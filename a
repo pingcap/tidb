@@ -1,0 +1,391 @@
+cd tools/check; \
+	GO111MODULE=on go build -o ../bin/ut ut.go
+cd tools/check; \
+	GO111MODULE=on go build -o ../bin/xprog xprog.go
+tools/bin/ut  || { find $PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable; exit 1; }
+?   	github.com/pingcap/tidb/autoid_service	[no test files]
+ok  	github.com/pingcap/tidb/bindinfo	0.013s
+?   	github.com/pingcap/tidb/build/linter/allrevive	[no test files]
+?   	github.com/pingcap/tidb/build/linter/asciicheck	[no test files]
+?   	github.com/pingcap/tidb/build/linter/bodyclose	[no test files]
+?   	github.com/pingcap/tidb/build/linter/durationcheck	[no test files]
+?   	github.com/pingcap/tidb/build/linter/errcheck	[no test files]
+?   	github.com/pingcap/tidb/build/linter/exportloopref	[no test files]
+?   	github.com/pingcap/tidb/build/linter/filepermission	[no test files]
+?   	github.com/pingcap/tidb/build/linter/forcetypeassert	[no test files]
+?   	github.com/pingcap/tidb/build/linter/gci	[no test files]
+?   	github.com/pingcap/tidb/build/linter/gofmt	[no test files]
+?   	github.com/pingcap/tidb/build/linter/gosec	[no test files]
+?   	github.com/pingcap/tidb/build/linter/ineffassign	[no test files]
+?   	github.com/pingcap/tidb/build/linter/makezero	[no test files]
+?   	github.com/pingcap/tidb/build/linter/misspell	[no test files]
+?   	github.com/pingcap/tidb/build/linter/noloopclosure	[no test files]
+?   	github.com/pingcap/tidb/build/linter/prealloc	[no test files]
+?   	github.com/pingcap/tidb/build/linter/predeclared	[no test files]
+?   	github.com/pingcap/tidb/build/linter/revive	[no test files]
+?   	github.com/pingcap/tidb/build/linter/rowserrcheck	[no test files]
+?   	github.com/pingcap/tidb/build/linter/staticcheck	[no test files]
+?   	github.com/pingcap/tidb/build/linter/unconvert	[no test files]
+?   	github.com/pingcap/tidb/build/linter/util	[no test files]
+ok  	github.com/pingcap/tidb/config	0.008s
+ok  	github.com/pingcap/tidb/ddl	0.006s
+ok  	github.com/pingcap/tidb/ddl/concurrentddltest	0.017s
+ok  	github.com/pingcap/tidb/ddl/failtest	0.010s
+ok  	github.com/pingcap/tidb/ddl/ingest	0.013s
+ok  	github.com/pingcap/tidb/ddl/label	0.009s
+ok  	github.com/pingcap/tidb/ddl/metadatalocktest	0.015s
+ok  	github.com/pingcap/tidb/ddl/placement	0.005s
+ok  	github.com/pingcap/tidb/ddl/schematracker	0.030s
+ok  	github.com/pingcap/tidb/ddl/syncer	0.013s
+?   	github.com/pingcap/tidb/ddl/testutil	[no test files]
+ok  	github.com/pingcap/tidb/ddl/util	0.009s
+ok  	github.com/pingcap/tidb/distsql	0.012s
+ok  	github.com/pingcap/tidb/domain	0.037s
+ok  	github.com/pingcap/tidb/domain/globalconfigsync	0.007s
+ok  	github.com/pingcap/tidb/domain/infosync	0.006s
+ok  	github.com/pingcap/tidb/errno	0.058s
+ok  	github.com/pingcap/tidb/executor	0.013s
+ok  	github.com/pingcap/tidb/executor/aggfuncs	0.010s
+ok  	github.com/pingcap/tidb/executor/analyzetest	0.011s
+ok  	github.com/pingcap/tidb/executor/fktest	0.013s
+ok  	github.com/pingcap/tidb/executor/kvtest	0.005s
+ok  	github.com/pingcap/tidb/executor/memtest	0.018s
+ok  	github.com/pingcap/tidb/executor/oomtest	0.032s
+ok  	github.com/pingcap/tidb/executor/seqtest	0.007s
+ok  	github.com/pingcap/tidb/executor/showtest	0.005s
+ok  	github.com/pingcap/tidb/executor/simpletest	0.014s
+ok  	github.com/pingcap/tidb/executor/splittest	0.007s
+ok  	github.com/pingcap/tidb/executor/tiflashtest	0.009s
+ok  	github.com/pingcap/tidb/expression	0.006s
+ok  	github.com/pingcap/tidb/expression/aggregation	0.012s
+?   	github.com/pingcap/tidb/expression/generator/helper	[no test files]
+ok  	github.com/pingcap/tidb/extension	0.043s
+?   	github.com/pingcap/tidb/extension/extensionimpl	[no test files]
+ok  	github.com/pingcap/tidb/infoschema	0.006s
+ok  	github.com/pingcap/tidb/infoschema/perfschema	0.018s
+ok  	github.com/pingcap/tidb/kv	0.012s
+?   	github.com/pingcap/tidb/lock	[no test files]
+ok  	github.com/pingcap/tidb/meta	0.008s
+ok  	github.com/pingcap/tidb/meta/autoid	0.005s
+ok  	github.com/pingcap/tidb/metrics	0.008s
+ok  	github.com/pingcap/tidb/owner	0.005s
+?   	github.com/pingcap/tidb/planner	[no test files]
+ok  	github.com/pingcap/tidb/planner/cascades	0.007s
+ok  	github.com/pingcap/tidb/planner/core	0.006s
+ok  	github.com/pingcap/tidb/planner/funcdep	0.005s
+ok  	github.com/pingcap/tidb/planner/implementation	0.009s
+ok  	github.com/pingcap/tidb/planner/memo	0.006s
+?   	github.com/pingcap/tidb/planner/property	[no test files]
+ok  	github.com/pingcap/tidb/planner/util	0.005s
+ok  	github.com/pingcap/tidb/plugin	0.005s
+ok  	github.com/pingcap/tidb/plugin/conn_ip_example	0.008s
+?   	github.com/pingcap/tidb/privilege	[no test files]
+ok  	github.com/pingcap/tidb/privilege/privileges	0.005s
+ok  	github.com/pingcap/tidb/server	0.004s
+ok  	github.com/pingcap/tidb/session	0.007s
+ok  	github.com/pingcap/tidb/session/session_test	0.005s
+?   	github.com/pingcap/tidb/session/txninfo	[no test files]
+ok  	github.com/pingcap/tidb/sessionctx	0.006s
+ok  	github.com/pingcap/tidb/sessionctx/binloginfo	0.006s
+ok  	github.com/pingcap/tidb/sessionctx/sessionstates	0.009s
+ok  	github.com/pingcap/tidb/sessionctx/stmtctx	0.006s
+ok  	github.com/pingcap/tidb/sessionctx/variable	0.029s
+?   	github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl	[no test files]
+ok  	github.com/pingcap/tidb/sessiontxn	0.006s
+?   	github.com/pingcap/tidb/sessiontxn/internal	[no test files]
+ok  	github.com/pingcap/tidb/sessiontxn/isolation	0.006s
+ok  	github.com/pingcap/tidb/sessiontxn/staleread	0.006s
+ok  	github.com/pingcap/tidb/statistics	0.005s
+ok  	github.com/pingcap/tidb/statistics/handle	0.005s
+ok  	github.com/pingcap/tidb/store	0.008s
+ok  	github.com/pingcap/tidb/store/copr	0.007s
+ok  	github.com/pingcap/tidb/store/copr/copr_test	0.005s
+ok  	github.com/pingcap/tidb/store/driver	0.006s
+?   	github.com/pingcap/tidb/store/driver/backoff	[no test files]
+ok  	github.com/pingcap/tidb/store/driver/error	0.006s
+?   	github.com/pingcap/tidb/store/driver/options	[no test files]
+ok  	github.com/pingcap/tidb/store/driver/txn	0.006s
+ok  	github.com/pingcap/tidb/store/gcworker	0.005s
+ok  	github.com/pingcap/tidb/store/helper	0.005s
+ok  	github.com/pingcap/tidb/store/mockstore	0.008s
+ok  	github.com/pingcap/tidb/store/mockstore/mockcopr	0.015s
+?   	github.com/pingcap/tidb/store/mockstore/mockstorage	[no test files]
+ok  	github.com/pingcap/tidb/store/mockstore/unistore	0.007s
+?   	github.com/pingcap/tidb/store/mockstore/unistore/client	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/config	[no test files]
+ok  	github.com/pingcap/tidb/store/mockstore/unistore/cophandler	0.012s
+ok  	github.com/pingcap/tidb/store/mockstore/unistore/lockstore	0.006s
+?   	github.com/pingcap/tidb/store/mockstore/unistore/metrics	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/pd	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/server	[no test files]
+ok  	github.com/pingcap/tidb/store/mockstore/unistore/tikv	0.012s
+?   	github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc	[no test files]
+?   	github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror	[no test files]
+ok  	github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter	0.011s
+?   	github.com/pingcap/tidb/store/pdtypes	[no test files]
+ok  	github.com/pingcap/tidb/structure	0.007s
+ok  	github.com/pingcap/tidb/table	0.011s
+ok  	github.com/pingcap/tidb/table/tables	0.018s
+ok  	github.com/pingcap/tidb/table/temptable	0.006s
+ok  	github.com/pingcap/tidb/tablecodec	0.005s
+ok  	github.com/pingcap/tidb/tablecodec/rowindexcodec	0.010s
+ok  	github.com/pingcap/tidb/telemetry	0.007s
+ok  	github.com/pingcap/tidb/telemetry/cte_test	0.009s
+?   	github.com/pingcap/tidb/testkit	[no test files]
+?   	github.com/pingcap/tidb/testkit/ddlhelper	[no test files]
+?   	github.com/pingcap/tidb/testkit/external	[no test files]
+ok  	github.com/pingcap/tidb/testkit/testfork	0.009s
+?   	github.com/pingcap/tidb/testkit/testmain	[no test files]
+?   	github.com/pingcap/tidb/testkit/testsetup	[no test files]
+ok  	github.com/pingcap/tidb/testkit/testutil	0.006s
+?   	github.com/pingcap/tidb/tidb-binlog/driver/example/mysql	[no test files]
+?   	github.com/pingcap/tidb/tidb-binlog/driver/example/print	[no test files]
+ok  	github.com/pingcap/tidb/tidb-binlog/driver/reader	0.006s
+ok  	github.com/pingcap/tidb/tidb-binlog/node	0.005s
+?   	github.com/pingcap/tidb/tidb-binlog/proto/go-binlog	[no test files]
+ok  	github.com/pingcap/tidb/tidb-binlog/pump_client	0.005s
+ok  	github.com/pingcap/tidb/tidb-server	0.007s
+ok  	github.com/pingcap/tidb/types	0.004s
+ok  	github.com/pingcap/tidb/types/parser_driver	0.007s
+ok  	github.com/pingcap/tidb/util	0.007s
+ok  	github.com/pingcap/tidb/util/admin	0.011s
+ok  	github.com/pingcap/tidb/util/arena	0.005s
+ok  	github.com/pingcap/tidb/util/benchdaily	0.016s
+ok  	github.com/pingcap/tidb/util/bitmap	0.010s
+?   	github.com/pingcap/tidb/util/breakpoint	[no test files]
+ok  	github.com/pingcap/tidb/util/cgroup	0.005s
+?   	github.com/pingcap/tidb/util/channel	[no test files]
+ok  	github.com/pingcap/tidb/util/checksum	0.006s
+ok  	github.com/pingcap/tidb/util/chunk	0.017s
+ok  	github.com/pingcap/tidb/util/codec	0.007s
+ok  	github.com/pingcap/tidb/util/collate	0.005s
+ok  	github.com/pingcap/tidb/util/column-mapping	0.006s
+ok  	github.com/pingcap/tidb/util/cpuprofile	0.009s
+?   	github.com/pingcap/tidb/util/cpuprofile/testutil	[no test files]
+ok  	github.com/pingcap/tidb/util/cteutil	0.006s
+ok  	github.com/pingcap/tidb/util/dbterror	0.005s
+ok  	github.com/pingcap/tidb/util/dbutil	0.008s
+ok  	github.com/pingcap/tidb/util/ddl-checker	0.011s
+ok  	github.com/pingcap/tidb/util/deadlockhistory	0.008s
+ok  	github.com/pingcap/tidb/util/disjointset	0.006s
+ok  	github.com/pingcap/tidb/util/disk	0.004s
+?   	github.com/pingcap/tidb/util/domainutil	[no test files]
+ok  	github.com/pingcap/tidb/util/encrypt	0.021s
+?   	github.com/pingcap/tidb/util/engine	[no test files]
+ok  	github.com/pingcap/tidb/util/etcd	0.008s
+ok  	github.com/pingcap/tidb/util/execdetails	0.006s
+ok  	github.com/pingcap/tidb/util/expensivequery	0.005s
+ok  	github.com/pingcap/tidb/util/fastrand	0.006s
+ok  	github.com/pingcap/tidb/util/filter	0.006s
+ok  	github.com/pingcap/tidb/util/format	0.015s
+ok  	github.com/pingcap/tidb/util/gctuner	0.008s
+?   	github.com/pingcap/tidb/util/gcutil	[no test files]
+ok  	github.com/pingcap/tidb/util/generatedexpr	0.005s
+ok  	github.com/pingcap/tidb/util/generic	0.009s
+ok  	github.com/pingcap/tidb/util/hack	0.005s
+?   	github.com/pingcap/tidb/util/hint	[no test files]
+?   	github.com/pingcap/tidb/util/importer	[no test files]
+?   	github.com/pingcap/tidb/util/israce	[no test files]
+ok  	github.com/pingcap/tidb/util/keydecoder	0.010s
+ok  	github.com/pingcap/tidb/util/kvcache	0.005s
+ok  	github.com/pingcap/tidb/util/localpool	0.007s
+ok  	github.com/pingcap/tidb/util/logutil	0.013s
+?   	github.com/pingcap/tidb/util/logutil/consistency	[no test files]
+ok  	github.com/pingcap/tidb/util/mathutil	0.007s
+ok  	github.com/pingcap/tidb/util/memory	0.007s
+ok  	github.com/pingcap/tidb/util/memoryusagealarm	0.034s
+ok  	github.com/pingcap/tidb/util/mock	0.005s
+ok  	github.com/pingcap/tidb/util/mvmap	0.007s
+ok  	github.com/pingcap/tidb/util/paging	0.004s
+ok  	github.com/pingcap/tidb/util/parser	0.011s
+?   	github.com/pingcap/tidb/util/pdapi	[no test files]
+ok  	github.com/pingcap/tidb/util/plancodec	0.008s
+ok  	github.com/pingcap/tidb/util/printer	0.004s
+ok  	github.com/pingcap/tidb/util/profile	0.004s
+ok  	github.com/pingcap/tidb/util/promutil	0.009s
+ok  	github.com/pingcap/tidb/util/ranger	0.005s
+ok  	github.com/pingcap/tidb/util/regexpr-router	0.008s
+ok  	github.com/pingcap/tidb/util/resourcegrouptag	0.005s
+ok  	github.com/pingcap/tidb/util/rowDecoder	0.020s
+ok  	github.com/pingcap/tidb/util/rowcodec	0.005s
+ok  	github.com/pingcap/tidb/util/schemacmp	0.005s
+ok  	github.com/pingcap/tidb/util/selection	0.007s
+ok  	github.com/pingcap/tidb/util/sem	0.008s
+ok  	github.com/pingcap/tidb/util/servermemorylimit	0.006s
+ok  	github.com/pingcap/tidb/util/set	0.004s
+?   	github.com/pingcap/tidb/util/signal	[no test files]
+?   	github.com/pingcap/tidb/util/size	[no test files]
+?   	github.com/pingcap/tidb/util/sli	[no test files]
+ok  	github.com/pingcap/tidb/util/slice	0.012s
+ok  	github.com/pingcap/tidb/util/sqlexec	0.004s
+ok  	github.com/pingcap/tidb/util/stmtsummary	0.004s
+ok  	github.com/pingcap/tidb/util/stringutil	0.006s
+ok  	github.com/pingcap/tidb/util/sys/linux	0.009s
+ok  	github.com/pingcap/tidb/util/sys/storage	0.009s
+ok  	github.com/pingcap/tidb/util/systimemon	0.006s
+ok  	github.com/pingcap/tidb/util/table-filter	0.010s
+ok  	github.com/pingcap/tidb/util/table-router	0.005s
+ok  	github.com/pingcap/tidb/util/table-rule-selector	0.006s
+?   	github.com/pingcap/tidb/util/tableutil	[no test files]
+ok  	github.com/pingcap/tidb/util/texttree	0.005s
+?   	github.com/pingcap/tidb/util/tikvutil	[no test files]
+ok  	github.com/pingcap/tidb/util/timeutil	0.006s
+?   	github.com/pingcap/tidb/util/tls	[no test files]
+ok  	github.com/pingcap/tidb/util/topsql	0.005s
+ok  	github.com/pingcap/tidb/util/topsql/collector	0.010s
+?   	github.com/pingcap/tidb/util/topsql/collector/mock	[no test files]
+ok  	github.com/pingcap/tidb/util/topsql/reporter	0.022s
+?   	github.com/pingcap/tidb/util/topsql/reporter/mock	[no test files]
+?   	github.com/pingcap/tidb/util/topsql/state	[no test files]
+ok  	github.com/pingcap/tidb/util/topsql/stmtstats	0.005s
+ok  	github.com/pingcap/tidb/util/tracing	0.004s
+?   	github.com/pingcap/tidb/util/trxevents	[no test files]
+?   	github.com/pingcap/tidb/util/versioninfo	[no test files]
+ok  	github.com/pingcap/tidb/util/vitess	0.008s
+ok  	github.com/pingcap/tidb/util/watcher	0.006s
+no test case in  autoid_service
+no test case in  build/linter/allrevive
+no test case in  build/linter/asciicheck
+no test case in  build/linter/bodyclose
+no test case in  build/linter/durationcheck
+no test case in  build/linter/errcheck
+no test case in  build/linter/exportloopref
+no test case in  build/linter/filepermission
+no test case in  build/linter/forcetypeassert
+no test case in  build/linter/gci
+no test case in  build/linter/gofmt
+no test case in  build/linter/gosec
+no test case in  build/linter/ineffassign
+no test case in  build/linter/makezero
+no test case in  build/linter/misspell
+no test case in  build/linter/noloopclosure
+no test case in  build/linter/prealloc
+no test case in  build/linter/predeclared
+no test case in  build/linter/revive
+no test case in  build/linter/rowserrcheck
+no test case in  build/linter/staticcheck
+no test case in  build/linter/unconvert
+no test case in  build/linter/util
+no test case in  ddl/testutil
+no test case in  expression/generator/helper
+no test case in  extension/extensionimpl
+no test case in  lock
+no test case in  planner
+no test case in  planner/property
+no test case in  privilege
+no test case in  session/txninfo
+no test case in  sessionctx/variable/featuretag/concurrencyddl
+no test case in  sessiontxn/internal
+no test case in  store/driver/backoff
+no test case in  store/driver/options
+no test case in  store/mockstore/mockstorage
+no test case in  store/mockstore/unistore/client
+no test case in  store/mockstore/unistore/config
+no test case in  store/mockstore/unistore/metrics
+no test case in  store/mockstore/unistore/pd
+no test case in  store/mockstore/unistore/server
+no test case in  store/mockstore/unistore/tikv/dbreader
+no test case in  store/mockstore/unistore/tikv/kverrors
+no test case in  store/mockstore/unistore/tikv/mvcc
+no test case in  store/mockstore/unistore/tikv/pberror
+no test case in  store/pdtypes
+no test case in  testkit
+no test case in  testkit/ddlhelper
+no test case in  testkit/external
+no test case in  testkit/testmain
+no test case in  testkit/testsetup
+no test case in  tidb-binlog/driver/example/mysql
+no test case in  tidb-binlog/driver/example/print
+no test case in  tidb-binlog/proto/go-binlog
+no test case in  util/breakpoint
+no test case in  util/channel
+no test case in  util/cpuprofile/testutil
+no test case in  util/domainutil
+no test case in  util/engine
+no test case in  util/gcutil
+no test case in  util/hint
+no test case in  util/importer
+no test case in  util/israce
+no test case in  util/logutil/consistency
+no test case in  util/pdapi
+no test case in  util/signal
+no test case in  util/size
+no test case in  util/sli
+no test case in  util/tableutil
+no test case in  util/tikvutil
+no test case in  util/tls
+no test case in  util/topsql/collector/mock
+no test case in  util/topsql/reporter/mock
+no test case in  util/topsql/state
+no test case in  util/trxevents
+no test case in  util/versioninfo
+building task finish, maxproc=10, count=5652, takes=5m14.49159525s
+[FAIL]  store/gcworker TestStartWithRunGCJobFailures
+[FAIL]  store/gcworker TestCheckGCMode
+[FAIL]  store/gcworker TestGCWithPendingTxn
+[FAIL]  ddl TestAddPrimaryKeyMergeProcess
+[FAIL]  store/gcworker TestMinStartTS
+[FAIL]  store/gcworker TestGCWithPendingTxn2
+[FAIL]  executor TestPlanCacheWithStaleReadByBinaryProto
+[FAIL]  store/gcworker TestStatusVars
+[FAIL]  telemetry TestAccountLock
+[FAIL]  telemetry TestCachedTable
+[FAIL]  telemetry TestAddIndexAccelerationAndMDL
+[FAIL]  store/gcworker TestResolveLocksPhysical
+[FAIL]  telemetry TestPlacementPolicies
+[FAIL]  executor TestStaleReadPrepare
+[FAIL]  executor/seqtest TestBatchInsertDelete
+[FAIL]  executor TestAggregation
+[FAIL]  planner/core TestLongBinaryPlan
+[FAIL]  store/gcworker TestMergeLockScanner
+[FAIL]  store/gcworker TestDeleteRangesFailure
+[FAIL]  telemetry TestGlobalKillUsageInfo
+[FAIL]  store/gcworker TestRunGCJob
+[FAIL]  store/gcworker TestResolveLockRangeInfine
+[FAIL]  store/gcworker TestGetGCConcurrency
+[FAIL]  sessiontxn/staleread TestExternalTimestampNotAffectPrepare
+[FAIL]  telemetry TestCostModelVer2UsageInfo
+[FAIL]  sessionctx/variable TestDefaultValuesAreSettable
+[FAIL]  executor TestHashJoinJSON
+[FAIL]  store/gcworker TestPhysicalScanLockDeadlock
+[FAIL]  planner/funcdep TestFDSet_ExtractFD
+[FAIL]  executor TestPBMemoryLeak
+[FAIL]  executor TestStaleSelect
+[FAIL]  store/gcworker TestResolveLockRangeMeetRegionCacheMiss
+[FAIL]  store/gcworker TestSkipGCAndOnlyResolveLock
+[FAIL]  store/gcworker TestSetServiceSafePoint
+[FAIL]  telemetry TestNonTransactionalUsage
+[FAIL]  store/gcworker TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge
+[FAIL]  store/gcworker TestGetOracleTime
+[FAIL]  store/gcworker TestDoGC
+[FAIL]  expression TestTan
+[FAIL]  executor/tiflashtest TestMppExecution
+[FAIL]  telemetry TestClusterIndexUsageInfo
+[FAIL]  telemetry TestPagingUsageInfo
+[FAIL]  telemetry TestTemporaryTable
+[FAIL]  store/gcworker TestRunGCJobAPI
+[FAIL]  store/gcworker TestRunDistGCJobAPI
+[FAIL]  executor TestStmtCtxStaleFlag
+[FAIL]  ddl TestAddIndexMergeVersionIndexValue
+[FAIL]  telemetry TestMultiSchemaChange
+[FAIL]  store/gcworker TestLeaderTick
+[FAIL]  executor TestGlobalMemoryControl
+[FAIL]  util/codec TestHashChunkRow
+[FAIL]  telemetry TestAutoCapture
+[FAIL]  telemetry TestTablePartition
+[FAIL]  store/gcworker TestGCPlacementRules
+[FAIL]  executor TestCountDistinctJSON
+[FAIL]  executor TestCreateView
+[FAIL]  ddl TestAddIndexMergeProcess
+[FAIL]  store/gcworker TestGCLabelRules
+[FAIL]  planner/funcdep TestFDSet_ExtractFDForApply
+[FAIL]  store/gcworker TestCheckScanLockMode
+[FAIL]  util/gctuner TestGlobalMemoryTuner
+[FAIL]  store/gcworker TestPrepareGC
+[FAIL]  sessiontxn TestTxnContextForStaleReadInPrepare
+[FAIL]  executor TestGlobalMemoryControl2
+[FAIL]  store/gcworker TestGetLowResolveTS
+[FAIL]  store/gcworker TestDoGCForOneRegion
+run all tasks takes 10m30.370951375s
