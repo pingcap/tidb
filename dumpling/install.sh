@@ -15,4 +15,3 @@ chmod a+x bin/minio
 
 wget https://dl.minio.io/client/mc/release/linux-amd64/mc -O bin/mc
 chmod a+x bin/mc
-
