@@ -148,6 +148,13 @@ var (
 			Name:      "add_index_ingest_usage",
 			Help:      "Counter of usage of add index acceleration solution",
 		})
+	TelemetryFlashbackClusterCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "flashback_cluster_usage",
+			Help:      "Counter of usage of flashback cluster",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -354,22 +361,25 @@ func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
 }
 
-// DDLUsageCounter records the usages of Add Index with acceleration solution.
+// DDLUsageCounter records the usages of DDL related features.
 type DDLUsageCounter struct {
-	AddIndexIngestUsed int64 `json:"add_index_ingest_used"`
-	MetadataLockUsed   bool  `json:"metadata_lock_used"`
+	AddIndexIngestUsed   int64 `json:"add_index_ingest_used"`
+	MetadataLockUsed     bool  `json:"metadata_lock_used"`
+	FlashbackClusterUsed int64 `json:"flashback_cluster_used"`
 }
 
 // Sub returns the difference of two counters.
 func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
 	return DDLUsageCounter{
-		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+		AddIndexIngestUsed:   a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+		FlashbackClusterUsed: a.FlashbackClusterUsed - rhs.FlashbackClusterUsed,
 	}
 }
 
 // GetDDLUsageCounter gets the add index acceleration solution counts.
 func GetDDLUsageCounter() DDLUsageCounter {
 	return DDLUsageCounter{
-		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
+		AddIndexIngestUsed:   readCounter(TelemetryAddIndexIngestCnt),
+		FlashbackClusterUsed: readCounter(TelemetryFlashbackClusterCnt),
 	}
 }
