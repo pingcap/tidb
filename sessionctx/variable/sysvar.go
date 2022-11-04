@@ -784,6 +784,16 @@ var defaultSysVars = []*SysVar{
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+
+			if bt == 0 {
+				if config.GetGlobalConfig().Performance.ServerMemoryQuota < 1 {
+					memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+				} else {
+					memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+				}
+			} else {
+				memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+			}
 			return nil
 		},
 	},
@@ -1651,7 +1661,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == IntOnly {
 			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
 		}
