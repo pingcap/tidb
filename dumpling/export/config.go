@@ -251,7 +251,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
 	flags.Uint64P(flagStatementSize, "s", DefaultStatementSize, "Attempted size of INSERT statement in bytes")
 	flags.StringP(flagOutput, "o", timestampDirName(), "Output directory")
-	flags.String(flagLoglevel, "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
+	flags.String(flagLoglevel, "debug", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
 	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
@@ -288,7 +288,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagReadTimeout)
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
-	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
+	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -593,6 +593,10 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 		return storage.NoCompression, nil
 	case "gzip", "gz":
 		return storage.Gzip, nil
+	case "snappy":
+		return storage.Snappy, nil
+	case "zst":
+		return storage.Zstd, nil
 	default:
 		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}

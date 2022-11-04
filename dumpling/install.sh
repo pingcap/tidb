@@ -15,3 +15,8 @@ chmod a+x bin/minio
 
 wget https://dl.minio.io/client/mc/release/linux-amd64/mc -O bin/mc
 chmod a+x bin/mc
+
+git clone https://github.com/facebook/zstd.git
+cd zstd
+make
+make install

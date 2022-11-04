@@ -60,7 +60,7 @@ export AWS_REGION=us-east-1
 export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
 export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
 run_dumpling --s3.endpoint="http://$S3_ENDPOINT/"
-ls "${HOST_DIR}" -R
+#ls "${HOST_DIR}" -R
 
 mkdir -p "${HOST_DIR}/remote"
 
@@ -80,6 +80,7 @@ echo "1st records count is ${cnt}"
 # run dumpling with compress option
 export DUMPLING_OUTPUT_DIR=s3://mybucket/dump-compress
 
+# test gzip
 run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress "gzip"
 
 mkdir -p "${HOST_DIR}/compress"
@@ -95,6 +96,46 @@ gzip "${HOST_DIR}/compress/s3.t-schema.sql.gz" -d
 diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
 
 gzip "${HOST_DIR}/compress/s3.t.000000000.sql.gz" -d
+diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+
+rm "${HOST_DIR}/compress/s3-schema-create.sql"
+rm "${HOST_DIR}/compress/s3.t-schema.sql"
+rm "${HOST_DIR}/compress/s3.t.000000000.sql"
+
+# test snappy
+run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress "snappy"
+
+bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.snappy "${HOST_DIR}/compress/s3-schema-create.sql.snappy"
+bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.snappy "${HOST_DIR}/compress/s3.t-schema.sql.snappy"
+bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.snappy "${HOST_DIR}/compress/s3.t.000000000.sql.snappy"
+
+snappy -d "${HOST_DIR}/compress/s3-schema-create.sql.snappy"
+diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
+
+snappy -d "${HOST_DIR}/compress/s3.t-schema.sql.snappy"
+diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
+
+snappy -d "${HOST_DIR}/compress/s3.t.000000000.sql.snappy"
+diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+
+rm "${HOST_DIR}/compress/s3-schema-create.sql"
+rm "${HOST_DIR}/compress/s3.t-schema.sql"
+rm "${HOST_DIR}/compress/s3.t.000000000.sql"
+
+# test zstd
+run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress "zst"
+
+bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.zst "${HOST_DIR}/compress/s3-schema-create.sql.zst"
+bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.zst "${HOST_DIR}/compress/s3.t-schema.sql.zst"
+bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.zst "${HOST_DIR}/compress/s3.t.000000000.sql.zst"
+
+zstd "${HOST_DIR}/compress/s3-schema-create.sql.zst" -d
+diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
+
+zstd "${HOST_DIR}/compress/s3.t-schema.sql.zst" -d
+diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
+
+zstd "${HOST_DIR}/compress/s3.t.000000000.sql.zst" -d
 diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
 
 run_sql "drop database if exists \`$DB_NAME\`;"
