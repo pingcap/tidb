@@ -16,14 +16,10 @@ package gpool
 
 import (
 	"errors"
-	"math"
 	"time"
 )
 
 const (
-	// DefaultPoolSize is the default capacity for a default goroutine pool.
-	DefaultPoolSize = math.MaxInt32
-
 	// DefaultCleanIntervalTime is the interval time to clean up goroutines.
 	DefaultCleanIntervalTime = 5 * time.Second
 )
