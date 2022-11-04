@@ -176,9 +176,9 @@ The DDL owner handle add foreign key constrain step is:
 1. None -> Write Only: add foreign key constrain which state is `write-only` into table.
 3. Write Only - Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
    ```sql
-   select count(*) from t2 where t2.a not in (select id from t1);
+   select 1 from t2 where t2.a is not null and t2.a not in (select id from t1) limit 1;
    ```
-   The expected result is `0`, otherwise, an error is returned and cancel the ddl job.
+   The expected result is `empty`, otherwise, an error is returned and cancel the ddl job.
 4. Write Reorg -> Public: update the foreign key constrain state to `public`.
 
 A problem is, How the DML treat the foreign key with on delete/update cascade behaviour which state is non-public?
@@ -374,133 +374,7 @@ modify related child table row by following step:
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
 
-There is an pseudocode about `DELETE` on reference table:
-
-1. Pseudocode in build plan stage.
-
-```go
-type Delete struct {
-    ...
-    // table-id => foreign key triggers.
-    FKTriggers map[int64][]*ForeignKeyTrigger
-}
-
-type ForeignKeyTrigger struct {
-	Tp                    FKTriggerType
-	OnModifyReferredTable *OnModifyReferredTableFKInfo
-	OnModifyChildTable    *OnModifyChildTableFKInfo
-}
-
-type OnModifyReferredTableFKInfo struct {
-	ReferredFK *model.ReferredFKInfo
-	ChildTable table.Table
-	FK         *model.FKInfo
-}
-
-const (
-	FKTriggerOnDeleteReferredTable      FKTriggerType = 1
-	FKTriggerOnUpdateReferredTable      FKTriggerType = 2
-	FKTriggerOnInsertOrUpdateChildTable FKTriggerType = 3
-)
-
-func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan, error) {
-    ....
-    del.FKTriggers = buildOnDeleteForeignKeyTrigger()
-}
-```
-
-2. Pseudocode in build executor.
-
-```go
-type DeleteExec struct {
-    fkTriggerExecs map[int64][]*ForeignKeyTriggerExec
-}
-
-type ForeignKeyTriggerExec struct {
-    fkTrigger     *plannercore.ForeignKeyTrigger
-    colsOffsets   []int
-    fkValues      [][]types.Datum
-}
-
-func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
-	...
-	deleteExec.fkTriggerExecs = b.buildTblID2ForeignKeyTriggerExecs()
-}
-```
-
-3. Pseudocode in `Delete` execution.
-
-```go
-func (e *DeleteExec) removeRow(...){
-    fkTriggerExecs := e.fkTriggerExecs[t.Meta().ID]
-    sc := ctx.GetSessionVars().StmtCtx
-    for _, fkt := range fkTriggerExecs {
-        err = fkt.addRowNeedToTrigger(sc, row)
-    }
-}
-
-func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementContext, row []types.Datum) error {
-    vals, err := fetchFKValues(row, fkt.colsOffsets)
-    if err != nil || hasNullValue(vals) {
-        return err
-    }
-    fkt.fkValues = append(fkt.fkValues, vals)
-    return nil
-}
-```
-
-4. Pseudocode after `Delete` execution.
-
-```go
-func (a *ExecStmt) Exec(){
-    e, err := a.buildExecutor()
-    e.Open()
-	f handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
-        err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
-        return result, err
-    }
-}
-
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
-    fkTriggerExecs := e.GetForeignKeyTriggerExecs()
-    for i := 0; i < len(fkTriggerExecs); i++{
-        fkt := fkTriggerExecs[i]
-        e, err := fkt.buildExecutor(ctx)
-        if err != nil {
-            return err
-        }
-        if e == nil {
-            continue
-        }
-        if err := e.Open(ctx); err != nil {
-            terror.Call(e.Close)
-            return err
-        }
-        _, _, err = a.handleNoDelay(ctx, e, isPessimistic)
-        if err != nil {
-            return err
-        }
-        err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
-        if err != nil {
-            return err
-        }
-    }
-    return nil
-}
-```
-
 ### Issue need to be discussed
-
-#### Impact when upgrading
-
-Create table with foreign key requires a multi-step state change(none -> write-only -> public),
-when the table's state changes from write-only to public, infoSchema need to drop the old table
-which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
-have the same ID, but one state is write-only, another table's state is public, it's unexpected.
-
-Warning, this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
-since old-version TiDB doesn't know to delete the old table, Since the cluster-index feature also has similar problem, 
-we chose to prevent DDL execution during the upgrade process to avoid this issue.
 
 #### Affect Row
 
@@ -524,7 +398,7 @@ Query OK, 1 row affected
 
 As you can see, in the query result, the affected row is 1, but actually should be 2, since the related row in t2 is also been deleted.
 
-This is a MySQL issue, do we need to be compatible with it?
+This is a MySQL behaviour, We can be compatible with it.
 
 #### DML Execution plan
 
@@ -560,7 +434,7 @@ Here is an example plan with foreign key:
 +--------------------------+---------+------+---------------+---------------+
 | Delete_4                 | N/A     | root |               | N/A           |
 | └─Point_Get_6            | 1.00    | root | table:t1      | handle:1      |
-| └─Foreign_Key_Trigger    | N/A     | root | table:t2      | cascade       |
+| └─Foreign_Key_Cascade    | N/A     | root | table:t2      | fk: fk_id     |
 +--------------------------+---------+------+---------------+---------------+
 ```
 
@@ -662,11 +536,19 @@ which implemention is use following SQL to check:
 select count(*) from t where t.a not in (select id from t_refer);
 ```
 
+Also check the foreign key is valid:
+- the foreign key state should be public.
+- the reference whether exist.
+- whether has index for the foreign key to use.
+
 ## Impact
 
 ### Impact of data replication
 
-todo
+Test sync table with foreign key:
+- TiCDC
+- DM
+- BR
 
 ## Test Case
 
