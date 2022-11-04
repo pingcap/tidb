@@ -1122,6 +1122,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
+		cc.ctx.GetSessionVars().ClearAlloc()
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
@@ -1866,6 +1867,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
+	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}
