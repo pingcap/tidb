@@ -234,7 +234,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		if e.limitDone(e.iterInTbl) {
 			break
 		}
-		chk := newFirstChunk(e.seedExec)
+		chk := tryNewCacheChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
 			return err
 		}
@@ -273,7 +273,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	for {
-		chk := newFirstChunk(e.recursiveExec)
+		chk := tryNewCacheChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
 			return err
 		}

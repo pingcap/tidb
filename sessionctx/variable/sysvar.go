@@ -347,6 +347,9 @@ var defaultSysVars = []*SysVar{
 			return s.LastPlanReplayerToken, nil
 		},
 	},
+	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
@@ -1661,7 +1664,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == IntOnly {
 			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
 		}
@@ -1968,6 +1971,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
@@ -1989,6 +1993,11 @@ var defaultSysVars = []*SysVar{
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableReuseCheck = TiDBOptOn(val)
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
