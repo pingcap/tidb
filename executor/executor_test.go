@@ -3972,12 +3972,13 @@ func TestApplyCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	require.Equal(t, "└─Apply_39", result.Rows()[1][0])
+	require.Contains(t, result.Rows()[1][0], "Apply")
 	var (
 		ind  int
 		flag bool
@@ -3997,7 +3998,7 @@ func TestApplyCache(t *testing.T) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	require.Equal(t, "└─Apply_39", result.Rows()[1][0])
+	require.Contains(t, result.Rows()[1][0], "Apply")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
@@ -6182,6 +6183,7 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
+
 func TestAutoIncrementInsertMinMax(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -6226,6 +6228,32 @@ func TestAutoIncrementInsertMinMax(t *testing.T) {
 	require.Error(t, err)
 	err = tk.ExecToErr("insert into t10 values (-2147483649)")
 	require.Error(t, err)
+}
+
+func TestSignalCheckpointForSort(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/SignalCheckpointForSort"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set tidb_mem_quota_query = 100000000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+
+	err := tk.QueryToErr("select * from t order by a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
 func TestSessionRootTrackerDetach(t *testing.T) {

@@ -77,7 +77,7 @@ type mergeJoinTable struct {
 
 func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	child := exec.children[t.childIndex]
-	t.childChunk = newFirstChunk(child)
+	t.childChunk = tryNewCacheChunk(child)
 	t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	items := make([]expression.Expression, 0, len(t.joinKeys))

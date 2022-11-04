@@ -1122,6 +1122,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
+		cc.ctx.GetSessionVars().ClearAlloc()
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
@@ -1866,6 +1867,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
+	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}
@@ -2485,20 +2487,24 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if pluginName != "" {
+	fakeResp := &handshakeResponse41{
+		Auth:       pass,
+		AuthPlugin: pluginName,
+		Capability: cc.capability,
+	}
+	if fakeResp.AuthPlugin != "" {
 		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
 			failpoint.Return(errors.Errorf("%v", val))
 		})
-		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
-			Auth:       pass,
-			AuthPlugin: pluginName,
-			Capability: cc.capability,
-		})
+		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
 			return err
 		}
+		if len(newpass) > 0 {
+			fakeResp.Auth = newpass
+		}
 	}
-	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)

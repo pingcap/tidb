@@ -41,6 +41,7 @@ import (
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -250,7 +251,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
 			tcpProto = "tcp4"
