@@ -468,10 +468,10 @@
       "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
       "explain format = 'verbose' select count(*) from t2 where a = 0",
       "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
-      "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
-      "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a"
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
+      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
     ]
 
   },
