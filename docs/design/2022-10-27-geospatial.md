@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
 - Author(s): [Author Name](http://github.com/dveeden)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
-- Tracking Issue: https://github.com/pingcap/tidb/issues/XXX
+- Discussion PR: https://github.com/pingcap/tidb/pull/38611 (Phase 1 only)
+- Tracking Issue: https://github.com/pingcap/tidb/issues/6347
 
 ## Table of Contents
 
