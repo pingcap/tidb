@@ -252,6 +252,9 @@ const (
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
+
+	// TiDBUseAlloc indicates whether the last statement used chunk alloc
+	TiDBUseAlloc = "last_sql_use_alloc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -733,6 +736,8 @@ const (
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
+	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
 	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
@@ -762,6 +767,9 @@ const (
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
+
+	// TiDBEnableReusechunk indicates whether to enable chunk alloc
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 )
 
 // TiDB vars that have only global scope
@@ -1009,7 +1017,7 @@ const (
 	DefTiDBTableCacheLease                         = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                   = true
 	DefTiDBEnableColumnTracking                    = false
-	DefTiDBStatsLoadSyncWait                       = 0
+	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
 	DefTiDBEnableMutationChecker                   = false
@@ -1037,6 +1045,7 @@ const (
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
+	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
@@ -1079,6 +1088,8 @@ const (
 	DefTiDBOptPrefixIndexSingleScan         = true
 	DefTiDBExternalTS                       = 0
 	DefTiDBEnableExternalTSRead             = false
+	DefTiDBEnableReusechunk                 = true
+	DefTiDBUseAlloc                         = false
 )
 
 // Process global variables.
@@ -1135,7 +1146,7 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
+	DefTiDBServerMemoryLimit = "0"
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 

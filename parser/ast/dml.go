@@ -2197,6 +2197,43 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) WhereExpr() ExprNode {
+	if n.Select == nil {
+		return nil
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil
+	}
+	return s.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) SetWhereExpr(e ExprNode) {
+	if n.Select == nil {
+		return
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return
+	}
+	s.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *InsertStmt) TableSource() (*TableSource, bool) {
+	if n.Select == nil {
+		return nil, false
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil, false
+	}
+	table, ok := s.From.TableRefs.Left.(*TableSource)
+	return table, ok
+}
+
 // DeleteStmt is a statement to delete rows from table.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
@@ -2395,6 +2432,7 @@ type ShardableDMLStmt = interface {
 
 var _ ShardableDMLStmt = &DeleteStmt{}
 var _ ShardableDMLStmt = &UpdateStmt{}
+var _ ShardableDMLStmt = &InsertStmt{}
 
 type NonTransactionalDMLStmt struct {
 	dmlNode
