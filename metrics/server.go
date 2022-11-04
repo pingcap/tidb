@@ -144,6 +144,22 @@ var (
 			Help:      "Counter of plan cache miss.",
 		}, []string{LblType})
 
+	PlanCacheInstanceMemoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_instance_memory_usage",
+			Help:      "Total plan cache memory usage of all sessions in a instance",
+		}, []string{LblType})
+
+	PlanCacheInstancePlanNumCounter = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_instance_plan_num_total",
+			Help:      "Counter of plan of all prepared plan cache in a instance",
+		}, []string{LblType})
+
 	ReadFromTableCacheCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -287,6 +303,14 @@ var (
 			Help:      "Duration (us) for loading table cache.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
+
+	RCCheckTSWriteConfilictCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "rc_check_ts_conflict_total",
+			Help:      "Counter of WriteConflict caused by RCCheckTS.",
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

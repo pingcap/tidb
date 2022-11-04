@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -489,6 +488,26 @@ func BenchmarkSort(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(ctx, rs[0], 50)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkSort2(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	prepareSortBenchData(se, "int", "%v", 1000000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t order by col")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(ctx, rs[0], 1000000)
 	}
 	b.StopTimer()
 }
@@ -1570,6 +1589,10 @@ partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
 
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1605,6 +1628,10 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
 	alloc := chunk.NewAllocator()
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
@@ -1714,7 +1741,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+func BenchmarkCompileStmt(b *testing.B) {
 	// See issue https://github.com/pingcap/tidb/issues/27633
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1815,12 +1842,12 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	}
 
 	args := expression.Args2Expressions4Test(3401544)
-	is := se.GetInfoSchema()
 
 	b.ResetTimer()
 	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+	compiler := executor.Compiler{Ctx: se}
 	for i := 0; i < b.N; i++ {
-		_, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
+		_, err := compiler.Compile(context.Background(), stmtExec)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1859,6 +1886,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
-		BenchmarkCompileExecutePreparedStmt,
+		BenchmarkCompileStmt,
 	)
 }

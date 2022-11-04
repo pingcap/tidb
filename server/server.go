@@ -41,6 +41,7 @@ import (
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,14 +49,20 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -134,8 +141,11 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode bool
 
-	sessionMapMutex  sync.Mutex
-	internalSessions map[interface{}]struct{}
+	sessionMapMutex     sync.Mutex
+	internalSessions    map[interface{}]struct{}
+	autoIDService       *autoid.Service
+	authTokenCancelFunc context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // ConnectionCount gets current connection count.
@@ -241,7 +251,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
 			tcpProto = "tcp4"
@@ -294,6 +304,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+
+	// Automatically reload JWKS for tidb_auth_token.
+	if len(s.cfg.Security.AuthTokenJWKS) > 0 {
+		var (
+			timeInterval time.Duration
+			err          error
+			ctx          context.Context
+		)
+		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
+			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
+				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
+			timeInterval = config.DefAuthTokenRefreshInterval
+		}
+		ctx, s.authTokenCancelFunc = context.WithCancel(context.Background())
+		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
+			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
 
@@ -494,13 +522,46 @@ func (s *Server) Close() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
+	if s.authTokenCancelFunc != nil {
+		s.authTokenCancelFunc()
+	}
+	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	// init the connInfo
+	_, _, err := conn.PeerHost("")
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("get peer host failed", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("error in get extensions", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
+		conn.extensions = sessExtensions
+		conn.onExtensionConnEvent(extension.ConnConnected, nil)
+		defer func() {
+			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
+		}()
+	}
+
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -548,7 +609,8 @@ func (s *Server) onConn(conn *clientConn) {
 
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
-	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
@@ -592,6 +654,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientIP:          cc.peerHost,
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
+		ServerIP:          cc.serverHost,
 		ServerPort:        int(cc.server.cfg.Port),
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
@@ -602,6 +665,32 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		DB:                cc.dbname,
 	}
 	return connInfo
+}
+
+func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
+	if cc.extensions == nil {
+		return
+	}
+
+	var connInfo *variable.ConnectionInfo
+	var activeRoles []*auth.RoleIdentity
+	if ctx := cc.getCtx(); ctx != nil {
+		sessVars := ctx.GetSessionVars()
+		connInfo = sessVars.ConnectionInfo
+		activeRoles = sessVars.ActiveRoles
+	}
+
+	if connInfo == nil {
+		connInfo = cc.connectInfo()
+	}
+
+	info := &extension.ConnEventInfo{
+		ConnectionInfo: connInfo,
+		ActiveRoles:    activeRoles,
+		Error:          err,
+	}
+
+	cc.extensions.OnConnectionEvent(tp, info)
 }
 
 func (s *Server) checkConnectionCount() error {
@@ -870,4 +959,40 @@ func setSystemTimeZoneVariable() {
 		}
 		variable.SetSysVar("system_time_zone", tz)
 	})
+}
+
+// CheckOldRunningTxn implements SessionManager interface.
+func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+		}
+	}
+}
+
+// KillNonFlashbackClusterConn implements SessionManager interface.
+func (s *Server) KillNonFlashbackClusterConn() {
+	s.rwlock.RLock()
+	connIDs := make([]uint64, 0, len(s.clients))
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			processInfo := client.ctx.Session.ShowProcess()
+			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
+			if !ok {
+				connIDs = append(connIDs, client.connectionID)
+				continue
+			}
+			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
+			if !ok {
+				connIDs = append(connIDs, client.connectionID)
+				continue
+			}
+		}
+	}
+	s.rwlock.RUnlock()
+	for _, id := range connIDs {
+		s.Kill(id, false)
+	}
 }

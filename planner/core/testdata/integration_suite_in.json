@@ -83,6 +83,7 @@
     "name": "TestIndexMerge",
     "cases": [
       "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2",
+      "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, A, B) */ * from t where a = 1 or b = 2",
       "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c",
       "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2"
     ]
@@ -106,7 +107,9 @@
     "name": "TestIndexJoinTableRange",
     "cases": [
       "desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
-      "desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
+      "desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
+      "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.a = t4.a where t4.b = 1",
+      "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1"
     ]
   },
   {
@@ -287,7 +290,9 @@
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
-      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
+      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select /*+ hash_join_build(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select /*+ hash_join_probe(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)"
     ]
   },
   {
@@ -463,10 +468,10 @@
       "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
       "explain format = 'verbose' select count(*) from t2 where a = 0",
       "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
-      "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
-      "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a"
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
+      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
     ]
 
   },
@@ -807,6 +812,12 @@
     ]
   },
   {
+    "name": "TestMppJoinExchangeColumnPrune",
+    "cases": [
+      "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)"
+    ]
+  },
+  {
     "name": "TestPushDownAggForMPP",
     "cases": [
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
@@ -984,6 +995,48 @@
       // GroupBy key is same with window function partition key, so they are in one fragment.
       // But fine grained shuffle doesn't support group by for now.
       "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);"
+    ]
+  },
+  {
+    "name": "TestIndexJoinRangeFallback",
+    "cases": [
+      "set @@tidb_opt_range_max_size = 0",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+      "set @@tidb_opt_range_max_size = 2900",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+      "set @@tidb_opt_range_max_size = 2300",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+      "set @@tidb_opt_range_max_size = 700",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+      "set @@tidb_opt_range_max_size = 0",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10",
+      "set @@tidb_opt_range_max_size = 300",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10",
+      "set @@tidb_opt_range_max_size = 0",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10",
+      "set @@tidb_opt_range_max_size = 300",
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10"
+    ]
+  },
+  {
+    "name": "TestNullConditionForPrefixIndex",
+    "cases": [
+      "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 = '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
+      "select count(1) from t2 use index(idx) where b is not null",
+      "select count(1) from t2 use index(idx) where b is null",
+      "select b from t2 use index(idx) where b is not null",
+      "select b from t2 use index(idx) where b is null",
+      "select b from t3 where a = 1 and b is not null",
+      "select b from t3 where a = 1 and b is null"
     ]
   }
 ]

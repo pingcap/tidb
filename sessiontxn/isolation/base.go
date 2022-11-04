@@ -119,7 +119,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
+	sessVars.TxnCtxMu.Unlock()
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -139,6 +144,10 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 		return is.(infoschema.InfoSchema)
 	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.infoSchema = is
 }
 
 // GetTxnScope returns the current txn scope
@@ -198,6 +207,17 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return nil
 }
 
+// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
+	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	if p.txn != nil && p.txn.Valid() {
+		if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+			p.txn.SetOption(kv.SnapInterceptor, interceptor)
+		}
+	}
+}
+
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
@@ -252,7 +272,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
@@ -401,7 +424,9 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() &&
+		!sessVars.StmtCtx.RCCheckTS &&
+		!sessVars.RcWriteCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 

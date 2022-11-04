@@ -536,8 +536,6 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"placement policy p1", "PLACEMENT POLICY = `p1`"},
 		{"placement policy p1 comment='aaa'", "PLACEMENT POLICY = `p1` COMMENT = 'aaa'"},
 		{"partition p0 placement policy p1", "PARTITION `p0` PLACEMENT POLICY = `p1`"},
-		{"set tiflash mode normal", "SET TIFLASH MODE NORMAL"},
-		{"set tiflash mode fast", "SET TIFLASH MODE FAST"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0]
@@ -828,4 +826,17 @@ func TestRemovePlacementRestore(t *testing.T) {
 		}
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, f)
 	}
+}
+
+func TestFlashBackDatabaseRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"flashback database M", "FLASHBACK DATABASE `M`"},
+		{"flashback schema M", "FLASHBACK DATABASE `M`"},
+		{"flashback database M to n", "FLASHBACK DATABASE `M` TO `n`"},
+		{"flashback schema M to N", "FLASHBACK DATABASE `M` TO `N`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

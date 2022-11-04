@@ -624,6 +624,9 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if sessVars.BinlogClient != nil {
 		return ErrSavepointNotSupportedWithBinlog
 	}
+	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
+		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -641,8 +644,22 @@ func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error 
 	return nil
 }
 
+func (e *SimpleExec) setCurrentUser(users []*auth.UserIdentity) {
+	sessionVars := e.ctx.GetSessionVars()
+	for i, user := range users {
+		if user.CurrentUser {
+			users[i].Username = sessionVars.User.AuthUsername
+			users[i].Hostname = sessionVars.User.AuthHostname
+		}
+	}
+}
+
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+
+	//Fix revoke role from current_user results error.
+	e.setCurrentUser(s.Users)
+
 	for _, role := range s.Roles {
 		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
 		if err != nil {
@@ -788,17 +805,47 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
 
-	sql := new(strings.Builder)
-	if s.IsCreateRole {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
-	} else {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
+	lockAccount := "N"
+	if length := len(s.PasswordOrLockOptions); length > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+				lockAccount = "Y"
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				break
+			}
+		}
 	}
+	if s.IsCreateRole {
+		lockAccount = "Y"
+	}
+
+	var userAttributes any = nil
+	if s.CommentOrAttributeOption != nil {
+		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
+			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+		}
+	}
+
+	tokenIssuer := ""
+	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
+		switch authTokenOption.Type {
+		case ast.TokenIssuer:
+			tokenIssuer = authTokenOption.Value
+		}
+	}
+
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -838,17 +885,23 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		switch authPlugin {
-		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket:
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken:
 		default:
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
 
-		hostName := strings.ToLower(spec.User.Hostname)
-		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
-		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
+		recordTokenIssuer := tokenIssuer
+		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
+			err := fmt.Errorf("TOKEN_ISSUER is not needed for '%s' user", authPlugin)
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			recordTokenIssuer = ""
+		} else if len(recordTokenIssuer) == 0 && authPlugin == mysql.AuthTiDBAuthToken {
+			err := fmt.Errorf("TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
+
+		hostName := strings.ToLower(spec.User.Hostname)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -912,7 +965,22 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	lockAccount := ""
+	if len(s.PasswordOrLockOptions) > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// the last declaration takes effect.
+		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+				lockAccount = "Y"
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				lockAccount = "N"
+				break
+			}
+		}
+	}
+
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -927,6 +995,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+
+	var authTokenOptions []*ast.AuthTokenOrTLSOption
+	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
+		if authTokenOrTLSOption.Type == ast.TokenIssuer {
+			authTokenOptions = append(authTokenOptions, authTokenOrTLSOption)
+		}
+	}
 
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
@@ -971,7 +1046,29 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
+		type AuthTokenOptionHandler int
+		const (
+			// NoNeedAuthTokenOptions means the final auth plugin is NOT tidb_auth_plugin
+			NoNeedAuthTokenOptions AuthTokenOptionHandler = iota
+			// OptionalAuthTokenOptions means the final auth_plugin is tidb_auth_plugin,
+			// and whether to declare AuthTokenOptions or not is ok.
+			OptionalAuthTokenOptions
+			// RequireAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
+			RequireAuthTokenOptions
+		)
+		authTokenOptionHandler := NoNeedAuthTokenOptions
+		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+			return err
+		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+			authTokenOptionHandler = OptionalAuthTokenOptions
+		}
+
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+		type alterField struct {
+			expr  string
+			value string
+		}
+		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
 				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
@@ -981,7 +1078,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				spec.AuthOpt.AuthPlugin = authplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
-			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket, "":
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
+				authTokenOptionHandler = NoNeedAuthTokenOptions
+			case mysql.AuthTiDBAuthToken:
+				if authTokenOptionHandler != OptionalAuthTokenOptions {
+					authTokenOptionHandler = RequireAuthTokenOptions
+				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
@@ -989,12 +1091,63 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
-				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
-				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
+			fields = append(fields,
+				alterField{"authentication_string=%?", pwd},
+				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
 			)
+		}
+
+		if len(lockAccount) != 0 {
+			fields = append(fields, alterField{"account_locked=%?", lockAccount})
+		}
+
+		if s.CommentOrAttributeOption != nil {
+			newAttributesStr := ""
+			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+			} else {
+				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+			}
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+		}
+
+		switch authTokenOptionHandler {
+		case NoNeedAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+		case OptionalAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				for _, authTokenOption := range authTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
+			}
+		case RequireAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				for _, authTokenOption := range authTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
+			} else {
+				err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+		}
+
+		if len(fields) > 0 {
+			sql := new(strings.Builder)
+			sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+			for i, f := range fields {
+				sqlexec.MustFormatSQL(sql, f.expr, f.value)
+				if i < len(fields)-1 {
+					sqlexec.MustFormatSQL(sql, ",")
+				}
+			}
+			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
+				continue
 			}
 		}
 
@@ -1028,13 +1181,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	sessionVars := e.ctx.GetSessionVars()
-	for i, user := range s.Users {
-		if user.CurrentUser {
-			s.Users[i].Username = sessionVars.User.AuthUsername
-			s.Users[i].Hostname = sessionVars.User.AuthHostname
-		}
-	}
+
+	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
 		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
@@ -1359,7 +1507,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} //TODO: need delete columns_priv once we implement columns_priv functionality.
+		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {
@@ -1457,8 +1605,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	var pwd string
 	switch authplugin {
-	case mysql.AuthCachingSha2Password:
-		pwd = auth.NewSha2Password(s.Password)
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
 		pwd = ""
@@ -1476,6 +1624,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
+		if x.FnName.L == ast.ConnectionID {
+			sm := e.ctx.GetSessionManager()
+			sm.Kill(e.ctx.GetSessionVars().ConnectionID, s.Query)
+			return nil
+		}
+		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
 		if s.TiDBExtension || conf.CompatibleKillQuery {
@@ -1485,7 +1641,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			}
 			sm.Kill(s.ConnectionID, s.Query)
 		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		return nil
@@ -1739,7 +1895,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	e.ctx.GetSessionVars().LastUpdateTime4PC = now
-	e.ctx.PreparedPlanCache().DeleteAll()
+	e.ctx.GetPlanCache(false).DeleteAll()
 	if s.StatementScope == ast.StatementScopeInstance {
 		// Record the timestamp. When other sessions want to use the plan cache,
 		// it will check the timestamp first to decide whether the plan cache should be flushed.

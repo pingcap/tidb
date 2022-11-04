@@ -15,19 +15,16 @@
 package executor_test
 
 import (
-	"crypto/tls"
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -84,64 +81,19 @@ func TestIgnorePlanCache(t *testing.T) {
 	require.False(t, tk.Session().GetSessionVars().StmtCtx.UseCache)
 }
 
-type mockSessionManager2 struct {
-	se     session.Session
-	killed int32
-}
-
-func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
-	pl := make(map[uint64]*util.ProcessInfo)
-	if pi, ok := sm.GetProcessInfo(0); ok {
-		pl[pi.ID] = pi
-	}
-	return pl
-}
-
-func (sm *mockSessionManager2) GetProcessInfo(_ uint64) (pi *util.ProcessInfo, notNil bool) {
-	pi = sm.se.ShowProcess()
-	if pi != nil {
-		notNil = true
-	}
-	return
-}
-
-func (sm *mockSessionManager2) Kill(_ uint64, _ bool) {
-	atomic.StoreInt32(&sm.killed, 1)
-	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
-}
-func (sm *mockSessionManager2) KillAllConnections()           {}
-func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
-func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
-
-func (sm *mockSessionManager2) StoreInternalSession(se interface{}) {}
-
-func (sm *mockSessionManager2) DeleteInternalSession(se interface{}) {}
-
-func (sm *mockSessionManager2) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
-	tk.SetSession(se)
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 
-	sm := &mockSessionManager2{
-		se: se,
-	}
-	se.SetSessionManager(sm)
-	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
+	go dom.ExpensiveQueryHandle().SetSessionManager(sv).Run()
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
-	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
 func TestPreparedNullParam(t *testing.T) {
@@ -908,7 +860,7 @@ func TestIssue29101(t *testing.T) {
 	  c_last varchar(16) DEFAULT NULL,
 	  c_credit char(2) DEFAULT NULL,
 	  c_discount decimal(4,4) DEFAULT NULL,
-	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  PRIMARY KEY (c_w_id,c_d_id,c_id) NONCLUSTERED,
 	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
 	)`)
 	tk.MustExec(`CREATE TABLE warehouse (
@@ -938,12 +890,12 @@ func TestIssue29101(t *testing.T) {
 	  ol_w_id int(11) NOT NULL,
 	  ol_number int(11) NOT NULL,
 	  ol_i_id int(11) NOT NULL,
-	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))`)
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number) NONCLUSTERED)`)
 	tk.MustExec(`CREATE TABLE stock (
 	  s_i_id int(11) NOT NULL,
 	  s_w_id int(11) NOT NULL,
 	  s_quantity int(11) DEFAULT NULL,
-	  PRIMARY KEY (s_w_id,s_i_id))`)
+	  PRIMARY KEY (s_w_id,s_i_id) NONCLUSTERED)`)
 	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
 	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
@@ -957,10 +909,10 @@ func TestIssue29101(t *testing.T) {
 		`  │ └─IndexLookUp_29 0.03 root  `,
 		`  │   ├─IndexRangeScan_27(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
 		`  │   └─TableRowIDScan_28(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
-		`  └─IndexLookUp_13(Probe) 1.00 root  `,
-		`    ├─IndexRangeScan_10(Build) 1.00 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
-		`    └─Selection_12(Probe) 1.00 cop[tikv]  lt(test.stock.s_quantity, 18)`,
-		`      └─TableRowIDScan_11 1.00 cop[tikv] table:stock keep order:false, stats:pseudo`))
+		`  └─IndexLookUp_13(Probe) 0.03 root  `,
+		`    ├─IndexRangeScan_10(Build) 0.03 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
+		`    └─Selection_12(Probe) 0.03 cop[tikv]  lt(test.stock.s_quantity, 18)`,
+		`      └─TableRowIDScan_11 0.03 cop[tikv] table:stock keep order:false, stats:pseudo`))
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 }
@@ -1078,7 +1030,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
 	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
@@ -1244,6 +1196,9 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	require.Equal(t, "cop[tikv]", rows[len(rows)-1][2])
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	// allowing mpp will generate mpp[tiflash] plan, the test framework will time out due to
+	// "retry for TiFlash peer with region missing", so disable mpp mode to use cop mode instead.
+	tk.MustExec("set @@session.tidb_allow_mpp=0")
 	tk.MustExec("execute stmt")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}

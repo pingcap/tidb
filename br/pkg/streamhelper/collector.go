@@ -95,6 +95,7 @@ func (c *storeCollector) begin(ctx context.Context) {
 
 func (c *storeCollector) recvLoop(ctx context.Context) (err error) {
 	defer utils.PanicToErr(&err)
+	log.Debug("Begin recv loop", zap.Uint64("store", c.storeID))
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,6 +180,7 @@ func (c *storeCollector) spawn(ctx context.Context) func(context.Context) (Store
 
 func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	log.Debug("sending batch", zap.Int("size", len(c.currentRequest.Regions)), zap.Uint64("store", c.storeID))
+	defer log.Debug("sending batch done", zap.Uint64("store", c.storeID))
 	cli, err := c.service.GetLogBackupClient(ctx, c.storeID)
 	if err != nil {
 		return err

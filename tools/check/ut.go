@@ -826,7 +826,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling", "tests"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -906,9 +906,12 @@ func listNewTestCases(pkg string) ([]string, error) {
 	// session.test -test.list Test
 	cmd := exec.Command(exe, "-test.list", "Test")
 	cmd.Dir = path.Join(workDir, pkg)
-	res, err := cmdToLines(cmd)
-	if err != nil {
-		return nil, withTrace(err)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	err := cmd.Run()
+	res := strings.Split(buf.String(), "\n")
+	if err != nil && len(res) == 0 {
+		fmt.Println("err ==", err)
 	}
 	return filter(res, func(s string) bool {
 		return strings.HasPrefix(s, "Test") && s != "TestT" && s != "TestBenchDaily"

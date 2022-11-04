@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +49,7 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
+	alloc   chunk.Allocator
 }
 
 // NewTestKit returns a new *TestKit.
@@ -57,8 +59,25 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
+		alloc:   chunk.NewAllocator(),
 	}
 	tk.RefreshSession()
+
+	dom, _ := session.GetDomain(store)
+	sm := dom.InfoSyncer().GetSessionManager()
+	if sm != nil {
+		mockSm, ok := sm.(*MockSessionManager)
+		if ok {
+			mockSm.mu.Lock()
+			if mockSm.conn == nil {
+				mockSm.conn = make(map[uint64]session.Session)
+			}
+			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.mu.Unlock()
+		}
+		tk.session.SetSessionManager(sm)
+	}
+
 	return tk
 }
 
@@ -70,6 +89,7 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		t:       t,
 		store:   store,
 		session: se,
+		alloc:   chunk.NewAllocator(),
 	}
 }
 
@@ -94,7 +114,18 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	res, err := tk.Exec(sql, args...)
+	defer func() {
+		tk.Session().GetSessionVars().ClearAlloc()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	tk.MustExecWithContext(context.Background(), sql, args...)
+}
+
+// MustExecWithContext executes a sql statement and asserts nil error.
+func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...interface{}) {
+	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
 
@@ -106,11 +137,22 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	defer func() {
+		tk.Session().GetSessionVars().ClearAlloc()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	return tk.MustQueryWithContext(context.Background(), sql, args...)
+}
+
+// MustQueryWithContext query the statements and returns result rows.
+func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...interface{}) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
-	rs, err := tk.Exec(sql, args...)
+	rs, err := tk.ExecWithContext(ctx, sql, args...)
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
-	return tk.ResultSetToResult(rs, comment)
+	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
 }
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
@@ -127,7 +169,8 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
 			ok = false
 		}
-		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		// The data format is "table: t1, partition: p0,p1,p2"
+		if len(partitions) != 0 && strings.HasSuffix(rs.rows[i][3], "partition:"+partitions) {
 			ok = true
 		}
 	}
@@ -224,22 +267,31 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
+	return tk.ExecWithContext(context.Background(), sql, args...)
+}
+
+// ExecWithContext executes a sql statement using the prepared stmt API
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
-		stmts, err := tk.session.Parse(ctx, sql)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var stmts []ast.StmtNode
+		if len(stmts) == 0 {
+			var err error
+			stmts, err = tk.session.Parse(ctx, sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
+		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
 			var err error
-			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+				rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
 			} else {
 				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
 			}
@@ -262,6 +314,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		return nil, errors.Trace(err)
 	}
 	params := expression.Args2Expressions4Test(args...)
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)

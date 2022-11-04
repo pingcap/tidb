@@ -25,12 +25,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 type collectPredicateColumnsPoint struct{}
 
-func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -41,6 +43,9 @@ func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPl
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
+	if !histNeeded {
+		return plan, nil
+	}
 	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
@@ -50,13 +55,13 @@ func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPl
 	return plan, nil
 }
 
-func (c collectPredicateColumnsPoint) name() string {
+func (collectPredicateColumnsPoint) name() string {
 	return "collect_predicate_columns_point"
 }
 
 type syncWaitStatsLoadPoint struct{}
 
-func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -64,7 +69,7 @@ func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ 
 	return plan, err
 }
 
-func (s syncWaitStatsLoadPoint) name() string {
+func (syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 
@@ -85,6 +90,8 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
+		logutil.BgLogger().Warn("SendLoadRequests failed", zap.Error(err))
+		stmtCtx.IsSyncStatsFailed = true
 		return handleTimeout(stmtCtx)
 	}
 	return nil
@@ -100,6 +107,8 @@ func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	if success {
 		return true, nil
 	}
+	logutil.BgLogger().Warn("SyncWaitStatsLoad failed")
+	stmtCtx.IsSyncStatsFailed = true
 	err := handleTimeout(stmtCtx)
 	return false, err
 }

@@ -218,7 +218,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -316,7 +316,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -342,7 +342,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
-	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n) NONCLUSTERED)")
 
 	tests := []struct {
 		sql  string
@@ -364,7 +364,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})

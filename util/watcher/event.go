@@ -62,9 +62,9 @@ func (op Op) String() string {
 
 // Event represents a single file operation event
 type Event struct {
+	FileInfo os.FileInfo
 	Path     string
 	Op       Op
-	FileInfo os.FileInfo
 }
 
 // IsDirEvent returns whether is a event for a directory

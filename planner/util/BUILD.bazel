@@ -17,6 +17,7 @@ go_library(
         "//types",
         "//util/collate",
         "//util/ranger",
+        "//util/size",
     ],
 )
 

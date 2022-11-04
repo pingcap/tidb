@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -157,6 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
+	if !useCursor {
+		// not using streaming ,can reuse chunk
+		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	}
 	// skip iteration-count, always 1
 	pos += 4
 
@@ -238,12 +243,25 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	rs, err := stmt.Execute(ctx, args)
+	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	if err != nil {
+		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+	}
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: args,
+		PrepStmt:   prepStmt,
+	}
+	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
 		return false, cc.writeOK(ctx)
+	}
+	if result, ok := rs.(*tidbResultSet); ok {
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
 	}
 
 	// if the client wants to use cursor
@@ -281,6 +299,7 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
+	cc.ctx.GetSessionVars().ClearAlloc()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {

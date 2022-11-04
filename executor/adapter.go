@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -193,18 +194,36 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	UesExchangePartition bool
 	PartitionTelemetry   *PartitionTelemetryInfo
+	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -247,7 +266,7 @@ type ExecStmt struct {
 }
 
 // GetStmtNode returns the stmtNode inside Statement
-func (a ExecStmt) GetStmtNode() ast.StmtNode {
+func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
@@ -300,6 +319,22 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
+
+	sctx := a.Ctx
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
+	var pi processinfoSetter
+	if raw, ok := sctx.(processinfoSetter); ok {
+		pi = raw
+		sql := a.OriginText()
+		maxExecutionTime := getMaxExecutionTime(sctx)
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
+			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+		}
+	}
+
 	return &recordSet{
 		executor:   pointExecutor,
 		stmt:       a,
@@ -328,7 +363,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -421,10 +456,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		if !ok {
+			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		if !ok {
+			oriIso = "REPEATABLE-READ"
+		}
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
@@ -438,7 +479,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
-		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
 	e, err := a.buildExecutor()
@@ -468,10 +509,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
+		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
+		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {
@@ -494,6 +539,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	a.prepareFKCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
@@ -514,13 +560,155 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
+		// change first.
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
+		a.Ctx.StmtCommit()
+	}
+	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	if err != nil {
+		err1 := a.handleFKTriggerError(stmtCtx)
+		if err1 != nil {
+			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+		}
+		return err
+	}
+	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	}
+	return nil
+}
+
+var maxForeignKeyCascadeDepth = 15
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, depth int) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	fkCascades := exec.GetFKCascades()
+	for _, fkCascade := range fkCascades {
+		err := a.handleForeignKeyCascade(ctx, fkCascade, depth)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
+//  1. Build delete/update executor for foreign key on delete/update behaviour.
+//     a. Construct delete/update AST. We used to try generated SQL string first and then parse the SQL to get AST,
+//     but we need convert Datum to string, there may be some risks here, since assert_eq(datum_a, parse(datum_a.toString())) may be broken.
+//     so we chose to construct AST directly.
+//     b. Build plan by the delete/update AST.
+//     c. Build executor by the delete/update plan.
+//  2. Execute the delete/update executor.
+//  3. Close the executor.
+//  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
+//  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
+		return nil
+	}
+	if depth > maxForeignKeyCascadeDepth {
+		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// cascade behaviour and this ExecStmt is in transaction.
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok || !exec.HasFKCascades() {
+		return
+	}
+	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	if !sessVar.InTxn() {
+		return
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return
+	}
+	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
+	// cascade failed.
+	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
+}
+
+func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
+	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return err
+	}
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	if savepointRecord == nil {
+		// Normally should never run into here, but just in case, rollback the transaction.
+		err = txn.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+	}
+	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	return nil
+}
+
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
 	sc := a.Ctx.GetSessionVars().StmtCtx
 	defer func() {
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-		if sc != nil && rs == nil {
+		if handled && sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.Detach()
 			}
@@ -536,6 +724,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplainAnalyze = true
+			a.Ctx.GetSessionVars().StmtCtx.IsExplainAnalyzeDML = isExplainAnalyze
 		}
 	}
 
@@ -543,7 +732,8 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
+			err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
 		return handled, r, err
@@ -596,6 +786,9 @@ type chunkRowRecordSet struct {
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+	if c.fields == nil {
+		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
+	}
 	return c.fields
 }
 
@@ -647,7 +840,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	}()
 	var rows []chunk.Row
 	var err error
-	req := newFirstChunk(e)
+	req := tryNewCacheChunk(e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -655,8 +848,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 			break
 		}
 		if req.NumRows() == 0 {
-			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
+			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -695,16 +887,17 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = a.next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, tryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
 	}
+	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
-	// Do not active the transaction here.
+	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
@@ -712,6 +905,27 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	defer func() {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic && sctx.GetSessionVars().InTxn() {
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
+			stmtText := a.OriginText()
+			if sctx.GetSessionVars().EnableRedactLog {
+				stmtText = parser.Normalize(stmtText)
+			}
+			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
+				"Note this may not be a uniqueness violation.",
+				zap.Error(err),
+				zap.String("statement", stmtText),
+				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", txnCtx.StartTS),
+				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			)
+			sctx.GetSessionVars().SetInTxn(false)
+			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+		}
+	}()
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -886,9 +1100,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	start := time.Now()
-	err := e.Open(ctx)
+	err = e.Open(ctx)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }
@@ -988,46 +1207,78 @@ var (
 	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
 	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
 	execWriteResponse      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "0")
+	execUnknown            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "0")
+
+	// pre-define observers for internal queries
+	execBuildLockingInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "1")
+	execOpenLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "1")
+	execNextLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "1")
+	execLockLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "1")
+	execBuildFinalInternal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "1")
+	execOpenFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "1")
+	execNextFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "1")
+	execLockFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "1")
+	execCommitPrewriteInternal     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "1")
+	execCommitCommitInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "1")
+	execCommitWaitCommitTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "1")
+	execCommitWaitLatestTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "1")
+	execCommitWaitLatchInternal    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "1")
+	execCommitWaitBinlogInternal   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "1")
+	execWriteResponseInternal      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "1")
+	execUnknownInternal            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "1")
 )
+
+var phaseDurationObserverMap map[string]prometheus.Observer
+var phaseDurationObserverMapInternal map[string]prometheus.Observer
+
+func init() {
+	phaseDurationObserverMap = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLocking,
+		phaseOpenLocking:        execOpenLocking,
+		phaseNextLocking:        execNextLocking,
+		phaseLockLocking:        execLockLocking,
+		phaseBuildFinal:         execBuildFinal,
+		phaseOpenFinal:          execOpenFinal,
+		phaseNextFinal:          execNextFinal,
+		phaseLockFinal:          execLockFinal,
+		phaseCommitPrewrite:     execCommitPrewrite,
+		phaseCommitCommit:       execCommitCommit,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTS,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTS,
+		phaseCommitWaitLatch:    execCommitWaitLatch,
+		phaseCommitWaitBinlog:   execCommitWaitBinlog,
+		phaseWriteResponse:      execWriteResponse,
+	}
+	phaseDurationObserverMapInternal = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLockingInternal,
+		phaseOpenLocking:        execOpenLockingInternal,
+		phaseNextLocking:        execNextLockingInternal,
+		phaseLockLocking:        execLockLockingInternal,
+		phaseBuildFinal:         execBuildFinalInternal,
+		phaseOpenFinal:          execOpenFinalInternal,
+		phaseNextFinal:          execNextFinalInternal,
+		phaseLockFinal:          execLockFinalInternal,
+		phaseCommitPrewrite:     execCommitPrewriteInternal,
+		phaseCommitCommit:       execCommitCommitInternal,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTSInternal,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTSInternal,
+		phaseCommitWaitLatch:    execCommitWaitLatchInternal,
+		phaseCommitWaitBinlog:   execCommitWaitBinlogInternal,
+		phaseWriteResponse:      execWriteResponseInternal,
+	}
+}
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 	if internal {
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "1")
+		if ob, found := phaseDurationObserverMapInternal[phase]; found {
+			return ob
+		}
+		return execUnknownInternal
 	}
-	switch phase {
-	case phaseBuildLocking:
-		return execBuildLocking
-	case phaseOpenLocking:
-		return execOpenLocking
-	case phaseNextLocking:
-		return execNextLocking
-	case phaseLockLocking:
-		return execLockLocking
-	case phaseBuildFinal:
-		return execBuildFinal
-	case phaseOpenFinal:
-		return execOpenFinal
-	case phaseNextFinal:
-		return execNextFinal
-	case phaseLockFinal:
-		return execLockFinal
-	case phaseCommitPrewrite:
-		return execCommitPrewrite
-	case phaseCommitCommit:
-		return execCommitCommit
-	case phaseCommitWaitCommitTS:
-		return execCommitWaitCommitTS
-	case phaseCommitWaitLatestTS:
-		return execCommitWaitLatestTS
-	case phaseCommitWaitLatch:
-		return execCommitWaitLatch
-	case phaseCommitWaitBinlog:
-		return execCommitWaitBinlog
-	case phaseWriteResponse:
-		return execWriteResponse
-	default:
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "0")
+	if ob, found := phaseDurationObserverMap[phase]; found {
+		return ob
 	}
+	return execUnknown
 }
 
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
@@ -1094,9 +1345,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {
@@ -1200,8 +1454,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1246,7 +1500,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
+		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if !slowItems.IsSyncStatsFailed {
+				panic("isSyncStatsFailed should be true")
+			}
+		}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
@@ -1417,7 +1680,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
@@ -1462,8 +1725,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
@@ -1608,4 +1871,42 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
+	if len(statsLoadStatus) < 1 {
+		return nil
+	}
+	is := domain.GetDomain(sctx).InfoSchema()
+	// tableName -> name -> status
+	r := make(map[string]map[string]string)
+	for item, status := range statsLoadStatus {
+		t, ok := is.TableByID(item.TableID)
+		if !ok {
+			t, _, _ = is.FindTableByPartitionID(item.TableID)
+		}
+		if t == nil {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
+				zap.Int64("tableID", item.TableID))
+			continue
+		}
+		tableName := t.Meta().Name.O
+		itemName := ""
+		if item.IsIndex {
+			itemName = t.Meta().FindIndexNameByID(item.ID)
+		} else {
+			itemName = t.Meta().FindColumnNameByID(item.ID)
+		}
+		if itemName == "" {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
+			continue
+		}
+		if r[tableName] == nil {
+			r[tableName] = make(map[string]string)
+		}
+		r[tableName][itemName] = status
+	}
+	return r
 }

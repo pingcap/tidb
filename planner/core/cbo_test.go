@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/model"
@@ -166,6 +167,7 @@ func TestEstimation(t *testing.T) {
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	defer statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
@@ -210,6 +212,7 @@ func constructInsertSQL(i, n int) string {
 func TestIndexRead(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -245,7 +248,7 @@ func TestIndexRead(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -275,7 +278,7 @@ func TestEmptyTable(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -342,7 +345,7 @@ func TestAnalyze(t *testing.T) {
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -585,7 +588,7 @@ func BenchmarkOptimize(b *testing.B) {
 		require.Len(b, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(b, err)
 
 		b.Run(tt.sql, func(b *testing.B) {
@@ -661,6 +664,7 @@ func TestLimitCrossEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -726,6 +730,11 @@ func TestUpdateProjEliminate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+
+	tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustExec("create table tb1(a int, b int, primary key(a))")
+	tk.MustExec("create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));")
+	tk.MustExec("update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);")
 }
 
 func TestTiFlashCostModel(t *testing.T) {
@@ -790,6 +799,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
 	tk.MustExec("set session tidb_enable_extended_stats = on")
@@ -814,12 +824,14 @@ func TestLimitIndexEstimation(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
 
-	testKit.MustExec("create table t1(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("create table t1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -856,7 +868,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t2(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(

@@ -113,5 +113,24 @@
       "EXPLAIN select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
       "EXPLAIN select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out"
     ]
+  },
+  {
+    "name": "TestMPPSingleDistinct3Stage",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+      "EXPLAIN select count(distinct b) from t;",
+      "EXPLAIN select count(distinct c) from t;",
+      "EXPLAIN select count(distinct e) from t;",
+      "EXPLAIN select count(distinct a,b,c,e) from t;",
+      "EXPLAIN select count(distinct c), count(a), count(*) from t;",
+      "EXPLAIN select sum(b), count(a), count(*), count(distinct c) from t;",
+      "EXPLAIN select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
+      "EXPLAIN select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
+      "EXPLAIN select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
+      "EXPLAIN select sum(b), count(distinct a, b, e), count(a+b) from t;",
+      "EXPLAIN select count(distinct b), json_objectagg(d,c) from t;",
+      "EXPLAIN select count(distinct c+a), count(a) from t;",
+      "EXPLAIN select sum(b), count(distinct c+a, b, e), count(a+b) from t;"
+    ]
   }
 ]

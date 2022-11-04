@@ -61,6 +61,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionFlashbackCluster:
+		return h.updateStatsVersion()
 	}
 	return nil
 }
@@ -71,6 +73,38 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets: 256,
 	ast.AnalyzeOptNumTopN:    20,
+}
+
+// updateStatsVersion will set statistics version to the newest TS,
+// then tidb-server will reload automatic.
+func (h *Handle) updateStatsVersion() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
+	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
+		return err
+	}
+	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
+		return err
+	}
+	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // updateGlobalStats will trigger the merge of global-stats when we drop table partition
@@ -115,7 +149,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
-	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil)
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -145,7 +179,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
-		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID})
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID}, nil)
 		if err != nil {
 			return err
 		}
