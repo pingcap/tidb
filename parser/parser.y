@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -246,6 +247,7 @@ import (
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
 	straightJoin      "STRAIGHT_JOIN"
+	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	stored            "STORED"
@@ -297,6 +299,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	ascii                 "ASCII"
+	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
 	statsOptions          "STATS_OPTIONS"
 	statsSampleRate       "STATS_SAMPLE_RATE"
@@ -603,6 +606,7 @@ import (
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
+	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -899,7 +903,8 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
+	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -910,7 +915,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	NonTransactionalDeleteStmt "Non-transactional delete statement"
+	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -951,6 +956,7 @@ import (
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
+	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1128,6 +1134,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
 	Priority                               "Statement priority"
@@ -1142,8 +1149,8 @@ import (
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
-	RequireList                            "require list"
-	RequireListElement                     "require list element"
+	RequireList                            "require list for tls options"
+	RequireListElement                     "require list element for tls option"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -1537,6 +1544,22 @@ AlterTableStmt:
 		$$ = &ast.CompactTableStmt{
 			Table:       $4.(*ast.TableName),
 			ReplicaKind: ast.CompactReplicaKindTiFlash,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindAll,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -2567,18 +2590,30 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" asof "TIMESTAMP" stringLit
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
-			AsOf: ast.AsOfClause{
-				TsExpr: ast.NewValueExpr($5, "", ""),
-			},
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
 
@@ -2605,6 +2640,23 @@ FlashbackToNewName:
 |	"TO" Identifier
 	{
 		$$ = $2
+	}
+
+/*******************************************************************
+ *
+ *  Flush Back Database Statement
+ *
+ *  Example:
+ *      FLASHBACK DATABASE/SCHEMA DBName TO newDBName
+ *
+ *******************************************************************/
+FlashbackDatabaseStmt:
+	"FLASHBACK" DatabaseSym DBName FlashbackToNewName
+	{
+		$$ = &ast.FlashBackDatabaseStmt{
+			DBName:  model.NewCIStr($3),
+			NewName: $4,
+		}
 	}
 
 /*******************************************************************
@@ -3390,13 +3442,13 @@ ReferDef:
 OnDelete:
 	"ON" "DELETE" ReferOpt
 	{
-		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(ast.ReferOptionType)}
+		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(model.ReferOptionType)}
 	}
 
 OnUpdate:
 	"ON" "UPDATE" ReferOpt
 	{
-		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(ast.ReferOptionType)}
+		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(model.ReferOptionType)}
 	}
 
 OnDeleteUpdateOpt:
@@ -3424,23 +3476,23 @@ OnDeleteUpdateOpt:
 ReferOpt:
 	"RESTRICT"
 	{
-		$$ = ast.ReferOptionRestrict
+		$$ = model.ReferOptionRestrict
 	}
 |	"CASCADE"
 	{
-		$$ = ast.ReferOptionCascade
+		$$ = model.ReferOptionCascade
 	}
 |	"SET" "NULL"
 	{
-		$$ = ast.ReferOptionSetNull
+		$$ = model.ReferOptionSetNull
 	}
 |	"NO" "ACTION"
 	{
-		$$ = ast.ReferOptionNoAction
+		$$ = model.ReferOptionNoAction
 	}
 |	"SET" "DEFAULT"
 	{
-		$$ = ast.ReferOptionSetDefault
+		$$ = model.ReferOptionSetDefault
 		yylex.AppendError(yylex.Errorf("The SET DEFAULT clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
@@ -3686,12 +3738,11 @@ IndexPartSpecificationList:
 IndexPartSpecification:
 	ColumnName OptFieldLen OptOrder
 	{
-		// Order is parsed but just ignored as MySQL did.
-		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int), Desc: $3.(bool)}
 	}
 |	'(' Expression ')' OptOrder
 	{
-		$$ = &ast.IndexPartSpecification{Expr: $2}
+		$$ = &ast.IndexPartSpecification{Expr: $2, Desc: $4.(bool)}
 	}
 
 IndexLockAndAlgorithmOpt:
@@ -5995,6 +6046,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
 |	"STATS_OPTIONS"
@@ -6331,6 +6383,7 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
+|	"TOKEN_ISSUER"
 
 TiDBKeyword:
 	"ADMIN"
@@ -7259,6 +7312,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
+|	"TiDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"
@@ -11316,8 +11370,9 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
+|	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
 |	GrantRoleStmt
@@ -11373,7 +11428,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
-|	NonTransactionalDeleteStmt
+|	NonTransactionalDMLStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -11456,6 +11511,7 @@ Constraint:
 		cst := $2.(*ast.Constraint)
 		if $1 != nil {
 			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
 		}
 		$$ = cst
 	}
@@ -12564,17 +12620,21 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
-		$$ = &ast.CreateUserStmt{
+		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
+		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 
 CreateRoleStmt:
@@ -12588,17 +12648,21 @@ CreateRoleStmt:
 		}
 	}
 
-/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+/* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		$$ = &ast.AlterUserStmt{
+		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
 	{
@@ -12712,31 +12776,31 @@ ConnectionOption:
 
 RequireClauseOpt:
 	{
-		$$ = []*ast.TLSOption{}
+		$$ = []*ast.AuthTokenOrTLSOption{}
 	}
 |	RequireClause
 
 RequireClause:
 	"REQUIRE" "NONE"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.TlsNone,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "SSL"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.Ssl,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "X509"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.X509,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" RequireList
 	{
@@ -12746,49 +12810,69 @@ RequireClause:
 RequireList:
 	RequireListElement
 	{
-		$$ = []*ast.TLSOption{$1.(*ast.TLSOption)}
+		$$ = []*ast.AuthTokenOrTLSOption{$1.(*ast.AuthTokenOrTLSOption)}
 	}
 |	RequireList "AND" RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $3.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $3.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 |	RequireList RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $2.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $2.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 
 RequireListElement:
 	"ISSUER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Issuer,
 			Value: $2,
 		}
 	}
 |	"SUBJECT" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Subject,
 			Value: $2,
 		}
 	}
 |	"CIPHER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Cipher,
 			Value: $2,
 		}
 	}
 |	"SAN" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.SAN,
 			Value: $2,
 		}
+	}
+|	"TOKEN_ISSUER" stringLit
+	{
+		$$ = &ast.AuthTokenOrTLSOption{
+			Type:  ast.TokenIssuer,
+			Value: $2,
+		}
+	}
+
+CommentOrAttributeOption:
+	{
+		$$ = nil
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserCommentType, Value: $2}
+	}
+|	"ATTRIBUTE" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
 PasswordOrLockOptions:
@@ -13082,12 +13166,12 @@ GrantStmt:
 			return 1
 		}
 		$$ = &ast.GrantStmt{
-			Privs:      p,
-			ObjectType: $4.(ast.ObjectTypeType),
-			Level:      $5.(*ast.GrantLevel),
-			Users:      $7.([]*ast.UserSpec),
-			TLSOptions: $8.([]*ast.TLSOption),
-			WithGrant:  $9.(bool),
+			Privs:                 p,
+			ObjectType:            $4.(ast.ObjectTypeType),
+			Level:                 $5.(*ast.GrantLevel),
+			Users:                 $7.([]*ast.UserSpec),
+			AuthTokenOrTLSOptions: $8.([]*ast.AuthTokenOrTLSOption),
+			WithGrant:             $9.(bool),
 		}
 	}
 
@@ -13752,16 +13836,21 @@ TableLockList:
  * Non-transactional Delete Statement
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
-NonTransactionalDeleteStmt:
-	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+NonTransactionalDMLStmt:
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions ShardableStmt
 	{
-		$$ = &ast.NonTransactionalDeleteStmt{
+		$$ = &ast.NonTransactionalDMLStmt{
 			DryRun:      $5.(int),
 			ShardColumn: $2.(*ast.ColumnName),
 			Limit:       getUint64FromNUM($4),
-			DeleteStmt:  $6.(*ast.DeleteStmt),
+			DMLStmt:     $6.(ast.ShardableDMLStmt),
 		}
 	}
+
+ShardableStmt:
+	DeleteFromStmt
+|	UpdateStmt
+|	InsertIntoStmt
 
 DryRunOptions:
 	{
@@ -13810,6 +13899,13 @@ KillStmt:
 			ConnectionID:  getUint64FromNUM($3),
 			Query:         true,
 			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB BuiltinFunction
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
 		}
 	}
 
@@ -14167,6 +14263,7 @@ RowStmt:
  *			  [ORDER BY {col_name | expr | position}
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
+ *			| 'file_name'
  *		| LOAD 'file_name']
  *******************************************************************/
 PlanReplayerStmt:
@@ -14240,6 +14337,26 @@ PlanReplayerStmt:
 			x.Limit = $10.(*ast.Limit)
 		}
 
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
+			File:    $5,
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    $6,
+		}
 		$$ = x
 	}
 |	"PLAN" "REPLAYER" "LOAD" stringLit

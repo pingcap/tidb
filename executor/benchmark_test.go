@@ -102,6 +102,11 @@ func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
 }
 
+// MemoryUsage of mockDataPhysicalPlan is only for testing
+func (mp *mockDataPhysicalPlan) MemoryUsage() (sum int64) {
+	return
+}
+
 func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
 	return &mockDataPhysicalPlan{
 		schema: srcExec.Schema(),
@@ -928,7 +933,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, childrenUsedSchema)
+			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -937,8 +942,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
 	t2 := disk.NewTracker(-1, -1)
-	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
-	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
+	e.ctx.GetSessionVars().MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.ctx.GetSessionVars().DiskTracker = t2
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
 	return e
 }
 
@@ -1335,7 +1342,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
@@ -1419,7 +1426,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	joiners := make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false)
 	}
 	e.joiners = joiners
 	return e, nil
@@ -1538,6 +1545,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		retTypes(leftExec),
 		retTypes(rightExec),
 		tc.childrenUsedSchema,
+		false,
 	)
 
 	mergeJoinExec.innerTable = &mergeJoinTable{

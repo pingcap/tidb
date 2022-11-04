@@ -181,15 +181,17 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
-	rules = append(rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
-	if followers+1 > primaryCount {
+	rules = append(rules, NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	if primaryCount > 1 {
+		rules = append(rules, NewRule(Voter, primaryCount-1, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	}
+	if cnt := followers + 1 - primaryCount; cnt > 0 {
 		// delete primary from regions
 		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
-
 		if len(regions) > 0 {
-			rules = append(rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		} else {
-			rules = append(rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
+			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect()))
 		}
 	}
 

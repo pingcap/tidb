@@ -158,6 +158,14 @@ The uniqueness constraints are also preserved. For all the keys with a `PresumeK
 
 Due to the "read committed" semantics of DMLs in pessimistic transactions, the late locking could succeed even if duplicated entries exist at the time of `INSERT` because other transactions remove the duplicated entry after that. From the view of our transaction, it's equivalent to the case when other transactions remove the duplicated entry before our `INSERT`. There will be no data corruption after the transaction commits.
 
+#### Assumptions we make
+
+The safety of the feature depends on these assumptions which are all true in TiDB 6.2.
+
+- TiDB does not acquire pessimistic locks for non-unique index keys.
+- TiDB does not mark non-unique index keys as `PresumeKeyNotExists`.
+- If a key gets marked as `PresumeKeyNotExists`, it must be in the current statement buffer.
+
 #### Safety with multiple operations in one statement
 
 In current TiDB(<=6.2) implementation, the locking phase of pessimistic DML (except SELECT FOR UPDATE) begins after executors. If there are multiple operations on one key in the execution phase, they may not behave like what we expect. For example in the same statement there are operations:

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
 
@@ -190,6 +191,7 @@ desc select * from th where a=-2;
 desc select * from th;
 desc select * from th partition (p2,p1);
 set @@session.tidb_partition_prune_mode = 'dynamic';
+analyze table th;
 desc select * from th where a=-2;
 desc select * from th;
 desc select * from th partition (p2,p1);

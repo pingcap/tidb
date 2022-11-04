@@ -32,6 +32,8 @@ const (
 	ReorgTableID = meta.MaxInt48 - 2
 	// HistoryTableID is the table ID of `tidb_ddl_history`.
 	HistoryTableID = meta.MaxInt48 - 3
+	// MDLTableID is the table ID of `tidb_mdl_info`.
+	MDLTableID = meta.MaxInt48 - 4
 
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
 	JobTableSQL = "create table " + JobTable + "(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))"

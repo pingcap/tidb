@@ -379,7 +379,8 @@ func ParseServerInfo(src string) ServerInfo {
 		if isReleaseVersion {
 			versionStr = tidbReleaseVersionRegex.FindString(src)
 		} else {
-			versionStr = tidbVersionRegex.FindString(src)[1:]
+			versionStr = tidbVersionRegex.FindString(src)
+			versionStr = strings.TrimPrefix(versionStr, "-")
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

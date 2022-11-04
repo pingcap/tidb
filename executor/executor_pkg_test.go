@@ -27,15 +27,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -49,84 +44,6 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
-
-func TestShowProcessList(t *testing.T) {
-	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
-	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
-	schema := buildSchema(names, ftypes)
-
-	// Compose a mocked session manager.
-	ps := make([]*util.ProcessInfo, 0, 1)
-	pi := &util.ProcessInfo{
-		ID:      0,
-		User:    "test",
-		Host:    "127.0.0.1",
-		DB:      "test",
-		Command: 't',
-		State:   1,
-		Info:    "",
-	}
-	ps = append(ps, pi)
-	sm := &testutil.MockSessionManager{
-		PS: ps,
-	}
-	sctx := mock.NewContext()
-	sctx.SetSessionManager(sm)
-	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
-
-	// Compose executor.
-	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, 0),
-		Tp:           ast.ShowProcessList,
-	}
-
-	ctx := context.Background()
-	err := e.Open(ctx)
-	require.NoError(t, err)
-
-	chk := newFirstChunk(e)
-	it := chunk.NewIterator4Chunk(chk)
-	// Run test and check results.
-	for _, p := range ps {
-		err = e.Next(context.Background(), chk)
-		require.NoError(t, err)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			require.Equal(t, row.GetUint64(0), p.ID)
-		}
-	}
-	err = e.Next(context.Background(), chk)
-	require.NoError(t, err)
-	require.Equal(t, 0, chk.NumRows())
-	err = e.Close()
-	require.NoError(t, err)
-}
-
-func buildSchema(names []string, ftypes []byte) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
-	for i := range names {
-		col := &expression.Column{
-			UniqueID: int64(i),
-		}
-		// User varchar as the default return column type.
-		tp := mysql.TypeVarchar
-		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
-			tp = ftypes[0]
-		}
-		fieldType := types.NewFieldType(tp)
-		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.SetFlen(flen)
-		fieldType.SetDecimal(decimal)
-
-		charset, collate := types.DefaultCharsetForType(tp)
-		fieldType.SetCharset(charset)
-		fieldType.SetCollate(collate)
-		col.RetType = fieldType
-		schema.Append(col)
-	}
-	return schema
-}
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
@@ -341,7 +258,7 @@ func getGrowing(m aggPartialResultMapper) bool {
 }
 
 func TestFilterTemporaryTableKeys(t *testing.T) {
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(nil)
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
@@ -389,7 +306,9 @@ func TestSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -425,7 +344,9 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)
@@ -455,7 +376,9 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 28000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)
@@ -477,8 +400,10 @@ func TestSortSpillDisk(t *testing.T) {
 	ctx = mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
-	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
+	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt = mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),

@@ -82,6 +82,7 @@ type SourceFileMeta struct {
 	Compression Compression
 	SortKey     string
 	FileSize    int64
+	ExtendData  ExtendColumnData
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -121,12 +122,19 @@ type MDLoaderSetupConfig struct {
 	// MaxScanFiles specifies the maximum number of files to scan.
 	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
 	MaxScanFiles int
+	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
+	// and return the partial result.
+	ReturnPartialResultOnError bool
+	// FileIter controls the file iteration policy when constructing a MDLoader.
+	FileIter FileIterator
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
 func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
 	return &MDLoaderSetupConfig{
-		MaxScanFiles: 0, // By default, the loader will scan all the files.
+		MaxScanFiles:               0, // By default, the loader will scan all the files.
+		ReturnPartialResultOnError: false,
+		FileIter:                   nil,
 	}
 }
 
@@ -136,7 +144,25 @@ type MDLoaderSetupOption func(cfg *MDLoaderSetupConfig)
 // WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
 func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
-		cfg.MaxScanFiles = maxScanFiles
+		if maxScanFiles > 0 {
+			cfg.MaxScanFiles = maxScanFiles
+			cfg.ReturnPartialResultOnError = true
+		}
+	}
+}
+
+// ReturnPartialResultOnError generates an option that controls
+// whether return the partial scanned result on error when setting up a MDLoader.
+func ReturnPartialResultOnError(supportPartialResult bool) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.ReturnPartialResultOnError = supportPartialResult
+	}
+}
+
+// WithFileIterator generates an option that specifies the file iteration policy.
+func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.FileIter = fileIter
 	}
 }
 
@@ -152,6 +178,7 @@ type MDLoader struct {
 }
 
 type mdLoaderSetup struct {
+	sourceID      string
 	loader        *MDLoader
 	dbSchemas     []FileInfo
 	tableSchemas  []FileInfo
@@ -184,6 +211,12 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	mdLoaderSetupCfg := DefaultMDLoaderSetupConfig()
 	for _, o := range opts {
 		o(mdLoaderSetupCfg)
+	}
+	if mdLoaderSetupCfg.FileIter == nil {
+		mdLoaderSetupCfg.FileIter = &allFileIterator{
+			store:        store,
+			maxScanFiles: mdLoaderSetupCfg.MaxScanFiles,
+		}
 	}
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
@@ -230,15 +263,16 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	}
 
 	setup := mdLoaderSetup{
+		sourceID:      cfg.Mydumper.SourceID,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
 	}
 
-	if err := setup.setup(ctx, mdl.store); err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			return mdl, err
+	if err := setup.setup(ctx); err != nil {
+		if mdLoaderSetupCfg.ReturnPartialResultOnError {
+			return mdl, errors.Trace(err)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -274,6 +308,12 @@ type FileInfo struct {
 	FileMeta  SourceFileMeta
 }
 
+// ExtendColumnData contains the extended column names and values information for a table.
+type ExtendColumnData struct {
+	Columns []string
+	Values  []string
+}
+
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
 //
 // The database and tables are inserted in a consistent order, so creating an
@@ -288,7 +328,7 @@ type FileInfo struct {
 // Will sort tables by table size, this means that the big table is imported
 // at the latest, which to avoid large table take a long time to import and block
 // small table to release index worker.
-func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage) error {
+func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	/*
 		Mydumper file names format
 			db    —— {db}-schema-create.sql
@@ -296,8 +336,12 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
 	var gerr error
-	if err := s.listFiles(ctx, store); err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+	fileIter := s.setupCfg.FileIter
+	if fileIter == nil {
+		return errors.New("file iterator is not defined")
+	}
+	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
+		if s.setupCfg.ReturnPartialResultOnError {
 			gerr = err
 		} else {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
@@ -365,55 +409,74 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	return gerr
 }
 
-func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalStorage) error {
+// FileHandler is the interface to handle the file give the path and size.
+// It is mainly used in the `FileIterator` as parameters.
+type FileHandler func(ctx context.Context, path string, size int64) error
+
+// FileIterator is the interface to iterate files in a data source.
+// Use this interface to customize the file iteration policy.
+type FileIterator interface {
+	IterateFiles(ctx context.Context, hdl FileHandler) error
+}
+
+type allFileIterator struct {
+	store        storage.ExternalStorage
+	maxScanFiles int
+}
+
+func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) error {
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
 	totalScannedFileCount := 0
-	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
-		logger := log.FromContext(ctx).With(zap.String("path", path))
+	err := iter.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		totalScannedFileCount++
-		if s.setupCfg.MaxScanFiles > 0 && totalScannedFileCount > s.setupCfg.MaxScanFiles {
+		if iter.maxScanFiles > 0 && totalScannedFileCount > iter.maxScanFiles {
 			return common.ErrTooManySourceFiles
 		}
-		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
-		if err != nil {
-			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
-		}
-		if res == nil {
-			logger.Info("[loader] file is filtered by file router")
-			return nil
-		}
-
-		info := FileInfo{
-			TableName: filter.Table{Schema: res.Schema, Name: res.Name},
-			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size},
-		}
-
-		if s.loader.shouldSkip(&info.TableName) {
-			logger.Debug("[filter] ignoring table file")
-
-			return nil
-		}
-
-		switch res.Type {
-		case SourceTypeSchemaSchema:
-			s.dbSchemas = append(s.dbSchemas, info)
-		case SourceTypeTableSchema:
-			s.tableSchemas = append(s.tableSchemas, info)
-		case SourceTypeViewSchema:
-			s.viewSchemas = append(s.viewSchemas, info)
-		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
-			s.tableDatas = append(s.tableDatas, info)
-		}
-
-		logger.Debug("file route result", zap.String("schema", res.Schema),
-			zap.String("table", res.Name), zap.Stringer("type", res.Type))
-
-		return nil
+		return hdl(ctx, path, size)
 	})
 
 	return errors.Trace(err)
+}
+
+func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size int64) error {
+	logger := log.FromContext(ctx).With(zap.String("path", path))
+	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
+	if err != nil {
+		return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
+	}
+	if res == nil {
+		logger.Info("[loader] file is filtered by file router")
+		return nil
+	}
+
+	info := FileInfo{
+		TableName: filter.Table{Schema: res.Schema, Name: res.Name},
+		FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size},
+	}
+
+	if s.loader.shouldSkip(&info.TableName) {
+		logger.Debug("[filter] ignoring table file")
+
+		return nil
+	}
+
+	switch res.Type {
+	case SourceTypeSchemaSchema:
+		s.dbSchemas = append(s.dbSchemas, info)
+	case SourceTypeTableSchema:
+		s.tableSchemas = append(s.tableSchemas, info)
+	case SourceTypeViewSchema:
+		s.viewSchemas = append(s.viewSchemas, info)
+	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+		s.tableDatas = append(s.tableDatas, info)
+	}
+
+	logger.Debug("file route result", zap.String("schema", res.Schema),
+		zap.String("table", res.Name), zap.Stringer("type", res.Type))
+
+	return nil
 }
 
 func (l *MDLoader) shouldSkip(table *filter.Table) bool {
@@ -473,6 +536,13 @@ func (s *mdLoaderSetup) route() error {
 				knownDBNames[targetDB] = newInfo
 			}
 			arr[i].TableName = filter.Table{Schema: targetDB, Name: targetTable}
+			extendCols, extendVals := r.FetchExtendColumn(rawDB, rawTable, s.sourceID)
+			if len(extendCols) > 0 {
+				arr[i].FileMeta.ExtendData = ExtendColumnData{
+					Columns: extendCols,
+					Values:  extendVals,
+				}
+			}
 		}
 		return nil
 	}

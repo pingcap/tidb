@@ -18,6 +18,15 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
+	AutoIDReqDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "meta",
+			Name:      "autoid_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
+		})
+
 	SessionExecuteParseDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -128,13 +137,14 @@ var (
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 
-	NonTransactionalDeleteCount = prometheus.NewCounter(
+	NonTransactionalDMLCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "non_transactional_delete_count",
+			Name:      "non_transactional_dml_count",
 			Help:      "Counter of non-transactional delete",
-		})
+		}, []string{LblType},
+	)
 	TxnStatusEnteringCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -163,38 +173,41 @@ var (
 
 // Label constants.
 const (
-	LblUnretryable = "unretryable"
-	LblReachMax    = "reach_max"
-	LblOK          = "ok"
-	LblError       = "error"
-	LblCommit      = "commit"
-	LblAbort       = "abort"
-	LblRollback    = "rollback"
-	LblType        = "type"
-	LblDb          = "db"
-	LblResult      = "result"
-	LblSQLType     = "sql_type"
-	LblCoprType    = "copr_type"
-	LblGeneral     = "general"
-	LblInternal    = "internal"
-	LblTxnMode     = "txn_mode"
-	LblPessimistic = "pessimistic"
-	LblOptimistic  = "optimistic"
-	LblStore       = "store"
-	LblAddress     = "address"
-	LblBatchGet    = "batch_get"
-	LblGet         = "get"
-	LblLockKeys    = "lock_keys"
-	LblInTxn       = "in_txn"
-	LblVersion     = "version"
-	LblHash        = "hash"
-	LblCTEType     = "cte_type"
-	LblIdle        = "idle"
-	LblRunning     = "executing_sql"
-	LblLockWaiting = "waiting_for_lock"
-	LblCommitting  = "committing"
-	LblRollingBack = "rolling_back"
-	LblHasLock     = "has_lock"
-	LblPhase       = "phase"
-	LblModule      = "module"
+	LblUnretryable    = "unretryable"
+	LblReachMax       = "reach_max"
+	LblOK             = "ok"
+	LblError          = "error"
+	LblCommit         = "commit"
+	LblAbort          = "abort"
+	LblRollback       = "rollback"
+	LblType           = "type"
+	LblDb             = "db"
+	LblResult         = "result"
+	LblSQLType        = "sql_type"
+	LblCoprType       = "copr_type"
+	LblGeneral        = "general"
+	LblInternal       = "internal"
+	LblTxnMode        = "txn_mode"
+	LblPessimistic    = "pessimistic"
+	LblOptimistic     = "optimistic"
+	LblStore          = "store"
+	LblAddress        = "address"
+	LblBatchGet       = "batch_get"
+	LblGet            = "get"
+	LblLockKeys       = "lock_keys"
+	LblInTxn          = "in_txn"
+	LblVersion        = "version"
+	LblHash           = "hash"
+	LblCTEType        = "cte_type"
+	LblAccountLock    = "account_lock"
+	LblIdle           = "idle"
+	LblRunning        = "executing_sql"
+	LblLockWaiting    = "waiting_for_lock"
+	LblCommitting     = "committing"
+	LblRollingBack    = "rolling_back"
+	LblHasLock        = "has_lock"
+	LblPhase          = "phase"
+	LblModule         = "module"
+	LblRCReadCheckTS  = "read_check"
+	LblRCWriteCheckTS = "write_check"
 )

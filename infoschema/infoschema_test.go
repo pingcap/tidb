@@ -316,12 +316,12 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := dom.InfoSchema()
 	require.False(t, is.HasTemporaryTable())
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)

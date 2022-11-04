@@ -58,6 +58,7 @@ go_test(
     data = glob([
         "csv/*",
         "examples/*",
+        "parquet/*",
     ]),
     embed = [":mydump"],
     flaky = True,

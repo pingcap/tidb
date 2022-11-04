@@ -1141,7 +1141,7 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify dt json")
 	tk.MustExec("alter table t modify tmp json")
 	tk.MustExec("alter table t modify y json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001000\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
 }
 
 func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
@@ -1606,7 +1606,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		checkErr error
 	)
 	i := 0
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1652,6 +1652,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
 	dom.DDL().SetHook(originalHook)

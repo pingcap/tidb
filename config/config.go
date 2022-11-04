@@ -34,7 +34,6 @@ import (
 	zaplog "github.com/pingcap/log"
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
-	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -87,6 +86,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
+	DefAuthTokenRefreshInterval = time.Hour
 )
 
 // Valid config maps
@@ -448,8 +449,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
+	// ExpensiveThreshold is deprecated.
+	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -485,12 +487,13 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL  AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -533,6 +536,9 @@ type Security struct {
 	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// Used for auth plugin `tidb_session_token`.
+	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
+	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -542,6 +548,10 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
+	// The path of the JWKS for tidb_auth_token authentication
+	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
+	// The refresh time interval of JWKS
+	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -639,14 +649,16 @@ type Performance struct {
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
 	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval       string `toml:"-" json:"-"`
-	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease      string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                     int    `toml:"gogc" json:"gogc"`
-	EnforceMPP               bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	MemProfileInterval string `toml:"-" json:"-"`
+
+	IndexUsageSyncLease              string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease              string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                             int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                       bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency             uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize               uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	EnableStatsCacheMemQuota         bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -843,7 +855,7 @@ var defaultConf = Config{
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
+		ExpensiveThreshold:  10000, // ExpensiveThreshold is deprecated.
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
@@ -863,11 +875,12 @@ var defaultConf = Config{
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
 		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  true,
+		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBRCReadCheckTS:           false,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -900,15 +913,16 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:      "0s",
-		GOGC:                     100,
-		EnforceMPP:               false,
-		PlanReplayerGCLease:      "10m",
-		StatsLoadConcurrency:     5,
-		StatsLoadQueueSize:       1000,
-		EnableStatsCacheMemQuota: false,
-		RunAutoAnalyze:           true,
-		EnableLoadFMSketch:       false,
+		IndexUsageSyncLease:              "0s",
+		GOGC:                             100,
+		EnforceMPP:                       false,
+		PlanReplayerGCLease:              "10m",
+		StatsLoadConcurrency:             5,
+		StatsLoadQueueSize:               1000,
+		AnalyzePartitionConcurrencyQuota: 16,
+		EnableStatsCacheMemQuota:         false,
+		RunAutoAnalyze:                   true,
+		EnableLoadFMSketch:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -951,6 +965,8 @@ var defaultConf = Config{
 		EnableSEM:                   false,
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
+		AuthTokenJWKS:               "",
+		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
@@ -1029,6 +1045,7 @@ var removedConfig = map[string]struct{}{
 	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
 	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
 	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
 	"performance.force-priority":             {}, // use tidb_force_priority
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
@@ -1038,6 +1055,7 @@ var removedConfig = map[string]struct{}{
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1350,12 +1368,6 @@ var hideConfig = []string{
 	"performance.index-usage-sync-lease",
 }
 
-// jsonifyPath converts the item to json path, so it can be extracted.
-func jsonifyPath(str string) string {
-	s := strings.Split(str, ".")
-	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\".\""))
-}
-
 // GetJSONConfig returns the config as JSON with hidden items removed
 // It replaces the earlier HideConfig() which used strings.Split() in
 // an way that didn't work for similarly named items (like enable).
@@ -1364,46 +1376,45 @@ func GetJSONConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	jsonValue, err := typejson.ParseBinaryFromString(string(j))
-	if err != nil {
-		return "", err
-	}
-	// Approximately length of removed items + hidden items.
-	pathExprs := make([]typejson.PathExpression, 0, len(removedConfig)+len(hideConfig))
-	var pathExpr typejson.PathExpression
 
-	// Patch out removed items.
+	jsonValue := make(map[string]interface{})
+	err = json.Unmarshal(j, &jsonValue)
+	if err != nil {
+		return "", err
+	}
+
+	removedPaths := make([]string, 0, len(removedConfig)+len(hideConfig))
 	for removedItem := range removedConfig {
-		s := jsonifyPath(removedItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
-		}
-		pathExprs = append(pathExprs, pathExpr)
+		removedPaths = append(removedPaths, removedItem)
 	}
-	// Patch out hidden items
-	for _, hiddenItem := range hideConfig {
-		s := jsonifyPath(hiddenItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
+	removedPaths = append(removedPaths, hideConfig...)
+
+	for _, path := range removedPaths {
+		s := strings.Split(path, ".")
+		curValue := jsonValue
+		for i, key := range s {
+			if i == len(s)-1 {
+				delete(curValue, key)
+			}
+
+			if curValue[key] != nil {
+				mapValue, ok := curValue[key].(map[string]interface{})
+				if !ok {
+					break
+				}
+
+				curValue = mapValue
+			} else {
+				break
+			}
 		}
-		pathExprs = append(pathExprs, pathExpr)
 	}
-	newJSONValue, err := jsonValue.Remove(pathExprs)
+
+	buf, err := json.Marshal(jsonValue)
 	if err != nil {
 		return "", err
 	}
-	// Convert back to GoJSON so it can be pretty formatted.
-	// This is expected for compatibility with previous versions.
-	buf, err := newJSONValue.MarshalJSON()
-	if err != nil {
-		return "", err
-	}
+
 	var resBuf bytes.Buffer
 	if err = json.Indent(&resBuf, buf, "", "\t"); err != nil {
 		return "", err

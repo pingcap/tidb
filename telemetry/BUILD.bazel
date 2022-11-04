@@ -61,6 +61,7 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//ddl",
         "//domain",
         "//kv",
         "//parser/model",

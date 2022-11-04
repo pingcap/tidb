@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
@@ -99,8 +100,6 @@ var (
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 
-	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
-	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
 	// GlobalAnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
@@ -150,8 +149,8 @@ type globalPanicOnExceed struct {
 
 func init() {
 	action := &globalPanicOnExceed{}
-	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
-	GlobalMemoryUsageTracker.SetActionOnExceed(action)
+	memory.GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
+	memory.GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
@@ -165,9 +164,6 @@ func init() {
 	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
-
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
@@ -559,7 +555,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
+	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -592,6 +588,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendString(11, subJob.State.String())
 		}
 	}
+}
+
+func showAddIdxReorgTp(job *model.Job) string {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+		tp := job.ReorgMeta.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
+		}
+	}
+	return ""
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -1629,9 +1635,9 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		type tableIter interface {
-			IterRecords(sessionctx.Context, []*table.Column, table.RecordIterFunc) error
+			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1886,13 +1892,11 @@ func (e *UnionExec) Close() error {
 	}
 	e.results = nil
 	if e.resultPool != nil {
-		for range e.resultPool {
-		}
+		channel.Clear(e.resultPool)
 	}
 	e.resourcePools = nil
 	if e.childIDChan != nil {
-		for range e.childIDChan {
-		}
+		channel.Clear(e.childIDChan)
 	}
 	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
 	// promised to exit when reaching here (e.childIDChan been closed).
@@ -1927,33 +1931,48 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.StatsLoadStatus = make(map[model.TableItemID]string)
 	sc.IsSyncStatsFailed = false
+	sc.IsExplainAnalyzeDML = false
+	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
+	// in PlanBuilder.buildDataSource
+	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+		sc.UseDynamicPruneMode = true
+	} else {
+		sc.UseDynamicPruneMode = false
+	}
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+	vars.MemTracker.UnbindActions()
+	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
+	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.ResetMaxConsumed()
+	vars.MemTracker.SessionID = vars.ConnectionID
+
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		vars.MemTracker.SetBytesLimit(-1)
 	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+		switch variable.OOMAction.Load() {
+		case variable.OOMActionCancel:
+			action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		case variable.OOMActionLog:
+			fallthrough
+		default:
+			action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		}
 	}
-
+	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
-	}
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
-	default:
-		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
+	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+		sc.DiskTracker.AttachTo(vars.DiskTracker)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2101,7 +2120,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	if globalConfig.Instance.EnableCollectExecutionInfo {
+	if globalConfig.Instance.EnableCollectExecutionInfo.Load() {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
 		// because ExplainFor need to display the last statement information.
 		reuseObj := vars.StmtCtx.RuntimeStatsColl

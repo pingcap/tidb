@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -140,12 +141,31 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			continue
 		}
 
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		// Generate correct index id for check.
+		idxID := m.indexID & tablecodec.IndexIDMask
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
-		indexHandle, err := tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		// If this is the temporary index data, need to remove the last byte of index data(version about when it is written).
+		var (
+			value       []byte
+			orgKey      []byte
+			indexHandle kv.Handle
+			err         error
+		)
+		if idxID != m.indexID {
+			value = append(value, m.value[:len(m.value)-1]...)
+			if len(value) == 0 || (bytes.Equal(value, []byte("delete")) || bytes.Equal(value, []byte("deleteu"))) {
+				continue
+			}
+			orgKey = append(orgKey, m.key...)
+			tablecodec.TempIndexKey2IndexKey(idxID, orgKey)
+			indexHandle, err = tablecodec.DecodeIndexHandle(orgKey, value, len(indexInfo.Columns))
+		} else {
+			indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -178,22 +198,32 @@ func checkIndexKeys(
 ) error {
 	var indexData []types.Datum
 	for _, m := range indexMutations {
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		var value []byte
+		// Generate correct index id for check.
+		idxID := m.indexID & tablecodec.IndexIDMask
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
-		rowColInfos, ok := indexIDToRowColInfos[m.indexID]
+		rowColInfos, ok := indexIDToRowColInfos[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
+		// If this is temp index data, need remove last byte of index data.
+		if idxID != m.indexID {
+			value = append(value, m.value[:len(m.value)-1]...)
+		} else {
+			value = append(value, m.value...)
+		}
+
 		// when we cannot decode the key to get the original value
-		if len(m.value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
 		decodedIndexValues, err := tablecodec.DecodeIndexKV(
-			m.key, m.value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
+			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -215,7 +245,8 @@ func checkIndexKeys(
 			indexData = append(indexData, datum)
 		}
 
-		if len(m.value) == 0 {
+		// When it is in add index new backfill state.
+		if len(value) == 0 || (idxID != m.indexID && (bytes.Equal(value, []byte("deleteu")) || bytes.Equal(value, []byte("delete")))) {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())

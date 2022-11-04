@@ -19,9 +19,9 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -75,7 +75,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	switch stmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
 	}
 
@@ -86,7 +86,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{}
-	err := Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	err := Preprocess(ctx, sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -159,38 +159,17 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
+	val, exist := cache.Get(key, paramTypes)
 	if !exist {
 		return nil, exist
 	}
-	candidates := val.([]*PlanCacheValue)
-	for _, candidate := range candidates {
-		if candidate.varTypesUnchanged(paramTypes) {
-			return candidate, true
-		}
-	}
-	return nil, false
+	candidate := val.(*PlanCacheValue)
+	return candidate, true
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
-	if !exist {
-		cache.Put(key, []*PlanCacheValue{plan})
-		return
-	}
-	candidates := val.([]*PlanCacheValue)
-	for i, candidate := range candidates {
-		if candidate.varTypesUnchanged(plan.ParamTypes) {
-			// hit an existing cached plan
-			candidates[i] = plan
-			return
-		}
-	}
-	// add to current candidate list
-	// TODO: limit the candidate list length
-	candidates = append(candidates, plan)
-	cache.Put(key, candidates)
+	cache.Put(key, plan, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
@@ -217,7 +196,8 @@ type planCacheKey struct {
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
 
-	hash []byte
+	memoryUsage int64 // Do not include in hash
+	hash        []byte
 }
 
 // Hash implements Key interface.
@@ -253,6 +233,23 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
+}
+
+const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
+
+// MemoryUsage return the memory usage of planCacheKey
+func (key *planCacheKey) MemoryUsage() (sum int64) {
+	if key == nil {
+		return
+	}
+
+	if key.memoryUsage > 0 {
+		return key.memoryUsage
+	}
+	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
+		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
+	key.memoryUsage = sum
+	return
 }
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
@@ -325,9 +322,7 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
 			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
-			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar) ||
-			// TypeNull should be considered the same as other types.
-			(s[i].GetType() == mysql.TypeNull || tps[i].GetType() == mysql.TypeNull)
+			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar)
 		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
 			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
 			return false
@@ -348,10 +343,50 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
+	memoryUsage       int64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+}
+
+// unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
+// 100 KiB is approximate consumption of a plan from our internal tests
+const unKnownMemoryUsage = int64(50 * size.KB)
+
+// MemoryUsage return the memory usage of PlanCacheValue
+func (v *PlanCacheValue) MemoryUsage() (sum int64) {
+	if v == nil {
+		return
+	}
+
+	if v.memoryUsage > 0 {
+		return v.memoryUsage
+	}
+	switch x := v.Plan.(type) {
+	case PhysicalPlan:
+		sum = x.MemoryUsage()
+	case *Insert:
+		sum = x.MemoryUsage()
+	case *Update:
+		sum = x.MemoryUsage()
+	case *Delete:
+		sum = x.MemoryUsage()
+	default:
+		sum = unKnownMemoryUsage
+	}
+
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
+
+	for _, name := range v.OutPutNames {
+		sum += name.MemoryUsage()
+	}
+	for _, ft := range v.ParamTypes {
+		sum += ft.MemoryUsage()
+	}
+	v.memoryUsage = sum
+	return
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
@@ -411,23 +446,4 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
-}
-
-// Parameterizer used to parameterize a general statement.
-// e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
-type Parameterizer interface {
-	// Parameterize this specific sql, ok indicates whether this sql is supported.
-	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
-}
-
-// ParameterizerKey is used to get a parameterizer from a ctx, only for test.
-const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
-
-// Parameterize parameterizes this sql, used by general plan cache.
-func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
-	if v := sctx.Value(ParameterizerKey); v != nil { // for test
-		return v.(Parameterizer).Parameterize(originSQL)
-	}
-	// TODO: implement it
-	return "", nil, false, nil
 }

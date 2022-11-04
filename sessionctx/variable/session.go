@@ -46,9 +46,11 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -61,8 +63,29 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// PreparedStmtCount is exported for test.
-var PreparedStmtCount int64
+var (
+	// PreparedStmtCount is exported for test.
+	PreparedStmtCount int64
+	// enableAdaptiveReplicaRead indicates whether closest adaptive replica read
+	// can be enabled. We forces disable replica read when tidb server in missing
+	// in regions that contains tikv server to avoid read traffic skew.
+	enableAdaptiveReplicaRead uint32 = 1
+)
+
+// SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
+// return true if the value is changed.
+func SetEnableAdaptiveReplicaRead(enabled bool) bool {
+	value := uint32(0)
+	if enabled {
+		value = 1
+	}
+	return atomic.SwapUint32(&enableAdaptiveReplicaRead, value) != value
+}
+
+// IsAdaptiveReplicaReadEnabled returns whether adaptive closest replica read can be enabled.
+func IsAdaptiveReplicaReadEnabled() bool {
+	return atomic.LoadUint32(&enableAdaptiveReplicaRead) > 0
+}
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -200,6 +223,10 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+	// EnableMDL indicates whether to enable the MDL lock for the transaction.
+	EnableMDL bool
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
+	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -295,10 +322,12 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
+	tc.EnableMDL = false
 }
 
 // ClearDelta clears the delta map.
@@ -571,6 +600,11 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 	return ft, ok
 }
 
+// HookContext contains the necessary variables for executing set/get hook
+type HookContext interface {
+	GetStore() kv.Storage
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -615,6 +649,8 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+	// TxnCtxMu is used to protect TxnCtx.
+	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
 	TxnManager interface{}
@@ -717,6 +753,9 @@ type SessionVars struct {
 	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
 	EnableSkewDistinctAgg bool
 
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -790,29 +829,8 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
-	// factors for cost model v2
-	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
-	cpuFactorV2 float64
-	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	copCPUFactorV2 float64
-	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	tiflashCPUFactorV2 float64
-	// networkFactorV2 is the network factor for the Cost Model Ver2.
-	networkFactorV2 float64
-	// scanFactorV2 is the scan factor for the Cost Model Ver2.
-	scanFactorV2 float64
-	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
-	descScanFactorV2 float64
-	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
-	tiflashScanFactorV2 float64
-	// seekFactorV2 is the seek factor for the Cost Model Ver2.
-	seekFactorV2 float64
-	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
-	memoryFactorV2 float64
-	// diskFactorV2 is the disk factor for the Cost Model Ver2.
-	diskFactorV2 float64
-	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
-	concurrencyFactorV2 float64
+	// enableForceInlineCTE is used to enable/disable force inline CTE.
+	enableForceInlineCTE bool
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
@@ -865,6 +883,9 @@ type SessionVars struct {
 
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
+
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1134,8 +1155,8 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
-	MPPStoreLastFailTime map[string]time.Time
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
+	MPPStoreLastFailTime *sync.Map
 
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
@@ -1179,8 +1200,8 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
@@ -1225,6 +1246,9 @@ type SessionVars struct {
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	PreparedPlanCacheSize uint64
 
+	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+
 	// EnableGeneralPlanCache indicates whether to enable general plan cache.
 	EnableGeneralPlanCache bool
 
@@ -1237,6 +1261,38 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
+
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
+
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
+	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker  *memory.Tracker
+	DiskTracker *memory.Tracker
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1308,8 +1364,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	return kv.GlobalTxnScope
 }
 
-// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
-func (s *SessionVars) UseDynamicPartitionPrune() bool {
+// IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
+// Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
+// session variable, it isn't guaranteed to be used during query due to other conditions checking.
+func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1394,6 +1452,7 @@ type ConnectionInfo struct {
 	ClientIP          string
 	ClientPort        string
 	ServerID          int
+	ServerIP          string
 	ServerPort        int
 	Duration          float64
 	User              string
@@ -1425,7 +1484,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 }
 
 // NewSessionVars creates a session vars object.
-func NewSessionVars() *SessionVars {
+func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
 		userVars: struct {
 			lock   sync.RWMutex
@@ -1474,6 +1533,7 @@ func NewSessionVars() *SessionVars {
 		memoryFactor:                  DefOptMemoryFactor,
 		diskFactor:                    DefOptDiskFactor,
 		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
 		EnableVectorizedExpression:    DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
@@ -1514,16 +1574,19 @@ func NewSessionVars() *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:          make(map[string]time.Time),
+		MPPStoreLastFailTime:          new(sync.Map),
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		HookContext:                   hctx,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1559,6 +1622,10 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
+	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
+	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.MemTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -1638,12 +1705,21 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	// if closest-adaptive is unavailable, fallback to leader read
+	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+		return kv.ReplicaReadLeader
+	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
 func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
+}
+
+// IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
+func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
+	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -1690,7 +1766,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -1938,7 +2014,7 @@ func (s *SessionVars) ClearStmtVars() {
 // GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetSessionOrGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1964,7 +2040,7 @@ func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
 		}
 		return sv.GetSessionFromHook(s)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // GetSessionStatesSystemVar gets the session variable value for session states.
@@ -1991,12 +2067,12 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // SetStmtVar sets system variable and updates SessionVars states.
@@ -2122,7 +2198,12 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
+	s.MPPStoreLastFailTime.Range(
+		func(key, value interface{}) bool {
+			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
+			return true
+		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2158,8 +2239,8 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	if sessionStates.MPPStoreLastFailTime != nil {
-		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	for k, v := range sessionStates.MPPStoreLastFailTime {
+		s.MPPStoreLastFailTime.Store(k, v)
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
@@ -2207,7 +2288,6 @@ type Concurrency struct {
 	indexLookupJoinConcurrency int
 
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
 	distSQLScanConcurrency int
 
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
@@ -2856,46 +2936,26 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 
 // GetCPUFactor returns the session variable cpuFactor
 func (s *SessionVars) GetCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.cpuFactorV2
-	}
 	return s.cpuFactor
 }
 
 // GetCopCPUFactor returns the session variable copCPUFactor
 func (s *SessionVars) GetCopCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.copCPUFactorV2
-	}
 	return s.copCPUFactor
-}
-
-// GetTiFlashCPUFactor returns the session
-func (s *SessionVars) GetTiFlashCPUFactor() float64 {
-	return s.tiflashCPUFactorV2
 }
 
 // GetMemoryFactor returns the session variable memoryFactor
 func (s *SessionVars) GetMemoryFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.memoryFactorV2
-	}
 	return s.memoryFactor
 }
 
 // GetDiskFactor returns the session variable diskFactor
 func (s *SessionVars) GetDiskFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.diskFactorV2
-	}
 	return s.diskFactor
 }
 
 // GetConcurrencyFactor returns the session variable concurrencyFactor
 func (s *SessionVars) GetConcurrencyFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.concurrencyFactorV2
-	}
 	return s.concurrencyFactor
 }
 
@@ -2906,9 +2966,6 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2921,9 +2978,6 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.scanFactorV2
-	}
 	return s.scanFactor
 }
 
@@ -2935,15 +2989,7 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.descScanFactorV2
-	}
 	return s.descScanFactor
-}
-
-// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
-func (s *SessionVars) GetTiFlashScanFactor() float64 {
-	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -2953,9 +2999,6 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.seekFactorV2
 	}
 	return s.seekFactor
 }
@@ -2986,4 +3029,19 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
+}
+
+// EnableForceInlineCTE returns the session variable enableForceInlineCTE
+func (s *SessionVars) EnableForceInlineCTE() bool {
+	return s.enableForceInlineCTE
 }

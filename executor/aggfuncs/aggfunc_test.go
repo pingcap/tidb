@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -190,8 +189,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		case mysql.TypeJSON:
 			jsonVal := row.GetJSON(0)
 			bytes := make([]byte, 0)
-			bytes = append(bytes, jsonVal.TypeCode)
-			bytes = append(bytes, jsonVal.Value...)
+			bytes = jsonVal.HashValue(bytes)
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
@@ -493,7 +491,7 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	case mysql.TypeDuration:
 		return func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
 	case mysql.TypeJSON:
-		return func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
+		return func(i int) types.Datum { return types.NewDatum(types.CreateBinaryJSON(int64(i))) }
 	case mysql.TypeEnum:
 		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {

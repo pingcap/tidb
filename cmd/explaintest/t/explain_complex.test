@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE TABLE `dt` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT ,
   `aid` varchar(32) NOT NULL,

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
@@ -34,7 +33,7 @@ func getJSONValue(secondArg types.Datum, valueType *types.FieldType) interface{}
 	if valueType.GetType() == mysql.TypeString && valueType.GetCharset() == charset.CharsetBin {
 		buf := make([]byte, valueType.GetFlen())
 		copy(buf, secondArg.GetBytes())
-		return json.Opaque{
+		return types.Opaque{
 			TypeCode: mysql.TypeString,
 			Buf:      buf,
 		}
@@ -53,6 +52,8 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
@@ -94,7 +95,7 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 			entries2[keyString] = getJSONValue(secondArg, valueType)
 		}
 
-		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argCombines[k], types.NewFieldType(mysql.TypeJSON), numRows, json.CreateBinary(entries1), json.CreateBinary(entries2), json.CreateBinary(entries1))
+		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argCombines[k], types.NewFieldType(mysql.TypeJSON), numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries1))
 
 		tests = append(tests, aggTest)
 	}
@@ -113,6 +114,8 @@ func TestJsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
@@ -145,7 +148,7 @@ func TestJsonObjectagg(t *testing.T) {
 			entries[keyString] = getJSONValue(secondArg, valueType)
 		}
 
-		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argTypes, types.NewFieldType(mysql.TypeJSON), numRows, nil, json.CreateBinary(entries))
+		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argTypes, types.NewFieldType(mysql.TypeJSON), numRows, nil, types.CreateBinaryJSON(entries))
 
 		tests = append(tests, aggTest)
 	}
@@ -242,14 +245,12 @@ func jsonMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType
 			memDelta += int64(len(val))
 		case mysql.TypeJSON:
 			val := row.GetJSON(1)
-			// +1 for the memory usage of the TypeCode of json
+			// +1 for the memory usage of the JSONTypeCode of json
 			memDelta += int64(len(val.Value) + 1)
 		case mysql.TypeDuration:
-			val := row.GetDuration(1, dataTypes[1].GetDecimal())
-			memDelta += int64(len(val.String()))
+			memDelta += aggfuncs.DefDurationSize
 		case mysql.TypeDate:
-			val := row.GetTime(1)
-			memDelta += int64(len(val.String()))
+			memDelta += aggfuncs.DefTimeSize
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefFloat64Size
 		default:

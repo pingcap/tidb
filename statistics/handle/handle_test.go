@@ -871,6 +871,34 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 }
 
 // nolint:unused
+func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testkit.TestKit, tblName, dbName string) {
+	tk.MustExec("create database if not exists " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec("drop table if exists " + tblName)
+	tk.MustExec(` create table ` + tblName + ` (a int, key(a)) partition by range (a) ` +
+		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
+	buf1 := bytes.NewBufferString("insert into " + tblName + " values (0)")
+	buf2 := bytes.NewBufferString("insert into " + tblName + " values (100000)")
+	for i := 0; i < 1000; i++ {
+		buf1.WriteString(fmt.Sprintf(", (%v)", 2))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100002))
+		buf1.WriteString(fmt.Sprintf(", (%v)", 1))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100001))
+		buf1.WriteString(fmt.Sprintf(", (%v)", 0))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100000))
+	}
+	for i := 0; i < 5000; i += 3 {
+		buf1.WriteString(fmt.Sprintf(", (%v)", i))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
+	}
+	tk.MustExec(buf1.String())
+	tk.MustExec(buf2.String())
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+}
+
+// nolint:unused
 func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
@@ -986,28 +1014,28 @@ func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
 	}()
 	tk.MustExec("set global tidb_persist_analyze_options=false")
-	prepareForGlobalStatsWithOpts(t, dom, tk, "test_gstats_opt2", "test_gstats_opt2")
+	prepareForGlobalStatsWithOptsV2(t, dom, tk, "test_gstats_opt2", "test_gstats_opt2")
 
-	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets, 1000 samples")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 50)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 1, 50)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
+	tk.MustExec("analyze table test_gstats_opt2 with 2 topn, 10 buckets, 1000 samples")
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
 
 	// analyze a partition to let its options be different with others'
-	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 10 topn, 20 buckets")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 10, 20) // use new options
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
+	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 3 topn, 20 buckets")
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 3, 20) // use new options
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
 
-	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 100 topn, 200 buckets")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 100, 200)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
+	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 1 topn, 15 buckets")
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 1, 15)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
 
-	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 20 topn") // change back to 20 topn
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 20, 256)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 20, 256)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
+	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 2 topn, 10 buckets") // change back to 2 topn
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
+	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
 }
 
 func TestGlobalStatsHealthy(t *testing.T) {
@@ -2121,6 +2149,9 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 }
 
 func TestPartitionPruneModeSessionVariable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")

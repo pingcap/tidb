@@ -126,7 +126,7 @@ func TestInferType(t *testing.T) {
 		require.NoError(t, err)
 
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		err = plannercore.Preprocess(context.Background(), sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, comment)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
 		require.NoError(t, err, comment)
@@ -742,9 +742,9 @@ func (s *InferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
 		{"c_int_d * c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"c_int_d * c_time_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_int_d * c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
-		{"c_int_d * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 17, 3},
-		{"c_datetime * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 29, 5},
-		{"c_bigint_d * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 27, 3},
+		{"c_int_d * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 16, 3},
+		{"c_datetime * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 28, 5},
+		{"c_bigint_d * c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 26, 3},
 		{"c_double_d * c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"c_double_d * c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"c_double_d * c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
@@ -980,6 +980,25 @@ func (s *InferTypeSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 		{"sha2(c_enum       , '256')", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 128, types.UnspecifiedLength},
 		{"sha2('1234'       , '256')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 128, types.UnspecifiedLength},
 		{"sha2(1234         , '256')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 128, types.UnspecifiedLength},
+
+		{"sm3(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_decimal    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_datetime   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_time_d     )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_timestamp_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_char       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_varchar    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_text_d     )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_binary     )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_varbinary  )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_blob_d     )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_set        )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3(c_enum       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
+		{"sm3('1234'       )", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 40, types.UnspecifiedLength},
+		{"sm3(1234         )", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 40, types.UnspecifiedLength},
 
 		{"AES_ENCRYPT(c_int_d, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
 		{"AES_ENCRYPT(c_char, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},

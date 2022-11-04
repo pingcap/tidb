@@ -20,6 +20,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hint"
@@ -255,7 +256,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -272,6 +273,8 @@ func TestCollectPredicateColumns(t *testing.T) {
 }
 
 func TestCollectHistNeededColumns(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	tests := []struct {
 		pruneMode string
 		sql       string
@@ -330,7 +333,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)

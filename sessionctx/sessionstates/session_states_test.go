@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,15 +381,18 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check MPPStoreLastFailTime
 			setFunc: func(tk *testkit.TestKit) any {
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
+				m := sync.Map{}
+				m.Store("store1", time.Now())
+				tk.Session().GetSessionVars().MPPStoreLastFailTime = &m
 				return tk.Session().GetSessionVars().MPPStoreLastFailTime
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				require.Equal(t, 1, len(failTime))
-				tm, ok := failTime["store1"]
+				tm, ok := failTime.Load("store1")
 				require.True(t, ok)
-				require.True(t, param.(map[string]time.Time)["store1"].Equal(tm))
+				v, ok := (param.(*sync.Map)).Load("store1")
+				require.True(t, ok)
+				require.True(t, tm.(time.Time).Equal(v.(time.Time)))
 			},
 		},
 		{
