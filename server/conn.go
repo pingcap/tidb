@@ -2487,20 +2487,24 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if pluginName != "" {
+	fakeResp := &handshakeResponse41{
+		Auth:       pass,
+		AuthPlugin: pluginName,
+		Capability: cc.capability,
+	}
+	if fakeResp.AuthPlugin != "" {
 		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
 			failpoint.Return(errors.Errorf("%v", val))
 		})
-		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
-			Auth:       pass,
-			AuthPlugin: pluginName,
-			Capability: cc.capability,
-		})
+		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
 			return err
 		}
+		if len(newpass) > 0 {
+			fakeResp.Auth = newpass
+		}
 	}
-	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
