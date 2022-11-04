@@ -4068,7 +4068,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
 
-	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("create table idpt (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
 		"idpt CREATE TABLE `idpt` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4094,7 +4094,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// if using a month with 31 days.
 	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
 	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
-	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustExec("create table t (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` date NOT NULL,\n" +

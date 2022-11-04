@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -196,6 +197,7 @@ type clientConn struct {
 		*TiDBContext // an interface to execute sql statements.
 	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
 	status        int32             // dispatching/reading/shutdown/waitshutdown
@@ -212,6 +214,7 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	extensions *extension.SessionExtensions
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -678,6 +681,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	case mysql.AuthTiDBSessionToken:
+	case mysql.AuthTiDBAuthToken:
+	case mysql.AuthMySQLClearPassword:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -706,6 +711,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
+		case mysql.AuthMySQLClearPassword:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -792,7 +798,7 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -922,6 +928,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
+		if userplugin == mysql.AuthTiDBAuthToken {
+			userplugin = mysql.AuthMySQLClearPassword
+		}
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
 			if err != nil {
@@ -945,6 +954,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	host = variable.DefHostname
 	if cc.isUnixSocket {
 		cc.peerHost = host
+		cc.serverHost = host
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
@@ -955,6 +965,15 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	}
 	cc.peerHost = host
 	cc.peerPort = port
+
+	serverAddr := cc.bufReadConn.LocalAddr().String()
+	serverHost, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		return
+	}
+	cc.serverHost = serverHost
+
 	return
 }
 
@@ -1103,6 +1122,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
+		cc.ctx.GetSessionVars().ClearAlloc()
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
@@ -1335,11 +1355,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	switch cmd {
-	case mysql.ComSleep:
-		// TODO: According to mysql document, this command is supposed to be used only internally.
-		// So it's just a temp fix, not sure if it's done right.
-		// Investigate this command and write test case later.
-		return nil
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
@@ -1852,6 +1867,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
+	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}
@@ -2448,8 +2464,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, _ := parseNullTermString(data)
+	dbName, data := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+	pluginName := ""
+	if len(data) > 0 {
+		// skip character set
+		if cc.capability&mysql.ClientProtocol41 > 0 && len(data) >= 2 {
+			data = data[2:]
+		}
+		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
+			pluginNameB, _ := parseNullTermString(data)
+			pluginName = string(hack.String(pluginNameB))
+		}
+	}
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -2459,6 +2486,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	err := cc.openSession()
 	if err != nil {
 		return err
+	}
+	if pluginName != "" {
+		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			failpoint.Return(errors.Errorf("%v", val))
+		})
+		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
+			Auth:       pass,
+			AuthPlugin: pluginName,
+			Capability: cc.capability,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
@@ -2477,7 +2517,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -2497,8 +2537,10 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 }
 
 func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
-	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	connectionInfo := cc.connectInfo()
+	cc.ctx.GetSessionVars().ConnectionInfo = connectionInfo
 
+	cc.onExtensionConnEvent(extension.ConnReset, nil)
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
