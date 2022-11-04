@@ -24,4 +24,3 @@ tar xvfz zstd-1.5.2.tar.gz
 cd zstd-1.5.2
 make
 make install
-
