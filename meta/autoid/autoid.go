@@ -26,6 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -533,6 +535,47 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
+func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
+	ebd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		// newSinglePointAlloc fail because not etcd background
+		// This could happen in the server package unit test
+		return nil
+	}
+
+	addrs, err := ebd.EtcdAddrs()
+	if err != nil {
+		panic(err)
+	}
+	spa := &singlePointAlloc{
+		dbID:       dbID,
+		tblID:      tblID,
+		isUnsigned: isUnsigned,
+	}
+	if len(addrs) > 0 {
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints: addrs,
+			TLS:       ebd.TLSConfig(),
+		})
+		if err != nil {
+			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
+			return nil
+		}
+		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
+	} else {
+		spa.clientDiscover = clientDiscover{}
+		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
+	}
+
+	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+		if val.(bool) {
+			spa = nil
+		}
+	})
+	return spa
+}
+
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
@@ -548,6 +591,15 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	for _, fn := range opts {
 		fn.ApplyOn(alloc)
 	}
+
+	// Use the MySQL compatible AUTO_INCREMENT mode.
+	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
+		if alloc1 != nil {
+			return alloc1
+		}
+	}
+
 	return alloc
 }
 
