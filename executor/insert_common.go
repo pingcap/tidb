@@ -460,7 +460,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
-	chk := newFirstChunk(selectExec)
+	chk := tryNewCacheChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 

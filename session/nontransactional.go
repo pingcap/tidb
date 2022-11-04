@@ -42,11 +42,17 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 // ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
+
+var (
+	nonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
+	nonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
+)
 
 // job: handle keys in [start, end]
 type job struct {
@@ -75,6 +81,13 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
+	sessVars := se.GetSessionVars()
+	originalReadStaleness := se.GetSessionVars().ReadStaleness
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+	sessVars.ReadStaleness = 0
+	defer func() {
+		sessVars.ReadStaleness = originalReadStaleness
+	}()
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err
@@ -130,29 +143,77 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:
-		if s.TableRefs == nil || s.TableRefs.TableRefs == nil || s.TableRefs.TableRefs.Left == nil {
-			return errors.New("table reference is nil")
+		if err := checkTableRef(s.TableRefs); err != nil {
+			return err
 		}
-		if s.TableRefs.TableRefs.Right != nil {
-			return errors.New("Non-transactional delete doesn't support multiple tables")
+		if err := checkReadClauses(s.Limit, s.Order); err != nil {
+			return err
 		}
-		if s.Limit != nil {
-			return errors.New("Non-transactional delete doesn't support limit")
-		}
-		if s.Order != nil {
-			return errors.New("Non-transactional delete doesn't support order by")
-		}
-		metrics.NonTransactionalDeleteCount.Inc()
+		nonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
 		// TODO: check: (1) single target table (2) more...
 		if s.Limit != nil {
 			return errors.New("Non-transactional update doesn't support limit")
 		}
 		// TODO: metrics
+	case *ast.InsertStmt:
+		if s.Select == nil {
+			return errors.New("Non-transactional insert supports insert select stmt only")
+		}
+		selectStmt, ok := s.Select.(*ast.SelectStmt)
+		if !ok {
+			return errors.New("Non-transactional insert doesn't support non-select source")
+		}
+		if err := checkTableRef(selectStmt.From); err != nil {
+			return err
+		}
+		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
+			return err
+		}
+		sourceTable, ok := selectStmt.From.TableRefs.Left.(*ast.TableSource)
+		if !ok {
+			return errors.New("Non-transactional insert must have a source table")
+		}
+		sourceName, ok := sourceTable.Source.(*ast.TableName)
+		if !ok {
+			return errors.New("Non-transaction insert must have s source table")
+		}
+		targetTable, ok := s.Table.TableRefs.Left.(*ast.TableSource)
+		if !ok {
+			return errors.New("Non-transactional insert must have a target table")
+		}
+		targetName, ok := targetTable.Source.(*ast.TableName)
+		if !ok {
+			return errors.New("Non-transactional insert must have a target table")
+		}
+		if sourceName.Name.L == targetName.Name.L {
+			return errors.New("Non-transactional insert doesn't support self-insert")
+		}
+		nonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}
 
+	return nil
+}
+
+func checkTableRef(t *ast.TableRefsClause) error {
+	if t == nil || t.TableRefs == nil || t.TableRefs.Left == nil {
+		return errors.New("table reference is nil")
+	}
+	if t.TableRefs.Right != nil {
+		return errors.New("Non-transactional statements don't support multiple tables")
+	}
+	return nil
+}
+
+func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
+	if limit != nil {
+		return errors.New("Non-transactional statements don't support limit")
+	}
+	if order != nil {
+		return errors.New("Non-transactional statements don't support order by")
+	}
 	return nil
 }
 
@@ -358,11 +419,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
-	originalReadStaleness := se.GetSessionVars().ReadStaleness
-	se.GetSessionVars().ReadStaleness = 0
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
-	se.GetSessionVars().ReadStaleness = originalReadStaleness
 
 	if err != nil {
 		return nil, err
