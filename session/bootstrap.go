@@ -641,11 +641,13 @@ const (
 	version97 = 97
 	// version98 add a column `Token_issuer` to `mysql.user`
 	version98 = 98
+	// version99 converts server-memory-quota to a sysvar
+	version99 = 99
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version98
+var currentBootstrapVersion int64 = version99
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -746,8 +748,10 @@ var (
 		upgradeToVer93,
 		upgradeToVer94,
 		upgradeToVer95,
+		// We will redo upgradeToVer96 in upgradeToVer99, it is skipped here.
 		upgradeToVer97,
 		upgradeToVer98,
+		upgradeToVer99,
 	}
 )
 
@@ -1976,6 +1980,14 @@ func upgradeToVer98(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func writeOOMAction(s Session) {

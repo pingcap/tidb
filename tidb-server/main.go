@@ -700,11 +700,11 @@ func setGlobalVars() {
 	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
 	if cfg.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
-	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
 	if err != nil || t < 0 {
