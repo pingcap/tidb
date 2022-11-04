@@ -636,18 +636,18 @@ const (
 	version94 = 94
 	// version95 add a column `User_attributes` to `mysql.user`
 	version95 = 95
-	// version96 converts server-memory-quota to a sysvar
-	version96 = 96
 	// version97 sets tidb_opt_range_max_size to 0 when a cluster upgrades from some version lower than v6.4.0 to v6.4.0+.
 	// It promises the compatibility of building ranges behavior.
 	version97 = 97
 	// version98 add a column `Token_issuer` to `mysql.user`
 	version98 = 98
+	// version99 converts server-memory-quota to a sysvar
+	version99 = 99
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version98
+var currentBootstrapVersion int64 = version99
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -748,9 +748,10 @@ var (
 		upgradeToVer93,
 		upgradeToVer94,
 		upgradeToVer95,
-		upgradeToVer96,
+		// We will redo upgradeToVer96 in upgradeToVer99, it is skipped here.
 		upgradeToVer97,
 		upgradeToVer98,
+		upgradeToVer99,
 	}
 )
 
@@ -1953,14 +1954,6 @@ func upgradeToVer95(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
 }
 
-func upgradeToVer96(s Session, ver int64) {
-	if ver >= version96 {
-		return
-	}
-	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
-}
-
 func upgradeToVer97(s Session, ver int64) {
 	if ver >= version97 {
 		return
@@ -1987,6 +1980,14 @@ func upgradeToVer98(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func writeOOMAction(s Session) {
