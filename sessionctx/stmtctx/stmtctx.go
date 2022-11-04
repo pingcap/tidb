@@ -340,8 +340,8 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
-	// TableJsonStats stores *handle.JSONTable by table id
-	TableJsonStats map[int64]interface{}
+	// TableJSONStats stores *handle.JSONTable by table id
+	TableJSONStats map[int64]interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

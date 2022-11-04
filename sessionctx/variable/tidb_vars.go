@@ -1081,10 +1081,11 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold       float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan         = true
-	DefTiDBExternalTS                       = 0
-	DefTiDBEnableExternalTSRead             = false
+	DefTiDBGOGCTunerThreshold        float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan          = true
+	DefTiDBExternalTS                        = 0
+	DefTiDBEnableExternalTSRead              = false
+	DefTiDBEnablePlanReplayerCapture         = false
 )
 
 // Process global variables.
@@ -1141,8 +1142,9 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
 )
 
 var (

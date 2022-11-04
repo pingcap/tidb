@@ -46,12 +46,6 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	}
 	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
-	histNeededTables := collectHistNeededTable(histNeededItems)
-	defer func() {
-		if err == nil && plan.SCtx().GetSessionVars().EnablePlanReplayerCapture {
-			recordTableRuntimeStatsJSON(plan.SCtx(), histNeededTables)
-		}
-	}()
 
 	if !histNeeded {
 		return plan, nil
@@ -179,29 +173,25 @@ func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededInd
 	return
 }
 
-func collectHistNeededTable(histNeededItems []model.TableItemID) map[int64]struct{} {
-	tables := make(map[int64]struct{})
-	for _, item := range histNeededItems {
-		tables[item.TableID] = struct{}{}
-	}
-	return tables
-}
-
 func recordTableRuntimeStatsJSON(sctx sessionctx.Context, tbls map[int64]struct{}) {
-	tblsJsonStats := sctx.GetSessionVars().StmtCtx.TableJsonStats
+	tblsJSONStats := sctx.GetSessionVars().StmtCtx.TableJSONStats
+	if tblsJSONStats == nil {
+		tblsJSONStats = map[int64]interface{}{}
+	}
 	for tblID := range tbls {
-		tblJsonStats, err := recordSingleTableJsonStats(sctx, tblID)
+		tblJsonStats, err := recordSingleTableJSONStats(sctx, tblID)
 		if err != nil {
-			logutil.BgLogger().Warn("mock", zap.Error(err))
+			logutil.BgLogger().Warn("record table json stats failed", zap.Int64("tblID", tblID), zap.Error(err))
 		}
 		if tblJsonStats == nil {
-			logutil.BgLogger().Warn("mock")
+			logutil.BgLogger().Warn("record table json stats failed due to empty", zap.Int64("tblID", tblID))
 		}
-		tblsJsonStats[tblID] = tblJsonStats
+		tblsJSONStats[tblID] = tblJsonStats
 	}
+	sctx.GetSessionVars().StmtCtx.TableJSONStats = tblsJSONStats
 }
 
-func recordSingleTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+func recordSingleTableJSONStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
 	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	tbl, ok := is.TableByID(tblID)
@@ -211,12 +201,12 @@ func recordSingleTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.J
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return recordCommonTableJsonStats(sctx, tblID)
+		return recordCommonTableJSONStats(sctx, tblID)
 	}
-	return recordPartitionTableJsonStats(sctx, tblID)
+	return recordPartitionTableJSONStats(sctx, tblID)
 }
 
-func recordCommonTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+func recordCommonTableJSONStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
 	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	statsHandle := dom.StatsHandle()
@@ -233,7 +223,7 @@ func recordCommonTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.J
 	return handle.GenJSONTableFromStats(schemaInfo.Name.String(), tblInfo, stats)
 }
 
-func recordPartitionTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+func recordPartitionTableJSONStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
 	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	tbl, ok := is.TableByID(tblID)
@@ -255,7 +245,7 @@ func recordPartitionTableJsonStats(sctx sessionctx.Context, tblID int64) (*handl
 	isDynamicMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	if !isDynamicMode {
 		for _, def := range pi.Definitions {
-			tbl, err := recordCommonTableJsonStats(sctx, def.ID)
+			tbl, err := recordCommonTableJSONStats(sctx, def.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -265,7 +255,7 @@ func recordPartitionTableJsonStats(sctx sessionctx.Context, tblID int64) (*handl
 			jsonTbl.Partitions[def.Name.L] = tbl
 		}
 	}
-	globalTbl, err := recordCommonTableJsonStats(sctx, tableInfo.ID)
+	globalTbl, err := recordCommonTableJSONStats(sctx, tableInfo.ID)
 	if err != nil {
 		return nil, err
 	}
