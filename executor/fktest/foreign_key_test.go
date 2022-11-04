@@ -16,6 +16,7 @@ package fk_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,10 +26,14 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1256,44 +1261,57 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
 }
 
-func TestForeignKeyGenerateCascadeSQL(t *testing.T) {
-	fk := &model.FKInfo{
-		Cols: []model.CIStr{model.NewCIStr("c0"), model.NewCIStr("c1")},
-	}
+func TestForeignKeyGenerateCascadeAST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
 	fkValues := [][]types.Datum{
 		{types.NewDatum(1), types.NewDatum("a")},
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
-	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, fkValues)
-	require.NoError(t, err)
-	require.Equal(t, "DELETE FROM `test`.`t` WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
-
-	sql, err = executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, fkValues)
-	require.NoError(t, err)
-	require.Equal(t, "DELETE FROM `test`.`t` USE INDEX(`idx`) WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
-
-	sql, err = executor.GenCascadeSetNullSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, fkValues)
-	require.NoError(t, err)
-	require.Equal(t, "UPDATE `test`.`t` SET `c0` = NULL, `c1` = NULL WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
-
-	sql, err = executor.GenCascadeSetNullSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, fkValues)
-	require.NoError(t, err)
-	require.Equal(t, "UPDATE `test`.`t` USE INDEX(`idx`) SET `c0` = NULL, `c1` = NULL WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
-
+	cols := []*model.ColumnInfo{
+		{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: model.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+	}
+	restoreFn := func(stmt ast.StmtNode) string {
+		var sb strings.Builder
+		fctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := stmt.Restore(fctx)
+		require.NoError(t, err)
+		return sb.String()
+	}
+	checkStmtFn := func(stmt ast.StmtNode, sql string) {
+		exec, ok := tk.Session().(sqlexec.RestrictedSQLExecutor)
+		require.True(t, ok)
+		expectedStmt, err := exec.ParseWithParams(context.Background(), sql)
+		require.NoError(t, err)
+		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))
+	}
+	var stmt ast.StmtNode
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 where (a,name) in ((1,'a'), (2,'b'))")
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 use index(idx) where (a,name) in ((1,'a'), (2,'b'))")
+	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	checkStmtFn(stmt, "update test.t2 set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
+	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	checkStmtFn(stmt, "update test.t2 use index(idx) set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
 		OldValuesList: fkValues,
 	}
-	sql, err = executor.GenCascadeUpdateSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, couple)
-	require.NoError(t, err)
-	require.Equal(t, "UPDATE `test`.`t` SET `c0` = 10, `c1` = 'aa' WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
-
-	newValue2 := []types.Datum{types.NewDatum(nil), types.NewDatum(nil)}
-	couple.NewValues = newValue2
-	sql, err = executor.GenCascadeUpdateSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, couple)
-	require.NoError(t, err)
-	require.Equal(t, "UPDATE `test`.`t` USE INDEX(`idx`) SET `c0` = NULL, `c1` = NULL WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
+	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, couple)
+	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
+	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, couple)
+	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
+	// Test for 1 fk column.
+	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
+	cols = []*model.ColumnInfo{{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
 func TestForeignKeyOnDeleteSetNull(t *testing.T) {

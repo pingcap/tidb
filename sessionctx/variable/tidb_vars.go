@@ -252,6 +252,9 @@ const (
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
+
+	// TiDBUseAlloc indicates whether the last statement used chunk alloc
+	TiDBUseAlloc = "last_sql_use_alloc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -764,6 +767,9 @@ const (
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
+
+	// TiDBEnableReusechunk indicates whether to enable chunk alloc
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 )
 
 // TiDB vars that have only global scope
@@ -1082,6 +1088,8 @@ const (
 	DefTiDBOptPrefixIndexSingleScan         = true
 	DefTiDBExternalTS                       = 0
 	DefTiDBEnableExternalTSRead             = false
+	DefTiDBEnableReusechunk                 = true
+	DefTiDBUseAlloc                         = false
 )
 
 // Process global variables.
