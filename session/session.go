@@ -3523,7 +3523,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryFlashbackClusterUsage.Inc()
 	}
 
-	if ti.UesExchangePartition {
+	if ti.UseExchangePartition {
 		telemetryExchangePartitionUsage.Inc()
 	}
 

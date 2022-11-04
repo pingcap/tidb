@@ -194,7 +194,7 @@ type TelemetryInfo struct {
 	UseNonRecursive       bool
 	UseRecursive          bool
 	UseMultiSchemaChange  bool
-	UesExchangePartition  bool
+	UseExchangePartition  bool
 	UseFlashbackToCluster bool
 	PartitionTelemetry    *PartitionTelemetryInfo
 	AccountLockTelemetry  *AccountLockTelemetryInfo
