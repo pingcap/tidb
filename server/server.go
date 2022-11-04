@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -139,9 +140,11 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode bool
 
-	sessionMapMutex  sync.Mutex
-	internalSessions map[interface{}]struct{}
-	autoIDService    *autoid.Service
+	sessionMapMutex     sync.Mutex
+	internalSessions    map[interface{}]struct{}
+	autoIDService       *autoid.Service
+	authTokenCancelFunc context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // ConnectionCount gets current connection count.
@@ -300,6 +303,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+
+	// Automatically reload JWKS for tidb_auth_token.
+	if len(s.cfg.Security.AuthTokenJWKS) > 0 {
+		var (
+			timeInterval time.Duration
+			err          error
+			ctx          context.Context
+		)
+		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
+			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
+				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
+			timeInterval = config.DefAuthTokenRefreshInterval
+		}
+		ctx, s.authTokenCancelFunc = context.WithCancel(context.Background())
+		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
+			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
 
@@ -503,6 +524,10 @@ func (s *Server) Close() {
 	if s.autoIDService != nil {
 		s.autoIDService.Close()
 	}
+	if s.authTokenCancelFunc != nil {
+		s.authTokenCancelFunc()
+	}
+	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 

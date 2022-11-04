@@ -4447,9 +4447,9 @@ func TestReorderSimplifiedOuterJoins(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3")
-	tk.MustExec("create table t1 (pk char(32) primary key, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3))")
-	tk.MustExec("create table t2 (pk char(32) primary key, col1 varchar(100))")
-	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
+	tk.MustExec("create table t1 (pk char(32) primary key nonclustered, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3))")
+	tk.MustExec("create table t2 (pk char(32) primary key nonclustered, col1 varchar(100))")
+	tk.MustExec("create table t3 (pk char(32) primary key nonclustered, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
 
 	var input []string
 	var output []struct {
@@ -4967,7 +4967,7 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b) nonclustered)")
 
 	var input []string
 	var output []struct {
@@ -6525,7 +6525,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
   oper_no varchar(12) DEFAULT NULL,
   modify_date datetime DEFAULT NULL,
   d_c_flag varchar(2) NOT NULL,
-  PRIMARY KEY (process_code,ctrl_class,d_c_flag));`)
+  PRIMARY KEY (process_code,ctrl_class,d_c_flag) NONCLUSTERED);`)
 	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '1', '10000', '2016-06-29 00:00:00', 'C')")
 	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '0', '0000', '2016-06-01 00:00:00', 'D')")
 	tk.MustExec("alter table t32157 cache")
