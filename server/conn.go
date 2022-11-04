@@ -682,6 +682,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthSocket:
 	case mysql.AuthTiDBSessionToken:
 	case mysql.AuthTiDBAuthToken:
+	case mysql.AuthMySQLClearPassword:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -710,7 +711,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
-		case mysql.AuthTiDBAuthToken:
+		case mysql.AuthMySQLClearPassword:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -927,6 +928,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
+		if userplugin == mysql.AuthTiDBAuthToken {
+			userplugin = mysql.AuthMySQLClearPassword
+		}
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
 			if err != nil {

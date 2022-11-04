@@ -2800,12 +2800,14 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101"))
 	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000102 AUTO_INCREMENT"))
 
+	// alter table from auto_id_cache=1 to default will discard the IDs cached by the autoid service.
+	// This is because they are two component and TiDB can't tell the autoid service to "save position and exit".
 	tk.MustExec("alter table t auto_id_cache = 20000")
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000102 AUTO_INCREMENT"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2004101 AUTO_INCREMENT"))
 
 	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101", "2000102"))
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2020102 AUTO_INCREMENT"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101", "2004101"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2024101 AUTO_INCREMENT"))
 }
 
 func TestAlterIndexVisibility(t *testing.T) {
