@@ -1055,7 +1055,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
 			case ast.AlterTableExchangePartition:
-				b.Ti.UesExchangePartition = true
+				b.Ti.UseExchangePartition = true
 			}
 		}
 	case *ast.CreateTableStmt:
@@ -1105,6 +1105,8 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 			}
 		}
+	case *ast.FlashBackToTimestampStmt:
+		b.Ti.UseFlashbackToCluster = true
 	}
 }
 
