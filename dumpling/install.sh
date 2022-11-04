@@ -22,7 +22,6 @@ go install github.com/ma6174/snappy
 wget https://github.com/facebook/zstd/releases/download/v1.5.2/zstd-1.5.2.tar.gz
 tar xvfz zstd-1.5.2.tar.gz
 cd zstd-1.5.2
-./configure
 make
 make install
 
