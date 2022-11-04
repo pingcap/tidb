@@ -95,7 +95,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := retTypes(e.children[0])
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	columns := e.children[0].Schema().Columns
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
@@ -190,7 +190,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.tblColPosInfos
 	tblRowMap := make(tableRowMapType)
 	fields := retTypes(e.children[0])
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	memUsageOfChk := int64(0)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
