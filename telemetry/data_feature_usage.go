@@ -384,6 +384,7 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
+
 func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 	curr := m.GetDDLUsageCounter()
 	diff := curr.Sub(initialDDLUsageCounter)
