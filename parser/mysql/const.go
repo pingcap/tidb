@@ -81,6 +81,8 @@ const (
 	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen = 64
+	// MaxForeignKeyIdentifierLen is max length of foreign key identifier.
+	MaxForeignKeyIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
 	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
