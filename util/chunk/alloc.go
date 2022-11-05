@@ -128,8 +128,8 @@ func (a *allocator) Reset() {
 	a.allocated = a.allocated[:0]
 
 	//column objects and put them to the column allocator for reuse.
-	for _, pool := range a.columnAlloc.pool {
-		for id, col := range pool.allocColumns {
+	for id, pool := range a.columnAlloc.pool {
+		for _, col := range pool.allocColumns {
 			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && checkColumnType(id, col) {
 				col.reset()
 				pool.freeColumns = append(pool.freeColumns, col)
