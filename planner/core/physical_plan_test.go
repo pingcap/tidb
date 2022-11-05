@@ -804,6 +804,7 @@ func TestMPPHints(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
