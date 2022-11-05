@@ -105,6 +105,8 @@ type HashJoinExec struct {
 	// for every naaj probe worker,  pre-allocate the int slice for store the join column index to check.
 	needCheckBuildRowPos [][]int
 	needCheckProbeRowPos [][]int
+
+	rowIters []*chunk.Iterator4Slice
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -295,7 +297,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		if e.finished.Load().(bool) {
 			return
 		}
-		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+		chk := e.ctx.GetSessionVars().GetNewChunk(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 		err = Next(ctx, e.buildSideExec, chk)
 		if err != nil {
 			e.buildFinished <- errors.Trace(err)
@@ -527,8 +529,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	iter := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter)
+	iter := e.rowIters[workerID]
+	iter.Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx, ok := 0, false
 	for iter.Begin(); iter.Current() != iter.End(); {
@@ -573,8 +575,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			iter1 := chunk.NewIterator4Slice(buildSideRows)
-			defer chunk.FreeIterator(iter1)
+			iter1 := e.rowIters[workerID]
+			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
 				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftNotNullRightNotNull)
 				if err != nil {
@@ -608,8 +610,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		iter2 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter2)
+		iter2 := e.rowIters[workerID]
+		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
 			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftNotNullRightHasNull)
 			if err != nil {
@@ -648,8 +650,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		iter1 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter1)
+		iter1 := e.rowIters[workerID]
+		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
 			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftHasNullRightHasNull)
 			if err != nil {
@@ -683,8 +685,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter2 := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter2)
+	iter2 := e.rowIters[workerID]
+	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
 		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftHasNullRightNotNull)
 		if err != nil {
@@ -728,8 +730,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			iter1 := chunk.NewIterator4Slice(buildSideRows)
-			defer chunk.FreeIterator(iter1)
+			iter1 := e.rowIters[workerID]
+			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
 				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
 				if err != nil {
@@ -763,8 +765,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		iter2 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter2)
+		iter2 := e.rowIters[workerID]
+		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
 			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
 			if err != nil {
@@ -803,8 +805,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		iter1 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter1)
+		iter1 := e.rowIters[workerID]
+		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
 			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
 			if err != nil {
@@ -838,8 +840,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter2 := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter2)
+	iter2 := e.rowIters[workerID]
+	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
 		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
 		if err != nil {
@@ -912,8 +914,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter)
+	iter := e.rowIters[workerID]
+	iter.Reset(buildSideRows)
 	hasMatch, hasNull, ok := false, false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
@@ -1116,6 +1118,9 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
 			}
 		}
+		for i := uint(0); i < e.concurrency; i++ {
+			e.rowIters = append(e.rowIters, chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice))
+		}
 		go util.WithRecovery(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
@@ -1206,7 +1211,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {
@@ -1302,8 +1307,8 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = newFirstChunk(e.outerExec)
-	e.innerChunk = newFirstChunk(e.innerExec)
+	e.outerChunk = tryNewCacheChunk(e.outerExec)
+	e.innerChunk = tryNewCacheChunk(e.innerExec)
 	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, -1)

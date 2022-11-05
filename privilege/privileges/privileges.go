@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
@@ -56,6 +60,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 }
 var dynamicPrivLock sync.Mutex
+var defaultTokenLife = 15 * time.Minute
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -183,31 +188,28 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	if pwd == "" {
 		return true
 	}
-	if record.AuthPlugin == mysql.AuthNativePassword {
+	switch record.AuthPlugin {
+	case mysql.AuthNativePassword:
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthCachingSha2Password {
+	case mysql.AuthCachingSha2Password:
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
+	case mysql.AuthTiDBSM3Password:
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthSocket {
+	case mysql.AuthSocket:
+		return true
+	case mysql.AuthTiDBAuthToken:
 		return true
 	}
 
@@ -240,6 +242,9 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		return "", errors.New("Failed to get user record")
+	}
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		return record.AuthPlugin, nil
 	}
 	// zero-length auth string means no password for native and caching_sha2 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
@@ -289,6 +294,49 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
+func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
+	if sub, ok := claims[jwtRepo.SubjectKey]; !ok {
+		return errors.New("lack 'sub'")
+	} else if sub != record.User {
+		return fmt.Errorf("Wrong 'sub': %s", sub)
+	}
+
+	if email, ok := claims[openid.EmailKey]; !ok {
+		return errors.New("lack 'email'")
+	} else if email != record.Email {
+		return fmt.Errorf("Wrong 'email': %s", email)
+	}
+
+	now := time.Now()
+	val, ok := claims[jwtRepo.IssuedAtKey]
+	if !ok {
+		return errors.New("lack 'iat'")
+	} else if iat, ok := val.(time.Time); !ok {
+		return fmt.Errorf("iat: %v is not a value of time.Time", val)
+	} else if now.After(iat.Add(tokenLife)) {
+		return errors.New("the token has been out of its life time")
+	} else if now.Before(iat) {
+		return errors.New("the token is issued at a future time")
+	}
+
+	if val, ok = claims[jwtRepo.ExpirationKey]; !ok {
+		return errors.New("lack 'exp'")
+	} else if exp, ok := val.(time.Time); !ok {
+		return fmt.Errorf("exp: %v is not a value of time.Time", val)
+	} else if now.After(exp) {
+		return errors.New("the token has been expired")
+	}
+
+	// `iss` is not required if `token_issuer` is empty in `mysql.user`
+	if iss, ok := claims[jwtRepo.IssuerKey]; ok && iss != record.AuthTokenIssuer {
+		return fmt.Errorf("Wrong 'iss': %s", iss)
+	} else if !ok && len(record.AuthTokenIssuer) > 0 {
+		return errors.New("lack 'iss'")
+	}
+
+	return nil
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
 	hasPassword := "YES"
@@ -323,7 +371,25 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	if len(pwd) > 0 && len(authentication) > 0 {
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		if len(authentication) == 0 {
+			logutil.BgLogger().Error("empty authentication")
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		tokenString := string(hack.String(authentication[:len(authentication)-1]))
+		var (
+			claims map[string]interface{}
+			err    error
+		)
+		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
+			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
+			logutil.BgLogger().Error("check claims failed", zap.Error(err))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)

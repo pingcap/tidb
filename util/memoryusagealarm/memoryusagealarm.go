@@ -301,7 +301,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
 	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
+		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
 	}, pinfo)
 }
 
@@ -315,7 +315,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
-		if len(info.Info) != 0 {
+		if len(info.Info) != 0 && info.CanExplainAnalyze {
 			pinfo = append(pinfo, info)
 		}
 	}
