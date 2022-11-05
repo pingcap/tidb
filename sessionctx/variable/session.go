@@ -1654,8 +1654,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
-		//useChunkAlloc:                 DefTiDBUseAlloc,
-		preUseChunkAlloc: DefTiDBUseAlloc,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool: struct {
 			Lock  sync.Mutex
 			Alloc chunk.Allocator
