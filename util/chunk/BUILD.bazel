@@ -31,6 +31,7 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",
+        "//util/sync",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sys//cpu",
