@@ -2019,7 +2019,7 @@ func upgradeToVer99After(s Session, ver int64) {
 }
 
 func upgradeToVer100(s Session, ver int64) {
-	if ver >= version99 {
+	if ver >= version100 {
 		return
 	}
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
