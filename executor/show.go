@@ -1015,6 +1015,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
+				case "CURRENT_DATE":
+					buf.WriteString(" DEFAULT CURRENT_DATE")
+					if col.GetDecimal() > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
+					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.

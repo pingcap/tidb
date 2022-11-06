@@ -122,8 +122,8 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			return d, errDefaultValue
 		}
 	case *ast.FuncCallExpr:
-		if x.FnName.L == ast.CurrentTimestamp {
-			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName)
+		if x.FnName.L == ast.CurrentTimestamp || x.FnName.L == ast.CurrentDate {
+			d.SetString(strings.ToUpper(x.FnName.L), mysql.DefaultCollationName)
 			return d, nil
 		}
 		return d, errDefaultValue
