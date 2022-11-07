@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/paging"
 	"math"
 	"strings"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
