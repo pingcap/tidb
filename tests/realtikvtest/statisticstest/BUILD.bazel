@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "statisticstest_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "main_test.go",
         "statistics_test.go",
@@ -12,7 +12,9 @@ go_test(
     deps = [
         "//statistics/handle",
         "//testkit",
+        "//testkit/testsetup",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

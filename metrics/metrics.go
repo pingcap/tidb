@@ -192,7 +192,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
-	prometheus.MustRegister(NonTransactionalDeleteCount)
+	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -205,6 +205,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GetCheckpointBatchSize)
 	prometheus.MustRegister(RegionCheckpointRequest)
 	prometheus.MustRegister(RegionCheckpointFailure)
+	prometheus.MustRegister(AutoIDReqDuration)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
@@ -229,7 +230,7 @@ func ToggleSimplifiedMode(simplified bool) {
 		ReadFromTableCacheCounter,
 		TiFlashQueryTotalCounter,
 		CampaignOwnerCounter,
-		NonTransactionalDeleteCount,
+		NonTransactionalDMLCount,
 		MemoryUsage,
 		TokenGauge,
 		tikvmetrics.TiKVRawkvSizeHistogram,
