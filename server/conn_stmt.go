@@ -204,7 +204,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
-	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+
+	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+	cc.onExtensionBinaryExecuteEnd(stmt, args, err)
+	return err
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
