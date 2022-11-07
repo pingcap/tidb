@@ -1915,7 +1915,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	var lastStmt ast.StmtNode
 	for i, stmt := range stmts {
 		if lastStmt != nil {
-			cc.onExtensionStmtEnd(stmt, nil)
+			cc.onExtensionStmtEnd(lastStmt, nil)
 		}
 
 		lastStmt = stmt
