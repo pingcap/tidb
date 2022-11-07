@@ -568,6 +568,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	if err = client.CheckTableExists(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
