@@ -23,10 +23,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -421,4 +424,72 @@ func TestHookContext(t *testing.T) {
 	variable.RegisterSysVar(&sv)
 
 	ctx.GetSessionVars().SetSystemVar("testhooksysvar", "test")
+}
+
+func TestGetReuseChunk(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	sessVars := variable.NewSessionVars(nil)
+
+	// SetAlloc efficient
+	sessVars.SetAlloc(nil)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+	// alloc is nil ，Allocate memory from the system
+	chk1 := sessVars.GetNewChunk(fieldTypes, 10)
+	require.NotNil(t, chk1)
+	chk2 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
+	require.NotNil(t, chk2)
+
+	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
+	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
+
+	alloc := chunk.NewAllocator()
+	sessVars.EnableReuseCheck = true
+	sessVars.SetAlloc(alloc)
+	require.NotNil(t, sessVars.ChunkPool.Alloc)
+	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+
+	//tries to apply from the cache
+	initCap := 10
+	chk1 = sessVars.GetNewChunk(fieldTypes, initCap)
+	require.NotNil(t, chk1)
+	chunkReuseMap[chk1] = struct{}{}
+	for i := 0; i < chk1.NumCols(); i++ {
+		columnReuseMap[chk1.Column(i)] = struct{}{}
+	}
+	chk2 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap)
+	require.NotNil(t, chk2)
+	chunkReuseMap[chk2] = struct{}{}
+	for i := 0; i < chk2.NumCols(); i++ {
+		columnReuseMap[chk2.Column(i)] = struct{}{}
+	}
+
+	alloc.Reset()
+	chkres1 := sessVars.GetNewChunk(fieldTypes, 10)
+	_, exist := chunkReuseMap[chkres1]
+	require.True(t, exist)
+	for i := 0; i < chkres1.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres1.Column(i)]
+		require.True(t, exist)
+	}
+	chkres2 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
+	require.NotNil(t, chkres2)
+	_, exist = chunkReuseMap[chkres2]
+	require.True(t, exist)
+	for i := 0; i < chkres2.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres2.Column(i)]
+		require.True(t, exist)
+	}
+	sessVars.ClearAlloc()
+	require.Nil(t, sessVars.ChunkPool.Alloc)
 }
