@@ -479,6 +479,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 
 	allow := ddl.IsEnableFastReorg()
 	require.Equal(t, false, allow)
+	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
 	tk.MustExec("create table tele_t(id int, b int)")
