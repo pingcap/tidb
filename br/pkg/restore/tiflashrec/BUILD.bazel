@@ -9,11 +9,11 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/utils",
         "//infoschema",
-        "//parser/ast",
-        "//parser/format",
-        "//parser/model",
-        "@com_github_pingcap_log//:log",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "//vendor/github.com/pingcap/tidb/parser/format",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -24,7 +24,7 @@ go_test(
     deps = [
         ":tiflashrec",
         "//infoschema",
-        "//parser/model",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

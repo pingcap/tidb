@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_jingyugao_rowserrcheck//passes/rowserr",
+        "//vendor/github.com/jingyugao/rowserrcheck/passes/rowserr",
     ],
 )

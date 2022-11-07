@@ -6,11 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/version/build",
     visibility = ["//visibility:public"],
     deps = [
-        "//parser/mysql",
         "//util/israce",
         "//util/versioninfo",
-        "@com_github_pingcap_log//:log",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/pingcap/tidb/parser/mysql",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -20,5 +20,5 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":build"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = ["//vendor/github.com/stretchr/testify/require"],
 )

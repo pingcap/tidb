@@ -7,10 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//store/mockstore/unistore/config",
-        "@com_github_pingcap_kvproto//pkg/deadlock",
-        "@com_github_pingcap_log//:log",
-        "@org_golang_x_exp//slices",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/kvproto/pkg/deadlock",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/go.uber.org/zap",
+        "//vendor/golang.org/x/exp/slices",
     ],
 )
 
@@ -26,9 +26,9 @@ go_test(
     deps = [
         "//store/mockstore/unistore/config",
         "//testkit/testsetup",
-        "@com_github_pingcap_kvproto//pkg/deadlock",
-        "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/kvproto/pkg/deadlock",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

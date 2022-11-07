@@ -12,7 +12,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/table-filter",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_errors//:errors"],
+    deps = ["//vendor/github.com/pingcap/errors"],
 )
 
 go_test(
@@ -26,6 +26,6 @@ go_test(
     flaky = True,
     deps = [
         ":table-filter",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

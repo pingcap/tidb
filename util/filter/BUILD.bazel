@@ -11,7 +11,7 @@ go_library(
     deps = [
         "//util/table-filter",
         "//util/table-rule-selector",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
     ],
 )
 
@@ -24,5 +24,5 @@ go_test(
     ],
     embed = [":filter"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = ["//vendor/github.com/stretchr/testify/require"],
 )

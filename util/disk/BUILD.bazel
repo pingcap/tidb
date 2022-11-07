@@ -10,13 +10,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
-        "//parser/terror",
         "//util/memory",
-        "@com_github_danjacques_gofslock//fslock",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
-        "@org_golang_x_sync//singleflight",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/danjacques/gofslock/fslock",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/pingcap/tidb/parser/terror",
+        "//vendor/go.uber.org/zap",
+        "//vendor/golang.org/x/sync/singleflight",
     ],
 )
 
@@ -32,7 +32,7 @@ go_test(
     deps = [
         "//config",
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

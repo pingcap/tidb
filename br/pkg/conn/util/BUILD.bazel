@@ -8,8 +8,8 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//util/engine",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_tikv_pd_client//:client",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/kvproto/pkg/metapb",
+        "//vendor/github.com/tikv/pd/client",
     ],
 )

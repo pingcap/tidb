@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/build/linter/util",
     visibility = ["//visibility:public"],
     deps = [
-        "@co_honnef_go_tools//analysis/report",
-        "@org_golang_x_tools//go/analysis",
-        "@org_golang_x_tools//go/loader",
+        "//vendor/golang.org/x/tools/go/analysis",
+        "//vendor/golang.org/x/tools/go/loader",
+        "//vendor/honnef.co/go/tools/analysis/report",
     ],
 )

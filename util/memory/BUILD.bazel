@@ -13,16 +13,16 @@ go_library(
     deps = [
         "//errno",
         "//metrics",
-        "//parser/terror",
         "//util/cgroup",
         "//util/dbterror",
         "//util/logutil",
         "//util/mathutil",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_shirou_gopsutil_v3//mem",
-        "@org_golang_x_exp//slices",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/failpoint",
+        "//vendor/github.com/pingcap/tidb/parser/terror",
+        "//vendor/github.com/shirou/gopsutil/v3/mem",
+        "//vendor/go.uber.org/atomic",
+        "//vendor/go.uber.org/zap",
+        "//vendor/golang.org/x/exp/slices",
     ],
 )
 
@@ -38,10 +38,10 @@ go_test(
     flaky = True,
     deps = [
         "//errno",
-        "//parser/terror",
         "//testkit/testsetup",
         "//util/mathutil",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/tidb/parser/terror",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

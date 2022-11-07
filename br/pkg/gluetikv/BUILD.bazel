@@ -14,7 +14,7 @@ go_library(
         "//domain",
         "//kv",
         "//store/driver",
-        "@com_github_tikv_pd_client//:client",
+        "//vendor/github.com/tikv/pd/client",
     ],
 )
 
@@ -24,5 +24,5 @@ go_test(
     srcs = ["glue_test.go"],
     embed = [":gluetikv"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = ["//vendor/github.com/stretchr/testify/require"],
 )

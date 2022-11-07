@@ -12,15 +12,15 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
-        "//parser/model",
-        "//parser/mysql",
-        "//parser/terror",
-        "//parser/types",
         "//sessionctx/stmtctx",
         "//types",
         "//util/chunk",
         "//util/codec",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/pingcap/tidb/parser/mysql",
+        "//vendor/github.com/pingcap/tidb/parser/terror",
+        "//vendor/github.com/pingcap/tidb/parser/types",
     ],
 )
 
@@ -36,7 +36,6 @@ go_test(
     flaky = True,
     deps = [
         "//kv",
-        "//parser/mysql",
         "//sessionctx/stmtctx",
         "//tablecodec",
         "//testkit/testsetup",
@@ -45,7 +44,8 @@ go_test(
         "//util/chunk",
         "//util/codec",
         "//util/collate",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/tidb/parser/mysql",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

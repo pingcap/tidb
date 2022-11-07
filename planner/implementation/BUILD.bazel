@@ -14,10 +14,10 @@ go_library(
     deps = [
         "//expression",
         "//kv",
-        "//parser/model",
         "//planner/core",
         "//planner/memo",
         "//statistics",
+        "//vendor/github.com/pingcap/tidb/parser/model",
     ],
 )
 
@@ -34,8 +34,8 @@ go_test(
         "//planner/core",
         "//planner/memo",
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.opencensus.io/stats/view",
+        "//vendor/go.uber.org/goleak",
     ],
 )

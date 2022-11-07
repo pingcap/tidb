@@ -9,7 +9,6 @@ go_library(
         "//extension",
         "//kv",
         "//metrics",
-        "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",
         "//types",
@@ -17,10 +16,11 @@ go_library(
         "//util/kvcache",
         "//util/sli",
         "//util/topsql/stmtstats",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_tipb//go-binlog",
-        "@com_github_tikv_client_go_v2//oracle",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/pingcap/tipb/go-binlog",
+        "//vendor/github.com/tikv/client-go/v2/oracle",
     ],
 )
 
@@ -35,7 +35,7 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

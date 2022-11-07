@@ -12,9 +12,9 @@ go_library(
         "//types",
         "//util/cpuprofile",
         "//util/texttree",
-        "@com_github_google_pprof//profile",
-        "@com_github_pingcap_errors//:errors",
-        "@org_golang_x_exp//slices",
+        "//vendor/github.com/google/pprof/profile",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/golang.org/x/exp/slices",
     ],
 )
 
@@ -38,9 +38,9 @@ go_test(
         "//testkit/testsetup",
         "//types",
         "//util/collate",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/assert",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.opencensus.io/stats/view",
+        "//vendor/go.uber.org/goleak",
     ],
 )

@@ -5,5 +5,5 @@ go_library(
     srcs = ["tikvutil.go"],
     importpath = "github.com/pingcap/tidb/util/tikvutil",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_atomic//:atomic"],
+    deps = ["//vendor/go.uber.org/atomic"],
 )

@@ -12,9 +12,9 @@ go_library(
         "//util/disk",
         "//util/logutil",
         "//util/memory",
-        "@org_golang_x_exp//slices",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
+        "//vendor/go.uber.org/zap",
+        "//vendor/go.uber.org/zap/zapcore",
+        "//vendor/golang.org/x/exp/slices",
     ],
 )
 
@@ -30,6 +30,6 @@ go_test(
         "//util",
         "//util/execdetails",
         "//util/memory",
-        "@com_github_stretchr_testify//assert",
+        "//vendor/github.com/stretchr/testify/assert",
     ],
 )

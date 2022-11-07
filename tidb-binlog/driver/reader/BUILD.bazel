@@ -10,10 +10,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//tidb-binlog/proto/go-binlog",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
-        "@com_github_shopify_sarama//:sarama",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/Shopify/sarama",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -25,7 +25,7 @@ go_test(
     flaky = True,
     deps = [
         "//tidb-binlog/proto/go-binlog",
-        "@com_github_shopify_sarama//:sarama",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/Shopify/sarama",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

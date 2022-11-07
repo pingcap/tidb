@@ -13,8 +13,8 @@ go_test(
         "//config",
         "//meta/autoid",
         "//testkit",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/github.com/tikv/client-go/v2/tikv",
+        "//vendor/go.uber.org/goleak",
     ],
 )

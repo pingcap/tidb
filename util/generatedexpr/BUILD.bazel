@@ -6,12 +6,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/generatedexpr",
     visibility = ["//visibility:public"],
     deps = [
-        "//parser",
-        "//parser/ast",
-        "//parser/charset",
-        "//parser/model",
         "//util",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/tidb/parser",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "//vendor/github.com/pingcap/tidb/parser/charset",
+        "//vendor/github.com/pingcap/tidb/parser/model",
     ],
 )
 
@@ -25,10 +25,10 @@ go_test(
     embed = [":generatedexpr"],
     flaky = True,
     deps = [
-        "//parser/ast",
         "//testkit/testsetup",
         "//types/parser_driver",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

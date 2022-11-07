@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/table-rule-selector",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
     ],
 )
 
@@ -17,5 +17,5 @@ go_test(
     srcs = ["column_test.go"],
     embed = [":column-mapping"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = ["//vendor/github.com/stretchr/testify/require"],
 )

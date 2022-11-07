@@ -11,7 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/logutil",
-        "@org_golang_x_tools//container/intsets",
+        "//vendor/golang.org/x/tools/container/intsets",
     ],
 )
 
@@ -31,17 +31,17 @@ go_test(
     deps = [
         "//domain",
         "//infoschema",
-        "//parser",
         "//planner/core",
         "//sessionctx",
         "//sessiontxn",
         "//testkit",
         "//testkit/testsetup",
         "//util/hint",
-        "@com_github_stretchr_testify//require",
-        "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//slices",
-        "@org_golang_x_tools//container/intsets",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/tidb/parser",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
+        "//vendor/golang.org/x/exp/maps",
+        "//vendor/golang.org/x/exp/slices",
+        "//vendor/golang.org/x/tools/container/intsets",
     ],
 )

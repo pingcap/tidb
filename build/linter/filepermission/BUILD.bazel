@@ -5,5 +5,5 @@ go_library(
     srcs = ["checker.go"],
     importpath = "github.com/pingcap/tidb/build/linter/filepermission",
     visibility = ["//visibility:public"],
-    deps = ["@org_golang_x_tools//go/analysis"],
+    deps = ["//vendor/golang.org/x/tools/go/analysis"],
 )

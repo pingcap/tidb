@@ -5,5 +5,5 @@ go_library(
     srcs = ["repair_vars.go"],
     importpath = "github.com/pingcap/tidb/util/domainutil",
     visibility = ["//visibility:public"],
-    deps = ["//parser/model"],
+    deps = ["//vendor/github.com/pingcap/tidb/parser/model"],
 )

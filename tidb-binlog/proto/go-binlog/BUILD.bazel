@@ -5,5 +5,5 @@ go_library(
     srcs = ["secondary_binlog.pb.go"],
     importpath = "github.com/pingcap/tidb/tidb-binlog/proto/go-binlog",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_golang_protobuf//proto"],
+    deps = ["//vendor/github.com/golang/protobuf/proto"],
 )

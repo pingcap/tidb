@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/etcd",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_pingcap_errors//:errors",
-        "@io_etcd_go_etcd_client_v3//:client",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/go.etcd.io/etcd/client/v3:client",
     ],
 )
 
@@ -18,9 +18,9 @@ go_test(
     embed = [":etcd"],
     flaky = True,
     deps = [
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_client_v3//:client",
-        "@io_etcd_go_etcd_tests_v3//integration",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.etcd.io/etcd/client/v3:client",
+        "//vendor/go.etcd.io/etcd/tests/v3/integration",
     ],
 )

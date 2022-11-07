@@ -5,5 +5,5 @@ go_library(
     srcs = ["tls.go"],
     importpath = "github.com/pingcap/tidb/util/tls",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_atomic//:atomic"],
+    deps = ["//vendor/go.uber.org/atomic"],
 )

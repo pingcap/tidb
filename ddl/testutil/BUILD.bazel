@@ -8,12 +8,12 @@ go_library(
     deps = [
         "//domain",
         "//kv",
-        "//parser/model",
         "//session",
         "//sessiontxn",
         "//table",
         "//table/tables",
         "//types",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/tidb/parser/model",
     ],
 )

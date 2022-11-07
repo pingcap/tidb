@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_gostaticanalysis_forcetypeassert//:forcetypeassert",
+        "//vendor/github.com/gostaticanalysis/forcetypeassert",
     ],
 )

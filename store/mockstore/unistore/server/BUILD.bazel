@@ -11,8 +11,8 @@ go_library(
         "//store/mockstore/unistore/pd",
         "//store/mockstore/unistore/tikv",
         "//store/mockstore/unistore/tikv/mvcc",
-        "@com_github_pingcap_badger//:badger",
-        "@com_github_pingcap_badger//options",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/badger",
+        "//vendor/github.com/pingcap/badger/options",
+        "//vendor/github.com/pingcap/errors",
     ],
 )

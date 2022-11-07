@@ -5,7 +5,7 @@ go_library(
     srcs = ["pluginpkg.go"],
     importpath = "github.com/pingcap/tidb/cmd/pluginpkg",
     visibility = ["//visibility:private"],
-    deps = ["@com_github_burntsushi_toml//:toml"],
+    deps = ["//vendor/github.com/BurntSushi/toml"],
 )
 
 go_binary(

@@ -11,8 +11,8 @@ go_library(
         "//util/hack",
         "//util/logutil",
         "//util/topsql/state",
-        "@com_github_google_pprof//profile",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/google/pprof/profile",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -27,7 +27,7 @@ go_test(
         "//util/cpuprofile",
         "//util/cpuprofile/testutil",
         "//util/topsql/state",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
     ],
 )

@@ -6,15 +6,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/cmd/explaintest",
     visibility = ["//visibility:private"],
     deps = [
-        "//parser/ast",
         "//session",
         "//sessionctx",
         "//util/logutil",
         "//util/mock",
-        "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/go-sql-driver/mysql",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "//vendor/go.uber.org/zap",
     ],
 )
 

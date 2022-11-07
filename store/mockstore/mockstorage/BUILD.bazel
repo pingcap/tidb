@@ -9,8 +9,8 @@ go_library(
         "//kv",
         "//store/copr",
         "//store/driver/txn",
-        "@com_github_pingcap_kvproto//pkg/deadlock",
-        "@com_github_tikv_client_go_v2//config",
-        "@com_github_tikv_client_go_v2//tikv",
+        "//vendor/github.com/pingcap/kvproto/pkg/deadlock",
+        "//vendor/github.com/tikv/client-go/v2/config",
+        "//vendor/github.com/tikv/client-go/v2/tikv",
     ],
 )

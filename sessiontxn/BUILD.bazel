@@ -12,9 +12,9 @@ go_library(
     deps = [
         "//infoschema",
         "//kv",
-        "//parser/ast",
         "//sessionctx",
         "//util/stringutil",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
     ],
 )
 
@@ -34,8 +34,6 @@ go_test(
         "//expression",
         "//infoschema",
         "//kv",
-        "//parser/ast",
-        "//parser/model",
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/isolation",
@@ -46,9 +44,11 @@ go_test(
         "//testkit/testfork",
         "//testkit/testsetup",
         "//tests/realtikvtest",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/failpoint",
+        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/github.com/tikv/client-go/v2/oracle",
+        "//vendor/go.uber.org/goleak",
     ],
 )

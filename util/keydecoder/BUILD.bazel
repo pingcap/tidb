@@ -8,11 +8,11 @@ go_library(
     deps = [
         "//infoschema",
         "//kv",
-        "//parser/model",
         "//tablecodec",
         "//util/logutil",
-        "@com_github_pingcap_errors//:errors",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -27,7 +27,6 @@ go_test(
     flaky = True,
     deps = [
         "//infoschema",
-        "//parser/model",
         "//planner/core",
         "//sessionctx/stmtctx",
         "//table",
@@ -36,8 +35,9 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util/codec",
-        "@com_github_stretchr_testify//assert",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/stretchr/testify/assert",
+        "//vendor/go.opencensus.io/stats/view",
+        "//vendor/go.uber.org/goleak",
     ],
 )

@@ -11,9 +11,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/topsql/state",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
-        "@org_uber_go_atomic//:atomic",
+        "//vendor/github.com/tikv/client-go/v2/tikvrpc",
+        "//vendor/github.com/tikv/client-go/v2/tikvrpc/interceptor",
+        "//vendor/go.uber.org/atomic",
     ],
 )
 
@@ -31,10 +31,10 @@ go_test(
     deps = [
         "//testkit/testsetup",
         "//util/topsql/state",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/github.com/stretchr/testify/assert",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/github.com/tikv/client-go/v2/tikvrpc",
+        "//vendor/go.uber.org/atomic",
+        "//vendor/go.uber.org/goleak",
     ],
 )

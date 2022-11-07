@@ -9,9 +9,9 @@ go_library(
         "//sessionctx/variable",
         "//util",
         "//util/logutil",
-        "@com_github_pingcap_log//:log",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/go.uber.org/zap",
+        "//vendor/go.uber.org/zap/zapcore",
     ],
 )
 
@@ -23,6 +23,6 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "@org_uber_go_goleak//:goleak",
+        "//vendor/go.uber.org/goleak",
     ],
 )

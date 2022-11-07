@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_ashanbrown_makezero//pkg/analyzer",
+        "//vendor/github.com/ashanbrown/makezero/pkg/analyzer",
     ],
 )

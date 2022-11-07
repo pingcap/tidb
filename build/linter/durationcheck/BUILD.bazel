@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_charithe_durationcheck//:durationcheck",
+        "//vendor/github.com/charithe/durationcheck",
     ],
 )

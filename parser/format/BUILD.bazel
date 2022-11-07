@@ -14,7 +14,7 @@ go_test(
     embed = [":format"],
     flaky = True,
     deps = [
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

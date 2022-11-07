@@ -10,12 +10,12 @@ go_library(
         "//br/pkg/lightning/restore/opts",
         "//br/pkg/storage",
         "//errno",
-        "//parser/model",
         "//store/pdtypes",
         "//util/dbterror",
         "//util/filter",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/metapb",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/kvproto/pkg/metapb",
+        "//vendor/github.com/pingcap/tidb/parser/model",
     ],
 )
 
@@ -27,7 +27,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/restore",
-        "//parser/model",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/pingcap/tidb/parser/model",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

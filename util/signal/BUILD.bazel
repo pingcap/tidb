@@ -11,6 +11,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/logutil",
-        "@org_uber_go_zap//:zap",
+        "//vendor/go.uber.org/zap",
     ],
 )

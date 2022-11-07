@@ -11,10 +11,10 @@ go_library(
     deps = [
         "//util",
         "//util/etcd",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
-        "@io_etcd_go_etcd_client_v3//:client",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/pingcap/errors",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/go.etcd.io/etcd/client/v3:client",
+        "//vendor/go.uber.org/zap",
     ],
 )
 
@@ -26,7 +26,7 @@ go_test(
     flaky = True,
     deps = [
         "//util/etcd",
-        "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_tests_v3//integration",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.etcd.io/etcd/tests/v3/integration",
     ],
 )

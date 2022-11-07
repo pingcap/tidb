@@ -5,5 +5,5 @@ go_library(
     srcs = ["trx_events.go"],
     importpath = "github.com/pingcap/tidb/util/trxevents",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_kvproto//pkg/kvrpcpb"],
+    deps = ["//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb"],
 )

@@ -8,7 +8,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/promutil",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_prometheus_client_golang//prometheus"],
+    deps = ["//vendor/github.com/prometheus/client_golang/prometheus"],
 )
 
 go_test(
@@ -18,7 +18,7 @@ go_test(
     embed = [":promutil"],
     flaky = True,
     deps = [
-        "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/prometheus/client_golang/prometheus",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

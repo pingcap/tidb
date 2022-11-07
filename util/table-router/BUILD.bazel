@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/table-rule-selector",
-        "@com_github_pingcap_errors//:errors",
+        "//vendor/github.com/pingcap/errors",
     ],
 )
 
@@ -19,6 +19,6 @@ go_test(
     flaky = True,
     deps = [
         "//util/table-rule-selector",
-        "@com_github_stretchr_testify//require",
+        "//vendor/github.com/stretchr/testify/require",
     ],
 )

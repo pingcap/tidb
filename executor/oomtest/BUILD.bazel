@@ -8,11 +8,11 @@ go_test(
     deps = [
         "//testkit",
         "//testkit/testsetup",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
+        "//vendor/github.com/pingcap/failpoint",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/github.com/stretchr/testify/require",
+        "//vendor/go.uber.org/goleak",
+        "//vendor/go.uber.org/zap",
+        "//vendor/go.uber.org/zap/zapcore",
     ],
 )

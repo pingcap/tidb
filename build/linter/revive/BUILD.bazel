@@ -7,11 +7,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_mgechev_revive//config",
-        "@com_github_mgechev_revive//lint",
-        "@com_github_mgechev_revive//rule",
-        "@com_github_pingcap_log//:log",
-        "@org_golang_x_tools//go/analysis",
-        "@org_uber_go_zap//:zap",
+        "//vendor/github.com/mgechev/revive/config",
+        "//vendor/github.com/mgechev/revive/lint",
+        "//vendor/github.com/mgechev/revive/rule",
+        "//vendor/github.com/pingcap/log",
+        "//vendor/go.uber.org/zap",
+        "//vendor/golang.org/x/tools/go/analysis",
     ],
 )

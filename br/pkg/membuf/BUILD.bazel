@@ -13,5 +13,5 @@ go_test(
     srcs = ["buffer_test.go"],
     embed = [":membuf"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = ["//vendor/github.com/stretchr/testify/require"],
 )
