@@ -751,6 +751,7 @@ func TestCompressChunkRestore(t *testing.T) {
 			id++
 		}
 	}
+	require.Equal(t, int64(33), rowID)
 
 	// test read starting from compress files' middle
 	chunk = checkpoints.ChunkCheckpoint{
@@ -775,6 +776,8 @@ func TestCompressChunkRestore(t *testing.T) {
 			id++
 		}
 	}
+	_, rowID = cr.parser.Pos()
+	require.Equal(t, int64(100), rowID)
 	err = cr.parser.ReadRow()
 	require.Equal(t, io.EOF, errors.Cause(err))
 }
