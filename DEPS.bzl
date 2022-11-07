@@ -694,8 +694,8 @@ def go_deps():
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable",
         importpath = "github.com/daixiang0/gci",
-        sum = "h1:4VLVDNdJ+wkXxz/nr5QRrbeK+JCvkMVqYjUWB5EnPF4=",
-        version = "v0.8.2",
+        sum = "h1:hc1eoyHmSPL6nfzkEYD0gBLr4dmWpHUrAGf4Lm6hDa4=",
+        version = "v0.8.3-0.20221107080612-85f4d54ed800",
     )
 
     go_repository(
