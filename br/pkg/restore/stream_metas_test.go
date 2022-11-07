@@ -1706,3 +1706,592 @@ func TestTruncate2(t *testing.T) {
 		}
 	}
 }
+
+func TestTruncate3(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpDir)
+	require.NoError(t, err)
+
+	cases := []struct {
+		metas      []*backuppb.Metadata
+		testParams []*testParam2
+	}{
+		{
+			// metadata   3------10  12----------20
+			//            ↑       ↑   ↑           ↑
+			//            +-+--+--+   +----+--+---+
+			//            ↓ ↓  ↓  ↓   ↓    ↓  ↓   ↓
+			// filegroup  3--d-7  ↓   ↓    ↓  ↓   ↓
+			// filegroup    5--d-10   ↓    ↓  ↓   ↓
+			// filegroup  3----d-----12---w--18   ↓
+			// filegroup    5----d--------15--w--20
+			metas: []*backuppb.Metadata{
+				m_2(1,
+					3, 7, stream.DefaultCF, 0,
+					5, 10, stream.DefaultCF, 0,
+				),
+				m_2(2,
+					12, 18, stream.WriteCF, 3,
+					15, 20, stream.WriteCF, 5,
+				),
+			},
+			testParams: []*testParam2{
+				{
+					until:        []uint64{2},
+					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							3, 7, stream.DefaultCF, 0,
+							5, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 3,
+							15, 20, stream.WriteCF, 5,
+						),
+					},
+				}, {
+					until:        []uint64{3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
+					shiftUntilTS: returnV(3), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							3, 7, stream.DefaultCF, 0,
+							5, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 3,
+							15, 20, stream.WriteCF, 5,
+						),
+					},
+				}, {
+					until:        []uint64{19, 20},
+					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							3, 7, stream.DefaultCF, 0,
+							5, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 3,
+							15, 20, stream.WriteCF, 5,
+						),
+					},
+				}, {
+					until:        []uint64{25},
+					shiftUntilTS: returnV(25), restMetadata: []*backuppb.Metadata{},
+				},
+			},
+		}, {
+			// metadata   2------10  12----------20
+			//            ↑       ↑   ↑           ↑
+			//            +-+--+--+   +----+--+---+
+			//            ↓ ↓  ↓  ↓   ↓    ↓  ↓   ↓
+			// filegroup  2--d-6  ↓   ↓    ↓  ↓   ↓
+			// filegroup    4--d-10   ↓    ↓  ↓   ↓
+			// filegroup  2----d-----12---w--18   ↓
+			// filegroup         8---d----15--w--20
+			metas: []*backuppb.Metadata{
+				m_2(1,
+					2, 6, stream.DefaultCF, 0,
+					4, 10, stream.DefaultCF, 0,
+				),
+				m_2(2,
+					12, 18, stream.WriteCF, 2,
+					15, 20, stream.WriteCF, 8,
+				),
+			},
+			testParams: []*testParam2{
+				{
+					until:        []uint64{1},
+					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							4, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 2,
+							15, 20, stream.WriteCF, 8,
+						),
+					},
+				}, {
+					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
+					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							4, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 2,
+							15, 20, stream.WriteCF, 8,
+						),
+					},
+				}, {
+					until:        []uint64{19, 20},
+					shiftUntilTS: returnV(8), restMetadata: []*backuppb.Metadata{
+						m_1(1,
+							4, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							12, 18, stream.WriteCF, 2,
+							15, 20, stream.WriteCF, 8,
+						),
+					},
+				}, {
+					until:        []uint64{25},
+					shiftUntilTS: returnV(25), restMetadata: []*backuppb.Metadata{},
+				},
+			},
+		}, {
+			// metadata   2------10    14----------20
+			//            ↑       ↑     ↑           ↑
+			//            +-+--+--+     +----+--+---+
+			//            ↓ ↓  ↓  ↓     ↓    ↓  ↓   ↓
+			// filegroup  2--d-6  ↓     ↓    ↓  ↓   ↓
+			// filegroup    4--d-10     ↓    ↓  ↓   ↓
+			// filegroup  2----d-------14---w--18   ↓
+			// filegroup            12---d--16--w--20
+			metas: []*backuppb.Metadata{
+				m_2(1,
+					2, 6, stream.DefaultCF, 0,
+					4, 10, stream.DefaultCF, 0,
+				),
+				m_2(2,
+					14, 18, stream.WriteCF, 2,
+					16, 20, stream.WriteCF, 12,
+				),
+			},
+			testParams: []*testParam2{
+				{
+					until:        []uint64{1},
+					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							4, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							14, 18, stream.WriteCF, 2,
+							16, 20, stream.WriteCF, 12,
+						),
+					},
+				}, {
+					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
+					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							4, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							14, 18, stream.WriteCF, 2,
+							16, 20, stream.WriteCF, 12,
+						),
+					},
+				}, {
+					until:        []uint64{19, 20},
+					shiftUntilTS: returnV(12), restMetadata: []*backuppb.Metadata{
+						m_2(2,
+							14, 18, stream.WriteCF, 2,
+							16, 20, stream.WriteCF, 8,
+						),
+					},
+				}, {
+					until:        []uint64{25},
+					shiftUntilTS: returnV(25), restMetadata: []*backuppb.Metadata{},
+				},
+			},
+		}, {
+			// metadata   2-------10    14----------20
+			//            ↑        ↑     ↑           ↑
+			//            +-+--+---+     +----+--+---+
+			//            ↓ ↓  ↓   ↓     ↓    ↓  ↓   ↓
+			// filegroup  2--d-6   ↓     ↓    ↓  ↓   ↓
+			// filegroup    4-d-8w10     ↓    ↓  ↓   ↓
+			// filegroup                14--d---18   ↓
+			// filegroup                14-d--16-w--20
+			metas: []*backuppb.Metadata{
+				m_2(1,
+					2, 6, stream.DefaultCF, 0,
+					8, 10, stream.WriteCF, 4,
+				),
+				m_2(2,
+					14, 18, stream.DefaultCF, 0,
+					16, 20, stream.WriteCF, 14,
+				),
+			},
+			testParams: []*testParam2{
+				{
+					until:        []uint64{1},
+					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							8, 10, stream.WriteCF, 4,
+						),
+						m_2(2,
+							14, 18, stream.DefaultCF, 0,
+							16, 20, stream.WriteCF, 14,
+						),
+					},
+				}, {
+					until:        []uint64{2, 3},
+					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							8, 10, stream.WriteCF, 4,
+						),
+						m_2(2,
+							14, 18, stream.DefaultCF, 0,
+							16, 20, stream.WriteCF, 14,
+						),
+					},
+				}, {
+					until:        []uint64{4, 5, 6, 7, 8, 9, 10},
+					shiftUntilTS: returnV(4), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							8, 10, stream.WriteCF, 4,
+						),
+						m_2(2,
+							14, 18, stream.DefaultCF, 0,
+							16, 20, stream.WriteCF, 14,
+						),
+					},
+				}, {
+					until:        []uint64{12},
+					shiftUntilTS: returnV(12), restMetadata: []*backuppb.Metadata{
+						m_2(2,
+							14, 18, stream.DefaultCF, 0,
+							16, 20, stream.WriteCF, 14,
+						),
+					},
+				}, {
+					until:        []uint64{14, 15, 16, 17, 18, 19, 20},
+					shiftUntilTS: returnV(14), restMetadata: []*backuppb.Metadata{
+						m_2(2,
+							14, 18, stream.DefaultCF, 0,
+							16, 20, stream.WriteCF, 14,
+						),
+					},
+				}, {
+					until:        []uint64{25},
+					shiftUntilTS: returnV(25), restMetadata: []*backuppb.Metadata{},
+				},
+			},
+		}, {
+			// metadata   2-------10    14----------22    24-w-26
+			//            ↑        ↑     ↑           ↑     ↑    ↑
+			//            +-+--+---+     +----+--+---+     +----+
+			//            ↓ ↓  ↓   ↓     ↓    ↓  ↓   ↓     ↓    ↓
+			// filegroup  2--d-6   ↓     ↓    ↓  ↓   ↓     ↓    ↓
+			// filegroup        8d10     ↓    ↓  ↓   ↓     ↓    ↓
+			// filegroup          9--d--14--w---18   ↓     ↓    ↓
+			// filegroup                      16-d--22     ↓    ↓
+			// filegroup                           20---d-24-w-26
+			metas: []*backuppb.Metadata{
+				m_2(1,
+					2, 6, stream.DefaultCF, 0,
+					8, 10, stream.DefaultCF, 0,
+				),
+				m_2(2,
+					14, 18, stream.WriteCF, 9,
+					16, 22, stream.DefaultCF, 0,
+				),
+				m_1(3,
+					24, 26, stream.WriteCF, 20,
+				),
+			},
+			testParams: []*testParam2{
+				{
+					until:        []uint64{1, 2, 3, 6},
+					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
+						m_2(1,
+							2, 6, stream.DefaultCF, 0,
+							8, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							14, 18, stream.WriteCF, 9,
+							16, 22, stream.DefaultCF, 0,
+						),
+						m_1(3,
+							24, 26, stream.WriteCF, 20,
+						),
+					},
+				}, {
+					until:        []uint64{7, 8},
+					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
+						m_1(1,
+							8, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							14, 18, stream.WriteCF, 9,
+							16, 22, stream.DefaultCF, 0,
+						),
+						m_1(3,
+							24, 26, stream.WriteCF, 20,
+						),
+					},
+				}, {
+					until:        []uint64{9, 10, 11, 14, 15, 16, 17, 18},
+					shiftUntilTS: returnV(9), restMetadata: []*backuppb.Metadata{
+						m_1(1,
+							8, 10, stream.DefaultCF, 0,
+						),
+						m_2(2,
+							14, 18, stream.WriteCF, 9,
+							16, 22, stream.DefaultCF, 0,
+						),
+						m_1(3,
+							24, 26, stream.WriteCF, 20,
+						),
+					},
+				}, {
+					until:        []uint64{19},
+					shiftUntilTS: returnV(19), restMetadata: []*backuppb.Metadata{
+						m_1(2,
+							16, 22, stream.DefaultCF, 0,
+						),
+						m_1(3,
+							24, 26, stream.WriteCF, 20,
+						),
+					},
+				}, {
+					until:        []uint64{20, 21, 22, 23, 24, 25, 26},
+					shiftUntilTS: returnV(20), restMetadata: []*backuppb.Metadata{
+						m_1(2,
+							16, 22, stream.DefaultCF, 0,
+						),
+						m_1(3,
+							24, 26, stream.WriteCF, 20,
+						),
+					},
+				}, {
+					until:        []uint64{28},
+					shiftUntilTS: returnV(28), restMetadata: []*backuppb.Metadata{},
+				},
+			},
+		},
+	}
+
+	for i, cs := range cases {
+		for j, ts := range cs.testParams {
+			for _, until := range ts.until {
+				t.Logf("case %d, param %d, until %d", i, j, until)
+				metas := restore.StreamMetadataSet{
+					Helper: stream.NewMetadataHelper(),
+				}
+				err := generateFiles(ctx, s, cs.metas, tmpDir)
+				require.NoError(t, err)
+				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
+				require.NoError(t, err)
+				require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
+				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+				require.Equal(t, len(n), 0)
+				require.NoError(t, err)
+
+				// check the result
+				checkFiles(ctx, s, ts.restMetadata, t)
+			}
+		}
+	}
+}
+
+type testParam3 struct {
+	until        []uint64
+	shiftUntilTS func(uint64) uint64
+}
+
+func fi(minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		NumberOfEntries:       1,
+		MinTs:                 minTS,
+		MaxTs:                 maxTS,
+		Cf:                    cf,
+		MinBeginTsInDefaultCf: defaultTS,
+	}
+}
+
+func getTsFromFiles(files []*backuppb.DataFileInfo) (uint64, uint64, uint64) {
+	if len(files) == 0 {
+		return 0, 0, 0
+	}
+	f := files[0]
+	minTs, maxTs, resolvedTs := f.MinTs, f.MaxTs, f.ResolvedTs
+	for _, file := range files {
+		if file.MinTs < minTs {
+			minTs = file.MinTs
+		}
+		if file.MaxTs > maxTs {
+			maxTs = file.MaxTs
+		}
+		if file.ResolvedTs < resolvedTs {
+			resolvedTs = file.ResolvedTs
+		}
+	}
+	return minTs, maxTs, resolvedTs
+}
+
+func mf(id int64, filess [][]*backuppb.DataFileInfo) *backuppb.Metadata {
+	filegroups := make([]*backuppb.DataFileGroup, 0)
+	for _, files := range filess {
+		minTs, maxTs, resolvedTs := getTsFromFiles(files)
+		filegroups = append(filegroups, &backuppb.DataFileGroup{
+			DataFilesInfo: files,
+			MinTs:         minTs,
+			MaxTs:         maxTs,
+			MinResolvedTs: resolvedTs,
+		})
+	}
+
+	m := &backuppb.Metadata{
+		StoreId:     id,
+		MetaVersion: backuppb.MetaVersion_V2,
+	}
+	restore.ReplaceMetadata(m, filegroups)
+	return m
+}
+
+func TestCalculateShiftTS(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpDir)
+	require.NoError(t, err)
+
+	cases := []struct {
+		metas      []*backuppb.Metadata
+		testParams []*testParam3
+	}{
+		{
+			// filegroup   10          35
+			//              ↑           ↑
+			//              +----+-++---+
+			//              ↓    ↓ ↓↓   ↓
+			// fileinfo    10-d-20
+			// fileinfo  8--d-15--w-30
+			// fileinfo       11-d-25-w-35
+			metas: []*backuppb.Metadata{
+				mf(1, [][]*backuppb.DataFileInfo{
+					{
+						fi(10, 20, stream.DefaultCF, 0),
+						fi(15, 30, stream.WriteCF, 8),
+						fi(25, 35, stream.WriteCF, 11),
+					},
+				}),
+			},
+			testParams: []*testParam3{
+				{
+					until:        []uint64{3},
+					shiftUntilTS: returnV(3),
+				}, {
+					until:        []uint64{8, 9, 10, 11, 12, 15, 16, 20, 21, 25, 26, 30},
+					shiftUntilTS: returnV(8),
+				}, {
+					until:        []uint64{31, 35},
+					shiftUntilTS: returnV(11),
+				}, {
+					until:        []uint64{36},
+					shiftUntilTS: returnV(36),
+				},
+			},
+		}, {
+			// filegroup   50               85
+			//              ↑                ↑
+			//              +-+-+--+--+------+
+			//              ↓ ↓ ↓  ↓  ↓      ↓
+			// fileinfo      55-d-65-70
+			// fileinfo    50-d60
+			// fileinfo               72d80w85
+			metas: []*backuppb.Metadata{
+				mf(1, [][]*backuppb.DataFileInfo{
+					{
+						fi(65, 70, stream.WriteCF, 55),
+						fi(50, 60, stream.DefaultCF, 0),
+						fi(80, 85, stream.WriteCF, 72),
+					},
+				}),
+			},
+			testParams: []*testParam3{
+				{
+					until:        []uint64{45, 50, 52},
+					shiftUntilTS: returnSelf(),
+				}, {
+					until:        []uint64{55, 56, 60, 61, 65, 66, 70},
+					shiftUntilTS: returnV(55),
+				}, {
+					until:        []uint64{71},
+					shiftUntilTS: returnV(71),
+				}, {
+					until:        []uint64{72, 73, 80, 81, 85},
+					shiftUntilTS: returnV(72),
+				}, {
+					until:        []uint64{86},
+					shiftUntilTS: returnV(86),
+				},
+			},
+		}, {
+			// filegroup   10          35   50               85
+			//              ↑           ↑   ↑                ↑
+			//              +----+-++---+   +-+-+--+--+------+
+			//              ↓    ↓ ↓↓   ↓   ↓ ↓ ↓  ↓  ↓      ↓
+			// fileinfo    10-d-20           55-d-65-70
+			// fileinfo  8--d-15--w-30     50-d60
+			// fileinfo       11-d-25-w-35            72d80w85
+			metas: []*backuppb.Metadata{
+				mf(1, [][]*backuppb.DataFileInfo{
+					{
+						fi(10, 20, stream.DefaultCF, 0),
+						fi(15, 30, stream.WriteCF, 8),
+						fi(25, 35, stream.WriteCF, 11),
+					},
+				}),
+				mf(2, [][]*backuppb.DataFileInfo{
+					{
+						fi(65, 70, stream.WriteCF, 55),
+						fi(50, 60, stream.DefaultCF, 0),
+						fi(80, 85, stream.WriteCF, 72),
+					},
+				}),
+			},
+			testParams: []*testParam3{
+				{
+					until:        []uint64{3},
+					shiftUntilTS: returnV(3),
+				}, {
+					until:        []uint64{8, 9, 10, 11, 12, 15, 16, 20, 21, 25, 26, 30},
+					shiftUntilTS: returnV(8),
+				}, {
+					until:        []uint64{31, 35},
+					shiftUntilTS: returnV(11),
+				}, {
+					until:        []uint64{36},
+					shiftUntilTS: returnV(36),
+				}, {
+					until:        []uint64{45, 50, 52},
+					shiftUntilTS: returnSelf(),
+				}, {
+					until:        []uint64{55, 56, 60, 61, 65, 66, 70},
+					shiftUntilTS: returnV(55),
+				}, {
+					until:        []uint64{71},
+					shiftUntilTS: returnV(71),
+				}, {
+					until:        []uint64{72, 73, 80, 81, 85},
+					shiftUntilTS: returnV(72),
+				}, {
+					until:        []uint64{86},
+					shiftUntilTS: returnV(86),
+				},
+			},
+		},
+	}
+
+	for i, cs := range cases {
+		for j, ts := range cs.testParams {
+			for _, until := range ts.until {
+				t.Logf("case %d, param %d, until %d", i, j, until)
+				metas := restore.StreamMetadataSet{
+					Helper: stream.NewMetadataHelper(),
+				}
+				err := generateFiles(ctx, s, cs.metas, tmpDir)
+				require.NoError(t, err)
+				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
+				require.NoError(t, err)
+				require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until), cs.metas)
+			}
+		}
+	}
+}
