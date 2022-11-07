@@ -1427,7 +1427,7 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 			}
 
 			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTS(ctx)
+			restoreTS, err := rc.GetTSWithRetry(ctx)
 			if err != nil {
 				log.Error("getTS failed", zap.Error(err))
 			} else {
@@ -2399,7 +2399,7 @@ func (rc *Client) RunGCRowsLoader(ctx context.Context) {
 func (rc *Client) InsertGCRows(ctx context.Context) error {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
-	ts, err := rc.GetTS(ctx)
+	ts, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
