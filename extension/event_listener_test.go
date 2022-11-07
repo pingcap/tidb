@@ -107,6 +107,21 @@ func getPreparedID(t *testing.T, sctx sessionctx.Context) uint32 {
 	return sessStates.PreparedStmtID
 }
 
+type stmtEventCase struct {
+	sql           string
+	binaryExecute uint32
+	executeParams []paramInfo
+
+	err             string
+	originalText    string
+	redactText      string
+	affectedRows    uint64
+	tables          []stmtctx.TableEntry
+	parseError      bool
+	prepareNotFound bool
+	multiQueryCases []stmtEventCase
+}
+
 func TestExtensionStmtEvents(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
@@ -119,6 +134,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 	conn := server.CreateMockConn(t, serv)
 	defer conn.Close()
 
+	require.NoError(t, conn.HandleQuery(context.Background(), "SET tidb_multi_statement_mode='ON'"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create table t1(a int, b int)"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create database test2"))
@@ -145,19 +161,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 	connID := conn.Context().Session.GetSessionVars().ConnectionID
 	require.NotEqual(t, uint64(0), connID)
 
-	cases := []struct {
-		sql           string
-		binaryExecute uint32
-		executeParams []paramInfo
-
-		err             string
-		originalText    string
-		redactText      string
-		affectedRows    uint64
-		tables          []stmtctx.TableEntry
-		parseError      bool
-		prepareNotFound bool
-	}{
+	cases := []stmtEventCase{
 		{
 			sql:        "select 1",
 			redactText: "select ?",
@@ -238,6 +242,22 @@ func TestExtensionStmtEvents(t *testing.T) {
 				{DB: "test", Table: "t1"},
 			},
 		},
+		{
+			sql: "select 1;select * from t1 where a > 1",
+			multiQueryCases: []stmtEventCase{
+				{
+					originalText: "select 1;",
+					redactText:   "select ? ;",
+				},
+				{
+					originalText: "select * from t1 where a > 1",
+					redactText:   "select * from `t1` where `a` > ?",
+					tables: []stmtctx.TableEntry{
+						{DB: "test", Table: "t1"},
+					},
+				},
+			},
+		},
 	}
 
 	for i, c := range cases {
@@ -264,65 +284,72 @@ func TestExtensionStmtEvents(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		require.Equal(t, 1, len(h.records), "%d", i)
-		record := h.records[0]
-		if c.err != "" {
-			require.Equal(t, c.err, record.err)
-			require.Equal(t, extension.StmtError, record.tp)
-		} else {
-			require.Empty(t, record.err)
-			require.Equal(t, extension.StmtSuccess, record.tp)
+		subCases := c.multiQueryCases
+		if subCases == nil {
+			subCases = []stmtEventCase{c}
 		}
 
-		require.NotNil(t, record.connInfo)
-		if c.parseError {
-			require.Nil(t, record.stmtNode)
-			require.Nil(t, record.executeStmtNode)
-			require.Nil(t, record.preparedNode)
-		} else {
-			require.NotNil(t, record.stmtNode)
-			if c.binaryExecute != 0 || strings.HasPrefix(strings.ToLower(c.sql), "execute ") {
-				require.NotNil(t, record.executeStmtNode)
-				require.Equal(t, record.stmtNode, record.executeStmtNode)
-				if c.prepareNotFound {
-					require.Nil(t, record.preparedNode)
-				} else {
-					require.NotNil(t, record.preparedNode)
-					require.NotEqual(t, record.preparedNode, record.executeStmtNode)
-				}
+		require.Equal(t, len(subCases), len(h.records), "%d", i)
+		for j, subCase := range subCases {
+			record := h.records[j]
+			if subCase.err != "" {
+				require.Equal(t, subCase.err, record.err)
+				require.Equal(t, extension.StmtError, record.tp)
 			} else {
+				require.Empty(t, record.err)
+				require.Equal(t, extension.StmtSuccess, record.tp)
+			}
+
+			require.NotNil(t, record.connInfo)
+			if subCase.parseError {
+				require.Nil(t, record.stmtNode)
 				require.Nil(t, record.executeStmtNode)
 				require.Nil(t, record.preparedNode)
+			} else {
+				require.NotNil(t, record.stmtNode)
+				if subCase.binaryExecute != 0 || strings.HasPrefix(strings.ToLower(subCase.sql), "execute ") {
+					require.NotNil(t, record.executeStmtNode)
+					require.Equal(t, record.stmtNode, record.executeStmtNode)
+					if c.prepareNotFound {
+						require.Nil(t, record.preparedNode)
+					} else {
+						require.NotNil(t, record.preparedNode)
+						require.NotEqual(t, record.preparedNode, record.executeStmtNode)
+					}
+				} else {
+					require.Nil(t, record.executeStmtNode)
+					require.Nil(t, record.preparedNode)
+				}
 			}
-		}
 
-		require.Equal(t, connID, record.connInfo.ConnectionID)
-		require.Equal(t, "root", record.user.Username)
-		require.Equal(t, "localhost", record.user.Hostname)
-		require.Equal(t, "root", record.user.AuthUsername)
-		require.Equal(t, "%", record.user.AuthHostname)
+			require.Equal(t, connID, record.connInfo.ConnectionID)
+			require.Equal(t, "root", record.user.Username)
+			require.Equal(t, "localhost", record.user.Hostname)
+			require.Equal(t, "root", record.user.AuthUsername)
+			require.Equal(t, "%", record.user.AuthHostname)
 
-		require.Equal(t, c.originalText, record.originalText)
-		require.Equal(t, c.redactText, record.redactText)
-		require.Equal(t, c.affectedRows, record.affectedRows)
-		if c.tables == nil {
-			c.tables = []stmtctx.TableEntry{}
-		}
-		sort.Slice(c.tables, func(i, j int) bool {
-			l := c.tables[i]
-			r := c.tables[j]
-			return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
-		})
-		sort.Slice(record.tables, func(i, j int) bool {
-			l := c.tables[i]
-			r := c.tables[j]
-			return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
-		})
-		require.Equal(t, c.tables, record.tables)
+			require.Equal(t, subCase.originalText, record.originalText)
+			require.Equal(t, subCase.redactText, record.redactText)
+			require.Equal(t, subCase.affectedRows, record.affectedRows)
+			if subCase.tables == nil {
+				subCase.tables = []stmtctx.TableEntry{}
+			}
+			sort.Slice(subCase.tables, func(i, j int) bool {
+				l := subCase.tables[i]
+				r := subCase.tables[j]
+				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
+			})
+			sort.Slice(record.tables, func(i, j int) bool {
+				l := subCase.tables[i]
+				r := subCase.tables[j]
+				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
+			})
+			require.Equal(t, subCase.tables, record.tables)
 
-		require.Equal(t, len(c.executeParams), len(record.params))
-		for k, param := range c.executeParams {
-			require.Equal(t, uint64(param.value), record.params[k].GetUint64())
+			require.Equal(t, len(subCase.executeParams), len(record.params))
+			for k, param := range subCase.executeParams {
+				require.Equal(t, uint64(param.value), record.params[k].GetUint64())
+			}
 		}
 	}
 }

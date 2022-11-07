@@ -91,7 +91,7 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...ex
 		info.stmtNode = stmt
 	}
 
-	if sc := sessVars.StmtCtx; sc != nil && !sc.Expired {
+	if sc := sessVars.StmtCtx; sc != nil && err == nil {
 		info.sc = sc
 	} else {
 		info.sc = &stmtctx.StatementContext{}

@@ -636,17 +636,6 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	if err != nil {
 		return err
 	}
-	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
-		pkCol := tbInfo.GetPkColInfo()
-		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
-			return nil
-		}
-	}
-	// check foreign key columns should have index.
-	// TODO(crazycs520): we can remove this check after TiDB support auto create index if needed when add foreign key.
-	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
-		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
-	}
 	return nil
 }
 
@@ -665,6 +654,16 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbIn
 	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// check foreign key columns should have index.
+	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
+			return nil
+		}
+	}
+	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
+		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
 	}
 	return nil
 }
