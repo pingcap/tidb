@@ -166,7 +166,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "lazy_pessimistic_unique_check_set_count",
-			Help:      "Counter of setting tidb_constraint_check_in_place to false",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false, note that it doesn't count the default value set by tidb config",
 		},
 	)
 )
