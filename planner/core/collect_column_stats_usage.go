@@ -303,7 +303,7 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	collector := newColumnStatsUsageCollector(mode)
 	collector.collectFromPlan(lp)
 	if collector.collectVisitedTable {
-		recordTableRuntimeStatsJSON(lp.SCtx(), collector.visitedtbls)
+		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
 	set2slice := func(set map[model.TableItemID]struct{}) []model.TableItemID {
 		ret := make([]model.TableItemID, 0, len(set))

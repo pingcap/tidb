@@ -173,7 +173,7 @@ func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededInd
 	return
 }
 
-func recordTableRuntimeStatsJSON(sctx sessionctx.Context, tbls map[int64]struct{}) {
+func recordTableRuntimeStats(sctx sessionctx.Context, tbls map[int64]struct{}) {
 	tblStats := sctx.GetSessionVars().StmtCtx.TableStats
 	if tblStats == nil {
 		tblStats = map[int64]interface{}{}
