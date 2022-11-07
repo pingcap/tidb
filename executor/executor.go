@@ -132,7 +132,7 @@ type baseExecutor struct {
 	children      []Executor
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.BasicRuntimeStats
-	AllocPool     *variable.ReuseChunkPool
+	AllocPool     chunk.Allocator
 }
 
 const (
@@ -268,7 +268,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		AllocPool:    &ctx.GetSessionVars().ChunkPool,
+		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {

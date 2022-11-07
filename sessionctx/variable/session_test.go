@@ -444,7 +444,7 @@ func TestGetReuseChunk(t *testing.T) {
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 	require.False(t, sessVars.GetUseChunkAlloc())
 	// alloc is nil ，Allocate memory from the system
-	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, &sessVars.ChunkPool)
+	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
 	require.NotNil(t, chk1)
 
 	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
@@ -459,7 +459,7 @@ func TestGetReuseChunk(t *testing.T) {
 
 	//tries to apply from the cache
 	initCap := 10
-	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, &sessVars.ChunkPool)
+	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
 	for i := 0; i < chk1.NumCols(); i++ {
@@ -467,7 +467,7 @@ func TestGetReuseChunk(t *testing.T) {
 	}
 
 	alloc.Reset()
-	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, &sessVars.ChunkPool)
+	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
@@ -482,6 +482,5 @@ func TestGetReuseChunk(t *testing.T) {
 
 	sessVars.ClearAlloc(&allocpool.Alloc, true)
 	require.NotEqual(t, allocpool.Alloc, alloc)
-
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }

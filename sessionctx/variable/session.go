@@ -1309,16 +1309,16 @@ type SessionVars struct {
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
 // thread safety
-func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool *ReuseChunkPool) *chunk.Chunk {
-	if pool == nil || pool.Alloc == nil {
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
+	if pool == nil {
 		return chunk.New(fields, capacity, maxCachesize)
 	}
-	pool.Lock.Lock()
-	defer pool.Lock.Unlock()
-	if pool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+	s.ChunkPool.Lock.Lock()
+	defer s.ChunkPool.Lock.Unlock()
+	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
-	chk := pool.Alloc.Alloc(fields, capacity, maxCachesize)
+	chk := pool.Alloc(fields, capacity, maxCachesize)
 	return chk
 }
 
