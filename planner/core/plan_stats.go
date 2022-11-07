@@ -107,7 +107,6 @@ func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	if success {
 		return true, nil
 	}
-	logutil.BgLogger().Warn("SyncWaitStatsLoad failed")
 	stmtCtx.IsSyncStatsFailed = true
 	err := handleTimeout(stmtCtx)
 	return false, err

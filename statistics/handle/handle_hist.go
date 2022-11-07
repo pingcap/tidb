@@ -16,6 +16,7 @@ package handle
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -80,6 +81,11 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	return nil
 }
 
+var (
+	SuccessSyncLoadCounter = metrics.SyncLoadCounter.WithLabelValues("success")
+	TimeoutSyncLoadCounter = metrics.SyncLoadCounter.WithLabelValues("timeout")
+)
+
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
 func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
@@ -97,7 +103,6 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 	for _, col := range sc.StatsLoad.NeededItems {
 		resultCheckMap[col] = struct{}{}
 	}
-	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
 	for {
@@ -109,6 +114,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 				}
 				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
+					SuccessSyncLoadCounter.Inc()
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 					return true
 				}
@@ -116,8 +122,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 				return false
 			}
 		case <-timer.C:
-			metrics.SyncLoadTimeoutCounter.Inc()
-			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout")
+			TimeoutSyncLoadCounter.Inc()
 			return false
 		}
 	}
@@ -216,38 +221,21 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
-	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.Get(item.TableID)
-	if !ok {
-		h.writeToResultChan(task.ResultCh, result)
+	wrapper, need := h.checkTaskNeedLoad(task)
+	if !need {
 		return nil, nil
 	}
 	var err error
-	wrapper := &statsWrapper{}
-	if item.IsIndex {
-		index, ok := tbl.Indices[item.ID]
-		if !ok || index.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
-		}
-		wrapper.idx = index
-	} else {
-		col, ok := tbl.Columns[item.ID]
-		if !ok || col.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
-		}
-		wrapper.col = col
-	}
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(result.Item, task.ResultCh)
 	if !working {
-		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
+	defer func() {
+		h.finishWorking(task.ResultCh, result)
+	}()
 	// refresh statsReader to get latest stats
 	h.loadFreshStatsReader(readerCtx, ctx)
-	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
 	if err != nil {
@@ -263,12 +251,52 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 			needUpdate = true
 		}
 	}
-	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		h.writeToResultChan(task.ResultCh, result)
+	if needUpdate {
+		h.updateCachedItem(item, wrapper.col, wrapper.idx)
 	}
-	h.finishWorking(result)
+	result.Success = true
 	return nil, nil
+}
+
+func (h *Handle) checkTaskNeedLoad(task *NeededItemTask) (*statsWrapper, bool) {
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	item := result.Item
+	oldCache := h.statsCache.Load().(statsCache)
+	tbl, ok := oldCache.Get(item.TableID)
+	if !ok {
+		result.Error = errors.New("table stats empty")
+		h.writeToResultChan(task.ResultCh, result)
+		return nil, false
+	}
+	wrapper := &statsWrapper{}
+	if item.IsIndex {
+		index, ok := tbl.Indices[item.ID]
+		if !ok || index.IsFullLoad() {
+			if !ok {
+				result.Error = errors.New("index stats empty")
+			}
+			if index.IsFullLoad() {
+				result.Success = true
+			}
+			h.writeToResultChan(task.ResultCh, result)
+			return nil, false
+		}
+		wrapper.idx = index
+	} else {
+		col, ok := tbl.Columns[item.ID]
+		if !ok || col.IsFullLoad() {
+			if !ok {
+				result.Error = errors.New("column stats empty")
+			}
+			if col.IsFullLoad() {
+				result.Success = true
+			}
+			h.writeToResultChan(task.ResultCh, result)
+			return nil, false
+		}
+		wrapper.col = col
+	}
+	return wrapper, true
 }
 
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
@@ -296,22 +324,41 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (*statsWrapper, error) {
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (wrapper *statsWrapper, err error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
+
+	t := time.Now()
+	defer func() {
+		if err == nil {
+			metrics.ReadStatsHistogram.WithLabelValues("success").Observe(float64(time.Since(t).Milliseconds()))
+		} else {
+			metrics.ReadStatsHistogram.WithLabelValues("fail").Observe(float64(time.Since(t).Milliseconds()))
+		}
+	}()
+
 	c := w.col
 	index := w.idx
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	var hg *statistics.Histogram
-	var err error
 	isIndexFlag := int64(0)
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
+	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+	}
+	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
 		hg, err = h.histogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 		if err != nil {
@@ -336,16 +383,6 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
-	}
-	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
 		idxHist := &statistics.Index{
 			Histogram:  *hg,
@@ -453,6 +490,13 @@ func (h *Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stm
 			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+	isWait := rs.IsWait()
+	isSuccess := rs.IsSuccess()
+	typ := "success"
+	if !isSuccess {
+		typ = "error"
+	}
+	metrics.SyncLoadResultCounter.WithLabelValues(typ, strconv.FormatBool(isWait)).Inc()
 	select {
 	case resultCh <- rs:
 	default:
@@ -505,12 +549,16 @@ func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsL
 	return true
 }
 
-func (h *Handle) finishWorking(result stmtctx.StatsLoadResult) {
+func (h *Handle) finishWorking(resultCh chan stmtctx.StatsLoadResult, result stmtctx.StatsLoadResult) {
+	h.writeToResultChan(resultCh, result)
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
 	if chList, ok := h.StatsLoad.WorkingColMap[result.Item]; ok {
 		list := chList[1:]
-		for _, ch := range list {
+		for index, ch := range list {
+			if index > 0 {
+				result.Wait = true
+			}
 			h.writeToResultChan(ch, result)
 		}
 	}

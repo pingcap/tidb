@@ -1103,13 +1103,25 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 
 // StatsLoadResult indicates result for StatsLoad
 type StatsLoadResult struct {
-	Item  model.TableItemID
-	Error error
+	Item    model.TableItemID
+	Error   error
+	Success bool
+	Wait    bool
 }
 
 // HasError returns whether result has error
 func (r StatsLoadResult) HasError() bool {
 	return r.Error != nil
+}
+
+// IsSuccess indicates StatsLoadResult actually load stats successfully
+func (r StatsLoadResult) IsSuccess() bool {
+	return r.Success
+}
+
+// IsWait indicates whether the result is wait other result
+func (r StatsLoadResult) IsWait() bool {
+	return r.Wait
 }
 
 // ErrorMsg returns StatsLoadResult err msg
