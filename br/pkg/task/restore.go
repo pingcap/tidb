@@ -58,7 +58,12 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
+	FlagPiTRBatchCount = "pitr-batch-count"
+	FlagPiTRBatchSize  = "pitr-batch-size"
 
+	defaultPiTRBatchCount           = 16
+	defaultPiTRBatchSize            = 32 * 1024 * 1024
 	defaultRestoreConcurrency       = 128
 	defaultRestoreStreamConcurrency = 256
 	maxRestoreBatchSizeLimit        = 10240
@@ -169,6 +174,8 @@ type RestoreConfig struct {
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+	pitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	pitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -200,6 +207,10 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "")
+	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "")
+	_ = command.Flags().MarkHidden(FlagPiTRBatchCount)
+	_ = command.Flags().MarkHidden(FlagPiTRBatchSize)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -228,6 +239,12 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
 
+	if cfg.pitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.pitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

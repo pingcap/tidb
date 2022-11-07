@@ -76,8 +76,6 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	MetaKVBatchSize = 64 * 1024 * 1024
-	pitrBatchCount  = 8
-	pitrBatchSize   = 7 * 1024 * 1024
 )
 
 // Client sends requests to restore files.
@@ -1892,6 +1890,7 @@ func applyKVFilesWithBatchMethod(
 					applyFunc(fs.defaultFiles, int64(fs.defaultKVCount), fs.defaultSize)
 					fs.defaultFiles = nil
 					fs.defaultSize = 0
+					fs.defaultKVCount = 0
 				}
 			} else {
 				if fs.writeFiles == nil {
@@ -1900,10 +1899,11 @@ func applyKVFilesWithBatchMethod(
 				fs.writeFiles = append(fs.writeFiles, f)
 				fs.writeSize += f.GetLength()
 				fs.writeKVCount += f.GetNumberOfEntries()
-				if len(fs.writeFiles) >= batchCount || fs.writeSize > batchSize {
+				if len(fs.writeFiles) >= batchCount || fs.writeSize >= batchSize {
 					applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
-					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.writeFiles = nil
 					fs.writeSize = 0
+					fs.writeKVCount = 0
 				}
 			}
 		}
@@ -1922,6 +1922,7 @@ func applyKVFilesWithBatchMethod(
 					applyFunc(tmpFiles, tmpKVCount, tmpSize)
 					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
 					tmpSize = 0
+					tmpKVCount = 0
 				}
 			}
 			if len(tmpFiles) > 0 {
@@ -1961,6 +1962,8 @@ func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
 	files LogIter,
+	pitrBatchCount uint32,
+	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(cnt int64),
 ) error {
@@ -2018,7 +2021,7 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	if supportBatch {
-		applyKVFilesWithBatchMethod(ctx, files, pitrBatchCount, pitrBatchSize, applyFunc)
+		applyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 	} else {
 		applyKVFilesWithSingelMethod(ctx, files, applyFunc)
 	}

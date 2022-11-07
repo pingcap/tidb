@@ -1254,10 +1254,10 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	dmlFiles, err := client.LoadDMLFiles(ctx)
+	logFilesIter, err := client.LoadDMLFiles(ctx)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.IncBy)
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIter, cfg.pitrBatchCount, cfg.pitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
