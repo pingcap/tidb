@@ -60,10 +60,12 @@ type NeededItemTask struct {
 func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
 	remainedItems := h.removeHistLoadedColumns(neededHistItems)
 
-	failpoint.Inject("assertRemainedItems", func(val failpoint.Value) {
-		count := val.(int)
-		if len(remainedItems) != count {
-			panic("remained items count wrong")
+	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
+		if sc.OptimizeTracer != nil {
+			count := val.(int)
+			if len(remainedItems) != count {
+				panic("remained items count wrong")
+			}
 		}
 	})
 
