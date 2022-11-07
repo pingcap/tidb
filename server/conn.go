@@ -1862,7 +1862,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sessVars := cc.ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
-	sc.Expired = true
 	var stmts []ast.StmtNode
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
@@ -1919,7 +1918,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 
 		lastStmt = stmt
-		sessVars.StmtCtx.Expired = true
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})

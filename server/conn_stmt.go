@@ -201,7 +201,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 	}
 
-	cc.getCtx().GetSessionVars().StmtCtx.Expired = true
 	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
 	cc.onExtensionBinaryExecuteEnd(stmt, args, err)
 	return err
