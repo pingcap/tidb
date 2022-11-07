@@ -1121,7 +1121,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
-		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err == nil)
+		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error

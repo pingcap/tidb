@@ -96,6 +96,7 @@ type RetryInfo struct {
 	LastRcReadTS           uint64
 }
 
+// ReuseChunkPool save Alloc object
 type ReuseChunkPool struct {
 	Lock  sync.Mutex
 	Alloc chunk.Allocator
@@ -1309,19 +1310,6 @@ type SessionVars struct {
 	preUseChunkAlloc bool
 }
 
-// // GetNewChunk Attempt to request memory from the chunk pool
-// // thread safety
-// func (pool *ReuseChunkPool) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
-// 	//Chunk memory pool is not set
-// 	if pool.Alloc == nil {
-// 		return chunk.NewChunkWithCapacity(fields, capacity)
-// 	}
-// 	pool.Lock.Lock()
-// 	defer pool.Lock.Unlock()
-// 	chk := pool.Alloc.Alloc(fields, capacity, capacity)
-// 	return chk
-// }
-
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
 // thread safety
 func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool *ReuseChunkPool) *chunk.Chunk {
@@ -1361,6 +1349,10 @@ func (s *SessionVars) ClearAlloc(cc *chunk.Allocator, err bool) {
 		s.ChunkPool.Alloc = nil
 		return
 	}
+
+	// If an error is reported, re-apply for alloc
+	// Prevent the goroutine left before, affecting the execution of the next sql
+	// issuse 38918
 	s.ChunkPool.Lock.Lock()
 	s.ChunkPool.Alloc = nil
 	s.ChunkPool.Lock.Unlock()
