@@ -1665,7 +1665,7 @@ func prepareClusterAndClient(t *testing.T,
 	for dbName, tables := range backupDB2Tables {
 		backupDBs[dbName] = &utils.Database{
 			Info: &model.DBInfo{
-				ID:   int64(dbID),
+				ID:   dbID,
 				Name: model.NewCIStr(dbName),
 			},
 			Tables: make([]*metautil.Table, len(tables)),
