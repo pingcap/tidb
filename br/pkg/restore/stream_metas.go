@@ -67,7 +67,6 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 		if err != nil {
 			return err
 		}
-		metadataMap.Lock()
 		// If the meta file contains only files with ts grater than `until`, when the file is from
 		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
 		// `Write`: it should trivially not be considered.
@@ -85,18 +84,23 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 					KVCount: kvCount,
 				})
 			}
+			metadataMap.Lock()
 			metadataMap.metas[path] = &MetadataInfo{
 				MinTS:          m.MinTs,
 				FileGroupInfos: fileGroupInfos,
 			}
+			metadataMap.Unlock()
 		}
 		// filter out the metadatas whose ts-range is overlap with [until, +inf)
 		// and calculate their minimum begin-default-ts
 		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
-		if ok && ts < metadataMap.shiftUntilTS {
-			metadataMap.shiftUntilTS = ts
+		if ok {
+			metadataMap.Lock()
+			if ts < metadataMap.shiftUntilTS {
+				metadataMap.shiftUntilTS = ts
+			}
+			metadataMap.Unlock()
 		}
-		metadataMap.Unlock()
 		return nil
 	})
 	if err != nil {
