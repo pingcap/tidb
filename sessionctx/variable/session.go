@@ -96,6 +96,11 @@ type RetryInfo struct {
 	LastRcReadTS           uint64
 }
 
+type ReuseChunkPool struct {
+	Lock  sync.Mutex
+	Alloc chunk.Allocator
+}
+
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
@@ -1295,10 +1300,7 @@ type SessionVars struct {
 	OptPrefixIndexSingleScan bool
 
 	// ChunkPool Several chunks and columns are cached
-	ChunkPool struct {
-		Lock  sync.Mutex
-		Alloc chunk.Allocator
-	}
+	ChunkPool ReuseChunkPool
 	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
@@ -1307,34 +1309,31 @@ type SessionVars struct {
 	preUseChunkAlloc bool
 }
 
-// GetNewChunk Attempt to request memory from the chunk pool
-// thread safety
-func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
-	//Chunk memory pool is not set
-	if s.ChunkPool.Alloc == nil {
-		return chunk.NewChunkWithCapacity(fields, capacity)
-	}
-	s.ChunkPool.Lock.Lock()
-	defer s.ChunkPool.Lock.Unlock()
-	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
-		s.StmtCtx.SetUseChunkAlloc()
-	}
-	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
-	return chk
-}
+// // GetNewChunk Attempt to request memory from the chunk pool
+// // thread safety
+// func (pool *ReuseChunkPool) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
+// 	//Chunk memory pool is not set
+// 	if pool.Alloc == nil {
+// 		return chunk.NewChunkWithCapacity(fields, capacity)
+// 	}
+// 	pool.Lock.Lock()
+// 	defer pool.Lock.Unlock()
+// 	chk := pool.Alloc.Alloc(fields, capacity, capacity)
+// 	return chk
+// }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
 // thread safety
-func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
-	if s.ChunkPool.Alloc == nil {
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool *ReuseChunkPool) *chunk.Chunk {
+	if pool == nil || pool.Alloc == nil {
 		return chunk.New(fields, capacity, maxCachesize)
 	}
-	s.ChunkPool.Lock.Lock()
-	defer s.ChunkPool.Lock.Unlock()
-	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+	pool.Lock.Lock()
+	defer pool.Lock.Unlock()
+	if pool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
-	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
+	chk := pool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
 }
 
@@ -1357,8 +1356,16 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 }
 
 // ClearAlloc indicates stop reuse chunk
-func (s *SessionVars) ClearAlloc() {
+func (s *SessionVars) ClearAlloc(cc *chunk.Allocator, err bool) {
+	if !err {
+		s.ChunkPool.Alloc = nil
+		return
+	}
+	s.ChunkPool.Lock.Lock()
 	s.ChunkPool.Alloc = nil
+	s.ChunkPool.Lock.Unlock()
+	s.ChunkPool = ReuseChunkPool{Alloc: nil}
+	*cc = chunk.NewAllocator()
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1655,10 +1662,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
-		ChunkPool: struct {
-			Lock  sync.Mutex
-			Alloc chunk.Allocator
-		}{Alloc: nil},
+		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
