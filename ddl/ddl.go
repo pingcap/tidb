@@ -1203,9 +1203,7 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 				mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 			sess, err := d.sessPool.get()
 			if err != nil {
-				if err != nil {
-					logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
-				}
+				logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
 				return
 			}
 			defer d.sessPool.put(sess)
