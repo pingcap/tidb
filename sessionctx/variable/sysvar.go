@@ -486,6 +486,39 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordEnable, Value: Off, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: ValidatePasswordPolicy, Value: "MEDIUM", Type: TypeEnum, PossibleValues: []string{"LOW", "MEDIUM", "STRONG"}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: On, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			var numberCount, specialCharCount, mixedCaseCount int64
+			if numberCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
+				return "", err
+			} else if numberCount, err = strconv.ParseInt(numberCountStr, 10, 64); err != nil {
+				return "", err
+			}
+			if specialCharCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
+				return "", err
+			} else if specialCharCount, err = strconv.ParseInt(specialCharCountStr, 10, 64); err != nil {
+				return "", err
+			}
+			if mixedCaseCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
+				return "", err
+			} else if mixedCaseCount, err = strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
+				return "", err
+			}
+			if length, err := strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+				return "", err
+			} else if length < numberCount+specialCharCount+2*mixedCaseCount {
+				return "", ErrWrongValueForVar.GenWithStackByArgs(ValidatePasswordLength, normalizedValue)
+			}
+			return normalizedValue, nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: ValidatePasswordDictionaryFile, Value: "", Type: TypeStr},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -2104,10 +2137,6 @@ const (
 	BlockEncryptionMode = "block_encryption_mode"
 	// WaitTimeout is the name for 'wait_timeout' system variable.
 	WaitTimeout = "wait_timeout"
-	// ValidatePasswordNumberCount is the name of 'validate_password_number_count' system variable.
-	ValidatePasswordNumberCount = "validate_password_number_count"
-	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
-	ValidatePasswordLength = "validate_password_length"
 	// Version is the name of 'version' system variable.
 	Version = "version"
 	// VersionComment is the name of 'version_comment' system variable.
@@ -2130,8 +2159,6 @@ const (
 	BinlogOrderCommits = "binlog_order_commits"
 	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
 	MasterVerifyChecksum = "master_verify_checksum"
-	// ValidatePasswordCheckUserName is the name for 'validate_password_check_user_name' system variable.
-	ValidatePasswordCheckUserName = "validate_password_check_user_name"
 	// SuperReadOnly is the name for 'super_read_only' system variable.
 	SuperReadOnly = "super_read_only"
 	// SQLNotes is the name for 'sql_notes' system variable.
@@ -2298,4 +2325,21 @@ const (
 	RandSeed2 = "rand_seed2"
 	// SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
 	SQLRequirePrimaryKey = "sql_require_primary_key"
+	// ValidatePasswordEnable turns on/off the validation of password.
+	ValidatePasswordEnable = "validate_password.enable"
+	// ValidatePasswordPolicy specifies the password policy enforced by validate_password.
+	ValidatePasswordPolicy = "validate_password.policy"
+	// ValidatePasswordCheckUserName controls whether validate_password compares passwords to the user name part of
+	// the effective user account for the current session
+	ValidatePasswordCheckUserName = "validate_password.check_user_name"
+	// ValidatePasswordLength specified the minimum number of characters that validate_password requires passwords to have
+	ValidatePasswordLength = "validate_password.length"
+	// ValidatePasswordMixedCaseCount specified the minimum number of lowercase and uppercase characters that validate_password requires
+	ValidatePasswordMixedCaseCount = "validate_password.mixed_case_count"
+	// ValidatePasswordNumberCount specified the minimum number of numeric (digit) characters that validate_password requires
+	ValidatePasswordNumberCount = "validate_password.number_count"
+	// ValidatePasswordSpecialCharCount specified the minimum number of nonalphanumeric characters that validate_password requires
+	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
+	// ValidatePasswordDictionaryFile specified the path name of the dictionary file that validate_password uses for checking passwords
+	ValidatePasswordDictionaryFile = "validate_password.dictionary_file"
 )

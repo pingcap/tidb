@@ -1407,14 +1407,11 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
-	tk.MustExec("set @@global.validate_password_number_count=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
+	tk.MustExec("set @@global.validate_password.number_count=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.number_count value: '-1'"))
 
-	tk.MustExec("set @@global.validate_password_length=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
-
-	tk.MustExec("set @@global.validate_password_length=8")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@global.validate_password.length=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.length value: '-1'"))
 
 	err = tk.ExecToErr("set @@tx_isolation=''")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
