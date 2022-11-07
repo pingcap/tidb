@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -256,6 +257,13 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
 	p.planCostVer2 = sumCostVer2(indexSideCost, divCostVer2(sumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
+
+	if p.ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
+		// if the expectCnt is below the paging threshold, using paging API
+		p.Paging = true // TODO: move this operation from cost model to physical optimization
+		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.6)
+	}
+
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
