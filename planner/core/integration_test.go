@@ -858,6 +858,7 @@ func TestMPPShuffledJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists d1_t")
 	tk.MustExec("create table d1_t(d1_k int, value int)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
@@ -1275,6 +1276,7 @@ func TestReadFromStorageHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, tt, ttt")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 	tk.MustExec("create table t(a int, b int, index ia(a))")
@@ -4267,6 +4269,7 @@ func TestPushDownProjectionForTiKV(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))")
 	tk.MustExec("analyze table t")
@@ -4550,6 +4553,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3))")
 	tk.MustExec("analyze table t")
@@ -4631,6 +4635,7 @@ func TestMppJoinDecimal(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table t (c1 decimal(8, 5), c2 decimal(9, 5), c3 decimal(9, 4) NOT NULL, c4 decimal(8, 4) NOT NULL, c5 decimal(40, 20))")
@@ -4723,6 +4728,7 @@ func TestMppAggTopNWithJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3))")
 	tk.MustExec("analyze table t")
@@ -5658,6 +5664,7 @@ func TestHeuristicIndexSelection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d))")
@@ -7029,6 +7036,7 @@ func TestIssue36194(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
@@ -7043,7 +7051,7 @@ func TestIssue36194(t *testing.T) {
 			}
 		}
 	}
-	tk.MustQuery("explain format = 'brief' select * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
 		"Limit 100.00 root  offset:0, count:100",
 		"└─TableReader 100.00 root  data:ExchangeSender",
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
