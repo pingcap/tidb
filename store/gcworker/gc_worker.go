@@ -1866,7 +1866,8 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
+	const timeFormat = "20060102-15:04:05.000 -0700"
+	err := w.saveValueToSysTable(key, t.Format(timeFormat))
 	return errors.Trace(err)
 }
 
