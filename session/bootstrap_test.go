@@ -625,8 +625,8 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	require.NoError(t, r.Next(context.Background(), req))
 	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
-	require.Equal(t, "INT_ONLY", row.GetString(0))
-	require.Equal(t, "INT_ONLY", row.GetString(1))
+	require.Equal(t, "ON", row.GetString(0))
+	require.Equal(t, "ON", row.GetString(1))
 	domV68.Close()
 }
 

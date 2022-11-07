@@ -164,7 +164,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -347,6 +347,9 @@ var defaultSysVars = []*SysVar{
 			return s.LastPlanReplayerToken, nil
 		},
 	},
+	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
@@ -748,12 +751,20 @@ var defaultSysVars = []*SysVar{
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
 			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
+			}
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
@@ -928,6 +939,10 @@ var defaultSysVars = []*SysVar{
 			s.PreparedPlanCacheSize = uVal
 		}
 		return err
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheMemoryMonitor, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheMemoryMonitor), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePreparedPlanCacheMemoryMonitor = TiDBOptOn(val)
+		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		f, err := strconv.ParseFloat(val, 64)
@@ -1639,7 +1654,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == IntOnly {
 			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
 		}
@@ -1914,7 +1929,7 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
 			if !s.ConstraintCheckInPlacePessimistic {
@@ -1946,6 +1961,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
@@ -1967,6 +1983,11 @@ var defaultSysVars = []*SysVar{
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableReuseCheck = TiDBOptOn(val)
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

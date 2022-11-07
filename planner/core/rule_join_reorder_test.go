@@ -52,6 +52,7 @@ func TestStraightJoinHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3, t4;")
 	tk.MustExec("create table t(a int, b int, key(a));")
 	tk.MustExec("create table t1(a int, b int, key(a));")
@@ -66,6 +67,7 @@ func TestLeadingJoinHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
 	tk.MustExec("create table t(a int, b int, key(a));")
 	tk.MustExec("create table t1(a int, b int, key(a));")
@@ -312,6 +314,7 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
 	tk.MustExec("create table t(a int, b int, key(a));")
 	tk.MustExec("create table t1(a int, b int, key(a));")
@@ -333,6 +336,7 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
 	tk.MustExec("create table t(a int, b int, key(a));")
 	tk.MustExec("create table t1(a int, b int, key(a));")
