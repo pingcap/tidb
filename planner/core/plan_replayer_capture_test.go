@@ -16,13 +16,13 @@ package core_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/statistics/handle"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
@@ -56,12 +56,12 @@ func TestPlanReplayerCaptureRecordJsonStats(t *testing.T) {
 		},
 	}
 	for _, tc := range testcases {
-		tableJSONStats := getTableJsonStats(tc.sql, t, ctx, dom)
-		require.Equal(t, tc.count, len(tableJSONStats))
+		tableStats := getTableStats(tc.sql, t, ctx, dom)
+		require.Equal(t, tc.count, len(tableStats))
 	}
 }
 
-func getTableJsonStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain.Domain) map[int64]*handle.JSONTable {
+func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain.Domain) map[int64]*statistics.Table {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
@@ -74,10 +74,10 @@ func getTableJsonStats(sql string, t *testing.T, ctx sessionctx.Context, dom *do
 	require.NoError(t, err)
 	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
 	require.NoError(t, err)
-	tableJSONStats := sctx.GetSessionVars().StmtCtx.TableJSONStats
-	r := make(map[int64]*handle.JSONTable)
-	for key, v := range tableJSONStats {
-		r[key] = v.(*handle.JSONTable)
+	tableStats := sctx.GetSessionVars().StmtCtx.TableStats
+	r := make(map[int64]*statistics.Table)
+	for key, v := range tableStats {
+		r[key] = v.(*statistics.Table)
 	}
 	return r
 }

@@ -340,8 +340,8 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
-	// TableJSONStats stores *handle.JSONTable by table id
-	TableJSONStats map[int64]interface{}
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 }
