@@ -273,6 +273,13 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		}
 		for _, tblHint := range tblHints {
 			if tblHint.HintName.L == hintQBName {
+				if len(tblHint.Tables) > 0 {
+					newHints = append(newHints, tblHint)
+				}
+				continue
+			}
+			if processor.isHint4View(tblHint) {
+				newHints = append(newHints, tblHint)
 				continue
 			}
 			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
@@ -530,6 +537,44 @@ func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable) bool {
 		}
 	}
 	return true
+}
+
+func (p *BlockHintProcessor) checkTableQBName4View(tables []ast.HintTable) bool {
+	allViewHints := true
+	for _, table := range tables {
+		qbName := table.QBName.L
+		if qbName != "" {
+			if _, ok := p.QbNameMap4View[qbName]; !ok {
+				allViewHints = false
+				break
+			}
+		}
+	}
+	return allViewHints
+}
+
+func (p *BlockHintProcessor) isHint4View(hint *ast.TableOptimizerHint) bool {
+	if hint.QBName.L != "" {
+		if p.QbNameMap4View != nil {
+			_, ok := p.QbNameMap4View[hint.QBName.L]
+			if ok {
+				return true
+			} else {
+				return false
+			}
+		}
+	}
+	allViewHints := true
+	for _, table := range hint.Tables {
+		qbName := table.QBName.L
+		if qbName != "" {
+			if _, ok := p.QbNameMap4View[qbName]; !ok {
+				allViewHints = false
+				break
+			}
+		}
+	}
+	return allViewHints
 }
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
