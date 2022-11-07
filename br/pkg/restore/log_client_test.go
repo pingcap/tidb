@@ -13,7 +13,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -299,24 +298,20 @@ func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 			}
 		}()
 
+		meta := new(StreamMetadataSet)
+		meta.Helper = stream.NewMetadataHelper()
+		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
+
 		var metas []*backuppb.Metadata
-		var lock sync.Mutex
-		helper := stream.NewMetadataHelper()
-		err := stream.FastUnmarshalMetaData(ctx, loc, func(path string, rawMetaData []byte) error {
-			m, err := helper.ParseToMetadataHard(rawMetaData)
-			if err != nil {
-				return err
-			}
+		for path := range meta.metadataInfos {
+			data, err := loc.ReadFile(ctx, path)
+			require.NoError(t, err)
 
-			if m.MinTs <= c.untilTS {
-				lock.Lock()
-				metas = append(metas, m)
-				lock.Unlock()
-			}
+			m, err := meta.Helper.ParseToMetadataHard(data)
+			require.NoError(t, err)
 
-			return nil
-		})
-		require.NoError(t, err)
+			metas = append(metas, m)
+		}
 
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
