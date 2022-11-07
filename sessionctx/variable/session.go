@@ -1162,11 +1162,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
@@ -1303,9 +1300,9 @@ func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	sc := &s.cached.data[0]
+	sc := &s.cachedStmtCtx[0]
 	if sc == s.StmtCtx {
-		sc = &s.cached.data[1]
+		sc = &s.cachedStmtCtx[1]
 	}
 	*sc = stmtctx.StatementContext{}
 	return sc
