@@ -154,6 +154,9 @@ func checkColumnType(id int, col *Column) bool {
 		return col.elemBuf == nil
 	}
 
+	if col.elemBuf == nil {
+		return false
+	}
 	return id == cap(col.elemBuf)
 }
 
