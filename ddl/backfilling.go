@@ -219,6 +219,9 @@ func closeBackfillWorkers(workers []*backfillWorker) {
 	}
 }
 
+// ResultCounterForTest is used for test.
+var ResultCounterForTest *atomic.Int32
+
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
 	handleRange := *task
@@ -288,6 +291,9 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		zap.Int("scanCount", result.scanCount),
 		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
 		zap.String("takeTime", time.Since(startTime).String()))
+	if ResultCounterForTest != nil && result.err == nil {
+		ResultCounterForTest.Add(1)
+	}
 	return result
 }
 
@@ -373,8 +379,6 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-const adjustWorkerSizeInterval = 16
-
 func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTask,
 	totalAddedCount *int64) (kv.Key, int64, error) {
 	var (
@@ -385,29 +389,43 @@ func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTa
 	taskSize := len(batchTasks)
 	for i := 0; i < taskSize; i++ {
 		result := <-scheduler.resultCh
-		if firstErr == nil && result.err != nil {
-			firstErr = result.err
-			// We should wait all working workers exits, any way.
-			continue
-		}
 
 		if result.err != nil {
 			logutil.BgLogger().Warn("[ddl] backfill worker failed",
 				zap.String("result next key", hex.EncodeToString(result.nextKey)),
 				zap.Error(result.err))
+			discardCnt := drainTasks(scheduler.taskCh)
+			taskSize -= discardCnt
+		}
+
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+			continue
 		}
 
 		if firstErr == nil {
 			*totalAddedCount += int64(result.addedCount)
 			addedCount += int64(result.addedCount)
 			keeper.updateNextKey(result.taskID, result.nextKey)
-			if i%adjustWorkerSizeInterval == 0 {
+			if i%scheduler.workerSize()*4 == 0 {
+				// We try to adjust the worker size regularly to reduce
+				// the overhead of loading the DDL related global variables.
 				firstErr = scheduler.adjustWorkerSize()
 			}
 		}
 	}
 
 	return keeper.nextKey, addedCount, errors.Trace(firstErr)
+}
+
+// drainTasks drains all tasks from the task channel.
+func drainTasks(taskCh chan *reorgBackfillTask) int {
+	cnt := 0
+	for len(taskCh) > 0 {
+		<-taskCh
+		cnt++
+	}
+	return cnt
 }
 
 // sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
