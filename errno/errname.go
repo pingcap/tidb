@@ -850,7 +850,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", []int{0}),
 	ErrInvalidJSONCharset:                                    mysql.Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    mysql.Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
-	ErrInvalidJSONPathWildcard:                               mysql.Message("In this situation, path expressions may not contain the * and ** tokens.", nil),
+	ErrInvalidJSONPathMultipleSelection:                      mysql.Message("In this situation, path expressions may not contain the * and ** tokens or range selection.", nil),
 	ErrInvalidJSONContainsPathType:                           mysql.Message("The second argument can only be either 'one' or 'all'.", nil),
 	ErrJSONUsedAsKey:                                         mysql.Message("JSON column '%-.192s' cannot be used in key specification.", nil),
 	ErrJSONDocumentTooDeep:                                   mysql.Message("The JSON document exceeds the maximum depth.", nil),

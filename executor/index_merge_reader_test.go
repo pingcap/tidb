@@ -446,17 +446,15 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
-	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	memTracker := tk.Session().GetSessionVars().MemTracker
 
 	tk.MustExec(insertStr)
-
-	oriMaxUsage := memTracker.MaxConsumed()
 
 	// We select all rows in t1, so the mem usage is more clear.
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 
-	newMaxUsage := memTracker.MaxConsumed()
-	require.Greater(t, newMaxUsage, oriMaxUsage)
+	memUsage := memTracker.MaxConsumed()
+	require.Greater(t, memUsage, int64(0))
 
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	require.Len(t, res.Rows(), 4)
@@ -498,7 +496,7 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime) NONCLUSTERED, key(c1), key(c2))
 			partition by range (to_days(c_datetime)) (
 				partition p0 values less than (to_days('2020-02-01')),
 				partition p1 values less than (to_days('2020-04-01')),

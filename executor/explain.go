@@ -115,12 +115,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
+				memTracker:   e.ctx.GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
 		e.executed = true
-		chk := newFirstChunk(e.analyzeExec)
+		chk := tryNewCacheChunk(e.analyzeExec)
 		for {
 			err = Next(ctx, e.analyzeExec, chk)
 			if err != nil || chk.NumRows() == 0 {

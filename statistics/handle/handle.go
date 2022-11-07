@@ -589,9 +589,10 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
+	killed := &sc.GetSessionVars().Killed
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
-		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex)
+		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
@@ -599,7 +600,7 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	} else if batchSize > maxPartitionMergeBatchSize {
 		batchSize = maxPartitionMergeBatchSize
 	}
-	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex)
+	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
 }
 
 // mergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
@@ -607,7 +608,7 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
 func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
+	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
@@ -627,7 +628,7 @@ func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchS
 	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
 	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper)
+		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Run(func() {
 			worker.Run(timeZone, isIndex, n, version)
 		})

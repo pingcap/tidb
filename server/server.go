@@ -41,6 +41,7 @@ import (
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -59,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -137,8 +140,11 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode bool
 
-	sessionMapMutex  sync.Mutex
-	internalSessions map[interface{}]struct{}
+	sessionMapMutex     sync.Mutex
+	internalSessions    map[interface{}]struct{}
+	autoIDService       *autoid.Service
+	authTokenCancelFunc context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // ConnectionCount gets current connection count.
@@ -244,7 +250,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
 			tcpProto = "tcp4"
@@ -297,6 +303,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+
+	// Automatically reload JWKS for tidb_auth_token.
+	if len(s.cfg.Security.AuthTokenJWKS) > 0 {
+		var (
+			timeInterval time.Duration
+			err          error
+			ctx          context.Context
+		)
+		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
+			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
+				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
+			timeInterval = config.DefAuthTokenRefreshInterval
+		}
+		ctx, s.authTokenCancelFunc = context.WithCancel(context.Background())
+		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
+			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
 
@@ -497,6 +521,13 @@ func (s *Server) Close() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
+	if s.authTokenCancelFunc != nil {
+		s.authTokenCancelFunc()
+	}
+	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
@@ -917,20 +948,24 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 // KillNonFlashbackClusterConn implements SessionManager interface.
 func (s *Server) KillNonFlashbackClusterConn() {
 	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	connIDs := make([]uint64, 0, len(s.clients))
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			processInfo := client.ctx.Session.ShowProcess()
 			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 			if !ok {
-				s.Kill(client.connectionID, false)
+				connIDs = append(connIDs, client.connectionID)
 				continue
 			}
 			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 			if !ok {
-				s.Kill(client.connectionID, false)
+				connIDs = append(connIDs, client.connectionID)
 				continue
 			}
 		}
+	}
+	s.rwlock.RUnlock()
+	for _, id := range connIDs {
+		s.Kill(id, false)
 	}
 }

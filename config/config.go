@@ -86,6 +86,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
+	DefAuthTokenRefreshInterval = time.Hour
 )
 
 // Valid config maps
@@ -276,6 +278,10 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
+	// TiDBMaxReuseChunk indicates max cached chunk num
+	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
+	// TiDBMaxReuseColumn indicates max cached column num
+	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -546,6 +552,10 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
+	// The path of the JWKS for tidb_auth_token authentication
+	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
+	// The refresh time interval of JWKS
+	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -741,6 +751,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
+	// ConstraintCheckInPlacePessimistic is the default value for the session variable `tidb_constraint_check_in_place_pessimistic`
+	ConstraintCheckInPlacePessimistic bool `toml:"constraint-check-in-place-pessimistic" json:"constraint-check-in-place-pessimistic"`
 }
 
 // TrxSummary is the config for transaction summary collecting.
@@ -762,10 +774,11 @@ func (config *TrxSummary) Valid() error {
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:                   256,
-		DeadlockHistoryCapacity:         10,
-		DeadlockHistoryCollectRetryable: false,
-		PessimisticAutoCommit:           *NewAtomicBool(false),
+		MaxRetryCount:                     256,
+		DeadlockHistoryCapacity:           10,
+		DeadlockHistoryCollectRetryable:   false,
+		PessimisticAutoCommit:             *NewAtomicBool(false),
+		ConstraintCheckInPlacePessimistic: true,
 	}
 }
 
@@ -959,6 +972,8 @@ var defaultConf = Config{
 		EnableSEM:                   false,
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
+		AuthTokenJWKS:               "",
+		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
@@ -967,6 +982,8 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	TiDBMaxReuseChunk:                    64,
+	TiDBMaxReuseColumn:                   256,
 }
 
 var (
@@ -1026,7 +1043,7 @@ var removedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},

@@ -167,9 +167,6 @@ func init() {
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
 
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
-
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
@@ -232,6 +229,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 func newFirstChunk(e Executor) *chunk.Chunk {
 	base := e.base()
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
+}
+
+func tryNewCacheChunk(e Executor) *chunk.Chunk {
+	base := e.base()
+	s := base.ctx.GetSessionVars()
+	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 // newList creates a new List to buffer current executor's result.
@@ -1392,7 +1395,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	return nil
@@ -1449,8 +1452,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		chk := newFirstChunk(exec)
-
+		chk := tryNewCacheChunk(exec)
 		err = Next(ctx, exec, chk)
 		if err != nil {
 			return nil, err
@@ -1525,7 +1527,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 func (e *SelectionExec) open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
@@ -1705,7 +1707,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrSubqueryMoreThan1Row
 	}
 
-	childChunk := newFirstChunk(e.children[0])
+	childChunk := tryNewCacheChunk(e.children[0])
 	err = Next(ctx, e.children[0], childChunk)
 	if err != nil {
 		return err
@@ -1947,31 +1949,37 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+	vars.MemTracker.UnbindActions()
+	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
+	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.ResetMaxConsumed()
+	vars.MemTracker.SessionID = vars.ConnectionID
+
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		vars.MemTracker.SetBytesLimit(-1)
 	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
-		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
+		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+		switch variable.OOMAction.Load() {
+		case variable.OOMActionCancel:
+			action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		case variable.OOMActionLog:
+			fallthrough
+		default:
+			action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		}
 	}
-
+	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
-	}
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
-	default:
-		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
+	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+		sc.DiskTracker.AttachTo(vars.DiskTracker)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2133,6 +2141,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
+	vars.ExchangeChunkStatus()
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
@@ -2171,6 +2180,10 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
 	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	if len(virtualColumnIndex) == 0 {
+		return nil
+	}
+
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
