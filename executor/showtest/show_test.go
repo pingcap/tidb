@@ -186,7 +186,7 @@ func TestShowCreateTable(t *testing.T) {
 		"`END_TIME` datetime NOT NULL," +
 		"`USER_TYPE` int(11) DEFAULT NULL," +
 		"`APP_ID` int(11) DEFAULT NULL," +
-		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+		"PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED," +
 		"KEY `IDX_EndTime` (`END_TIME`)," +
 		"KEY `IDX_RoundId` (`ROUND_ID`)," +
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +

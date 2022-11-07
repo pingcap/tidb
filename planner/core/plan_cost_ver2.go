@@ -325,7 +325,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
-	memQuota := p.ctx.GetSessionVars().StmtCtx.MemTracker.GetBytesLimit()
+	memQuota := p.ctx.GetSessionVars().MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
 		oomUseTmpStorage && // spill is enabled
 		memQuota > 0 && // mem-quota is set
@@ -424,6 +424,10 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
+
+	if inputRows < 2000 { // prefer to use StreamAgg if no much data to process
+		inputRows = 2000
+	}
 
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
@@ -709,7 +713,7 @@ func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVe
 func filterCostVer2(option *PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(filters)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(numFuncs)*cpuFactor.Value,
+		rows*numFuncs*cpuFactor.Value,
 		"cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor)
 }
 
@@ -723,15 +727,17 @@ func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.A
 func groupCostVer2(option *PlanCostOption, rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(groupItems)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(numFuncs)*cpuFactor.Value,
+		rows*numFuncs*cpuFactor.Value,
 		"group(%v*cols(%v)*%v)", rows, numFuncs, cpuFactor)
 }
 
-func numFunctions(exprs []expression.Expression) int {
-	num := 0
+func numFunctions(exprs []expression.Expression) float64 {
+	num := 0.0
 	for _, e := range exprs {
 		if _, ok := e.(*expression.ScalarFunction); ok {
 			num++
+		} else { // Column and Constant
+			num += 0.01 // an empirical value
 		}
 	}
 	return num
@@ -819,21 +825,21 @@ func (c costVer2Factors) tolist() (l []costVer2Factor) {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0},
-	TiKVScan:      costVer2Factor{"tikv_scan_factor", 100},
-	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 150},
-	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 5},
-	TiDBCPU:       costVer2Factor{"tidb_cpu_factor", 30},
-	TiKVCPU:       costVer2Factor{"tikv_cpu_factor", 30},
-	TiFlashCPU:    costVer2Factor{"tiflash_cpu_factor", 5},
-	TiDB2KVNet:    costVer2Factor{"tidb_kv_net_factor", 8},
-	TiDB2FlashNet: costVer2Factor{"tidb_flash_net_factor", 4},
-	TiFlashMPPNet: costVer2Factor{"tiflash_mpp_net_factor", 4},
-	TiDBMem:       costVer2Factor{"tidb_mem_factor", 1},
-	TiKVMem:       costVer2Factor{"tikv_mem_factor", 1},
-	TiFlashMem:    costVer2Factor{"tiflash_mem_factor", 1},
-	TiDBDisk:      costVer2Factor{"tidb_disk_factor", 1000},
-	TiDBRequest:   costVer2Factor{"tidb_request_factor", 9500000},
+	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0.00},
+	TiKVScan:      costVer2Factor{"tikv_scan_factor", 40.70},
+	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 61.05},
+	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 11.60},
+	TiDBCPU:       costVer2Factor{"tidb_cpu_factor", 49.90},
+	TiKVCPU:       costVer2Factor{"tikv_cpu_factor", 49.90},
+	TiFlashCPU:    costVer2Factor{"tiflash_cpu_factor", 2.40},
+	TiDB2KVNet:    costVer2Factor{"tidb_kv_net_factor", 3.96},
+	TiDB2FlashNet: costVer2Factor{"tidb_flash_net_factor", 2.20},
+	TiFlashMPPNet: costVer2Factor{"tiflash_mpp_net_factor", 1.00},
+	TiDBMem:       costVer2Factor{"tidb_mem_factor", 0.20},
+	TiKVMem:       costVer2Factor{"tikv_mem_factor", 0.20},
+	TiFlashMem:    costVer2Factor{"tiflash_mem_factor", 0.05},
+	TiDBDisk:      costVer2Factor{"tidb_disk_factor", 200.00},
+	TiDBRequest:   costVer2Factor{"tidb_request_factor", 6000000.00},
 }
 
 func getTaskCPUFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {

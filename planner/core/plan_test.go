@@ -314,7 +314,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   ol_supply_w_id  int(11) DEFAULT NULL,
 	   ol_quantity  int(11) DEFAULT NULL,
 	   ol_dist_info  char(24) DEFAULT NULL,
-	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number )
+	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number ) NONCLUSTERED
 	);`)
 	tk.MustExec(`CREATE TABLE  bmsql_district  (
 	   d_w_id  int(11) NOT NULL,
@@ -328,7 +328,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   d_city  varchar(20) DEFAULT NULL,
 	   d_state  char(2) DEFAULT NULL,
 	   d_zip  char(9) DEFAULT NULL,
-	  PRIMARY KEY ( d_w_id , d_id )
+	  PRIMARY KEY ( d_w_id , d_id ) NONCLUSTERED
 	);`)
 	tk.MustExec(`CREATE TABLE  bmsql_stock  (
 	   s_w_id  int(11) NOT NULL,
@@ -348,7 +348,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   s_dist_08  char(24) DEFAULT NULL,
 	   s_dist_09  char(24) DEFAULT NULL,
 	   s_dist_10  char(24) DEFAULT NULL,
-	  PRIMARY KEY ( s_w_id , s_i_id )
+	  PRIMARY KEY ( s_w_id , s_i_id ) NONCLUSTERED
 	);`)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/planner/mockRandomPlanID", "return(true)")
