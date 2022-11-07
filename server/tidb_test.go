@@ -43,11 +43,14 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
@@ -922,7 +925,7 @@ func TestCreateTableFlen(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	// issue #4540
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
 	require.NoError(t, err)
@@ -994,7 +997,7 @@ func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error
 func TestShowTablesFlen(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
@@ -1024,7 +1027,7 @@ func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
 func TestFieldList(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
 	require.NoError(t, err)
@@ -1122,7 +1125,7 @@ func TestSumAvg(t *testing.T) {
 func TestNullFlag(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1196,7 +1199,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	// issue #21465
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1258,7 +1261,7 @@ func TestGracefulShutdown(t *testing.T) {
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	defer qctx.Close()
 	ctx := context.Background()
@@ -1668,7 +1671,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("alter table t drop index if exists idx_b")
 		_, err := db.Exec(addIndexStr)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1062: Duplicate entry '1' for key 'idx_b'", err.Error())
+		require.Equal(t, "Error 1062: Duplicate entry '1' for key 't.idx_b'", err.Error())
 	}
 	check = func() {
 		checkFn(addIndexStr, "")
@@ -2750,4 +2753,164 @@ func TestRcReadCheckTS(t *testing.T) {
 	// Test retry caused by ongoing prewrite lock.
 	// As the `defaultLockTTL` is 3s and it's difficult to change it here, the lock
 	// test is implemented in the uft test cases.
+}
+
+type connEventLogs struct {
+	sync.Mutex
+	types []extension.ConnEventTp
+	infos []extension.ConnEventInfo
+}
+
+func (l *connEventLogs) add(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
+	l.Lock()
+	defer l.Unlock()
+	l.types = append(l.types, tp)
+	l.infos = append(l.infos, *info)
+}
+
+func (l *connEventLogs) reset() {
+	l.Lock()
+	defer l.Unlock()
+	l.types = l.types[:0]
+	l.infos = l.infos[:0]
+}
+
+func (l *connEventLogs) check(fn func()) {
+	l.Lock()
+	defer l.Unlock()
+	fn()
+}
+
+func (l *connEventLogs) waitConnDisconnected() error {
+	totalSleep := 0
+	for {
+		l.Lock()
+		if l.types[len(l.types)-1] == extension.ConnDisconnected {
+			l.Unlock()
+			return nil
+		}
+		l.Unlock()
+		if totalSleep >= 10000 {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+		totalSleep += 100
+	}
+	return errors.New("timeout")
+}
+
+func TestExtensionConnEvent(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	logs := &connEventLogs{}
+	require.NoError(t, extension.Register("test", extension.WithSessionHandlerFactory(func() *extension.SessionHandler {
+		return &extension.SessionHandler{
+			OnConnectionEvent: logs.add,
+		}
+	})))
+	require.NoError(t, extension.Setup())
+
+	ts := createTidbTestSuite(t)
+
+	// test for login success
+	logs.reset()
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var expectedConn2 variable.ConnectionInfo
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeAccepted,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "root"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.Nil(t, logs.infos[1].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+	})
+
+	_, err = conn.ExecContext(context.TODO(), "create role r1@'%'")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "grant r1 TO root")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set role all")
+	require.NoError(t, err)
+
+	require.NoError(t, conn.Close())
+	require.NoError(t, db.Close())
+	require.NoError(t, logs.waitConnDisconnected())
+	logs.check(func() {
+		require.Equal(t, 3, len(logs.infos))
+		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
+		require.Equal(t, auth.RoleIdentity{
+			Username: "r1",
+			Hostname: "%",
+		}, *logs.infos[2].ActiveRoles[0])
+		require.Nil(t, logs.infos[2].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
+	})
+
+	// test for login failed
+	logs.reset()
+	cfg := mysql.NewConfig()
+	cfg.User = "noexist"
+	cfg.Net = "tcp"
+	cfg.Addr = fmt.Sprintf("127.0.0.1:%d", ts.port)
+	cfg.DBName = "test"
+
+	db, err = sql.Open("mysql", cfg.FormatDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	_, err = db.Conn(context.Background())
+	require.Error(t, err)
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeRejected,
+			extension.ConnDisconnected,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "noexist"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+	})
 }

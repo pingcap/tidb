@@ -29,7 +29,7 @@ func (es *Extensions) Manifests() []*Manifest {
 	return manifests
 }
 
-// Bootstrap bootstrap all extensions
+// Bootstrap bootstraps all extensions
 func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
 	if es == nil {
 		return nil
@@ -43,4 +43,12 @@ func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
 		}
 	}
 	return nil
+}
+
+// NewSessionExtensions creates a new ConnExtensions object
+func (es *Extensions) NewSessionExtensions() *SessionExtensions {
+	if es == nil {
+		return nil
+	}
+	return newSessionExtensions(es)
 }

@@ -67,7 +67,7 @@ type IndexLookUpJoin struct {
 
 	task       *lookUpJoinTask
 	joinResult *chunk.Chunk
-	innerIter  chunk.Iterator
+	innerIter  *chunk.Iterator4Slice
 
 	joiner      joiner
 	isOuterJoin bool
@@ -226,7 +226,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.ctx,
-		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		executorChk:   e.ctx.GetSessionVars().GetNewChunk(e.innerCtx.rowTypes, e.maxChunkSize),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
@@ -277,7 +277,10 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		startTime := time.Now()
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
+			if e.innerIter == nil {
+				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
+			}
+			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()
 		}
 
@@ -428,7 +431,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := chunk.NewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize)
+		chk := ow.ctx.GetSessionVars().GetNewChunk(ow.outerCtx.rowTypes, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := Next(ctx, ow.executor, chk)
 		if err != nil {
@@ -459,7 +462,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.encodedLookUpKeys = make([]*chunk.Chunk, task.outerResult.NumChunks())
 	for i := range task.encodedLookUpKeys {
-		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
+		task.encodedLookUpKeys[i] = ow.ctx.GetSessionVars().GetNewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
 	}
 	return task, nil
 }
@@ -711,7 +714,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = newFirstChunk(innerExec)
+		iw.executorChk = tryNewCacheChunk(innerExec)
 	}
 	task.innerResult = innerResult
 	return nil
