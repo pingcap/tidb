@@ -57,6 +57,7 @@ type featureUsage struct {
 	EnableCostModelVer2       bool                             `json:"enableCostModelVer2"`
 	DDLUsageCounter           *m.DDLUsageCounter               `json:"DDLUsageCounter"`
 	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
+	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
 }
 
 type placementPolicyUsage struct {
@@ -130,6 +131,9 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			}
 			if tbInfo.Meta().PlacementPolicyRef != nil {
 				usage.PlacementPolicyUsage.NumTableWithPolicies++
+			}
+			if tbInfo.Meta().AutoIdCache == 1 {
+				usage.AutoIDNoCache = true
 			}
 			partitions := tbInfo.Meta().GetPartitionInfo()
 			if partitions == nil {
