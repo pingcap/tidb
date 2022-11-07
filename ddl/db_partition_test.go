@@ -4662,4 +4662,82 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"34 34💥",
 		"46 46",
 		"57 57"))
+	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+}
+
+func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "modColPartFail"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
+	tk.MustGetErrCode(`alter table t modify a varchar(255)`, errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode(`alter table t modify a float`, mysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (b int unsigned, a varchar(255), key (b)) partition by range columns (a) (partition p0 values less than (""), partition p1 values less than ("11111"), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34 💥💥Longer than 11111"),(46,"46"),(57,"57")`)
+	tk.MustExec(`alter table t modify a varchar(50)`)
+	tk.MustGetErrCode(`alter table t modify a float`, mysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustGetErrCode(`alter table t modify a int`, errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg(`alter table t modify a varchar(4)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.WarnDataTruncated)
+	tk.MustExec(`SET SQL_MODE = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// fix https://github.com/pingcap/tidb/issues/38669 and update this
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`SET SQL_MODE = DEFAULT`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34 💥💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tStr := "" +
+		"CREATE TABLE `t` (\n" +
+		"  `b` int(10) unsigned DEFAULT NULL,\n" +
+		"  `a` varchar(5) DEFAULT NULL,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (''),\n" +
+		" PARTITION `p1` VALUES LESS THAN ('11111'),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t " + tStr))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(tStr)
+	tk.MustExec(`drop table t`)
+	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
+	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
+	tk.MustContainErrMsg(`alter table t modify a int unsigned`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	tk.MustQuery("select * from t partition (`p-300`)").Sort().Check(testkit.Rows("-400 -400"))
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustContainErrMsg(`alter table t modify a smallint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	tk.MustExec(`alter table t modify a bigint`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range columns (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
+	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
+	tk.MustContainErrMsg(`alter table t modify a int unsigned`, "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions")
+	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustQuery("select * from t partition (`p-300`)").Sort().Check(testkit.Rows("-400 -400"))
+	tk.MustExec(`set sql_mode = default`)
+	// OK to decrease, since with RANGE COLUMNS, it will check the partition definition values against the new type
+	tk.MustExec(`alter table t modify a smallint`)
+	tk.MustExec(`alter table t modify a bigint`)
+
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255), key (b)) partition by list columns (b) (partition p1 values in ("1", "ab", "12345"), partition p2 values in ("2", "abc", "999999"))`)
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (999999, "999999")`)
+	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`set sql_mode = default`)
 }

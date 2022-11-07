@@ -191,12 +191,13 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive      bool
-	UseRecursive         bool
-	UseMultiSchemaChange bool
-	UesExchangePartition bool
-	PartitionTelemetry   *PartitionTelemetryInfo
-	AccountLockTelemetry *AccountLockTelemetryInfo
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UesExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.

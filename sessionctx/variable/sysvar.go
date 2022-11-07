@@ -787,16 +787,6 @@ var defaultSysVars = []*SysVar{
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-
-			if bt == 0 {
-				if config.GetGlobalConfig().Performance.ServerMemoryQuota < 1 {
-					memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
-				} else {
-					memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-				}
-			} else {
-				memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
-			}
 			return nil
 		},
 	},
