@@ -1059,7 +1059,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
-	DefTiDBEnableMDL                               = false
+	DefTiDBEnableMDL                               = true
 	DefTiFlashFastScan                             = false
 	DefMemoryUsageAlarmRatio                       = 0.7
 	DefMemoryUsageAlarmKeepRecordNum               = 5
@@ -1070,19 +1070,18 @@ const (
 	DefTiDBGeneralPlanCacheSize                    = 100
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                     int32  = 10240
-	MinDDLReorgBatchSize                     int32  = 32
-	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
-	DefTiDBRcWriteCheckTs                           = false
-	DefTiDBConstraintCheckInPlacePessimistic        = true
-	DefTiDBForeignKeyChecks                         = false
-	DefTiDBAnalyzePartitionConcurrency              = 1
-	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                             = 1
-	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
-	DefTiDBMergePartitionStatsConcurrency           = 1
-	DefTiDBServerMemoryLimitGCTrigger               = 0.7
-	DefTiDBEnableGOGCTuner                          = true
+	MaxDDLReorgBatchSize                  int32  = 10240
+	MinDDLReorgBatchSize                  int32  = 32
+	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	DefTiDBRcWriteCheckTs                        = false
+	DefTiDBForeignKeyChecks                      = false
+	DefTiDBAnalyzePartitionConcurrency           = 1
+	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
+	DefTiDBCostModelVer                          = 1
+	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
+	DefTiDBMergePartitionStatsConcurrency        = 1
+	DefTiDBServerMemoryLimitGCTrigger            = 0.7
+	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold       float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan         = true
@@ -1134,7 +1133,7 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                         = atomic.NewBool(DefTiDBEnableMDL)
+	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
