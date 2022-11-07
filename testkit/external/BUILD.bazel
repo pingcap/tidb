@@ -7,10 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//domain",
+        "//parser/model",
         "//table",
         "//table/tables",
         "//testkit",
-        "//vendor/github.com/pingcap/tidb/parser/model",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

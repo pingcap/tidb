@@ -9,7 +9,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/sys/linux",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/golang.org/x/sys/unix"],
+    deps = ["@org_golang_x_sys//unix"],
 )
 
 go_test(
@@ -23,7 +23,7 @@ go_test(
     deps = [
         ":linux",
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

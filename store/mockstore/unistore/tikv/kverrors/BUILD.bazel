@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//store/mockstore/unistore/tikv/mvcc",
-        "//vendor/github.com/pingcap/kvproto/pkg/deadlock",
-        "//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )

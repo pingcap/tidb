@@ -11,11 +11,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/parser/test_driver",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/ast",
-        "//vendor/github.com/pingcap/tidb/parser/charset",
-        "//vendor/github.com/pingcap/tidb/parser/format",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/pingcap/tidb/parser/types",
+        "//parser/ast",
+        "//parser/charset",
+        "//parser/format",
+        "//parser/mysql",
+        "//parser/types",
+        "@com_github_pingcap_errors//:errors",
     ],
 )

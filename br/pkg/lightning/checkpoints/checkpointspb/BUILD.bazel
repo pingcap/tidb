@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/gogo/protobuf/gogoproto",
-        "//vendor/github.com/gogo/protobuf/proto",
+        "@com_github_gogo_protobuf//gogoproto",
+        "@com_github_gogo_protobuf//proto",
     ],
 )

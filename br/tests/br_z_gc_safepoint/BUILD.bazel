@@ -6,10 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/tests/br_z_gc_safepoint",
     visibility = ["//visibility:private"],
     deps = [
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/tikv/client-go/v2/oracle",
-        "//vendor/github.com/tikv/pd/client",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

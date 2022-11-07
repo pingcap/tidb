@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore/config",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/pingcap/badger/options",
-        "//vendor/github.com/pingcap/log",
+        "@com_github_pingcap_badger//options",
+        "@com_github_pingcap_log//:log",
     ],
 )

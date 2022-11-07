@@ -13,10 +13,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/pdtypes",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/docker/go-units",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/kvproto/pkg/metapb",
-        "//vendor/github.com/pingcap/kvproto/pkg/pdpb",
-        "//vendor/golang.org/x/exp/slices",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@org_golang_x_exp//slices",
     ],
 )

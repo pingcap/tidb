@@ -10,15 +10,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/sqlexec",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser",
+        "//parser/ast",
         "//sessionctx",
         "//sessionctx/variable",
         "//types",
         "//util/chunk",
         "//util/hack",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
-        "//vendor/github.com/pingcap/tidb/parser",
-        "//vendor/github.com/pingcap/tidb/parser/ast",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 
@@ -33,7 +33,7 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

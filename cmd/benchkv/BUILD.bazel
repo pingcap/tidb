@@ -7,14 +7,14 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//kv",
+        "//parser/terror",
         "//store/driver",
-        "//vendor/github.com/go-sql-driver/mysql",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
-        "//vendor/github.com/prometheus/client_golang/prometheus",
-        "//vendor/github.com/prometheus/client_golang/prometheus/promhttp",
-        "//vendor/go.uber.org/zap",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/promhttp",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

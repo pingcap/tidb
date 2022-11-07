@@ -10,12 +10,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/parser/model",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/auth",
-        "//vendor/github.com/pingcap/tidb/parser/charset",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
-        "//vendor/github.com/pingcap/tidb/parser/types",
+        "//parser/auth",
+        "//parser/charset",
+        "//parser/mysql",
+        "//parser/terror",
+        "//parser/types",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -29,10 +29,9 @@ go_test(
     embed = [":model"],
     flaky = True,
     deps = [
-        "//vendor/github.com/pingcap/tidb/parser/charset",
-        "//vendor/github.com/pingcap/tidb/parser/model",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/pingcap/tidb/parser/types",
-        "//vendor/github.com/stretchr/testify/require",
+        "//parser/charset",
+        "//parser/mysql",
+        "//parser/types",
+        "@com_github_stretchr_testify//require",
     ],
 )

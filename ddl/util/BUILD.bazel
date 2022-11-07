@@ -11,18 +11,18 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/model",
+        "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
         "//util/chunk",
         "//util/logutil",
         "//util/sqlexec",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/model",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
-        "//vendor/github.com/tikv/client-go/v2/tikvrpc",
-        "//vendor/go.etcd.io/etcd/client/v3:client",
-        "//vendor/go.uber.org/atomic",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -34,6 +34,6 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/go.uber.org/goleak",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -7,8 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/logutil",
-        "//vendor/github.com/tikv/pd/client",
-        "//vendor/go.uber.org/zap",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -23,10 +23,10 @@ go_test(
         "//session",
         "//store/mockstore",
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/github.com/tikv/pd/client",
-        "//vendor/go.etcd.io/etcd/tests/v3/integration",
-        "//vendor/go.opencensus.io/stats/view",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

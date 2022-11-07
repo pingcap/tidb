@@ -15,6 +15,6 @@ go_test(
     flaky = True,
     deps = [
         ":worker",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

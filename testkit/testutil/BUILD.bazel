@@ -10,13 +10,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/mysql",
         "//sessionctx/stmtctx",
         "//types",
         "//util/codec",
         "//util/collate",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/golang.org/x/exp/slices",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
     ],
 )
 
@@ -27,7 +27,7 @@ go_test(
     embed = [":testutil"],
     flaky = True,
     deps = [
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

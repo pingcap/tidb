@@ -5,7 +5,7 @@ go_library(
     srcs = ["opcode.go"],
     importpath = "github.com/pingcap/tidb/parser/opcode",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/github.com/pingcap/tidb/parser/format"],
+    deps = ["//parser/format"],
 )
 
 go_test(

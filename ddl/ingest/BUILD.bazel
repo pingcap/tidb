@@ -27,6 +27,9 @@ go_library(
         "//br/pkg/lightning/log",
         "//config",
         "//kv",
+        "//parser",
+        "//parser/model",
+        "//parser/mysql",
         "//sessionctx/variable",
         "//table",
         "//util",
@@ -34,13 +37,10 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/size",
-        "//vendor/github.com/google/uuid",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser",
-        "//vendor/github.com/pingcap/tidb/parser/model",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/pkg/errors",
-        "//vendor/go.uber.org/zap",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pkg_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -54,6 +54,6 @@ go_test(
     deps = [
         ":ingest",
         "//config",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

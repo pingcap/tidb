@@ -8,5 +8,5 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/testkit/testmain",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/go.uber.org/goleak"],
+    deps = ["@org_uber_go_goleak//:goleak"],
 )

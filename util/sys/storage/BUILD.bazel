@@ -11,7 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = select({
         "@io_bazel_rules_go//go/platform:windows": [
-            "//vendor/golang.org/x/sys/windows",
+            "@org_golang_x_sys//windows",
         ],
         "//conditions:default": [],
     }),
@@ -28,7 +28,7 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

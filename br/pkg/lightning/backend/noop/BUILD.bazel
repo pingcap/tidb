@@ -11,9 +11,9 @@ go_library(
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
+        "//parser/model",
         "//table",
         "//types",
-        "//vendor/github.com/google/uuid",
-        "//vendor/github.com/pingcap/tidb/parser/model",
+        "@com_github_google_uuid//:uuid",
     ],
 )

@@ -10,8 +10,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/logutil",
-        "//vendor/github.com/pingcap/tipb/go-tipb",
-        "//vendor/go.uber.org/zap",
-        "//vendor/google.golang.org/grpc",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
     ],
 )

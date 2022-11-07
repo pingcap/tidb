@@ -5,5 +5,5 @@ go_library(
     srcs = ["pberror.go"],
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/github.com/pingcap/kvproto/pkg/errorpb"],
+    deps = ["@com_github_pingcap_kvproto//pkg/errorpb"],
 )

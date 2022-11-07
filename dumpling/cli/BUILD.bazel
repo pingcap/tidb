@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//dumpling/log",
-        "//vendor/go.uber.org/zap",
+        "@org_uber_go_zap//:zap",
     ],
 )

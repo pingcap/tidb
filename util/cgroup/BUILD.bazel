@@ -12,10 +12,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/cgroup",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/cockroachdb/errors",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/go.uber.org/zap",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -24,5 +24,5 @@ go_test(
     srcs = ["cgroup_mock_test.go"],
     embed = [":cgroup"],
     flaky = True,
-    deps = ["//vendor/github.com/stretchr/testify/require"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

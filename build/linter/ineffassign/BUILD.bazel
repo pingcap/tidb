@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "//vendor/github.com/gordonklaus/ineffassign/pkg/ineffassign",
+        "@com_github_gordonklaus_ineffassign//pkg/ineffassign",
     ],
 )

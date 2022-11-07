@@ -13,8 +13,8 @@ go_library(
     deps = [
         "//util",
         "//util/memory",
-        "//vendor/github.com/pingcap/failpoint",
-        "//vendor/go.uber.org/atomic",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -31,7 +31,7 @@ go_test(
     race = "on",
     deps = [
         "//util/memory",
-        "//vendor/github.com/pingcap/failpoint",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )

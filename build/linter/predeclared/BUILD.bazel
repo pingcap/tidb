@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "//vendor/github.com/nishanths/predeclared/passes/predeclared",
+        "@com_github_nishanths_predeclared//passes/predeclared",
     ],
 )

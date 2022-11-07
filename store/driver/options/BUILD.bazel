@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
-        "//vendor/github.com/tikv/client-go/v2/kv",
+        "@com_github_tikv_client_go_v2//kv",
     ],
 )

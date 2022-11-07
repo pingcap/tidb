@@ -13,9 +13,9 @@ go_library(
         "//kv",
         "//testkit",
         "//util/logutil",
-        "//vendor/github.com/pingcap/failpoint",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -37,6 +37,6 @@ go_test(
         "//ddl/ingest",
         "//testkit",
         "//tests/realtikvtest",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

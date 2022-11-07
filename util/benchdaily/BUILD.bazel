@@ -18,6 +18,6 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/go.uber.org/goleak",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

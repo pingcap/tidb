@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/tests/lightning_checkpoint_parquet",
     visibility = ["//visibility:private"],
     deps = [
-        "//vendor/github.com/xitongsys/parquet-go-source/local",
-        "//vendor/github.com/xitongsys/parquet-go/writer",
+        "@com_github_xitongsys_parquet_go//writer",
+        "@com_github_xitongsys_parquet_go_source//local",
     ],
 )
 

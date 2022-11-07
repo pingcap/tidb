@@ -8,6 +8,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "//vendor/github.com/kisielk/errcheck/errcheck",
+        "@com_github_kisielk_errcheck//errcheck",
     ],
 )

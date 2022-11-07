@@ -13,9 +13,9 @@ go_test(
         "//store/mockstore",
         "//testkit/testmain",
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/github.com/tikv/client-go/v2/testutils",
-        "//vendor/github.com/tikv/client-go/v2/tikv",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

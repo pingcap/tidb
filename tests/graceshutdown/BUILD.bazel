@@ -10,11 +10,11 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/go-sql-driver/mysql",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
-        "//vendor/go.uber.org/zap",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

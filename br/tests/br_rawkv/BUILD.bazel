@@ -6,11 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/tests/br_rawkv",
     visibility = ["//visibility:private"],
     deps = [
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/tikv/client-go/v2/config",
-        "//vendor/github.com/tikv/client-go/v2/rawkv",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//rawkv",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

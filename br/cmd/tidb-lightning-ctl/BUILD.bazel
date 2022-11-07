@@ -14,7 +14,7 @@ go_library(
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/restore",
         "//br/pkg/lightning/tikv",
-        "//vendor/github.com/pingcap/errors",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

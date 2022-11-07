@@ -8,7 +8,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/mathutil",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/golang.org/x/exp/constraints"],
+    deps = ["@org_golang_x_exp//constraints"],
 )
 
 go_test(
@@ -23,7 +23,7 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

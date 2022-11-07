@@ -8,6 +8,6 @@ go_library(
     deps = [
         "//sessionctx",
         "//util/stringutil",
-        "//vendor/github.com/pingcap/failpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )

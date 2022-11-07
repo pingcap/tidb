@@ -14,13 +14,13 @@ go_library(
         "//ddl",
         "//domain",
         "//kv",
+        "//parser/model",
         "//sessionctx",
-        "//vendor/github.com/fatih/color",
-        "//vendor/github.com/pingcap/tidb/parser/model",
-        "//vendor/github.com/tikv/pd/client",
-        "//vendor/github.com/vbauerster/mpb/v7:mpb",
-        "//vendor/github.com/vbauerster/mpb/v7/decor",
-        "//vendor/golang.org/x/term",
+        "@com_github_fatih_color//:color",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_vbauerster_mpb_v7//:mpb",
+        "@com_github_vbauerster_mpb_v7//decor",
+        "@org_golang_x_term//:term",
     ],
 )
 
@@ -31,7 +31,7 @@ go_test(
     flaky = True,
     deps = [
         ":glue",
-        "//vendor/github.com/fatih/color",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_fatih_color//:color",
+        "@com_github_stretchr_testify//require",
     ],
 )

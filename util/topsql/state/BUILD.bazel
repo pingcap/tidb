@@ -5,5 +5,5 @@ go_library(
     srcs = ["state.go"],
     importpath = "github.com/pingcap/tidb/util/topsql/state",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/go.uber.org/atomic"],
+    deps = ["@org_uber_go_atomic//:atomic"],
 )

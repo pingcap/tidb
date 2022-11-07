@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "//vendor/github.com/timakin/bodyclose/passes/bodyclose",
+        "@com_github_timakin_bodyclose//passes/bodyclose",
     ],
 )

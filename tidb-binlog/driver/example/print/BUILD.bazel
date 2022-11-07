@@ -7,9 +7,9 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//tidb-binlog/driver/reader",
-        "//vendor/github.com/Shopify/sarama",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_log//:log",
+        "@com_github_shopify_sarama//:sarama",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

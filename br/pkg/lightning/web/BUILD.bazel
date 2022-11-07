@@ -13,7 +13,7 @@ go_library(
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/mydump",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/go.uber.org/atomic",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

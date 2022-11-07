@@ -23,15 +23,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/metrics",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser/terror",
         "//util/logutil",
         "//util/mathutil",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
-        "//vendor/github.com/prometheus/client_golang/prometheus",
-        "//vendor/github.com/prometheus/client_golang/prometheus/collectors",
-        "//vendor/github.com/prometheus/client_model/go",
-        "//vendor/github.com/tikv/client-go/v2/metrics",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/collectors",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_tikv_client_go_v2//metrics",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -45,10 +45,10 @@ go_test(
     embed = [":metrics"],
     flaky = True,
     deps = [
+        "//parser/terror",
         "//testkit/testsetup",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

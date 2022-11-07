@@ -10,8 +10,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/github.com/pingcap/tidb/parser/terror",
+        "//parser/mysql",
+        "//parser/terror",
     ],
 )
 
@@ -27,8 +27,8 @@ go_test(
     deps = [
         "//errno",
         "//testkit/testsetup",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

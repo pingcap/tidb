@@ -17,7 +17,7 @@ go_library(
         "//util/codec",
         "//util/collate",
         "//util/size",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/pingcap/tipb/go-tipb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )

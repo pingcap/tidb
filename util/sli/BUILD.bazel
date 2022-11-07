@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
-        "//vendor/github.com/pingcap/failpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )

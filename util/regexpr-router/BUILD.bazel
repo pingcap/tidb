@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//util/filter",
         "//util/table-router",
-        "//vendor/github.com/pingcap/errors",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -21,6 +21,6 @@ go_test(
     deps = [
         "//util/filter",
         "//util/table-router",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -8,10 +8,10 @@ go_library(
     deps = [
         "//dumpling/cli",
         "//dumpling/export",
-        "//vendor/github.com/prometheus/client_golang/prometheus",
-        "//vendor/github.com/prometheus/client_golang/prometheus/collectors",
-        "//vendor/github.com/spf13/pflag",
-        "//vendor/go.uber.org/zap",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/collectors",
+        "@com_github_spf13_pflag//:pflag",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

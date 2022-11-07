@@ -9,8 +9,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/watcher",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/go.uber.org/atomic",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -20,5 +20,5 @@ go_test(
     srcs = ["watcher_test.go"],
     embed = [":watcher"],
     flaky = True,
-    deps = ["//vendor/github.com/stretchr/testify/require"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

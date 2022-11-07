@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
-        "//vendor/github.com/golang/mock/gomock",
+        "@com_github_golang_mock//gomock",
     ],
 )

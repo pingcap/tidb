@@ -12,6 +12,6 @@ go_test(
     srcs = ["sync_map_test.go"],
     deps = [
         ":generic",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -6,11 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/servermemorylimit",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser/mysql",
         "//types",
         "//util",
         "//util/memory",
-        "//vendor/github.com/pingcap/tidb/parser/mysql",
-        "//vendor/go.uber.org/atomic",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -23,6 +23,6 @@ go_test(
     deps = [
         "//types",
         "//util",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_stretchr_testify//require",
     ],
 )

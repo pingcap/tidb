@@ -9,8 +9,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/tracing",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/opentracing/basictracer-go",
-        "//vendor/github.com/opentracing/opentracing-go",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
     ],
 )
 
@@ -27,9 +27,9 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/opentracing/basictracer-go",
-        "//vendor/github.com/opentracing/opentracing-go",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

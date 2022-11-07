@@ -10,7 +10,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//util/logutil",
-        "//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@org_uber_go_zap//:zap",
     ],
 )

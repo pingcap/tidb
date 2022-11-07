@@ -11,8 +11,8 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//owner",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/go.uber.org/zap",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -23,7 +23,7 @@ go_test(
     deps = [
         ":daemon",
         "//owner",
-        "//vendor/github.com/pingcap/log",
-        "//vendor/github.com/stretchr/testify/require",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
     ],
 )

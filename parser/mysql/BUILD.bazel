@@ -17,8 +17,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/parser/mysql",
     visibility = ["//visibility:public"],
     deps = [
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tidb/parser/format",
+        "//parser/format",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -33,5 +33,5 @@ go_test(
     ],
     embed = [":mysql"],
     flaky = True,
-    deps = ["//vendor/github.com/stretchr/testify/require"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

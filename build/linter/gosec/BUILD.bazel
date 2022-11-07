@@ -7,10 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "//vendor/github.com/golangci/golangci-lint/pkg/result",
-        "//vendor/github.com/golangci/gosec",
-        "//vendor/github.com/golangci/gosec/rules",
-        "//vendor/golang.org/x/tools/go/analysis",
-        "//vendor/golang.org/x/tools/go/loader",
+        "@com_github_golangci_golangci_lint//pkg/result",
+        "@com_github_golangci_gosec//:gosec",
+        "@com_github_golangci_gosec//rules",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
     ],
 )

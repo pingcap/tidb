@@ -32,7 +32,7 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/assert",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

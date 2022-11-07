@@ -15,10 +15,10 @@ go_library(
         "//util/logutil",
         "//util/memory",
         "//util/texttree",
-        "//vendor/github.com/golang/snappy",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/tipb/go-tipb",
-        "//vendor/go.uber.org/zap",
+        "@com_github_golang_snappy//:snappy",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -35,7 +35,7 @@ go_test(
     deps = [
         "//kv",
         "//testkit/testsetup",
-        "//vendor/github.com/stretchr/testify/require",
-        "//vendor/go.uber.org/goleak",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

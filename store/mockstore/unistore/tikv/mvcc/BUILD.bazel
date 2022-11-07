@@ -12,9 +12,9 @@ go_library(
     deps = [
         "//store/mockstore/unistore/lockstore",
         "//util/codec",
-        "//vendor/github.com/pingcap/badger",
-        "//vendor/github.com/pingcap/badger/y",
-        "//vendor/github.com/pingcap/errors",
-        "//vendor/github.com/pingcap/kvproto/pkg/kvrpcpb",
+        "@com_github_pingcap_badger//:badger",
+        "@com_github_pingcap_badger//y",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
