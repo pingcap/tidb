@@ -40,12 +40,14 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	h := dom.StatsHandle()
 	h.SetLease(1)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems", `return(0)`))
-	tk.MustQuery("explain select * from t where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems")
+	// no item would be loaded
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems", `return(0)`))
+	tk.MustQuery("trace plan select * from t where a > 10")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems")
 	tk.MustExec("analyze table t1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems", `return(1)`))
-	tk.MustQuery("explain select * from t1 where a > 10")
+	// one column would be loaded
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems", `return(1)`))
+	tk.MustQuery("trace plan select * from t1 where a > 10")
 }
 
 func TestConcurrentLoadHist(t *testing.T) {
