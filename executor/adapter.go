@@ -191,12 +191,13 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive      bool
-	UseRecursive         bool
-	UseMultiSchemaChange bool
-	UesExchangePartition bool
-	PartitionTelemetry   *PartitionTelemetryInfo
-	AccountLockTelemetry *AccountLockTelemetryInfo
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UesExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -611,6 +612,17 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 	return nil
 }
 
+// handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
+//  1. Build delete/update executor for foreign key on delete/update behaviour.
+//     a. Construct delete/update AST. We used to try generated SQL string first and then parse the SQL to get AST,
+//     but we need convert Datum to string, there may be some risks here, since assert_eq(datum_a, parse(datum_a.toString())) may be broken.
+//     so we chose to construct AST directly.
+//     b. Build plan by the delete/update AST.
+//     c. Build executor by the delete/update plan.
+//  2. Execute the delete/update executor.
+//  3. Close the executor.
+//  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
+//  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
@@ -829,7 +841,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	}()
 	var rows []chunk.Row
 	var err error
-	req := newFirstChunk(e)
+	req := tryNewCacheChunk(e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -876,7 +888,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = a.next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, tryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -61,12 +62,13 @@ type LRUPlanCache struct {
 	guard float64
 
 	memoryUsageTotal int64
+	sctx             sessionctx.Context
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
 func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
-	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
+	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool), sctx sessionctx.Context) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
@@ -79,6 +81,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
+		sctx:           sctx,
 	}
 }
 
@@ -203,7 +206,9 @@ func (l *LRUPlanCache) Close() {
 	if l == nil {
 		return
 	}
-	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(l.memoryUsageTotal))
+	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(l.memoryUsageTotal))
+	}
 	metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(l.size))
 }
 
@@ -259,7 +264,8 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 
 // updateInstanceMetric update the memory usage and plan num for show in grafana
 func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
-	if l == nil {
+	updateInstancePlanNum(in, out)
+	if l == nil || !l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
 		return
 	}
 
@@ -270,10 +276,19 @@ func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	} else if in != nil { // put plan
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage()
-		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(1)
 	} else { // delete plan
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
 		l.memoryUsageTotal -= out.MemoryUsage()
+	}
+}
+
+// updateInstancePlanNum update the plan num
+func updateInstancePlanNum(in, out *planCacheEntry) {
+	if in != nil && out != nil { // replace plan
+		return
+	} else if in != nil { // put plan
+		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(1)
+	} else { // delete plan
 		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(1)
 	}
 }

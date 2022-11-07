@@ -541,7 +541,7 @@ func TestShow(t *testing.T) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y) nonclustered);`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
@@ -938,7 +938,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5800)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
