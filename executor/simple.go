@@ -807,9 +807,9 @@ func (e *SimpleExec) checkUserNameInPassword(pwd string) error {
 	if bytes.Contains(pwdBytes, userName) {
 		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
 	}
-	var reverseUserName []byte
+	reverseUserName := make([]byte, userNameLen)
 	for i := range userName {
-		reverseUserName = append(reverseUserName, userName[userNameLen-1-i])
+		reverseUserName[i] = userName[userNameLen-1-i]
 	}
 	if bytes.Contains(pwdBytes, reverseUserName) {
 		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
