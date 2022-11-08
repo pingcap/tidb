@@ -436,14 +436,15 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
+
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 	}
 }
