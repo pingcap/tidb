@@ -455,9 +455,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
 	bJobs1[0].State = model.JobStateRollingback
-	bJobs1[0].ID++
+	bJobs1[0].ID = 2
 	bJobs1[1].State = model.JobStateCancelling
-	bJobs1[1].ID++
+	bJobs1[1].ID = 3
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID     eleID1    JobStateNone
@@ -471,4 +471,6 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID, eleID1, meta.IndexElementKey)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 2)
+	equalBackfillJob(t, bJobs1[0], bJobs[0], types.ZeroTime)
+	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
 }

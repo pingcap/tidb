@@ -58,9 +58,10 @@ const (
 	typeCleanUpIndexWorker backfillWorkerType = 2
 
 	InstanceLease = 60 // s
-	// TODO: control the behavior
-	EnableDistReorg = true
 )
+
+// TODO: control the behavior
+var EnableDistReorg = true
 
 type BackfillJob struct {
 	ID             int64
