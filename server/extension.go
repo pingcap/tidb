@@ -54,7 +54,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	cc.extensions.OnConnectionEvent(tp, info)
 }
 
-func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...expression.Expression) {
+func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...expression.Expression) {
 	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
@@ -91,8 +91,8 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...ex
 		info.stmtNode = stmt
 	}
 
-	if sc := sessVars.StmtCtx; sc != nil && err == nil {
-		info.sc = sc
+	if stmtCtxValid {
+		info.sc = sessVars.StmtCtx
 	} else {
 		info.sc = &stmtctx.StatementContext{}
 	}
@@ -112,8 +112,8 @@ func (cc *clientConn) onExtensionSQLParseFailed(sql string, err error) {
 	})
 }
 
-func (cc *clientConn) onExtensionBinaryExecuteEnd(prep PreparedStatement, args []expression.Expression, err error) {
-	cc.onExtensionStmtEnd(prep, err, args...)
+func (cc *clientConn) onExtensionBinaryExecuteEnd(prep PreparedStatement, args []expression.Expression, stmtCtxValid bool, err error) {
+	cc.onExtensionStmtEnd(prep, stmtCtxValid, err, args...)
 }
 
 type stmtEventInfo struct {
@@ -191,7 +191,7 @@ func (e *stmtEventInfo) CurrentDB() string {
 }
 
 func (e *stmtEventInfo) AffectedRows() uint64 {
-	if e.sc == nil {
+	if e.sc == nil || e.err != nil {
 		return 0
 	}
 	return e.sc.AffectedRows()
