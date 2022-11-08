@@ -2673,7 +2673,7 @@ func InitDDLJobTables(store kv.Storage) error {
 		tableVer, err := t.CheckDDLTableVersion()
 		targetVer := meta.DDLTableVersion2
 		targetTables := DDLJobTables
-		if !ddl.EnableDistReorg {
+		if !ddl.IsDistReorgEnable() {
 			targetVer = meta.DDLTableVersion1
 			targetTables = DDLJobTables[:3]
 		}

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -60,8 +61,24 @@ const (
 	InstanceLease = 60 // s
 )
 
+// enableDistReorg means whether to enable dist reorg. The default is enable.
 // TODO: control the behavior
-var EnableDistReorg = true
+var enableDistReorg = atomicutil.NewBool(false)
+
+// DistReorgEnable enables dist reorg. It exports for testing.
+func DistReorgEnable() {
+	enableDistReorg.Store(true)
+}
+
+// DistReorgDisable disables dist reorg. It exports for testing.
+func DistReorgDisable() {
+	enableDistReorg.Store(false)
+}
+
+// IsDistReorgEnable indicates whether dist reorg enabled. It exports for testing.
+func IsDistReorgEnable() bool {
+	return enableDistReorg.Load()
+}
 
 type BackfillJob struct {
 	ID             int64
@@ -76,17 +93,9 @@ type BackfillJob struct {
 	Mate           *model.BackfillMeta
 }
 
-func (bj *BackfillJob) IsFinished() bool {
-	return bj.State == model.JobStateDone
-}
-
-func (bj *BackfillJob) IsRunning() bool {
-	return bj.State == model.JobStateRunning
-}
-
 func (bj *BackfillJob) AbbrStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
-		bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
 }
 
 func GetOracleTime(store kv.Storage) (time.Time, error) {
