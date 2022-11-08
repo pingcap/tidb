@@ -246,13 +246,14 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	}
 	tableSideCost := divCostVer2(sumCostVer2(tableNetCost, tableChildCost), distConcurrency)
 
-	// double-read
+	// double-read: assume at least 1 row to double-read to avoid 0 double-read cost.
+	doubleReadRows := math.Max(indexRows, 1)
 	doubleReadCPUCost := newCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
-		"double-read-cpu(%v*%v)", indexRows, cpuFactor)
+		"double-read-cpu(%v*%v)", doubleReadRows, cpuFactor)
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
-	doubleReadTasks := indexRows / batchSize * taskPerBatch
+	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
 	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
