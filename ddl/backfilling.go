@@ -381,51 +381,35 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 
 func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTask,
 	totalAddedCount *int64) (kv.Key, int64, error) {
-	var (
-		addedCount int64
-		firstErr   error
-	)
+	var addedCount int64
 	keeper := newDoneTaskKeeper(batchTasks[0].startKey)
 	taskSize := len(batchTasks)
 	for i := 0; i < taskSize; i++ {
 		result := <-scheduler.resultCh
-
 		if result.err != nil {
 			logutil.BgLogger().Warn("[ddl] backfill worker failed",
 				zap.String("result next key", hex.EncodeToString(result.nextKey)),
 				zap.Error(result.err))
-			discardCnt := drainTasks(scheduler.taskCh)
-			taskSize -= discardCnt
+			// Drain tasks.
+			for len(scheduler.taskCh) > 0 {
+				<-scheduler.taskCh
+			}
+			return keeper.nextKey, addedCount, errors.Trace(result.err)
 		}
-
-		if firstErr == nil && result.err != nil {
-			firstErr = result.err
-			continue
-		}
-
-		if firstErr == nil {
-			*totalAddedCount += int64(result.addedCount)
-			addedCount += int64(result.addedCount)
-			keeper.updateNextKey(result.taskID, result.nextKey)
-			if i%scheduler.workerSize()*4 == 0 {
-				// We try to adjust the worker size regularly to reduce
-				// the overhead of loading the DDL related global variables.
-				firstErr = scheduler.adjustWorkerSize()
+		*totalAddedCount += int64(result.addedCount)
+		addedCount += int64(result.addedCount)
+		keeper.updateNextKey(result.taskID, result.nextKey)
+		if i%scheduler.workerSize()*4 == 0 {
+			// We try to adjust the worker size regularly to reduce
+			// the overhead of loading the DDL related global variables.
+			err := scheduler.adjustWorkerSize()
+			if err != nil {
+				logutil.BgLogger().Warn("cannot adjust backfill worker size", zap.Error(err))
 			}
 		}
 	}
 
-	return keeper.nextKey, addedCount, errors.Trace(firstErr)
-}
-
-// drainTasks drains all tasks from the task channel.
-func drainTasks(taskCh chan *reorgBackfillTask) int {
-	cnt := 0
-	for len(taskCh) > 0 {
-		<-taskCh
-		cnt++
-	}
-	return cnt
+	return keeper.nextKey, addedCount, nil
 }
 
 // sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
