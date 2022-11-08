@@ -404,11 +404,13 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 			continue
 		}
 		usedHints[i] = true
-		// TODO: need to check whether the qbName can be empty
 		if p.QbNameMap4View == nil {
 			p.QbNameMap4View = make(map[string][]ast.HintTable)
 		}
 		qbName := hint.QBName.L
+		if qbName == "" {
+			continue
+		}
 		if _, ok := p.QbNameMap4View[qbName]; ok {
 			if p.Ctx != nil {
 				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
