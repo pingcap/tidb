@@ -307,7 +307,7 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
-	cc.ctx.GetSessionVars().ClearAlloc()
+	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
