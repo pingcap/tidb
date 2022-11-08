@@ -380,7 +380,7 @@ func generateRecords(task *PlanReplayerDumpTask) []domain.PlanReplayerStatusReco
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, domain.PlanReplayerStatusRecord{
-				OriginSql: execStmt.Text(),
+				OriginSQL: execStmt.Text(),
 				Token:     task.FileName,
 				Internal:  false,
 			})

@@ -107,7 +107,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 				continue
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
-			if isPlanReplayer {
+			if isPlanReplayer && p.planReplayerHandle != nil {
 				p.planReplayerHandle.deletePlanReplayerStatus(context.Background(), fileName)
 			}
 		}
@@ -159,7 +159,7 @@ func (h *planReplayerHandle) insertExternalPlanReplayerErrorStatusRecord(ctx con
 	exec := h.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
-		record.OriginSql, record.FailedReason, instance))
+		record.OriginSQL, record.FailedReason, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
@@ -172,7 +172,7 @@ func (h *planReplayerHandle) insertExternalPlanReplayerSuccessStatusRecord(ctx c
 	exec := h.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
-		record.OriginSql, record.Token, instance))
+		record.OriginSQL, record.Token, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
@@ -182,7 +182,7 @@ func (h *planReplayerHandle) insertExternalPlanReplayerSuccessStatusRecord(ctx c
 // PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
 type PlanReplayerStatusRecord struct {
 	Internal     bool
-	OriginSql    string
+	OriginSQL    string
 	Token        string
 	FailedReason string
 }
