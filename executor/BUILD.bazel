@@ -150,6 +150,7 @@ go_library(
         "//telemetry",
         "//tidb-binlog/node",
         "//types",
+        "//types/parser_driver",
         "//util",
         "//util/admin",
         "//util/bitmap",
@@ -183,6 +184,7 @@ go_library(
         "//util/rowDecoder",
         "//util/rowcodec",
         "//util/sem",
+        "//util/servermemorylimit",
         "//util/set",
         "//util/size",
         "//util/sqlexec",
@@ -242,7 +244,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "adapter_test.go",
         "admin_test.go",

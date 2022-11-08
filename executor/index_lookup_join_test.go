@@ -352,13 +352,16 @@ func TestIssue23722(t *testing.T) {
 	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 
 	// Test lookup content exceeds primary key prefix.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b char(10), c varchar(255), primary key (c(5)) clustered);")
 	tk.MustExec("insert into t values (20301,'Charlie','aaaaaaa');")
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie aaaaaaa"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 
 	// Test the original case.
 	tk.MustExec("drop table if exists t;")
@@ -452,7 +455,9 @@ func TestIssue27893(t *testing.T) {
 	tk.MustExec("insert into t1 values('x')")
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 }
 
 func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {

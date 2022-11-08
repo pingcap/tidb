@@ -158,6 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
+	if !useCursor {
+		// not using streaming ,can reuse chunk
+		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	}
 	// skip iteration-count, always 1
 	pos += 4
 
@@ -200,7 +204,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
-	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+
+	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+	cc.onExtensionBinaryExecuteEnd(stmt, args, err)
+	return err
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
@@ -295,6 +302,7 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
+	cc.ctx.GetSessionVars().ClearAlloc()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {

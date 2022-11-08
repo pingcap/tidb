@@ -468,10 +468,10 @@
       "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
       "explain format = 'verbose' select count(*) from t2 where a = 0",
       "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
-      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
-      "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
-      "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a"
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
+      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
     ]
 
   },
@@ -745,12 +745,12 @@
   {
     "name": "TestPushDownProjectionForTiFlash",
     "cases": [
-      "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
-      "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
-      "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
-      "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
-      "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
-      "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select /*+ read_from_storage(tiflash[t]) */ id + 1 as b from t)A",
       "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
       "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
@@ -809,6 +809,12 @@
       "desc format = 'brief' select * from t t1 where exists (select * from t t2 where t1.c1 = t2.c2 and t1.c2 = t2.c3 and t1.c3 = t2.c1 and t1.c4 = t2.c3 and t1.c1 = t2.c5)",
       "desc format = 'brief' select * from t t1 left join t t2 on t1.c1 = t2.c2 join t t3 on t2.c5 = t3.c3 right join t t4 on t3.c3 = t4.c4 ",
       "desc format = 'brief' SELECT STRAIGHT_JOIN t1 . col_varchar_64 , t1 . col_char_64_not_null FROM tt AS t1 INNER JOIN( tt AS t2 JOIN tt AS t3 ON(t3 . col_decimal_30_10_key = t2 . col_tinyint)) ON(t3 . col_varchar_64 = t2 . col_varchar_key) WHERE t3 . col_varchar_64 = t1 . col_char_64_not_null GROUP BY 1 , 2"
+    ]
+  },
+  {
+    "name": "TestMppJoinExchangeColumnPrune",
+    "cases": [
+      "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)"
     ]
   },
   {

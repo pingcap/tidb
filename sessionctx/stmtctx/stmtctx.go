@@ -109,37 +109,38 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
-	NoZeroDate             bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	TruncateAsWarning      bool
-	OverflowAsWarning      bool
-	InShowWarning          bool
-	UseCache               bool
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	AllowInvalidDate       bool
-	IgnoreNoPartition      bool
-	SkipPlanCache          bool
-	IgnoreExplainIDSuffix  bool
-	SkipUTF8Check          bool
-	SkipASCIICheck         bool
-	SkipUTF8MB4Check       bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue               bool
+	DDLJobID                      int64
+	InInsertStmt                  bool
+	InUpdateStmt                  bool
+	InDeleteStmt                  bool
+	InSelectStmt                  bool
+	InLoadDataStmt                bool
+	InExplainStmt                 bool
+	InCreateOrAlterStmt           bool
+	InSetSessionStatesStmt        bool
+	InPreparedPlanBuilding        bool
+	IgnoreTruncate                bool
+	IgnoreZeroInDate              bool
+	NoZeroDate                    bool
+	DupKeyAsWarning               bool
+	BadNullAsWarning              bool
+	DividedByZeroAsWarning        bool
+	TruncateAsWarning             bool
+	OverflowAsWarning             bool
+	ErrAutoincReadFailedAsWarning bool
+	InShowWarning                 bool
+	UseCache                      bool
+	BatchCheck                    bool
+	InNullRejectCheck             bool
+	AllowInvalidDate              bool
+	IgnoreNoPartition             bool
+	SkipPlanCache                 bool
+	IgnoreExplainIDSuffix         bool
+	SkipUTF8Check                 bool
+	SkipASCIICheck                bool
+	SkipUTF8MB4Check              bool
+	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -339,6 +340,9 @@ type StatementContext struct {
 		SavepointName string
 		HasFKCascades bool
 	}
+
+	// useChunkAlloc indicates whether statement use chunk alloc
+	useChunkAlloc bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -382,6 +386,8 @@ const (
 	StmtNowTsCacheKey StmtCacheKey = iota
 	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
 	StmtSafeTSCacheKey
+	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
+	StmtExternalTSCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -395,6 +401,23 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 		sc.stmtCache.data[key] = value
 	}
 	return sc.stmtCache.data[key]
+}
+
+// GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	}
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		value, err := valueEvaluator()
+		if err != nil {
+			return nil, err
+		}
+		sc.stmtCache.data[key] = value
+	}
+	return sc.stmtCache.data[key], nil
 }
 
 // ResetInStmtCache resets the cache of given key.
@@ -481,6 +504,21 @@ func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
+}
+
+// SetUseChunkAlloc set use chunk alloc status
+func (sc *StatementContext) SetUseChunkAlloc() {
+	sc.useChunkAlloc = true
+}
+
+// ClearUseChunkAlloc clear useChunkAlloc status
+func (sc *StatementContext) ClearUseChunkAlloc() {
+	sc.useChunkAlloc = false
+}
+
+// GetUseChunkAllocStatus returns useChunkAlloc status
+func (sc *StatementContext) GetUseChunkAllocStatus() bool {
+	return sc.useChunkAlloc
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.
