@@ -370,12 +370,19 @@ func TestReadFromMetadata(t *testing.T) {
 
 		meta := new(StreamMetadataSet)
 		meta.Helper = stream.NewMetadataHelper()
-		meta.LoadUntil(ctx, loc, c.untilTS)
+		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
 
 		var metas []*backuppb.Metadata
-		for _, m := range meta.metadata {
+		for path := range meta.metadataInfos {
+			data, err := loc.ReadFile(ctx, path)
+			require.NoError(t, err)
+
+			m, err := meta.Helper.ParseToMetadataHard(data)
+			require.NoError(t, err)
+
 			metas = append(metas, m)
 		}
+
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
 			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
@@ -436,10 +443,16 @@ func TestReadFromMetadataV2(t *testing.T) {
 
 		meta := new(StreamMetadataSet)
 		meta.Helper = stream.NewMetadataHelper()
-		meta.LoadUntil(ctx, loc, c.untilTS)
+		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
 
 		var metas []*backuppb.Metadata
-		for _, m := range meta.metadata {
+		for path := range meta.metadataInfos {
+			data, err := loc.ReadFile(ctx, path)
+			require.NoError(t, err)
+
+			m, err := meta.Helper.ParseToMetadataHard(data)
+			require.NoError(t, err)
+
 			metas = append(metas, m)
 		}
 		actualStoreIDs := make([]int64, 0, len(metas))
