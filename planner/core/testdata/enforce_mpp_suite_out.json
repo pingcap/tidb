@@ -31,30 +31,30 @@
       {
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_24 1.00 217.09 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_25 1.00 167.19 root  index:StreamAgg_9",
-          "  └─StreamAgg_9 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_23 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_24 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_25 1.00 143.91 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_23 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_17 1.00 217.09 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_18 1.00 167.19 root  index:StreamAgg_9",
-          "  └─StreamAgg_9 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_16 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_17 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_18 1.00 143.91 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_16 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_10 1.00 65360.67 root  funcs:count(1)->Column#4",
-          "└─TableReader_24 10.00 64861.67 root  data:Selection_23",
-          "  └─Selection_23 10.00 972291.38 cop[tiflash]  eq(test.t.a, 1)",
-          "    └─TableFullScan_22 10000.00 948291.38 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg_10 1.00 64007.91 root  funcs:count(1)->Column#4",
+          "└─TableReader_24 10.00 63508.91 root  data:Selection_23",
+          "  └─Selection_23 10.00 952000.00 cop[tiflash]  eq(test.t.a, 1)",
+          "    └─TableFullScan_22 10000.00 928000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -71,30 +71,30 @@
       {
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_31 1.00 217.09 root  funcs:count(Column#7)->Column#4",
-          "└─IndexReader_32 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_30 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_31 1.00 193.81 root  funcs:count(Column#7)->Column#4",
+          "└─IndexReader_32 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_30 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 217.09 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_12 1.00 65360.67 root  funcs:count(1)->Column#4",
-          "└─TableReader_31 10.00 64861.67 root  data:Selection_30",
-          "  └─Selection_30 10.00 972291.38 cop[tiflash]  eq(test.t.a, 1)",
-          "    └─TableFullScan_29 10000.00 948291.38 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg_12 1.00 64007.91 root  funcs:count(1)->Column#4",
+          "└─TableReader_31 10.00 63508.91 root  data:Selection_30",
+          "  └─Selection_30 10.00 952000.00 cop[tiflash]  eq(test.t.a, 1)",
+          "    └─TableFullScan_29 10000.00 928000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -106,30 +106,30 @@
       {
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_31 1.00 217.09 root  funcs:count(Column#7)->Column#4",
-          "└─IndexReader_32 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_30 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_31 1.00 193.81 root  funcs:count(Column#7)->Column#4",
+          "└─IndexReader_32 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_30 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 217.09 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_12 1.00 65360.67 root  funcs:count(1)->Column#4",
-          "└─TableReader_31 10.00 64861.67 root  data:Selection_30",
-          "  └─Selection_30 10.00 972291.38 cop[tiflash]  eq(test.t.a, 1)",
-          "    └─TableFullScan_29 10000.00 948291.38 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg_12 1.00 64007.91 root  funcs:count(1)->Column#4",
+          "└─TableReader_31 10.00 63508.91 root  data:Selection_30",
+          "  └─Selection_30 10.00 952000.00 cop[tiflash]  eq(test.t.a, 1)",
+          "    └─TableFullScan_29 10000.00 928000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -141,20 +141,20 @@
       {
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_31 1.00 217.09 root  funcs:count(Column#7)->Column#4",
-          "└─IndexReader_32 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_30 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_31 1.00 193.81 root  funcs:count(Column#7)->Column#4",
+          "└─IndexReader_32 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_30 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 217.09 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 167.19 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2476.20 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1977.20 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
@@ -165,10 +165,10 @@
         "Plan": [
           "HashAgg_22 1.00 39930.30 root  funcs:count(Column#6)->Column#4",
           "└─TableReader_24 1.00 0.00 root  data:ExchangeSender_23",
-          "  └─ExchangeSender_23 1.00 974211.94 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_10 1.00 974211.94 mpp[tiflash]  funcs:count(1)->Column#6",
-          "      └─Selection_21 10.00 972291.38 mpp[tiflash]  eq(test.t.a, 1)",
-          "        └─TableFullScan_20 10000.00 948291.38 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─ExchangeSender_23 1.00 953920.56 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_10 1.00 953920.56 mpp[tiflash]  funcs:count(1)->Column#6",
+          "      └─Selection_21 10.00 952000.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_20 10000.00 928000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
