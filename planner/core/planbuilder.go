@@ -1022,28 +1022,25 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 }
 
 func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, error) {
-	//charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtFromDigest(v.PlanDigest)
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByDigest(v.PlanDigest)
 	if bindableStmt == nil {
 		return nil, errors.New("plan digest '" + v.PlanDigest + "' doesn't exist")
 	}
 
-	parser4Capture := parser.New() // todo: set parser's sql mode and so
-	stmtOigin, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	parser4binding := parser.New() // todo: set parser's sql mode and so
+	stmtOigin, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		logutil.BgLogger().Debug("[sql-bind-digest] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+		logutil.BgLogger().Debug("[sql-bind] parse origin SQL failed in create binding by plan digest",
+			zap.String("SQL", bindableStmt.Query), zap.Error(err))
 	}
-
 	dbName := utilparser.GetDefaultDB(stmtOigin, bindableStmt.Schema)
 	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), stmtOigin, bindableStmt.PlanHint, true, dbName)
 	if bindSQL == "" {
-		logutil.BgLogger().Info("assssss")
+		logutil.BgLogger().Debug("[sql-bind] parse bind SQL failed in create binding by plan digest")
 	}
-
-	stmtHint, err := parser4Capture.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	stmtHint, err := parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	v.OriginNode = stmtOigin
 	v.HintedNode = stmtHint
-
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, dbName, v.OriginNode.Text())),
@@ -1056,7 +1053,6 @@ func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, err
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
-	// todo: error situation --> log
 }
 
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
