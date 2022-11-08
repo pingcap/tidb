@@ -1954,6 +1954,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.ResetMaxConsumed()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
@@ -2042,6 +2043,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
+		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()

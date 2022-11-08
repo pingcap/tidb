@@ -5320,11 +5320,11 @@
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 12487.50 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
