@@ -48,6 +48,7 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	// one column would be loaded
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems", `return(1)`))
 	tk.MustQuery("trace plan select * from t1 where a > 10")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems")
 }
 
 func TestConcurrentLoadHist(t *testing.T) {
