@@ -205,8 +205,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 	}
 
+	sessVars := cc.ctx.GetSessionVars()
+	// expiredTaskID is the task ID of the previous statement. When executing stmt,
+	// the StmtCtx will be reset and the TaskID will be updated. We can compare the StmtCtx.TaskID
+	// with the previous task one to determine whether StmtCtx is inited for current stmt.
+	expiredTaskID := sessVars.StmtCtx.TaskID
 	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
-	cc.onExtensionBinaryExecuteEnd(stmt, args, err)
+	cc.onExtensionBinaryExecuteEnd(stmt, args, sessVars.StmtCtx.TaskID != expiredTaskID, err)
 	return err
 }
 
