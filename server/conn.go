@@ -1908,7 +1908,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
 			for _, stmt := range stmts {
-				cc.onExtensionStmtEnd(stmt, err)
+				cc.onExtensionStmtEnd(stmt, false, err)
 			}
 			return err
 		}
@@ -1919,12 +1919,18 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 	var retryable bool
 	var lastStmt ast.StmtNode
+	var expiredStmtTaskID uint64
 	for i, stmt := range stmts {
 		if lastStmt != nil {
-			cc.onExtensionStmtEnd(lastStmt, nil)
+			cc.onExtensionStmtEnd(lastStmt, true, nil)
 		}
-
 		lastStmt = stmt
+
+		// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+		// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+		// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+		expiredStmtTaskID = sessVars.StmtCtx.TaskID
+
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
@@ -1966,7 +1972,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	if lastStmt != nil {
-		cc.onExtensionStmtEnd(lastStmt, err)
+		cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
 	}
 
 	return err
