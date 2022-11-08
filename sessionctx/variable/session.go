@@ -98,7 +98,7 @@ type RetryInfo struct {
 
 // ReuseChunkPool save Alloc object
 type ReuseChunkPool struct {
-	Lock  sync.Mutex
+	mu    sync.Mutex
 	Alloc chunk.Allocator
 }
 
@@ -1313,8 +1313,8 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	if pool == nil {
 		return chunk.New(fields, capacity, maxCachesize)
 	}
-	s.ChunkPool.Lock.Lock()
-	defer s.ChunkPool.Lock.Unlock()
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
 	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
@@ -1341,8 +1341,8 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 }
 
 // ClearAlloc indicates stop reuse chunk
-func (s *SessionVars) ClearAlloc(cc *chunk.Allocator, err bool) {
-	if !err {
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
+	if !b {
 		s.ChunkPool.Alloc = nil
 		return
 	}
@@ -1350,11 +1350,10 @@ func (s *SessionVars) ClearAlloc(cc *chunk.Allocator, err bool) {
 	// If an error is reported, re-apply for alloc
 	// Prevent the goroutine left before, affecting the execution of the next sql
 	// issuse 38918
-	s.ChunkPool.Lock.Lock()
+	s.ChunkPool.mu.Lock()
 	s.ChunkPool.Alloc = nil
-	s.ChunkPool.Lock.Unlock()
-	s.ChunkPool = ReuseChunkPool{Alloc: nil}
-	*cc = chunk.NewAllocator()
+	s.ChunkPool.mu.Unlock()
+	*alloc = chunk.NewAllocator()
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
