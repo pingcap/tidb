@@ -33,7 +33,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (p LogicalPlan, err error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -44,12 +44,11 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
-	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
-
 	if !histNeeded {
 		return plan, nil
 	}
+	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
+	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, err
