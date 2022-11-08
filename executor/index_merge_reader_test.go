@@ -496,7 +496,7 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime) NONCLUSTERED, key(c1), key(c2))
 			partition by range (to_days(c_datetime)) (
 				partition p0 values less than (to_days('2020-02-01')),
 				partition p1 values less than (to_days('2020-04-01')),
