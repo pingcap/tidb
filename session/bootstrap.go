@@ -433,14 +433,13 @@ const (
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
 	CreatePlanReplayerStatusTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_status (
-		sql_digest VARCHAR(128)
-		plan_digest VARCHAR(128)
+		sql_digest VARCHAR(128),
+		plan_digest VARCHAR(128),
 		origin_sql TEXT,
 		token VARCHAR(128),
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		fail_reason TEXT,
-		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job',
-		PRIMARY KEY (id));`
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`
 )
 
 // bootstrap initiates system DB for a store.

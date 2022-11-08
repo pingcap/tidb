@@ -306,7 +306,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 				records[i] = record
 			}
 		}
-		domain.InsertPlanReplayerStatus(ctx, sctx, records)
+		domain.GetDomain(sctx).GetPlanReplayerHandle().InsertPlanReplayerStatus(ctx, records)
 	}()
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
@@ -382,7 +382,7 @@ func generateRecords(task *PlanReplayerDumpTask) []domain.PlanReplayerStatusReco
 			records = append(records, domain.PlanReplayerStatusRecord{
 				OriginSql: execStmt.Text(),
 				Token:     task.FileName,
-				Internal:  true,
+				Internal:  false,
 			})
 		}
 	}

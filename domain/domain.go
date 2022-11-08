@@ -114,6 +114,7 @@ type Domain struct {
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 
@@ -1530,9 +1531,17 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// SetupDumpFileGcCheckerSCTX setup sctx for dumpFileGcChecker
-func (do *Domain) SetupDumpFileGcCheckerSCTX(ctx sessionctx.Context) {
-	do.dumpFileGcChecker.setupSctx(ctx)
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
+	do.planReplayerHandle = &planReplayerHandle{
+		sctx: ctx,
+	}
+	do.dumpFileGcChecker.setupPlanReplayerHandle(do.planReplayerHandle)
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.

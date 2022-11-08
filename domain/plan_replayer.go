@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -38,9 +39,9 @@ import (
 // For now it is used by `plan replayer` and `trace plan` statement
 type dumpFileGcChecker struct {
 	sync.Mutex
-	gcLease time.Duration
-	paths   []string
-	ctx     sessionctx.Context
+	gcLease            time.Duration
+	paths              []string
+	planReplayerHandle *planReplayerHandle
 }
 
 // GetPlanReplayerDirName returns plan replayer directory path.
@@ -70,16 +71,16 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *dumpFileGcChecker) setupSctx(ctx sessionctx.Context) {
-	p.ctx = ctx
-}
-
 func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
 		p.gcDumpFilesByPath(path, t)
 	}
+}
+
+func (p *dumpFileGcChecker) setupPlanReplayerHandle(handle *planReplayerHandle) {
+	p.planReplayerHandle = handle
 }
 
 func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
@@ -107,24 +108,32 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer {
-				DeletePlanReplayerStatus(context.Background(), p.ctx, fileName)
+				p.planReplayerHandle.deletePlanReplayerStatus(context.Background(), fileName)
 			}
 		}
 	}
 }
 
+type planReplayerHandle struct {
+	sync.Mutex
+	sctx sessionctx.Context
+}
+
 // DeletePlanReplayerStatus delete  mysql.plan_replayer_status record
-func DeletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
-	exec := sctx.(sqlexec.SQLExecutor)
-	r, err := exec.ExecuteInternal(ctx, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
+func (h *planReplayerHandle) deletePlanReplayerStatus(ctx context.Context, token string) {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	h.Lock()
+	defer h.Unlock()
+	exec := h.sctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
 	if err != nil {
 		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
 	}
-	r.Close()
 }
 
 // InsertPlanReplayerStatus insert mysql.plan_replayer_status record
-func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
+func (h *planReplayerHandle) InsertPlanReplayerStatus(ctx context.Context, records []PlanReplayerStatusRecord) {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
@@ -136,18 +145,20 @@ func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 	for _, record := range records {
 		if !record.Internal {
 			if len(record.FailedReason) > 0 {
-				insertExternalPlanReplayerErrorStatusRecord(ctx, sctx, instance, record)
+				h.insertExternalPlanReplayerErrorStatusRecord(ctx1, instance, record)
 			} else {
-				insertExternalPlanReplayerSuccessStatusRecord(ctx, sctx, instance, record)
+				h.insertExternalPlanReplayerSuccessStatusRecord(ctx1, instance, record)
 			}
 		}
 	}
 }
 
-func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
-	exec := sctx.(sqlexec.SQLExecutor)
+func (h *planReplayerHandle) insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, instance string, record PlanReplayerStatusRecord) {
+	h.Lock()
+	defer h.Unlock()
+	exec := h.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-		"insert into mysql.plan_replayer_Status (origin_sql, fail_reason, instance) values (%s,%s,%s)",
+		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
 		record.OriginSql, record.FailedReason, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
@@ -155,10 +166,12 @@ func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessi
 	}
 }
 
-func insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
-	exec := sctx.(sqlexec.SQLExecutor)
+func (h *planReplayerHandle) insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, instance string, record PlanReplayerStatusRecord) {
+	h.Lock()
+	defer h.Unlock()
+	exec := h.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-		"insert into mysql.plan_replayer_Status (origin_sql, token, instance) values (%s,%s,%s)",
+		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
 		record.OriginSql, record.Token, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
