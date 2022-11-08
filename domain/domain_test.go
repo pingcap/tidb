@@ -247,7 +247,24 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 	dom.sysVarCache.Unlock()
 
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+		"s1": {
+			ID: "s1",
+			Labels: map[string]string{
+				"zone": "zone1",
+			},
+		},
+		"s2": {
+			ID: "s2",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+	}
+	infosync.SetAllServerInfo4Test(mockedAllServerInfos)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", `return("")`))
+	infosync.SetServerInfo4Test(mockedAllServerInfos["s2"])
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", `return("")`))
 
 	stores := []*metapb.Store{
 		{
@@ -304,8 +321,77 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		require.False(t, variable.IsAdaptiveReplicaReadEnabled())
 	}
 
+	// partial matches
+	mockedAllServerInfos = map[string]*infosync.ServerInfo{
+		"s1": {
+			ID: "s1",
+			Labels: map[string]string{
+				"zone": "zone1",
+			},
+		},
+		"s2": {
+			ID: "s2",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+		"s22": {
+			ID: "s22",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+		"s3": {
+			ID: "s3",
+			Labels: map[string]string{
+				"zone": "zone3",
+			},
+		},
+		"s4": {
+			ID: "s4",
+			Labels: map[string]string{
+				"zone": "zone4",
+			},
+		},
+	}
+	pdClient.stores = stores
+	infosync.SetAllServerInfo4Test(mockedAllServerInfos)
+	cases := []struct {
+		id      string
+		matches bool
+	}{
+		{
+			id:      "s1",
+			matches: true,
+		},
+		{
+			id:      "s2",
+			matches: true,
+		},
+		{
+			id:      "s22",
+			matches: false,
+		},
+		{
+			id:      "s3",
+			matches: true,
+		},
+		{
+			id:      "s4",
+			matches: false,
+		},
+	}
+	for _, c := range cases {
+		infosync.SetServerInfo4Test(mockedAllServerInfos[c.id])
+		variable.SetEnableAdaptiveReplicaRead(!c.matches)
+		err = dom.checkReplicaRead(ctx, pdClient)
+		require.Nil(t, err)
+		require.Equal(t, c.matches, variable.IsAdaptiveReplicaReadEnabled())
+	}
+
 	variable.SetEnableAdaptiveReplicaRead(true)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo"))
 }
 
 type mockInfoPdClient struct {
