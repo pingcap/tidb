@@ -498,6 +498,38 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
+// GetBindableStmtFromDigest get bindable stmt from planDigest
+// todo: accelerate
+func (ssMap *stmtSummaryByDigestMap) GetBindableStmtFromDigest(planDigest string) *BindableStmt {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		ssbd.Lock()
+		defer ssbd.Unlock()
+
+		if ssbd.planDigest == planDigest {
+			ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+			ssElement.Lock()
+			defer ssElement.Unlock()
+			stmt := &BindableStmt{
+				Schema:    ssbd.schemaName,
+				Query:     ssElement.sampleSQL,
+				PlanHint:  ssElement.planHint,
+				Charset:   ssElement.charset,
+				Collation: ssElement.collation,
+				Users:     ssElement.authUsers,
+			}
+			if ssElement.prepared {
+				stmt.Query = ssbd.normalizedSQL
+			}
+			return stmt
+		}
+	}
+	return nil
+}
+
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.

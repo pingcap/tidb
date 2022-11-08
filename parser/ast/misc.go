@@ -1813,6 +1813,10 @@ type CreateBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
+
+	// modify all case statement
+	FromDigest bool
+	PlanDigest string
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -1838,17 +1842,20 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*CreateBindingStmt)
-	origNode, ok := n.OriginNode.Accept(v)
-	if !ok {
-		return n, false
+
+	if !n.FromDigest {
+		n = newNode.(*CreateBindingStmt)
+		origNode, ok := n.OriginNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OriginNode = origNode.(StmtNode)
+		hintedNode, ok := n.HintedNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HintedNode = hintedNode.(StmtNode)
 	}
-	n.OriginNode = origNode.(StmtNode)
-	hintedNode, ok := n.HintedNode.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.HintedNode = hintedNode.(StmtNode)
 	return v.Leave(n)
 }
 

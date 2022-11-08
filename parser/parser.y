@@ -373,6 +373,7 @@ import (
 	deallocate            "DEALLOCATE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
 	disabled              "DISABLED"
@@ -6384,6 +6385,7 @@ UnReservedKeyword:
 |	"NONCLUSTERED"
 |	"PRESERVE"
 |	"TOKEN_ISSUER"
+|	"DIGEST"
 
 TiDBKeyword:
 	"ADMIN"
@@ -13073,6 +13075,16 @@ CreateBindingStmt:
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+	{
+		x := &ast.CreateBindingStmt{
+			GlobalScope: $2.(bool),
+			FromDigest:  true,
+			PlanDigest:  $9,
 		}
 
 		$$ = x

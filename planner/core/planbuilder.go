@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"math"
 	"strconv"
 	"strings"
@@ -1020,31 +1021,71 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
-func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
-	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-
-	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
-	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
-	// the HintedNode.Restore will be `select * from test . t`.
-	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
-	// So we need check here.
-	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
-		return nil, err
+func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, error) {
+	//charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtFromDigest(v.PlanDigest)
+	if bindableStmt == nil {
+		return nil, errors.New("plan digest '" + v.PlanDigest + "' doesn't exist")
 	}
 
-	// todo(binding): follow code here, get things from StmtSummaryByDigestMap
+	parser4Capture := parser.New() // todo: set parser's sql mode and so
+	stmtOigin, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		logutil.BgLogger().Debug("[sql-bind-digest] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+	}
+
+	dbName := utilparser.GetDefaultDB(stmtOigin, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), stmtOigin, bindableStmt.PlanHint, true, dbName)
+	if bindSQL == "" {
+		logutil.BgLogger().Info("assssss")
+	}
+
+	stmtHint, err := parser4Capture.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	v.OriginNode = stmtOigin
+	v.HintedNode = stmtHint
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, dbName, v.OriginNode.Text())),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, dbName, v.HintedNode.Text()),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedNode,
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-		Charset:      charSet,
-		Collation:    collation,
+		Db:           utilparser.GetDefaultDB(v.OriginNode, dbName),
+		Charset:      bindableStmt.Charset,
+		Collation:    bindableStmt.Collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
+	// todo: error situation --> log
+}
+
+func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	if v.FromDigest {
+		// todo(binding): follow code here, get things from StmtSummaryByDigestMap
+		return b.getBindPlanFromDigest(v)
+	} else {
+		charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+		// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+		// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+		// the HintedNode.Restore will be `select * from test . t`.
+		// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+		// So we need check here.
+		if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+			return nil, err
+		}
+		p := &SQLBindPlan{
+			SQLBindOp:    OpSQLBindCreate,
+			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
+			IsGlobal:     v.GlobalScope,
+			BindStmt:     v.HintedNode,
+			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+			Charset:      charSet,
+			Collation:    collation,
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		return p, nil
+	}
 }
 
 // detectAggInExprNode detects an aggregate function in its exprs.
