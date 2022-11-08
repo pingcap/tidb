@@ -85,6 +85,7 @@ go_test(
     ],
     embed = [":variable"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//config",
         "//kv",
