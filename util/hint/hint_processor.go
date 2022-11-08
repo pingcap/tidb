@@ -435,14 +435,16 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 		qbName := hint.QBName.L
 		if qbName != "" {
 			_, ok = p.QbNameMap4View[qbName]
-		} else {
-			if len(hint.Tables) == 1 {
-				// TODO: only support one table in view hints. Need to check what happened if there are more table name appear in one hint
-				qbName = hint.Tables[0].QBName.L
-				_, ok = p.QbNameMap4View[qbName]
-			} else {
-				if p.Ctx != nil {
-					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only support to define one table in one view hint"))
+		} else if len(hint.Tables) > 0 {
+			// Only support to define the tables belong to the same query block in one view hint
+			qbName = hint.Tables[0].QBName.L
+			_, ok = p.QbNameMap4View[qbName]
+			if ok {
+				for _, table := range hint.Tables {
+					if table.QBName.L != qbName {
+						ok = false
+						break
+					}
 				}
 			}
 		}
