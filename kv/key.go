@@ -41,10 +41,10 @@ func (k Key) Next() Key {
 //
 // Assume there are keys like:
 //
-//   rowkey1
-//   rowkey1_column1
-//   rowkey1_column2
-//   rowKey2
+//	rowkey1
+//	rowkey1_column1
+//	rowkey1_column2
+//	rowKey2
 //
 // If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
@@ -89,9 +89,17 @@ func (k Key) String() string {
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
+// Hack: make the layout exactly the same with github.com/pingcap/kvproto/pkg/coprocessor.KeyRange
+// So we can avoid allocation of converting kv.KeyRange to coprocessor.KeyRange
+// Not defined as "type KeyRange = coprocessor.KeyRange" because their field name are different.
+// kv.KeyRange use StartKey,EndKey while coprocessor.KeyRange use Start,End
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+
+	XXXNoUnkeyedLiteral struct{}
+	XXXunrecognized     []byte
+	XXXsizecache        int32
 }
 
 // IsPoint checks if the key range represents a point.

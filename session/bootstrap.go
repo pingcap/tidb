@@ -97,6 +97,8 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		User_attributes			json,
+		Token_issuer			VARCHAR(255),
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -424,6 +426,10 @@ const (
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
+	// CreateMDLView is a view about metadata locks.
+	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -627,11 +633,22 @@ const (
 	version92 = 92
 	// version93 converts oom-use-tmp-storage to a sysvar
 	version93 = 93
+	version94 = 94
+	// version95 add a column `User_attributes` to `mysql.user`
+	version95 = 95
+	// version97 sets tidb_opt_range_max_size to 0 when a cluster upgrades from some version lower than v6.4.0 to v6.4.0+.
+	// It promises the compatibility of building ranges behavior.
+	version97 = 97
+	// version98 add a column `Token_issuer` to `mysql.user`
+	version98 = 98
+	version99 = 99
+	// version100 converts server-memory-quota to a sysvar
+	version100 = 100
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version93
+var currentBootstrapVersion int64 = version100
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -730,6 +747,12 @@ var (
 		upgradeToVer90,
 		upgradeToVer91,
 		upgradeToVer93,
+		upgradeToVer94,
+		upgradeToVer95,
+		// We will redo upgradeToVer96 in upgradeToVer100, it is skipped here.
+		upgradeToVer97,
+		upgradeToVer98,
+		upgradeToVer100,
 	}
 )
 
@@ -810,8 +833,12 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
+	needEnableMdl := upgradeToVer99Before(s, ver)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
+	}
+	if needEnableMdl {
+		upgradeToVer99After(s, ver)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1918,6 +1945,87 @@ func upgradeToVer93(s Session, ver int64) {
 	importConfigOption(s, "oom-use-tmp-storage", variable.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
+func upgradeToVer94(s Session, ver int64) {
+	if ver >= version94 {
+		return
+	}
+	mustExecute(s, CreateMDLView)
+}
+
+func upgradeToVer95(s Session, ver int64) {
+	if ver >= version95 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
+}
+
+func upgradeToVer97(s Session, ver int64) {
+	if ver >= version97 {
+		return
+	}
+	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize, 0)
+}
+
+func upgradeToVer98(s Session, ver int64) {
+	if ver >= version98 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99Before(s Session, ver int64) bool {
+	if ver >= version99 {
+		return false
+	}
+	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_enable_metadata_lock | 0" since concurrent DDL may not be enabled.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return false
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+	return true
+}
+
+func upgradeToVer99After(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer100(s Session, ver int64) {
+	if ver >= version100 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2012,6 +2120,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAnalyzeJobs)
 	// Create advisory_locks table.
 	mustExecute(s, CreateAdvisoryLocks)
+	// Create mdl view.
+	mustExecute(s, CreateMDLView)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
@@ -2033,10 +2143,10 @@ func doDMLWorks(s Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value
@@ -2058,10 +2168,6 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
 			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
-			}
-		case variable.TiDBPartitionPruneMode:
-			if inTestSuite() || config.CheckTableBeforeDrop {
-				vVal = string(variable.Dynamic)
 			}
 		case variable.TiDBMemOOMAction:
 			if inTestSuite() {

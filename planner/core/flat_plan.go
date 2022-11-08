@@ -54,8 +54,9 @@ type FlatPlanTree []*FlatOperator
 
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
 // Note:
-//     It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
-//     Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
+//
+//	It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+//	Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil
@@ -338,7 +339,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalCTE:
-		f.ctesToFlatten = append(f.ctesToFlatten, plan)
+		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
+		// for details) to affect the row count display of the independent CTE plan tree.
+		copiedCTE := *plan
+		copiedCTE.probeParents = nil
+		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

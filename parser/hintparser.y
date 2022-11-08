@@ -61,7 +61,8 @@ import (
 	hintBNL                 "BNL"
 	hintNoBNL               "NO_BNL"
 	hintHashJoin            "HASH_JOIN"
-	hintOrderedHashJoin     "ORDERED_HASH_JOIN"
+	hintHashJoinBuild       "HASH_JOIN_BUILD"
+	hintHashJoinProbe       "HASH_JOIN_PROBE"
 	hintNoHashJoin          "NO_HASH_JOIN"
 	hintMerge               "MERGE"
 	hintNoMerge             "NO_MERGE"
@@ -84,6 +85,8 @@ import (
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
 	hintHashAgg               "HASH_AGG"
+	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
+	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
 	hintInlHashJoin           "INL_HASH_JOIN"
 	hintInlJoin               "INL_JOIN"
@@ -95,6 +98,7 @@ import (
 	hintReadFromStorage       "READ_FROM_STORAGE"
 	hintSMJoin                "MERGE_JOIN"
 	hintBCJoin                "BROADCAST_JOIN"
+	hintShuffleJoin           "SHUFFLE_JOIN"
 	hintStreamAgg             "STREAM_AGG"
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
@@ -109,6 +113,7 @@ import (
 	hintStraightJoin          "STRAIGHT_JOIN"
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
+	hintNoDecorrelate         "NO_DECORRELATE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -536,6 +541,7 @@ UnsupportedTableLevelOptimizerHintName:
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
+|	"SHUFFLE_JOIN"
 |	"INL_JOIN"
 |	"MERGE"
 |	"INL_HASH_JOIN"
@@ -543,7 +549,8 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"LEADING"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -579,6 +586,8 @@ BooleanHintName:
 NullaryHintName:
 	"USE_PLAN_CACHE"
 |	"HASH_AGG"
+|	"MPP_1PHASE_AGG"
+|	"MPP_2PHASE_AGG"
 |	"STREAM_AGG"
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
@@ -587,6 +596,7 @@ NullaryHintName:
 |	"IGNORE_PLAN_CACHE"
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
+|	"NO_DECORRELATE"
 
 HintQueryType:
 	"OLAP"
@@ -608,7 +618,8 @@ Identifier:
 |	"BNL"
 |	"NO_BNL"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"NO_HASH_JOIN"
 |	"MERGE"
 |	"NO_MERGE"
@@ -631,6 +642,8 @@ Identifier:
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
 |	"HASH_AGG"
+|	"MPP_1PHASE_AGG"
+|	"MPP_2PHASE_AGG"
 |	"IGNORE_INDEX"
 |	"INL_HASH_JOIN"
 |	"INL_JOIN"
@@ -642,6 +655,7 @@ Identifier:
 |	"READ_FROM_STORAGE"
 |	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
+|	"SHUFFLE_JOIN"
 |	"STREAM_AGG"
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
@@ -655,6 +669,7 @@ Identifier:
 |	"STRAIGHT_JOIN"
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
+|	"NO_DECORRELATE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

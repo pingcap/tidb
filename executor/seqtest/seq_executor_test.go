@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -299,8 +298,8 @@ func TestShow(t *testing.T) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
-	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -496,27 +495,31 @@ func TestShow(t *testing.T) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+	tk.MustExecToErr(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	require.Error(t, err)
 
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
+	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(25), d int) PARTITION BY RANGE COLUMNS(a,d,c) (
  	PARTITION p0 VALUES LESS THAN (5,10,'ggg'),
  	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
  	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
         PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
-			"  `c` char(1) DEFAULT NULL,\n"+
+			"  `c` varchar(25) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY RANGE COLUMNS(`a`,`d`,`c`)\n"+
+			"(PARTITION `p0` VALUES LESS THAN (5,10,'ggg'),\n"+
+			" PARTITION `p1` VALUES LESS THAN (10,20,'mmm'),\n"+
+			" PARTITION `p2` VALUES LESS THAN (15,30,'sss'),\n"+
+			" PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE))"))
 
 	// Test hash partition
 	tk.MustExec(`drop table if exists t`)
@@ -538,7 +541,7 @@ func TestShow(t *testing.T) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y) nonclustered);`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
@@ -935,7 +938,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5800)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1045,9 +1048,7 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test case for batch delete.
 	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("delete from batch_insert;", errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
 	// Enable batch delete and set batch size to 50.
@@ -1085,8 +1086,10 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 	if c.mu.checkPrio {
 		switch req.Type {
 		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
+			if ctx.Value(c) != nil {
+				if c.getCheckPriority() != req.Priority {
+					return nil, errors.New("fail to set priority")
+				}
 			}
 		}
 	}
@@ -1099,6 +1102,8 @@ func TestCoprocessorPriority(t *testing.T) {
 		cli.Client = c
 		return cli
 	}))
+
+	ctx := context.WithValue(context.Background(), cli, 42)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1118,18 +1123,18 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "update t set id = 3")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t select * from t limit 2")
+	tk.MustExecWithContext(ctx, "delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExecWithContext(ctx, "insert into t values (1), (2)")
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -1137,47 +1142,46 @@ func TestCoprocessorPriority(t *testing.T) {
 	})
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-	tk.MustExec("delete from t where id = 2")
-	tk.MustExec("update t set id = 2 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
+	tk.MustExecWithContext(ctx, "delete from t where id = 2")
+	tk.MustExecWithContext(ctx, "update t set id = 2 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t values (3)")
 
 	// Test priority specified by SQL statement.
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
+	tk.MustQueryWithContext(ctx, "select HIGH_PRIORITY * from t")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select LOW_PRIORITY id from t where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("3"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("4"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustExec("set tidb_force_priority = 'DELAYED'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'DELAYED'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("5"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
-
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("6"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
@@ -1450,8 +1454,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 	tk.RefreshSession()
 	tk.MustExec("use test")
 	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
-	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
 	tk.RefreshSession()

@@ -49,6 +49,9 @@ type txnManager struct {
 
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
+
+	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
+	reservedOptimisticProviders [2]isolation.OptimisticTxnContextProvider
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
@@ -65,6 +68,13 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	}
 
 	return nil
+}
+
+func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	if m.ctxProvider == nil {
+		return
+	}
+	m.ctxProvider.SetTxnInfoSchema(is)
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
@@ -189,6 +199,14 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
+// OnLocalTemporaryTableCreated is the hook that should be called when a temporary table created.
+// The provider will update its state then
+func (m *txnManager) OnLocalTemporaryTableCreated() {
+	if m.ctxProvider != nil {
+		m.ctxProvider.OnLocalTemporaryTableCreated()
+	}
+}
+
 func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
@@ -223,7 +241,13 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	switch txnMode {
 	case "", ast.Optimistic:
 		// When txnMode is 'OPTIMISTIC' or '', the transaction should be optimistic
-		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		provider := &m.reservedOptimisticProviders[0]
+		if old, ok := m.ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && old == provider {
+			// We should make sure the new provider is not the same with the old one
+			provider = &m.reservedOptimisticProviders[1]
+		}
+		provider.ResetForNewTxn(m.sctx, r.CausalConsistencyOnly)
+		return provider, nil
 	case ast.Pessimistic:
 		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
 		switch sessVars.IsolationLevelForNewTxn() {

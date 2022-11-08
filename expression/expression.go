@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -34,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -126,7 +127,7 @@ type Expression interface {
 	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -165,6 +166,9 @@ type Expression interface {
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(schema *Schema) bool
 
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -177,6 +181,9 @@ type Expression interface {
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
+
+	// MemoryUsage return the memory usage of Expression
+	MemoryUsage() int64
 }
 
 // CNFExprs stands for a CNF expression.
@@ -225,8 +232,9 @@ func ExprNotNull(expr Expression) bool {
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
-//		INSERT INTO t VALUES ("999999999999999999");
-//		SELECT * FROM t WHERE v;
+//
+//	INSERT INTO t VALUES ("999999999999999999");
+//	SELECT * FROM t WHERE v;
 func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
 	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
 		return -1, nil
@@ -753,6 +761,19 @@ type Assignment struct {
 	LazyErr error
 }
 
+// MemoryUsage return the memory usage of Assignment
+func (a *Assignment) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface*2
+	if a.Expr != nil {
+		sum += a.Expr.MemoryUsage()
+	}
+	return
+}
+
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
 type VarAssignment struct {
 	Name        string
@@ -797,6 +818,10 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		return expr
 	}
+	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return expr
+	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
@@ -819,6 +844,71 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		}
 	}
 	return expr
+}
+
+// evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
+// If the Expression is a non-constant value, it means the result is unknown.
+// The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
+// when the value is Null Constant.
+func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		args := make([]Expression, len(x.GetArgs()))
+		nullFromSets := make([]bool, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
+			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+		}
+		allArgsNullFromSet := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && !nullFromSets[i] {
+				allArgsNullFromSet = false
+				break
+			}
+		}
+
+		// If one of the args of `AND` and `OR` are Null Constant from the column schema, and the another argument is Constant, then we should keep it.
+		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
+		// due to the result of `AND` and `OR` are uncertain if one of the arguments is NULL.
+		if x.FuncName.L == ast.LogicAnd || x.FuncName.L == ast.LogicOr {
+			hasNonConstantArg := false
+			for _, arg := range args {
+				if _, ok := arg.(*Constant); !ok {
+					hasNonConstantArg = true
+					break
+				}
+			}
+			if hasNonConstantArg {
+				for i := range args {
+					if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+						if x.FuncName.L == ast.LogicAnd {
+							args[i] = NewOne()
+							break
+						}
+						if x.FuncName.L == ast.LogicOr {
+							args[i] = NewZero()
+							break
+						}
+					}
+				}
+			}
+		}
+
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		cons, ok := c.(*Constant)
+		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
+		// then we think the result Null Constant is also affected by the column schema
+		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+	case *Column:
+		if !schema.Contains(x) {
+			return x, false
+		}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return FoldConstant(x), false
+		}
+	}
+	return expr, false
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
@@ -982,7 +1072,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
 		// FIXME: JSONUnquote is incompatible with Coprocessor
-		ast.JSONUnquote,
+		ast.JSONUnquote, ast.JSONContains,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -1020,6 +1110,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
 }
@@ -1057,7 +1153,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
 		ast.TimeToSec:
@@ -1105,6 +1201,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastTimeAsDuration:
+			return retType.GetType() == mysql.TypeDuration
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1146,7 +1244,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true
@@ -1158,7 +1256,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex:
+	case ast.Hex, ast.Bin:
 		return true
 	case ast.GetFormat:
 		return true

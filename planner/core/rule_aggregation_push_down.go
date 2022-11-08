@@ -322,8 +322,8 @@ func (a *aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncD
 }
 
 // TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
+//  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{

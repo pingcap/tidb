@@ -5,7 +5,6 @@ package restore
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -32,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -72,6 +73,8 @@ const minBatchDdlSize = 1
 const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
+
+	MetaKVBatchSize = 64 * 1024 * 1024
 )
 
 // Client sends requests to restore files.
@@ -133,20 +136,11 @@ type Client struct {
 
 	supportPolicy bool
 
-	// startTS and restoreTS are used for kv file restore.
-	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
-	startTS   uint64
-	restoreTS uint64
-
-	// If the commitTS of txn-entry belong to [startTS, restoreTS],
-	// the startTS of txn-entry may be smaller than startTS.
-	// We need maintain and restore more entries in default cf
-	// (the startTS in these entries belong to [shiftStartTS, startTS]).
-	shiftStartTS uint64
-
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
+
+	*logFileManager
 
 	storage storage.ExternalStorage
 
@@ -168,6 +162,9 @@ type Client struct {
 
 	// see RestoreCommonConfig.WithSysTable
 	withSysTable bool
+
+	// the successfully preallocated table IDs.
+	preallocedTableIDs *tidalloc.PreallocIDs
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -232,6 +229,26 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
+func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+	rc.preallocedTableIDs = tidalloc.New(tables)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		return rc.preallocedTableIDs.Alloc(meta.NewMeta(txn))
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Info("registering the table IDs", zap.Stringer("ids", rc.preallocedTableIDs))
+	for i := range rc.dbPool {
+		rc.dbPool[i].registerPreallocatedIDs(rc.preallocedTableIDs)
+	}
+	if rc.db != nil {
+		rc.db.registerPreallocatedIDs(rc.preallocedTableIDs)
+	}
+	return nil
+}
+
 // SetPlacementPolicyMode to policy mode.
 func (rc *Client) SetPlacementPolicyMode(withPlacementPolicy string) {
 	switch strings.ToUpper(withPlacementPolicy) {
@@ -267,15 +284,6 @@ func (rc *Client) GetPolicyMap() *sync.Map {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
-}
-
-// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
-func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
-	if err != nil {
-		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
-	}
-	return ts, err
 }
 
 func (rc *Client) GetDomain() *domain.Domain {
@@ -316,14 +324,6 @@ func (rc *Client) Close() {
 	}
 
 	log.Info("Restore client closed")
-}
-
-func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
-	rc.startTS = startTs
-	rc.restoreTS = restoreTS
-	rc.shiftStartTS = shiftStartTS
-	log.Info("set restore range ts", zap.Uint64("shift-start-ts", shiftStartTS),
-		zap.Uint64("start-ts", startTs), zap.Uint64("restored-ts", restoreTS))
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
@@ -470,15 +470,41 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 	return restoreTS, nil
 }
 
+// GetTSWithRetry gets a new timestamp with retry from PD.
+func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
+	var (
+		startTS  uint64
+		getTSErr error
+		retry    uint
+	)
+
+	err := utils.WithRetry(ctx, func() error {
+		startTS, getTSErr = rc.GetTS(ctx)
+		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+			if val.(bool) && retry < 3 {
+				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+			}
+		})
+
+		retry++
+		if getTSErr != nil {
+			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
+		}
+		return getTSErr
+	}, utils.NewPDReqBackoffer())
+
+	if err != nil {
+		log.Error("failed to get TS", zap.Error(err))
+	}
+	return startTS, errors.Trace(err)
+}
+
 // ResetTS resets the timestamp of PD to a bigger value.
-func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
+func (rc *Client) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) error {
 	restoreTS := rc.backupMeta.GetEndVersion()
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
-	i := 0
 	return utils.WithRetry(ctx, func() error {
-		idx := i % len(pdAddrs)
-		i++
-		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
+		return pdCtrl.ResetTS(ctx, restoreTS)
 	}, utils.NewPDReqBackoffer())
 }
 
@@ -727,6 +753,11 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	if err := rc.allocTableIDs(ctx, tables); err != nil {
+		errCh <- err
+		close(outCh)
+		return outCh
+	}
 
 	var err error
 
@@ -1004,7 +1035,7 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			finalStore := store
 			rc.workerPool.ApplyOnErrorGroup(eg,
 				func() error {
-					err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1348,7 +1379,7 @@ func (rc *Client) execChecksum(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	startTS, err := rc.GetTS(ctx)
+	startTS, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1630,20 +1661,30 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+func (rc *Client) getTiFlashNodeCount(ctx context.Context) (uint64, error) {
+	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(len(tiFlashStores)), nil
+}
+
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
-	skipTiflash bool,
+	recorder *tiflashrec.TiFlashRecorder,
 ) error {
-	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if skipTiflash ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
+		if recorder != nil ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
+			if recorder != nil && table.Info.TiFlashReplica != nil {
+				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+			}
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1693,89 +1734,18 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
-	shiftTS := struct {
-		sync.Mutex
-		value  uint64
-		exists bool
-	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, m *backuppb.Metadata) error {
-		shiftTS.Lock()
-		defer shiftTS.Unlock()
-
-		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		return nil
-	})
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+	init := LogFileManagerInit{
+		StartTS:   startTS,
+		RestoreTS: restoreTS,
+		Storage:   rc.storage,
+	}
+	var err error
+	rc.logFileManager, err = CreateLogFileManager(ctx, init)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if !shiftTS.exists {
-		return startTS, nil
-	}
-	return shiftTS.value, nil
-}
-
-// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := struct {
-		sync.Mutex
-		metas []*backuppb.Metadata
-	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
-
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
-		streamBackupMetaFiles.Lock()
-		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
-			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
-		}
-		streamBackupMetaFiles.Unlock()
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return streamBackupMetaFiles.metas, nil
-}
-
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		for _, d := range m.Files {
-			if d.MinTs > rc.restoreTS {
-				continue
-			} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-				continue
-			} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-				continue
-			}
-
-			if d.IsMeta {
-				mFiles = append(mFiles, d)
-			} else {
-				dFiles = append(dFiles, d)
-			}
-			log.Debug("backup stream collect data file", zap.String("file", d.Path))
-		}
-	}
-
-	// sort files firstly.
-	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
-		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
-			return i.ResolvedTs < j.ResolvedTs
-		}
-		return i.MaxTs < j.MaxTs
-	})
-	return dFiles, mFiles, nil
+	return nil
 }
 
 // FixIndex tries to fix a single index.
@@ -1840,21 +1810,20 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files []*backuppb.DataFileInfo,
+	files LogIter,
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(),
 ) error {
 	var err error
+	fileCount := 0
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
 		if err == nil {
 			log.Info("Restore KV files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", len(files), elapsed)
+			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
-
-	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
@@ -1895,13 +1864,19 @@ func (rc *Client) RestoreKVFiles(
 			})
 		}
 	}
-	for _, file := range files {
+	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		if r.Err != nil {
+			return err
+		}
+		file := r.Item
 		if file.Type == backuppb.FileType_Delete {
 			// collect delete type file and apply it later.
 			deleteFiles = append(deleteFiles, file)
 			continue
 		}
 		fileReplica := file
+		// applyFunc blocks once there aren't enough workers.
+		// this would help us don't load too many DML file info.
 		applyFunc(fileReplica)
 	}
 	if len(deleteFiles) > 0 {
@@ -1993,7 +1968,33 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex), nil
+	rp := stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+	return rp, nil
+}
+
+func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
+		if i.GetMinTs() < j.GetMinTs() {
+			return true
+		} else if i.GetMinTs() > j.GetMinTs() {
+			return false
+		}
+
+		if i.GetMaxTs() < j.GetMaxTs() {
+			return true
+		} else if i.GetMaxTs() > j.GetMaxTs() {
+			return false
+		}
+
+		if i.GetResolvedTs() < j.GetResolvedTs() {
+			return true
+		} else if i.GetResolvedTs() > j.GetResolvedTs() {
+			return false
+		}
+
+		return true
+	})
+	return files
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -2005,6 +2006,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	progressInc func(),
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
+	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	// The k-v events in default CF should be restored firstly. The reason is that:
 	// The error of transactions of meta could happen if restore write CF events successfully,
@@ -2014,30 +2016,27 @@ func (rc *Client) RestoreMetaKVFiles(
 			filesInWriteCF = append(filesInWriteCF, f)
 			continue
 		}
-
 		if f.Type == backuppb.FileType_Delete {
 			// this should happen abnormally.
 			// only do some preventive checks here.
 			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
 		}
-
-		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
-		if err != nil {
-			return errors.Trace(err)
+		if f.Cf == stream.DefaultCF {
+			filesInDefaultCF = append(filesInDefaultCF, f)
 		}
-		updateStats(kvCount, size)
-		progressInc()
 	}
 
-	// Restore files in write CF.
-	for _, f := range filesInWriteCF {
-		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		updateStats(kvCount, size)
-		progressInc()
+	if err := rc.RestoreMetaKVFilesWithBatchMethod(
+		ctx,
+		SortMetaKVFiles(filesInDefaultCF),
+		SortMetaKVFiles(filesInWriteCF),
+		schemasReplace,
+		updateStats,
+		progressInc,
+		rc.RestoreBatchMetaKVFiles,
+	); err != nil {
+		return errors.Trace(err)
 	}
 
 	// Update global schema version and report all of TiDBs.
@@ -2047,74 +2046,180 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
-// RestoreMetaKVFile tries to restore a file about meta kv-event from stream-backup.
-func (rc *Client) RestoreMetaKVFile(
+func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 	ctx context.Context,
-	file *backuppb.DataFileInfo,
+	defaultFiles []*backuppb.DataFileInfo,
+	writeFiles []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
+	updateStats func(kvCount uint64, size uint64),
+	progressInc func(),
+	restoreBatch func(
+		ctx context.Context,
+		files []*backuppb.DataFileInfo,
+		schemasReplace *stream.SchemasReplace,
+		kvEntries []*KvEntryWithTS,
+		filterTS uint64,
+		updateStats func(kvCount uint64, size uint64),
+		progressInc func(),
+		cf string,
+	) ([]*KvEntryWithTS, error),
+) error {
+	var (
+		rangeMin uint64
+		rangeMax uint64
+		err      error
+	)
+
+	var (
+		batchSize  uint64 = 0
+		defaultIdx int    = 0
+		writeIdx   int    = 0
+	)
+	// the average size of each KV is 2560 Bytes
+	// kvEntries is kvs left by the previous batch
+	const kvSize = 2560
+	defaultKvEntries := make([]*KvEntryWithTS, 0)
+	writeKvEntries := make([]*KvEntryWithTS, 0)
+	for i, f := range defaultFiles {
+		if i == 0 {
+			rangeMax = f.MaxTs
+			rangeMin = f.MinTs
+		} else {
+			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
+				rangeMin = mathutil.Min(rangeMin, f.MinTs)
+				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
+				batchSize += f.Length
+			} else {
+				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
+				// So it is ok to pass f.MinTs as filterTs.
+				defaultKvEntries, err = restoreBatch(ctx, defaultFiles[defaultIdx:i], schemasReplace, defaultKvEntries, f.MinTs, updateStats, progressInc, stream.DefaultCF)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultIdx = i
+				rangeMin = f.MinTs
+				rangeMax = f.MaxTs
+				// the initial batch size is the size of left kvs and the current file length.
+				batchSize = uint64(len(defaultKvEntries)*kvSize) + f.Length
+
+				// restore writeCF kv to f.MinTs
+				var toWriteIdx int
+				for toWriteIdx = writeIdx; toWriteIdx < len(writeFiles); toWriteIdx++ {
+					if writeFiles[toWriteIdx].MinTs >= f.MinTs {
+						break
+					}
+				}
+				writeKvEntries, err = restoreBatch(ctx, writeFiles[writeIdx:toWriteIdx], schemasReplace, writeKvEntries, f.MinTs, updateStats, progressInc, stream.WriteCF)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				writeIdx = toWriteIdx
+			}
+		}
+		if i == len(defaultFiles)-1 {
+			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// the kv entry with ts, the ts is decoded from entry.
+type KvEntryWithTS struct {
+	e  kv.Entry
+	ts uint64
+}
+
+func (rc *Client) RestoreBatchMetaKVFiles(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
+	kvEntries []*KvEntryWithTS,
+	filterTS uint64,
+	updateStats func(kvCount uint64, size uint64),
+	progressInc func(),
+	cf string,
+) ([]*KvEntryWithTS, error) {
+	nextKvEntries := make([]*KvEntryWithTS, 0)
+	curKvEntries := make([]*KvEntryWithTS, 0)
+	if len(files) == 0 && len(kvEntries) == 0 {
+		return nextKvEntries, nil
+	}
+
+	// filter the kv from kvEntries again.
+	for _, kv := range kvEntries {
+		if kv.ts < filterTS {
+			curKvEntries = append(curKvEntries, kv)
+		} else {
+			nextKvEntries = append(nextKvEntries, kv)
+		}
+	}
+
+	// read all of entries from files.
+	for _, f := range files {
+		es, nextEs, err := rc.ReadAllEntries(ctx, f, filterTS)
+		if err != nil {
+			return nextKvEntries, errors.Trace(err)
+		}
+
+		curKvEntries = append(curKvEntries, es...)
+		nextKvEntries = append(nextKvEntries, nextEs...)
+	}
+
+	// sort these entries.
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
+		return i.ts < j.ts
+	})
+
+	// restore these entries with rawPut() method.
+	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, curKvEntries, cf)
+	if err != nil {
+		return nextKvEntries, errors.Trace(err)
+	}
+
+	updateStats(kvCount, size)
+	for i := 0; i < len(files); i++ {
+		progressInc()
+	}
+	return nextKvEntries, nil
+}
+
+func (rc *Client) restoreMetaKvEntries(
+	ctx context.Context,
 	sr *stream.SchemasReplace,
+	entries []*KvEntryWithTS,
+	columnFamily string,
 ) (uint64, uint64, error) {
 	var (
 		kvCount uint64
 		size    uint64
 	)
-	log.Info("restore meta kv events", zap.String("file", file.Path),
-		zap.String("cf", file.Cf), zap.Int64("kv-count", file.NumberOfEntries),
-		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
 
-	rc.rawKVClient.SetColumnFamily(file.GetCf())
-	buff, err := rc.storage.ReadFile(ctx, file.Path)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return 0, 0, errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
-	}
+	rc.rawKVClient.SetColumnFamily(columnFamily)
 
-	iter := stream.NewEventIterator(buff)
-	for iter.Valid() {
-		iter.Next()
-		if iter.GetError() != nil {
-			return 0, 0, errors.Trace(iter.GetError())
-		}
+	for _, entry := range entries {
+		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.ts), zap.Int("key-len", len(entry.e.Key)),
+			zap.Int("value-len", len(entry.e.Value)), zap.ByteString("key", entry.e.Key))
 
-		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
-		ts, err := GetKeyTS(txnEntry.Key)
+		newEntry, err := sr.RewriteKvEntry(&entry.e, columnFamily)
 		if err != nil {
-			return 0, 0, errors.Trace(err)
-		}
-
-		// The commitTs in write CF need be limited on [startTs, restoreTs].
-		// We can restore more key-value in default CF.
-		if ts > rc.restoreTS {
-			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
-			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
-			continue
-		}
-		if len(txnEntry.Value) == 0 {
-			// we might record duplicated prewrite keys in some conor cases.
-			// the first prewrite key has the value but the second don't.
-			// so we can ignore the empty value key.
-			// see details at https://github.com/pingcap/tiflow/issues/5468.
-			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
-			continue
-		}
-		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
-			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
-		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
-		if err != nil {
-			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
-				logutil.Key("txn-key", txnEntry.Key))
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(entry.e.Key)),
+				logutil.Key("txn-key", entry.e.Key))
 			return 0, 0, errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
-		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
-			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
+		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
+			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, ts); err != nil {
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 

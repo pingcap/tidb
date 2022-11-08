@@ -24,4 +24,6 @@ var (
 	errInvalidPrivilegeType = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
 	ErrNonexistingGrant     = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
 	errLoadPrivilege        = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
+	ErrAccessDenied         = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
+	errAccountHasBeenLocked = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
 )

@@ -1,5 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+package_group(
+    name = "types_friend",
+    packages = [
+        "-//config/...",
+        "//...",
+    ],
+)
+
 go_library(
     name = "types",
     srcs = [
@@ -19,13 +27,19 @@ go_library(
         "field_type_builder.go",
         "fsp.go",
         "helper.go",
+        "json_binary.go",
+        "json_binary_functions.go",
+        "json_constants.go",
+        "json_path_expr.go",
         "mydecimal.go",
         "overflow.go",
         "set.go",
         "time.go",
     ],
     importpath = "github.com/pingcap/tidb/types",
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":types_friend",
+    ],
     deps = [
         "//errno",
         "//parser/ast",
@@ -36,16 +50,18 @@ go_library(
         "//parser/terror",
         "//parser/types",
         "//sessionctx/stmtctx",
-        "//types/json",
         "//util/collate",
         "//util/dbterror",
         "//util/hack",
+        "//util/kvcache",
         "//util/logutil",
         "//util/mathutil",
         "//util/parser",
+        "//util/size",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -69,6 +85,9 @@ go_test(
         "format_test.go",
         "fsp_test.go",
         "helper_test.go",
+        "json_binary_functions_test.go",
+        "json_binary_test.go",
+        "json_path_expr_test.go",
         "main_test.go",
         "mydecimal_benchmark_test.go",
         "mydecimal_test.go",
@@ -86,7 +105,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//testkit",
         "//testkit/testsetup",
-        "//types/json",
         "//util/collate",
         "//util/hack",
         "//util/mock",

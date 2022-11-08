@@ -28,7 +28,7 @@ var (
 
 // Match matches the `pat` at least `times`, and returns the match, the rest and the error
 func Match(buf string, pat func(byte) bool, times int) (match string, rest string, err error) {
-	var i int = 0
+	var i int
 	for i < len(buf) && pat(buf[i]) {
 		i++
 	}

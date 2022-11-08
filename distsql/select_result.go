@@ -54,11 +54,6 @@ var (
 )
 
 var (
-	coprCacheCounterHit  = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
-	coprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
-)
-
-var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
@@ -160,8 +155,6 @@ type selectResult struct {
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
 		if r.stats != nil {
-			coprCacheCounterHit.Add(float64(r.stats.CoprCacheHitNum))
-			coprCacheCounterMiss.Add(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 			// Ignore internal sql.
 			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
 				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))

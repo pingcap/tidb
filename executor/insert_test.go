@@ -349,7 +349,20 @@ func TestUpdateDuplicateKey(t *testing.T) {
 	tk.MustExec(`insert into c values(1,2,3);`)
 	tk.MustExec(`insert into c values(1,2,4);`)
 	tk.MustGetErrMsg(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`,
-		"[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+		"[kv:1062]Duplicate entry '1-2-4' for key 'c.PRIMARY'")
+}
+
+func TestIssue37187(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table t1 (a int(11) ,b varchar(100) ,primary key (a));")
+	tk.MustExec("create table t2 (c int(11) ,d varchar(100) ,primary key (c));")
+	tk.MustExec("prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';")
+	err := tk.ExecToErr("execute in1;")
+	require.NoError(t, err)
 }
 
 func TestInsertWrongValueForField(t *testing.T) {
@@ -379,12 +392,20 @@ func TestInsertWrongValueForField(t *testing.T) {
 	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
 	tk.MustExec(`SET @@sql_mode=''`)
 	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
-	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00' for column 'time1' at row 1`))
 	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
 
 	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
 	tk.MustGetErrMsg(`INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00')`, `[table:1292]Incorrect timestamp value: '1018-12-24 00:00:00' for column 'time1' at row 1`)
 	tk.MustExec(`DROP TABLE ts`)
+
+	tk.MustExec(`CREATE TABLE t0(c0 SMALLINT AUTO_INCREMENT PRIMARY KEY);`)
+	tk.MustExec(`INSERT IGNORE  INTO t0(c0) VALUES (194626268);`)
+	tk.MustExec(`INSERT IGNORE  INTO t0(c0) VALUES ('*')`)
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(
+		`Warning 1366 Incorrect smallint value: '*' for column 'c0' at row 1`,
+		`Warning 1690 constant 32768 overflows smallint`,
+		`Warning 1467 Failed to read auto-increment value from storage engine`))
 }
 
 func TestInsertValueForCastDecimalField(t *testing.T) {
@@ -1381,7 +1402,7 @@ func TestIssue16366(t *testing.T) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c numeric primary key);`)
 	tk.MustExec("insert ignore into t values(null);")
-	tk.MustContainErrMsg(`insert into t values(0);`, "Duplicate entry '0' for key 'PRIMARY'")
+	tk.MustContainErrMsg(`insert into t values(0);`, "Duplicate entry '0' for key 't.PRIMARY'")
 }
 
 func TestClusterPrimaryTablePlainInsert(t *testing.T) {
@@ -1532,6 +1553,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
+	stats.FKCheckTime = time.Second
+	stats.FKCheckStats = &executor.FKCheckRuntimeStats{Keys: 20}
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s, fk_num: 20}", stats.String())
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {
@@ -1543,52 +1567,52 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t value (34, '12Ak');")
-		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 't.b'")
 
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t value (34, '12ak');")
 		tk.MustExec("delete from t where b = '12ak';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 't.b'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime primary key);")
 		tk.MustExec("insert into t values ('2020-01-01');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.PRIMARY'")
 
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t values ('2020-01-01');")
 		tk.MustExec("delete from t where a = '2020-01-01';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int primary key );")
 		tk.MustExec("insert into t value (1);")
-		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime unique);")
 		tk.MustExec("insert into t values ('2020-01-01');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.a'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 't.a'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
-		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 't.PRIMARY'"))
 
 		tk.MustExec("begin pessimistic;")
 		tk.MustExec("insert into t values ('a7', 'a', 10);")
-		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 't.PRIMARY'")
 		tk.MustExec("rollback;")
 
 		// Test for large unsigned integer handle.
@@ -1596,7 +1620,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a bigint unsigned primary key);")
 		tk.MustExec("insert into t values(18446744073709551615);")
-		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 't.PRIMARY'")
 	}
 }
 
@@ -1629,7 +1653,7 @@ func TestIssue10402(t *testing.T) {
 	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
 	require.Equal(t, uint16(4), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]",
+	require.Equal(t, "[{Warning [types:1265]Data truncated for column 'v' at row 1} {Warning [types:1265]Data truncated for column 'v' at row 2} {Warning [types:1265]Data truncated for column 'v' at row 3} {Warning [types:1265]Data truncated for column 'v' at row 4}]",
 		fmt.Sprintf("%v", warns))
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
@@ -1662,12 +1686,12 @@ func TestDuplicatedEntryErr(t *testing.T) {
 	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
 	tk.MustExec("insert into t1 values(1,'aaaaa');")
 	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 't1.PRIMARY'")
 	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 't1.PRIMARY'")
 	tk.MustExec("insert into t1 select 1, 'bb'")
 	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-bb' for key 't1.PRIMARY'")
 }
 
 func TestBinaryLiteralInsertToEnum(t *testing.T) {
@@ -1838,7 +1862,8 @@ func TestStringtoDecimal(t *testing.T) {
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
 	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'id' at row 1
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect decimal value: '12e-3' for column 'id' at row 1"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }
@@ -1852,7 +1877,7 @@ func TestIssue17745(t *testing.T) {
 	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
-	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1264 Out of range value for column 'c1' at row 1`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
 	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
 	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("drop table if exists tt1")

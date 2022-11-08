@@ -22,7 +22,9 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
@@ -203,4 +205,79 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < now();").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2022-04-29 17:50:00'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '2010-01-02 15:04:05'").Check(testkit.Rows("0"))
+}
+
+func TestIssue37066(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, primary key (a) clustered);")
+	tk.MustExec("create table t2(a int, b int, primary key (a) nonclustered);")
+	tk.MustExec("create table t3(a varchar(10), b varchar(10), c int, primary key (a) clustered, index ib(b), index ic(c));")
+	tk.MustExec("create table t4(a varchar(10), b int, primary key (a) nonclustered);")
+
+	cases := []string{
+		"select * from t1 where a = 10",
+		"select * from t2 where a = 10",
+		"select * from t3 where a = 'abc'",
+		"select * from t4 where a = 'abc'",
+		"select * from t1 where a in (10, 11, 12)",
+		"select * from t2 where a in (10, 11, 12)",
+		"select * from t3 where a in ('abc', 'bcd', 'cde')",
+		"select * from t4 where a in ('abc', 'bcd', 'cde')",
+	}
+	// For now, we keep the consistency between the index_names column and the result of EXPLAIN.
+	// And what's the best behavior is still to be discussed.
+	results := []string{
+		"",
+		"[t2:PRIMARY]",
+		"[t3:PRIMARY]",
+		"[t4:PRIMARY]",
+		"",
+		"[t2:PRIMARY]",
+		"[t3:PRIMARY]",
+		"[t4:PRIMARY]",
+	}
+
+	for i, c := range cases {
+		tk.MustQuery(c)
+		result1 := testdata.ConvertRowsToStrings(tk.MustQuery("select index_names from information_schema.slow_query " +
+			`where query = "` + c + `;"` +
+			"limit 1;").Rows())
+		result2 := testdata.ConvertRowsToStrings(tk.MustQuery("select index_names from information_schema.statements_summary " +
+			`where QUERY_SAMPLE_TEXT like "%` + c + `%" and QUERY_SAMPLE_TEXT not like "%like%" ` +
+			"limit 1;").Rows())
+		// assert result1
+		require.Len(t, result1, 1)
+		res1 := result1[0]
+		require.Equal(t, results[i], res1)
+		// assert result2
+		require.Len(t, result2, 1)
+		res2 := result2[0]
+		if res1 == "" {
+			require.Equal(t, res2, "<nil>")
+		} else {
+			require.Equal(t, res1, "["+res2+"]")
+		}
+	}
 }

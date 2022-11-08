@@ -167,3 +167,94 @@ type Visitor interface {
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
 }
+
+// GetStmtLabel generates a label for a statement.
+func GetStmtLabel(stmtNode StmtNode) string {
+	switch x := stmtNode.(type) {
+	case *AlterTableStmt:
+		return "AlterTable"
+	case *AnalyzeTableStmt:
+		return "AnalyzeTable"
+	case *BeginStmt:
+		return "Begin"
+	case *ChangeStmt:
+		return "Change"
+	case *CommitStmt:
+		return "Commit"
+	case *CompactTableStmt:
+		return "CompactTable"
+	case *CreateDatabaseStmt:
+		return "CreateDatabase"
+	case *CreateIndexStmt:
+		return "CreateIndex"
+	case *CreateTableStmt:
+		return "CreateTable"
+	case *CreateViewStmt:
+		return "CreateView"
+	case *CreateUserStmt:
+		return "CreateUser"
+	case *DeleteStmt:
+		return "Delete"
+	case *DropDatabaseStmt:
+		return "DropDatabase"
+	case *DropIndexStmt:
+		return "DropIndex"
+	case *DropTableStmt:
+		if x.IsView {
+			return "DropView"
+		}
+		return "DropTable"
+	case *ExplainStmt:
+		if _, ok := x.Stmt.(*ShowStmt); ok {
+			return "DescTable"
+		}
+		if x.Analyze {
+			return "ExplainAnalyzeSQL"
+		}
+		return "ExplainSQL"
+	case *InsertStmt:
+		if x.IsReplace {
+			return "Replace"
+		}
+		return "Insert"
+	case *LoadDataStmt:
+		return "LoadData"
+	case *RollbackStmt:
+		return "Rollback"
+	case *SelectStmt:
+		return "Select"
+	case *SetStmt, *SetPwdStmt:
+		return "Set"
+	case *ShowStmt:
+		return "Show"
+	case *TruncateTableStmt:
+		return "TruncateTable"
+	case *UpdateStmt:
+		return "Update"
+	case *GrantStmt:
+		return "Grant"
+	case *RevokeStmt:
+		return "Revoke"
+	case *DeallocateStmt:
+		return "Deallocate"
+	case *ExecuteStmt:
+		return "Execute"
+	case *PrepareStmt:
+		return "Prepare"
+	case *UseStmt:
+		return "Use"
+	case *CreateBindingStmt:
+		return "CreateBinding"
+	case *IndexAdviseStmt:
+		return "IndexAdvise"
+	case *DropBindingStmt:
+		return "DropBinding"
+	case *TraceStmt:
+		return "Trace"
+	case *ShutdownStmt:
+		return "Shutdown"
+	case *SavepointStmt:
+		return "Savepoint"
+	}
+	return "other"
+}

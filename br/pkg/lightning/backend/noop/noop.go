@@ -97,14 +97,14 @@ func (b noopBackend) CheckRequirements(context.Context, *backend.CheckCtx) error
 // name. The returned table info does not need to be precise if the encoder,
 // is not requiring them, but must at least fill in the following fields for
 // TablesFromMeta to succeed:
-//  - Name
-//  - State (must be model.StatePublic)
-//  - ID
-//  - Columns
-//     * Name
-//     * State (must be model.StatePublic)
-//     * Offset (must be 0, 1, 2, ...)
-//  - PKIsHandle (true = do not generate _tidb_rowid)
+//   - Name
+//   - State (must be model.StatePublic)
+//   - ID
+//   - Columns
+//   - Name
+//   - State (must be model.StatePublic)
+//   - Offset (must be 0, 1, 2, ...)
+//   - PKIsHandle (true = do not generate _tidb_rowid)
 func (b noopBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return nil, nil
 }

@@ -15,10 +15,10 @@
 package infoschema_test
 
 import (
-	"crypto/tls"
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,29 +35,33 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64)})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
+		0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session())})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
@@ -120,7 +124,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "xxx",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -128,14 +132,14 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 
@@ -287,42 +291,6 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 	tk.MustExec("DROP DATABASE default_time_test")
 }
 
-type mockSessionManager struct {
-	processInfoMap map[uint64]*util.ProcessInfo
-	txnInfo        []*txninfo.TxnInfo
-}
-
-func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	return sm.txnInfo
-}
-
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
-}
-
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	rs, ok := sm.processInfoMap[id]
-	return rs, ok
-}
-
-func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
-
-func (sm *mockSessionManager) KillAllConnections() {}
-
-func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
-
-func (sm *mockSessionManager) ServerID() uint64 { return 1 }
-
-func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestSomeTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -330,8 +298,8 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -342,8 +310,8 @@ func TestSomeTables(t *testing.T) {
 		State:   1,
 		Info:    "do something",
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
-	sm.processInfoMap[2] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
@@ -354,8 +322,8 @@ func TestSomeTables(t *testing.T) {
 		State:   2,
 		Info:    strings.Repeat("x", 101),
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
-	sm.processInfoMap[3] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      3,
 		User:    "user-3",
 		Host:    "127.0.0.1",
@@ -366,7 +334,7 @@ func TestSomeTables(t *testing.T) {
 		State:   1,
 		Info:    "check port",
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
@@ -387,8 +355,8 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -396,8 +364,8 @@ func TestSomeTables(t *testing.T) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-	}
-	sm.processInfoMap[2] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:            2,
 		User:          "user-2",
 		Host:          "localhost",
@@ -406,7 +374,7 @@ func TestSomeTables(t *testing.T) {
 		State:         2,
 		Info:          strings.Repeat("x", 101),
 		CurTxnStartTS: 410090409861578752,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
@@ -545,6 +513,12 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t6` (a bigint key clustered auto_random(2, 32))")
+	assertShardingInfo("t6", "PK_AUTO_RANDOM_BITS=2, RANGE BITS=32")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t7` (a bigint key clustered auto_random(5, 64))")
+	assertShardingInfo("t7", "PK_AUTO_RANDOM_BITS=5")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
 }
@@ -1337,8 +1311,7 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk := newTestKitWithPlanCache(t, store)
 
@@ -1389,7 +1362,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 	errno.IncrementError(1365, "root", "localhost")
 
 	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1413,8 +1386,8 @@ func TestTiDBTrx(t *testing.T) {
 	// by digest.
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
-	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
-	sm.txnInfo[0] = &txninfo.TxnInfo{
+	sm := &testkit.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
@@ -1425,7 +1398,7 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentDB:        "test",
 	}
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
-	sm.txnInfo[1] = &txninfo.TxnInfo{
+	sm.TxnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
@@ -1434,13 +1407,13 @@ func TestTiDBTrx(t *testing.T) {
 		Username:         "user1",
 		CurrentDB:        "db1",
 	}
-	sm.txnInfo[1].BlockStartTime.Valid = true
-	sm.txnInfo[1].BlockStartTime.Time = blockTime2
+	sm.TxnInfo[1].BlockStartTime.Valid = true
+	sm.TxnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Session().SetSessionManager(sm)
 
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test []",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
@@ -1487,7 +1460,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -1498,7 +1471,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	tk = newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -1564,20 +1537,21 @@ func TestVariablesInfo(t *testing.T) {
 
 	// stabalize timestamp val and EnableCollectExecutionInfo
 	tk.MustExec("SET TIMESTAMP=123456789")
-	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo = false
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(false)
 	// Test that in the current_value matches the default value in all
 	// but a few permitted special cases.
 	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
 	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
 	stmt.Check(testkit.Rows(
-		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
-		"tidb_enable_collect_execution_info ON OFF", // for test stability
-		"tidb_enable_mutation_checker OFF ON",       // for new installs
-		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
-		"tidb_partition_prune_mode static dynamic",  // for new installs
-		"tidb_row_format_version 1 2",               // for new installs
-		"tidb_txn_assertion_level OFF FAST",         // for new installs
-		"timestamp 0 123456789",                     // always dynamic
+		"last_sql_use_alloc OFF ON",                   // for test stability
+		"tidb_enable_auto_analyze ON OFF",             // always changed for tests
+		"tidb_enable_collect_execution_info ON OFF",   // for test stability
+		"tidb_enable_mutation_checker OFF ON",         // for new installs
+		"tidb_enable_plan_replayer_capture OFF false", // for enable plan replayer capture
+		"tidb_mem_oom_action CANCEL LOG",              // always changed for tests
+		"tidb_row_format_version 1 2",                 // for new installs
+		"tidb_txn_assertion_level OFF FAST",           // for new installs
+		"timestamp 0 123456789",                       // always dynamic
 	))
 }
 
@@ -1591,4 +1565,87 @@ func TestTableConstraintsContainForeignKeys(t *testing.T) {
 	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
+}
+
+func TestMemoryUsageAndOpsHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner"))
+	}()
+	gctuner.GlobalMemoryLimitTuner.Start()
+	defer func() {
+		time.Sleep(1 * time.Second) // Wait tuning finished.
+	}()
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	tk.MustExec("set global tidb_server_memory_limit=512<<20")
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom=off")
+	dom, err := session.GetDomain(store)
+	require.Nil(t, err)
+	go dom.ServerMemoryLimitHandle().SetSessionManager(tk.Session().GetSessionManager()).Run()
+	// OOM
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	for i := 0; i < 9; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+
+	var tmp string
+	var ok bool
+	var beginTime = time.Now().Format(types.TimeFormat)
+	err = tk.QueryToErr("explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a")
+	var endTime = time.Now().Format(types.TimeFormat)
+	require.NotNil(t, err)
+	// Check Memory Table
+	rows := tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE").Rows()
+	require.Len(t, rows, 1)
+	row := rows[0]
+	require.Len(t, row, 11)
+	require.Equal(t, row[0], strconv.FormatUint(memory.GetMemTotalIgnoreErr(), 10)) // MEMORY_TOTAL
+	require.Equal(t, row[1], "536870912")                                           // MEMORY_LIMIT
+	require.Greater(t, row[2], "0")                                                 // MEMORY_CURRENT
+	tmp, ok = row[3].(string)                                                       // MEMORY_MAX_USED
+	require.Equal(t, ok, true)
+	val, err := strconv.ParseUint(tmp, 10, 64)
+	require.Nil(t, err)
+	require.Greater(t, val, uint64(536870912))
+
+	tmp, ok = row[4].(string) // CURRENT_OPS
+	require.Equal(t, ok, true)
+	if tmp != "null" && tmp != "shrink" {
+		require.Fail(t, "CURRENT_OPS get wrong value")
+	}
+	require.GreaterOrEqual(t, row[5], beginTime) // SESSION_KILL_LAST
+	require.LessOrEqual(t, row[5], endTime)
+	require.Greater(t, row[6], "0")              // SESSION_KILL_TOTAL
+	require.GreaterOrEqual(t, row[7], beginTime) // GC_LAST
+	require.LessOrEqual(t, row[7], endTime)
+	require.Greater(t, row[8], "0") // GC_TOTAL
+	require.Equal(t, row[9], "0")   // DISK_USAGE
+	require.Equal(t, row[10], "0")  // QUERY_FORCE_DISK
+
+	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
+	require.Greater(t, len(rows), 0)
+	row = rows[len(rows)-1]
+	require.Len(t, row, 12)
+	require.GreaterOrEqual(t, row[0], beginTime) // TIME
+	require.LessOrEqual(t, row[0], endTime)
+	require.Equal(t, row[1], "SessionKill") // OPS
+	require.Equal(t, row[2], "536870912")   // MEMORY_LIMIT
+	tmp, ok = row[3].(string)               // MEMORY_CURRENT
+	require.Equal(t, ok, true)
+	val, err = strconv.ParseUint(tmp, 10, 64)
+	require.Nil(t, err)
+	require.Greater(t, val, uint64(536870912))
+
+	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
+	require.Greater(t, row[5], "0")                                                                                              // MEM
+	require.Equal(t, row[6], "0")                                                                                                // DISK
+	require.Equal(t, row[7], "")                                                                                                 // CLIENT
+	require.Equal(t, row[8], "test")                                                                                             // DB
+	require.Equal(t, row[9], "")                                                                                                 // USER
+	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
+	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
 }

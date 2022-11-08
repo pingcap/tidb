@@ -60,7 +60,7 @@ func TestColumnAdd(t *testing.T) {
 	)
 	first := true
 	var jobID int64
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -80,7 +80,8 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
-	d.SetHook(tc)
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -93,7 +94,7 @@ func TestColumnAdd(t *testing.T) {
 			dropCol = tbl.VisibleCols()[2]
 		}
 	}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.NotStarted() {
 			return
 		}
@@ -105,7 +106,8 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	}
-	d.SetHook(tc)
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
@@ -113,7 +115,7 @@ func TestColumnAdd(t *testing.T) {
 
 	// Add column not default.
 	first = true
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc3 := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -133,6 +135,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
 	d.SetHook(tc)
 	tk.MustExec("alter table t add column c3 int")
 	testCheckJobDone(t, store, jobID, true)

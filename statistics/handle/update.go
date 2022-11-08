@@ -192,12 +192,12 @@ var (
 )
 
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return nil
 	}
-	err := h.RecalculateExpectCount(q)
+	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -340,8 +340,11 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
-//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
+
+// maxInsertLength is the length limit for internal insert SQL.
+const maxInsertLength = 1024 * 1024
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
@@ -970,11 +973,11 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 }
 
 // NeedAnalyzeTable checks if we need to analyze the table:
-// 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a while.
-// 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
-//    between `start` and `end`.
+//  1. If the table has never been analyzed, we need to analyze it when it has
+//     not been modified for a while.
+//  2. If the table had been analyzed before, we need to analyze it when
+//     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//     between `start` and `end`.
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
@@ -1102,7 +1105,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				continue
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
+				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
 					return true
 				}
@@ -1154,10 +1157,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
-func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
+func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
 	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 	h.mu.RUnlock()
+	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
@@ -1181,13 +1185,29 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 		sqlBuilder.WriteString(suffix)
 		return sqlBuilder.String()
 	}
+	if len(partitionNames) < 1 {
+		return false
+	}
+	logutil.BgLogger().Info("[stats] start to auto analyze",
+		zap.String("table", tblInfo.Name.String()),
+		zap.Any("partitions", partitionNames),
+		zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 	if len(partitionNames) > 0 {
-		logutil.BgLogger().Info("[stats] auto analyze triggered")
-		sql := getSQL("analyze table %n.%n partition", "", len(partitionNames))
-		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
 		statsTbl := h.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
+			start := i
+			end := start + analyzePartitionBatchSize
+			if end >= len(partitionNames) {
+				end = len(partitionNames)
+			}
+			sql := getSQL("analyze table %n.%n partition", "", end-start)
+			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+			logutil.BgLogger().Info("[stats] auto analyze triggered",
+				zap.String("table", tblInfo.Name.String()),
+				zap.Any("partitions", partitionNames[start:end]))
+			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+		}
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1202,13 +1222,23 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 			}
 		}
 		if len(partitionNames) > 0 {
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed")
-			sql := getSQL("analyze table %n.%n partition", " index %n", len(partitionNames))
-			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
-			params = append(params, idx.Name.O)
 			statsTbl := h.GetTableStats(tblInfo)
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+			for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
+				start := i
+				end := start + analyzePartitionBatchSize
+				if end >= len(partitionNames) {
+					end = len(partitionNames)
+				}
+				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
+				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+				params = append(params, idx.Name.O)
+				logutil.BgLogger().Info("[stats] auto analyze for unanalyzed",
+					zap.String("table", tblInfo.Name.String()),
+					zap.String("index", idx.Name.String()),
+					zap.Any("partitions", partitionNames[start:end]))
+				h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+			}
 			return true
 		}
 	}
@@ -1379,13 +1409,13 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 }
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
-func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
+func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
 	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
 	tablePseudo := t.Pseudo
-	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+	if enablePseudoForOutdatedStats {
 		tablePseudo = t.Pseudo || t.IsOutdated()
 	}
 	if !tablePseudo {

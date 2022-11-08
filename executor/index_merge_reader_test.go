@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -185,11 +184,9 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 
 func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
 	insertStr := "insert into t1 values(0, 0, 0)"
@@ -449,17 +446,15 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
-	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	memTracker := tk.Session().GetSessionVars().MemTracker
 
 	tk.MustExec(insertStr)
-
-	oriMaxUsage := memTracker.MaxConsumed()
 
 	// We select all rows in t1, so the mem usage is more clear.
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 
-	newMaxUsage := memTracker.MaxConsumed()
-	require.Greater(t, newMaxUsage, oriMaxUsage)
+	memUsage := memTracker.MaxConsumed()
+	require.Greater(t, memUsage, int64(0))
 
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	require.Len(t, res.Rows(), 4)
@@ -501,7 +496,7 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime) NONCLUSTERED, key(c1), key(c2))
 			partition by range (to_days(c_datetime)) (
 				partition p0 values less than (to_days('2020-02-01')),
 				partition p1 values less than (to_days('2020-04-01')),

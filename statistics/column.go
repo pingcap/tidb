@@ -141,11 +141,6 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
 }
 
-// IsHistNeeded checks if this column needs histogram to be loaded
-func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.IsLoadNeeded()
-}
-
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
@@ -455,4 +450,22 @@ func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowE
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// StatusToString gets the string info of StatsLoadedStatus
+func (s StatsLoadedStatus) StatusToString() string {
+	if !s.statsInitialized {
+		return "unInitialized"
+	}
+	switch s.evictedStatus {
+	case allLoaded:
+		return "allLoaded"
+	case onlyCmsEvicted:
+		return "onlyCmsEvicted"
+	case onlyHistRemained:
+		return "onlyHistRemained"
+	case allEvicted:
+		return "allEvicted"
+	}
+	return "unknown"
 }

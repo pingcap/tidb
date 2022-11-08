@@ -26,6 +26,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -49,10 +51,18 @@ type domainMap struct {
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	key := store.UUID()
-
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+
+	if store == nil {
+		for _, d := range dm.domains {
+			// return available domain if any
+			return d, nil
+		}
+		return nil, errors.New("can not find available domain for a nil store")
+	}
+
+	key := store.UUID()
 
 	d = dm.domains[key]
 	if d != nil {
@@ -75,7 +85,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			dm.Delete(store)
 		}
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		err1 = d.Init(ddlLease, sysFactory)
+
+		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
+			ddlInjector = injector.Injector
+		}
+		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()

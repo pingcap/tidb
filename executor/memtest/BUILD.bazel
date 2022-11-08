@@ -8,9 +8,9 @@ go_test(
         "mem_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
-        "//executor",
         "//meta/autoid",
         "//testkit",
         "@com_github_stretchr_testify//require",

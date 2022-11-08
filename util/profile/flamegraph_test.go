@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestProfileToDatum(t *testing.T) {
+	defer view.Stop()
 	file, err := os.Open("testdata/test.pprof")
 	require.NoError(t, err)
 	defer func() {
