@@ -72,6 +72,7 @@ const (
 	CompressionSnappy
 )
 
+// ToStorageCompressType converts Compression to storage.CompressType.
 func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
 	switch compression {
 	case CompressionGZ:
@@ -83,7 +84,7 @@ func ToStorageCompressType(compression Compression) (storage.CompressType, error
 	case CompressionNone:
 		return storage.NoCompression, nil
 	default:
-		return storage.NoCompression, errors.Errorf("compression %s doesn't have related storage compressType", compression)
+		return storage.NoCompression, errors.Errorf("compression %d doesn't have related storage compressType", compression)
 	}
 }
 
