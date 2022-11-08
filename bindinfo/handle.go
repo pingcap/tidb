@@ -121,7 +121,8 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.bindInfo.parser = parser.New()
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		return h.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
+		_, err := h.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
+		return err
 	}
 	h.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -390,7 +391,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (d
 		}
 
 		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil || deleteRows == 0 {
+		if err != nil || deletedRows == 0 {
 			return
 		}
 
