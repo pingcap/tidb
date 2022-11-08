@@ -1926,9 +1926,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		lastStmt = stmt
 
-		// expiredTaskID is the task ID of the previous statement. When executing stmt,
-		// the StmtCtx will be reset and the TaskID will be updated. We can compare the StmtCtx.TaskID
-		// with the previous task one to determine whether StmtCtx is inited for current stmt.
+		// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+		// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+		// with the previous one to determine whether StmtCtx has been inited for the current stmt.
 		expiredStmtTaskID = sessVars.StmtCtx.TaskID
 
 		if len(pointPlans) > 0 {
