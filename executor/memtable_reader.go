@@ -205,7 +205,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					return
 				}
 
-				req, err := http.NewRequest(http.MethodGet, url, nil)
+				ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second*5))
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
