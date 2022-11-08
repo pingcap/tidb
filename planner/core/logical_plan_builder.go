@@ -4426,15 +4426,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
 		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
 			if len(viewQBNameHintTable) == 0 {
-				// TODO: need to check whether this will happen(maybe in the recursion)
 				continue
 			}
 			viewSelectOffset := b.getSelectOffset()
 
 			var viewHintSelectOffset int
-			// TODO: can not handle the different DB.
 			if viewQBNameHintTable[0].QBName.L == "" {
-				// If we do not explicit set the qbName, we will improve the empty qb name to @sel_1.
+				// If we do not explicit set the qbName, we will set the empty qb name to @sel_1.
 				viewHintSelectOffset = 1
 			} else {
 				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
@@ -5012,7 +5010,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 
 	hintProcessor := &hint.BlockHintProcessor{Ctx: b.ctx}
-	// TODO: need to check whether the selectOffset has already been set. Is necessary to use the 'Accept' function here.
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
