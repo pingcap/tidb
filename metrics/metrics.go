@@ -114,6 +114,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
+	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
