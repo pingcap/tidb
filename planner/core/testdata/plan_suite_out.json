@@ -397,7 +397,7 @@
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1] [5,5] [9,9] [13,13] [17,17]], Table(t))"
+        "Best": "TableReader(Table(t)->Sel([or(or(and(gt(test.t.c, 0), lt(test.t.c, 2)), and(gt(test.t.c, 4), lt(test.t.c, 6))), or(and(gt(test.t.c, 8), lt(test.t.c, 10)), or(and(gt(test.t.c, 12), lt(test.t.c, 14)), and(gt(test.t.c, 16), lt(test.t.c, 18)))))]))"
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
@@ -477,7 +477,7 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
@@ -1528,13 +1528,13 @@
         ],
         "Plan": [
           "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan(Build) 9990.00 root  not(isnull(test.t.b))",
-          "│ └─TableReader 9990.00 root  data:Selection",
-          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─UnionScan(Probe) 10000.00 root  ",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "├─UnionScan(Build) 10000.00 root  ",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─UnionScan(Probe) 9990.00 root  not(isnull(test.t.b))",
+          "  └─TableReader 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1588,7 +1588,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -1995,8 +1995,9 @@
         "Plan": [
           "HashJoin 80000000.00 root  CARTESIAN inner join",
           "├─HashAgg(Build) 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-          "│ └─TableReader 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│ └─TableReader 8000.00 root  data:HashAgg",
+          "│   └─HashAgg 8000.00 cop[tikv]  group by:test.t.a, ",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -3362,11 +3363,11 @@
         "SQL": "select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y')",
         "Plan": [
           "Projection 8000.00 root  date_format(test.t.d, %Y)->Column#9, Column#6, cast(Column#13, bigint(21) BINARY)->Column#7, Column#8",
-          "└─HashAgg 8000.00 root  group by:Column#29, funcs:sum(Column#25)->Column#6, funcs:sum(Column#26)->Column#13, funcs:count(Column#27)->Column#8, funcs:firstrow(Column#28)->test.t.d",
-          "  └─Projection 8000.00 root  Column#11, cast(Column#12, decimal(20,0) BINARY)->Column#26, test.t.c, test.t.d, date_format(test.t.d, %Y)->Column#29",
-          "    └─HashAgg 8000.00 root  group by:Column#23, Column#24, funcs:sum(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:firstrow(Column#21)->test.t.c, funcs:firstrow(Column#22)->test.t.d",
-          "      └─Projection 10000.00 root  cast(test.t.a, decimal(10,0) BINARY)->Column#19, test.t.b, test.t.c, test.t.d, date_format(test.t.d, %Y)->Column#23, test.t.c",
-          "        └─TableReader 10000.00 root  data:TableFullScan",
+          "└─HashAgg 8000.00 root  group by:Column#23, funcs:sum(Column#19)->Column#6, funcs:sum(Column#20)->Column#13, funcs:count(Column#21)->Column#8, funcs:firstrow(Column#22)->test.t.d",
+          "  └─Projection 8000.00 root  Column#11, cast(Column#12, decimal(20,0) BINARY)->Column#20, test.t.c, test.t.d, date_format(test.t.d, %Y)->Column#23",
+          "    └─HashAgg 8000.00 root  group by:Column#14, test.t.c, funcs:sum(Column#15)->Column#11, funcs:count(Column#16)->Column#12, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#18)->test.t.d",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.t.d, \"%Y\"), test.t.c, funcs:sum(test.t.a)->Column#15, funcs:count(test.t.b)->Column#16, funcs:firstrow(test.t.d)->Column#18",
           "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -3376,9 +3377,10 @@
           "Projection 8000.00 root  test.t.d, test.t.a, cast(Column#10, bigint(21) BINARY)->Column#6, cast(Column#12, bigint(21) BINARY)->Column#7, Column#8",
           "└─HashAgg 8000.00 root  group by:Column#23, Column#24, funcs:sum(Column#18)->Column#10, funcs:sum(Column#19)->Column#12, funcs:count(Column#20)->Column#8, funcs:firstrow(Column#21)->test.t.a, funcs:firstrow(Column#22)->test.t.d",
           "  └─Projection 8000.00 root  cast(Column#9, decimal(20,0) BINARY)->Column#18, cast(Column#11, decimal(20,0) BINARY)->Column#19, test.t.c, test.t.a, test.t.d, test.t.d, test.t.a",
-          "    └─HashAgg 8000.00 root  group by:test.t.a, test.t.c, test.t.d, funcs:count(1)->Column#9, funcs:count(test.t.b)->Column#11, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(test.t.d)->test.t.d",
-          "      └─TableReader 10000.00 root  data:TableFullScan",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg 8000.00 root  group by:test.t.a, test.t.c, test.t.d, funcs:count(Column#13)->Column#9, funcs:count(Column#14)->Column#11, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(test.t.d)->test.t.d",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.t.a, test.t.c, test.t.d, funcs:count(1)->Column#13, funcs:count(test.t.b)->Column#14",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3874,9 +3876,10 @@
         "Plan": [
           "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─HashAgg(Build) 7992.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-          "│ └─TableReader 9990.00 root  data:Selection",
-          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│ └─TableReader 7992.00 root  data:HashAgg",
+          "│   └─HashAgg 7992.00 cop[tikv]  group by:test.t.a, ",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -3888,9 +3891,10 @@
         "Plan": [
           "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─HashAgg(Build) 7992.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-          "│ └─TableReader 9990.00 root  data:Selection",
-          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│ └─TableReader 7992.00 root  data:HashAgg",
+          "│   └─HashAgg 7992.00 cop[tikv]  group by:test.t.a, ",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
