@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validate_password
+package validator
 
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -32,11 +33,12 @@ type dictionaryImpl struct {
 
 var dictionary = dictionaryImpl{cache: make(map[string]struct{})}
 
+// UpdateDictionaryFile update the dictionary for validating password.
 func UpdateDictionaryFile(filePath string) error {
 	dictionary.m.Lock()
 	defer dictionary.m.Unlock()
 	newDictionary := make(map[string]struct{})
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return err
 	}
@@ -59,9 +61,10 @@ func UpdateDictionaryFile(filePath string) error {
 	return file.Close()
 }
 
+// ValidateDictionaryPassword checks if the password contains words in the dictionary.
 func ValidateDictionaryPassword(pwd string) bool {
 	dictionary.m.RLock()
-	dictionary.m.RUnlock()
+	defer dictionary.m.RUnlock()
 	if len(dictionary.cache) == 0 {
 		return true
 	}
