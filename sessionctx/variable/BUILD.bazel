@@ -57,6 +57,7 @@ go_library(
         "//util/timeutil",
         "//util/tls",
         "//util/topsql/state",
+        "//util/validate-password",
         "//util/versioninfo",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//config",

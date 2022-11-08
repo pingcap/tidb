@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "validate-password",
+    srcs = ["dictionary.go"],
+    importpath = "github.com/pingcap/tidb/util/validate-password",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/hack",
+        "//util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

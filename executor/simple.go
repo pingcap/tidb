@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/tls"
+	validatePwd "github.com/pingcap/tidb/util/validate-password"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -797,35 +798,30 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption) bool {
 	return false
 }
 
-func (e *SimpleExec) checkUserNameInPassword(pwd string) error {
+func (e *SimpleExec) validateUserNameInPassword(pwd, username string) error {
 	pwdBytes := hack.Slice(pwd)
-	userName := hack.Slice(e.ctx.GetSessionVars().User.AuthUsername)
-	userNameLen := len(userName)
+	usernameBytes := hack.Slice(username)
+	userNameLen := len(usernameBytes)
 	if userNameLen == 0 {
 		return nil
 	}
-	if bytes.Contains(pwdBytes, userName) {
+	if bytes.Contains(pwdBytes, usernameBytes) {
 		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
 	}
-	reverseUserName := make([]byte, userNameLen)
-	for i := range userName {
-		reverseUserName[i] = userName[userNameLen-1-i]
+	usernameReversedBytes := make([]byte, userNameLen)
+	for i := range usernameBytes {
+		usernameReversedBytes[i] = usernameBytes[userNameLen-1-i]
 	}
-	if bytes.Contains(pwdBytes, reverseUserName) {
-		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
+	if bytes.Contains(pwdBytes, usernameReversedBytes) {
+		return ErrNotValidPassword.GenWithStack("Password Contains Reversed User Name")
 	}
-	return nil
-}
-
-func (e *SimpleExec) checkDictionary(pwd string) error {
-	// TODO: dictionary_file
 	return nil
 }
 
 func (e *SimpleExec) validatePassword(pwd string) error {
-	if validatePwd, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+	if validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
 		return err
-	} else if !variable.TiDBOptOn(validatePwd) {
+	} else if !variable.TiDBOptOn(validatePwdEnable) {
 		return nil
 	}
 
@@ -842,7 +838,9 @@ func (e *SimpleExec) validatePassword(pwd string) error {
 	if err != nil {
 		return err
 	}
-	if err = e.checkUserNameInPassword(pwd); err != nil {
+	if err = e.validateUserNameInPassword(pwd, e.ctx.GetSessionVars().User.AuthUsername); err != nil {
+		return err
+	} else if err = e.validateUserNameInPassword(pwd, e.ctx.GetSessionVars().User.Username); err != nil {
 		return err
 	}
 	if validatePolicy == "LOW" {
@@ -890,7 +888,10 @@ func (e *SimpleExec) validatePassword(pwd string) error {
 	}
 
 	// STRONG
-	return e.checkDictionary(pwd)
+	if !validatePwd.ValidateDictionaryPassword(pwd) {
+		return ErrNotValidPassword.GenWithStack("Password contains word in the dictionary")
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
