@@ -186,6 +186,10 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.
