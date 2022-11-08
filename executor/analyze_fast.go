@@ -256,7 +256,7 @@ func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte, wantCols
 		handleColIDs[i] = c.ID
 		wantCols[c.ID] = c.RetType
 	}
-	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, wantCols, loc, values)
+	return tablecodec.DecodeHandleToDatumMapIfSkip(handle, handleColIDs, wantCols, loc, values, false)
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {

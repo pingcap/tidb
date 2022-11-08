@@ -159,6 +159,26 @@ func TestClusterIndexAnalyze(t *testing.T) {
 	tk.MustExec("drop table t;")
 }
 
+func TestIssue38935(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
+	//Fast analyze under test int primary key
+	tk.MustExec("CREATE TABLE `t2` (`pk` int(11) NOT NULL,PRIMARY KEY (`pk`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("INSERT INTO `t2` VALUES (1892)")
+	tk.MustExec("set tidb_enable_fast_analyze=on")
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t2")
+	//Fast analyze under test string primary key
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE `t2` (`pk` varchar(15) NOT NULL,PRIMARY KEY (`pk`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("INSERT INTO `t2` VALUES ('1892')")
+	tk.MustExec("set tidb_enable_fast_analyze=on")
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t2")
+}
+
 func TestAnalyzeRestrict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

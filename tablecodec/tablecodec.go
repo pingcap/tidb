@@ -497,6 +497,11 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return DecodeHandleToDatumMapIfSkip(handle, handleColIDs, cols, loc, row, true)
+}
+
+func DecodeHandleToDatumMapIfSkip(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, dtSkip bool) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -508,7 +513,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
-			if types.NeedRestoredData(ft) {
+			if dtSkip && types.NeedRestoredData(ft) {
 				continue
 			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
