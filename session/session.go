@@ -2811,9 +2811,10 @@ func InitDDLJobTables(store kv.Storage) error {
 		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		targetVer := meta.DDLTableVersion2
+		targetTables := DDLJobTables
 		if !ddl.EnableDistReorg {
 			targetVer = meta.DDLTableVersion1
-			DDLJobTables = DDLJobTables[:3]
+			targetTables = DDLJobTables[:3]
 		}
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -2828,8 +2829,9 @@ func InitDDLJobTables(store kv.Storage) error {
 		}
 		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
-		for _, tbl := range DDLJobTables {
-			logutil.BgLogger().Info("init DDL job tables", zap.Reflect("tbl", tbl), zap.String("tbl version", tableVer))
+		for _, tbl := range targetTables {
+			logutil.BgLogger().Info("init DDL job tables",
+				zap.Int64("tbl id", tbl.id), zap.String("tbl version", tableVer), zap.String("target tbl version", targetVer))
 			if tableVer == meta.DDLTableVersion1 && tbl.id > ddl.BackfillTableID {
 				continue
 			}
