@@ -441,7 +441,11 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 		return nil, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
-	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	if exec, ok := p.(*core.Execute); ok && exec.PrepStmt != nil {
+		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(exec.PrepStmt.VisitInfos)
+	} else {
+		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
+	}
 	return p, nil
 }
 
