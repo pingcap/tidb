@@ -425,8 +425,9 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			jobTasks[i] = job
 			injectModifyJobArgFailPoint(job)
 		}
+
 		sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-		err = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
+		err = insertDDLJobs2Table(NewSession(sess), true, jobTasks...)
 	}
 	return errors.Trace(err)
 }

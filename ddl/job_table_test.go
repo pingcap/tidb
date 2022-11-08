@@ -15,16 +15,20 @@
 package ddl_test
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -178,67 +182,195 @@ func check(t *testing.T, record []int64, ids ...int64) {
 	}
 }
 
-func TestAlwaysChoiceProcessingJob(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
+func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query string) []*ddl.BackfillJob {
+	bJobs := make([]*ddl.BackfillJob, 0, cnt)
+	for i := 0; i < cnt; i++ {
+		sKey := []byte(fmt.Sprintf("%d", i))
+		eKey := []byte(fmt.Sprintf("%d", i+1))
+		bm := &model.BackfillMeta{
+			CurrKey:    sKey,
+			StartKey:   sKey,
+			EndKey:     eKey,
+			EndInclude: true,
+			JobMeta: &model.JobMeta{
+				SchemaID: schemaID,
+				TableID:  tblID,
+				Query:    query,
+			},
+		}
+		bj := &ddl.BackfillJob{
+			ID:     int64(i),
+			JobID:  jobID,
+			EleID:  eleID,
+			EleKey: meta.IndexElementKey,
+			Tp:     model.TypeAddIndexBackfill,
+			State:  model.JobStateNone,
+			Mate:   bm,
+		}
+		bJobs = append(bJobs, bj)
 	}
+	return bJobs
+}
+
+func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) {
+	require.Equal(t, a.ID, b.ID)
+	require.Equal(t, a.JobID, b.JobID)
+	require.Equal(t, a.EleID, b.EleID)
+	require.Equal(t, a.EleKey, b.EleKey)
+	require.Equal(t, a.StoreID, b.StoreID)
+	require.Equal(t, a.InstanceID, b.InstanceID)
+	require.GreaterOrEqual(t, b.InstanceLease.Compare(lessTime), 0)
+	require.Equal(t, a.State, b.State)
+	require.Equal(t, a.Mate, b.Mate)
+}
+
+func getIdxConditionStr(jobID, eleID int64) string {
+	return fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
+		jobID, eleID, meta.IndexElementKey)
+}
+
+func TestSimpleExecBackfillJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	d := dom.DDL()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
+	d := dom.DDL()
+	se := ddl.NewSession(tk.Session())
 
-	ddlJobs := []string{
-		"alter table t add index idx(a)",
-		"alter table t add index idx(b)",
-	}
+	jobID := int64(3)
+	eleID1 := int64(4)
+	eleID2 := int64(5)
+	uuid := d.GetID()
+	instanceLease := ddl.InstanceLease
+	// test no backfill job
+	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, true, []int64{jobID}, instanceLease)
+	require.NoError(t, err)
+	require.Nil(t, bJobs)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, true, []int64{jobID}, uuid, instanceLease)
+	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout").Error())
+	require.Nil(t, bJobs)
+	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
+		jobID, eleID2, meta.IndexElementKey), "check_backfill_job_count")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 0)
+	// Test some backfill jobs, add backfill jobs to the table.
+	cnt := 2
+	bjTestCases := make([]*ddl.BackfillJob, 0, cnt*2)
+	bJobs1 := makeAddIdxBackfillJobs(1, 2, jobID, eleID1, cnt, "alter table add index idx(a)")
+	bJobs2 := makeAddIdxBackfillJobs(1, 2, jobID, eleID2, cnt, "alter table add index idx(b)")
+	bjTestCases = append(bjTestCases, bJobs1...)
+	bjTestCases = append(bjTestCases, bJobs2...)
+	err = ddl.AddBackfillJobs(se, bjTestCases)
+	// ID     jobID     eleID    InstanceID
+	// -------------------------------------
+	// 0      jobID     eleID1    uuid
+	// 1      jobID     eleID1    ""
+	// 0      jobID     eleID2    ""
+	// 1      jobID     eleID2    ""
+	require.NoError(t, err)
+	// test get some backfill jobs
+	bJobs, err = ddl.GetBackfillJobsForOneEle(se, 1, true, []int64{jobID}, instanceLease)
+	require.NoError(t, err)
+	require.Len(t, bJobs, 1)
+	require.Equal(t, bjTestCases[0], bJobs[0])
+	previousTime, err := ddl.GetOracleTime(se.GetStore())
+	require.NoError(t, err)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, true, []int64{jobID}, uuid, instanceLease)
+	require.NoError(t, err)
+	require.Len(t, bJobs, 1)
+	bjRet := bjTestCases[0]
+	bjRet.InstanceID = uuid
+	equalBackfillJob(t, bjRet, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
+	currTime, err := ddl.GetOracleTime(se.GetStore())
+	require.NoError(t, err)
+	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
+	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].InstanceLease), 0)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID2), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, cnt)
 
-	hook := &ddl.TestDDLCallback{}
-	var wg util.WaitGroupWrapper
-	wg.Add(1)
-	var once sync.Once
-	var idxa, idxb int64
-	hook.OnGetJobBeforeExported = func(jobType string) {
-		once.Do(func() {
-			var jobs []*model.Job
-			for i, job := range ddlJobs {
-				wg.Run(func() {
-					tk := testkit.NewTestKit(t, store)
-					tk.MustExec("use test")
-					recordSet, _ := tk.Exec(job)
-					if recordSet != nil {
-						require.NoError(t, recordSet.Close())
-					}
-				})
-				for {
-					time.Sleep(time.Millisecond * 100)
-					var err error
-					jobs, err = ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
-					require.NoError(t, err)
-					if len(jobs) == i+1 {
-						break
-					}
-				}
-			}
-			idxa = jobs[0].ID
-			idxb = jobs[1].ID
-			require.Greater(t, idxb, idxa)
-			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("update mysql.tidb_ddl_job set processing = 1 where job_id = ?", idxb)
-			wg.Done()
-		})
-	}
+	// remove a backfill job
+	err = ddl.RemoveBackfillJob(se, false, bJobs1[0])
+	// ID     jobID     eleID
+	// ------------------------
+	// 1      jobID     eleID1
+	// 0      jobID     eleID2
+	// 1      jobID     eleID2
+	require.NoError(t, err)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID1), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 1)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID2), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, cnt)
+	// remove all backfill jobs
+	err = ddl.RemoveBackfillJob(se, true, bJobs2[0])
+	// ID     jobID     eleID
+	// ------------------------
+	// 1      jobID     eleID1
+	require.NoError(t, err)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID1), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 1)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID2), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 0)
+	// clean backfill job
+	err = ddl.RemoveBackfillJob(se, true, bJobs1[1])
+	// ID     jobID     eleID
+	// ------------------------
+	require.NoError(t, err)
 
-	record := make([]int64, 0, 16)
-	hook.OnGetJobAfterExported = func(jobType string, job *model.Job) {
-		// record the job schedule order
-		record = append(record, job.ID)
-	}
+	// test history backfill jobs
+	err = ddl.AddBackfillHistoryJob(se, []*ddl.BackfillJob{bJobs1[0]})
+	require.NoError(t, err)
+	// ID     jobID     eleID
+	// ------------------------
+	// 0      jobID     eleID1
+	currTime, err = ddl.GetOracleTime(se.GetStore())
+	require.NoError(t, err)
+	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and job_id = %d order by job_id", currTime.Add(-instanceLease), jobID)
+	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
+	require.NoError(t, err)
+	require.Len(t, bJobs, 1)
 
-	d.SetHook(hook)
-	wg.Wait()
+	// test GetInterruptedBackfillJobsForOneEle
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID, eleID1, meta.IndexElementKey)
+	require.NoError(t, err)
+	require.Nil(t, bJobs)
+	// ID     jobID     eleID
+	// ------------------------
+	// 0      jobID     eleID1
+	// 1      jobID     eleID1
+	// 0      jobID     eleID2
+	// 1      jobID     eleID2
+	err = ddl.AddBackfillJobs(se, bjTestCases)
+	require.NoError(t, err)
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID, eleID1, meta.IndexElementKey)
+	require.NoError(t, err)
+	require.Nil(t, bJobs)
+	bJobs1[0].State = model.JobStateRollingback
+	bJobs1[0].ID = 2
+	bJobs1[1].State = model.JobStateCancelling
+	bJobs1[1].ID = 3
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 0      jobID     eleID1    JobStateNone
+	// 1      jobID     eleID1    JobStateNone
+	// 0      jobID     eleID2    JobStateNone
+	// 1      jobID     eleID2    JobStateNone
+	// 2      jobID     eleID1    JobStateRollingback
+	// 3      jobID     eleID1    JobStateCancelling
+	err = ddl.AddBackfillJobs(se, bJobs1)
+	require.NoError(t, err)
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID, eleID1, meta.IndexElementKey)
+	require.NoError(t, err)
+	require.Len(t, bJobs, 2)
+	equalBackfillJob(t, bJobs1[0], bJobs[0], types.ZeroTime)
+	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
 
-	check(t, record, idxb, idxa)
+	// test the BackfillJob's AbbrStr
+	require.Equal(t, fmt.Sprintf("ID:2, JobID:3, EleID:4, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
+	require.Equal(t, "ID:3, JobID:3, EleID:4, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
+	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
 }

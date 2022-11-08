@@ -102,7 +102,6 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -2786,6 +2785,8 @@ var (
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
@@ -2808,8 +2809,13 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		tableVer, err := t.CheckDDLTableVersion()
+		targetVer := meta.DDLTableVersion2
+		if !ddl.EnableDistReorg {
+			targetVer = meta.DDLTableVersion1
+			DDLJobTables = DDLJobTables[:3]
+		}
+		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -2823,6 +2829,17 @@ func InitDDLJobTables(store kv.Storage) error {
 		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
+			logutil.BgLogger().Info("init DDL job tables", zap.Reflect("tbl", tbl), zap.String("tbl version", tableVer))
+			if tableVer == meta.DDLTableVersion1 && tbl.id > ddl.BackfillTableID {
+				continue
+			}
+			id, err := t.GetGlobalID()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if id >= meta.MaxGlobalID {
+				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2839,7 +2856,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 		}
-		return t.SetDDLTables()
+		return t.SetDDLTables(targetVer)
 	})
 }
 
