@@ -607,7 +607,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 				return nil, err
 			}
 			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = newSession(sessForJob)
+			wk.sess = NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -1252,7 +1252,7 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	sess := newSession(s)
+	sess := NewSession(s)
 	err := sess.begin()
 	if err != nil {
 		return nil, err
@@ -1266,7 +1266,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	sess := newSession(s)
+	sess := NewSession(s)
 	txn, err := sess.txn()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1435,7 +1435,7 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	}
 	var jobMap = make(map[int64]int) // jobID -> error index
 
-	sess := newSession(se)
+	sess := NewSession(se)
 	err := sess.begin()
 	if err != nil {
 		return nil, err
@@ -1517,7 +1517,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	if variable.EnableConcurrentDDL.Load() {
-		return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
+		return getJobsBySQL(NewSession(sess), JobTable, "1 order by job_id")
 	}
 
 	return getDDLJobs(t)
@@ -1603,7 +1603,7 @@ type session struct {
 	sessionctx.Context
 }
 
-func newSession(s sessionctx.Context) *session {
+func NewSession(s sessionctx.Context) *session {
 	return &session{s}
 }
 
@@ -1725,7 +1725,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 
 // AddHistoryDDLJobForTest used for test.
 func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
+	return AddHistoryDDLJob(NewSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob record the history job.

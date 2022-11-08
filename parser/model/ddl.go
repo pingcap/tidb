@@ -357,6 +357,65 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 }
 
+type BackfillType byte
+
+const (
+	TypeAddIndexBackfill     BackfillType = 1
+	TypeUpdateColumnBackfill BackfillType = 2
+	TypeCleanUpIndexBackfill BackfillType = 3
+)
+
+func (bt BackfillType) String() string {
+	switch bt {
+	case TypeAddIndexBackfill:
+		return "add index"
+	case TypeUpdateColumnBackfill:
+		return "update column"
+	case TypeCleanUpIndexBackfill:
+		return "clean up index"
+	default:
+		return "unknown"
+	}
+}
+
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
+}
+
+type BackfillMeta struct {
+	CurrKey    []byte `json:"curr_key"`
+	StartKey   []byte `json:"start_key"`
+	EndKey     []byte `json:"end_key"`
+	EndInclude bool   `json:"end_include"`
+	StartTS    uint64 `json:"start_ts"`
+	FinishTS   uint64 `json:"finish_ts"`
+	RowCount   int64  `json:"row_count"`
+	ErrMsg     string `json:"err_msg"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
+	*JobMeta      `json:"job_meta"`
+}
+
+// Encode encodes BackfillMeta with json format.
+func (bm *BackfillMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(bm)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes BackfillMeta from the json buffer.
+func (bm *BackfillMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID         int64         `json:"id"`

@@ -2661,6 +2661,8 @@ var (
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
 )
 
@@ -2668,8 +2670,13 @@ var (
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		tableVer, err := t.CheckDDLTableVersion()
+		targetVer := meta.DDLTableVersion2
+		if !ddl.EnableDistReorg {
+			targetVer = meta.DDLTableVersion1
+			DDLJobTables = DDLJobTables[:3]
+		}
+		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -2678,6 +2685,10 @@ func InitDDLJobTables(store kv.Storage) error {
 		}
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
+			logutil.BgLogger().Info("init DDL job tables", zap.Reflect("tbl", tbl), zap.String("tbl version", tableVer))
+			if tableVer == meta.DDLTableVersion1 && tbl.id > ddl.BackfillTableID {
+				continue
+			}
 			id, err := t.GetGlobalID()
 			if err != nil {
 				return errors.Trace(err)
@@ -2704,7 +2715,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 		}
-		return t.SetDDLTables()
+		return t.SetDDLTables(targetVer)
 	})
 }
 

@@ -737,7 +737,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 	}
 	defer pool.put(se)
 
-	sess := newSession(se)
+	sess := NewSession(se)
 	err = sess.begin()
 	if err != nil {
 		return
@@ -766,7 +766,7 @@ type reorgHandler struct {
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
 func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(t, newSession(sess), variable.EnableConcurrentDDL.Load())
+	return newReorgHandler(t, NewSession(sess), variable.EnableConcurrentDDL.Load())
 }
 
 func newReorgHandler(t *meta.Meta, sess *session, enableConcurrentDDL bool) *reorgHandler {

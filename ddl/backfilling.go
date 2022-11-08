@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,12 +38,14 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -53,7 +56,50 @@ const (
 	typeAddIndexWorker     backfillWorkerType = 0
 	typeUpdateColumnWorker backfillWorkerType = 1
 	typeCleanUpIndexWorker backfillWorkerType = 2
+
+	InstanceLease = 60 // s
+	// TODO: control the behavior
+	EnableDistReorg = true
 )
+
+type BackfillJob struct {
+	ID             int64
+	JobID          int64
+	EleID          int64
+	EleKey         []byte
+	Tp             model.BackfillType
+	State          model.JobState
+	StoreID        int64
+	Instance_ID    string
+	Instance_Lease types.Time
+	Mate           *model.BackfillMeta
+}
+
+func (bj *BackfillJob) IsFinished() bool {
+	return bj.State == model.JobStateDone
+}
+
+func (bj *BackfillJob) IsRunning() bool {
+	return bj.State == model.JobStateRunning
+}
+
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
+}
+
+func GetOracleTime(store kv.Storage) (time.Time, error) {
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return time.Time{}, errors.Trace(err)
+	}
+	return oracle.GetTimeFromTS(currentVer.Ver), nil
+}
+
+func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
+	leaseTime := currTime.Add(lease)
+	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
+}
 
 // By now the DDL jobs that need backfilling include:
 // 1: add-index

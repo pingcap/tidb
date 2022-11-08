@@ -2047,7 +2047,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
-			sess := newSession(se)
+			sess := NewSession(se)
 			_, err = sess.execute(context.Background(), "insert into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
