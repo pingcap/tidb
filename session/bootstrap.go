@@ -431,21 +431,15 @@ const (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
 
-	CreatePlanReplayerTaskTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_task (
-		sql_digest VARCHAR(128) NOT NULL,
-		plan_digest VARCHAR(128) NOT NULL,
-		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		PRIMARY KEY (sql_digest,plan_digest));`
-
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
 	CreatePlanReplayerStatusTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_status (
-		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
-		sql_digest VARCHAR(128) NOT NULL,
-		plan_digest VARCHAR(128) NOT NULL,
+		sql_digest VARCHAR(128)
+		plan_digest VARCHAR(128)
+		origin_sql TEXT,
 		token VARCHAR(128),
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		fail_reason TEXT,
-		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job',,
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job',
 		PRIMARY KEY (id));`
 )
 
@@ -2011,7 +2005,6 @@ func upgradeToVer101(s Session, ver int64) {
 	if ver >= version101 {
 		return
 	}
-	doReentrantDDL(s, CreatePlanReplayerTaskTable)
 	doReentrantDDL(s, CreatePlanReplayerStatusTable)
 }
 
@@ -2150,8 +2143,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
-	// Create plan_replayer_task table
-	mustExecute(s, CreatePlanReplayerTaskTable)
 	//  Create plan_replayer_status table
 	mustExecute(s, CreatePlanReplayerStatusTable)
 }

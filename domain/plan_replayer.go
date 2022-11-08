@@ -28,9 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -126,7 +124,7 @@ func DeletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, toke
 }
 
 // InsertPlanReplayerStatus insert mysql.plan_replayer_status record
-func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest, token string, err error) {
+func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
@@ -135,61 +133,43 @@ func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, sqlD
 	} else {
 		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
 	}
-	exec := sctx.(sqlexec.SQLExecutor)
-	if err != nil {
-		_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-			"insert into mysql.plan_replayer_Status (sql_digest, plan_digest, fail_reason, instance) values (%s,%s,%s,%s)",
-			sqlDigest, planDigest, err.Error(), instance))
-		if err != nil {
-			logutil.BgLogger().Error("insert mysql.plan_replayer_status record failed",
-				zap.String("token", token),
-				zap.Error(err))
-		}
-	} else {
-		_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-			"insert into mysql.plan_replayer_Status (sql_digest, plan_digest, token, instance) values (%s,%s,%s,%s)",
-			sqlDigest, planDigest, token, instance))
-		if err != nil {
-			logutil.BgLogger().Error("insert mysql.plan_replayer_status record failed",
-				zap.String("token", token),
-				zap.Error(err))
+	for _, record := range records {
+		if !record.Internal {
+			if len(record.FailedReason) > 0 {
+				insertExternalPlanReplayerErrorStatusRecord(ctx, sctx, instance, record)
+			} else {
+				insertExternalPlanReplayerSuccessStatusRecord(ctx, sctx, instance, record)
+			}
 		}
 	}
 }
 
-func GetAllPlanReplayerTask(ctx context.Context, sctx sessionctx.Context) ([]PlanReplayerKey, error) {
+func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.SQLExecutor)
-	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
+	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+		"insert into mysql.plan_replayer_Status (origin_sql, fail_reason, instance) values (%s,%s,%s)",
+		record.OriginSql, record.FailedReason, instance))
 	if err != nil {
-		return nil, err
+		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.Error(err))
 	}
-	if rs == nil {
-		return nil, nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return nil, errors.Trace(err)
-	}
-	keys := make([]PlanReplayerKey, 0, len(rows))
-	for _, row := range rows {
-		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
-		keys = append(keys, PlanReplayerKey{
-			sqlDigest:  sqlDigest,
-			planDigest: planDigest,
-		})
-	}
-	return keys, nil
 }
 
-type PlanReplayerKey struct {
-	sqlDigest  string
-	planDigest string
+func insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+		"insert into mysql.plan_replayer_Status (origin_sql, token, instance) values (%s,%s,%s)",
+		record.OriginSql, record.Token, instance))
+	if err != nil {
+		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.Error(err))
+	}
 }
 
-type PlanReplayerHandle struct {
-	mu struct {
-		sync.RWMutex
-		planReplayerCapture map[PlanReplayerKey]struct{}
-	}
+// PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
+type PlanReplayerStatusRecord struct {
+	Internal     bool
+	OriginSql    string
+	Token        string
+	FailedReason string
 }
