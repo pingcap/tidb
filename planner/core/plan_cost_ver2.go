@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -256,6 +257,13 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
 	p.planCostVer2 = sumCostVer2(indexSideCost, divCostVer2(sumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
+
+	if p.ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
+		// if the expectCnt is below the paging threshold, using paging API
+		p.Paging = true // TODO: move this operation from cost model to physical optimization
+		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.6)
+	}
+
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
@@ -713,7 +721,7 @@ func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVe
 func filterCostVer2(option *PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(filters)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(numFuncs)*cpuFactor.Value,
+		rows*numFuncs*cpuFactor.Value,
 		"cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor)
 }
 
@@ -727,15 +735,17 @@ func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.A
 func groupCostVer2(option *PlanCostOption, rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(groupItems)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(numFuncs)*cpuFactor.Value,
+		rows*numFuncs*cpuFactor.Value,
 		"group(%v*cols(%v)*%v)", rows, numFuncs, cpuFactor)
 }
 
-func numFunctions(exprs []expression.Expression) int {
-	num := 0
+func numFunctions(exprs []expression.Expression) float64 {
+	num := 0.0
 	for _, e := range exprs {
 		if _, ok := e.(*expression.ScalarFunction); ok {
 			num++
+		} else { // Column and Constant
+			num += 0.01 // an empirical value
 		}
 	}
 	return num
