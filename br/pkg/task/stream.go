@@ -895,31 +895,24 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		Helper: stream.NewMetadataHelper(),
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
-			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFileGroups())),
-				zap.Int("data-file-after", len(current.GetFileGroups())))
-			return cfg.DryRun
-		},
+		DryRun: cfg.DryRun,
 	}
-	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
+	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
+	if err != nil {
 		return err
 	}
 	readMetaDone()
 
 	var (
-		fileCount    uint64 = 0
-		kvCount      int64  = 0
-		totalSize    uint64 = 0
-		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
+		fileCount int    = 0
+		kvCount   int64  = 0
+		totalSize uint64 = 0
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		for _, f := range d.DataFilesInfo {
-			kvCount += f.NumberOfEntries
-		}
+		kvCount += d.KVCount
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -937,40 +930,33 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove log
+	// begin to remove
 	clearDataFileDone := console.ShowTask(
 		"Clearing data files... ", glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
-	worker := utils.NewWorkerPool(128, "delete files")
-	wg := new(sync.WaitGroup)
-	for _, f := range removed {
-		if !cfg.DryRun {
-			wg.Add(1)
-			finalFile := f
-			worker.Apply(func() {
-				defer wg.Done()
-				if err := storage.DeleteFile(ctx, finalFile.Path); err != nil {
-					log.Warn("File not deleted.", zap.String("path", finalFile.Path), logutil.ShortError(err))
-					console.Print("\n"+em(finalFile.Path), "not deleted, you may clear it manually:", warn(err))
-				}
-			})
+
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, storage, func(int64) {})
+	if err != nil {
+		return err
+	}
+
+	if len(notDeleted) > 0 {
+		const keepFirstNFailure = 16
+		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
+		console.Println("- Total", em(len(notDeleted)), "items.")
+		if len(notDeleted) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
+			// TODO: maybe don't add them at the very first.
+			notDeleted = notDeleted[:keepFirstNFailure]
+		}
+		for _, f := range notDeleted {
+			console.Println(f)
 		}
 	}
-	wg.Wait()
 	clearDataFileDone()
 
-	// remove metadata
-	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
-	if !cfg.DryRun {
-		if err := metas.DoWriteBack(ctx, storage); err != nil {
-			return err
-		}
-	}
-	removeMetaDone()
 	return nil
 }
 
