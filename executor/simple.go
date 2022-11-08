@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -783,6 +785,114 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption) bool {
+	if authOpt == nil || !authOpt.ByAuthString {
+		return false
+	}
+	if authOpt.AuthString == mysql.AuthNativePassword ||
+		authOpt.AuthString == mysql.AuthTiDBSM3Password ||
+		authOpt.AuthString == mysql.AuthCachingSha2Password {
+		return true
+	}
+	return false
+}
+
+func (e *SimpleExec) checkUserNameInPassword(pwd string) error {
+	pwdBytes := hack.Slice(pwd)
+	userName := hack.Slice(e.ctx.GetSessionVars().User.AuthUsername)
+	userNameLen := len(userName)
+	if userNameLen == 0 {
+		return nil
+	}
+	if bytes.Contains(pwdBytes, userName) {
+		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
+	}
+	var reverseUserName []byte
+	for i := range userName {
+		reverseUserName = append(reverseUserName, userName[userNameLen-1-i])
+	}
+	if bytes.Contains(pwdBytes, reverseUserName) {
+		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
+	}
+	return nil
+}
+
+func (e *SimpleExec) checkDictionary(pwd string) error {
+	// TODO: dictionary_file
+	return nil
+}
+
+func (e *SimpleExec) validatePassword(pwd string) error {
+	if validatePwd, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+		return err
+	} else if !variable.TiDBOptOn(validatePwd) {
+		return nil
+	}
+
+	runes := []rune(pwd)
+	// LOW
+	if validateLengthStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
+		return err
+	} else if validateLength, err := strconv.ParseInt(validateLengthStr, 10, 64); err != nil {
+		return err
+	} else if (int64)(len(runes)) < validateLength {
+		return ErrNotValidPassword.GenWithStack("Require Password Length: %d", validateLength)
+	}
+	validatePolicy, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordPolicy)
+	if err != nil {
+		return err
+	}
+	if err = e.checkUserNameInPassword(pwd); err != nil {
+		return err
+	}
+	if validatePolicy == "LOW" {
+		return nil
+	}
+
+	// MEDIUM
+	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
+	for _, r := range runes {
+		if unicode.IsUpper(r) {
+			upperCaseCount++
+		} else if unicode.IsLower(r) {
+			lowerCaseCount++
+		} else if unicode.IsDigit(r) {
+			numberCount++
+		} else {
+			specialCharCount++
+		}
+	}
+	if mixedCaseCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
+		return err
+	} else if mixedCaseCount, err := strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
+		return err
+	} else if lowerCaseCount < mixedCaseCount {
+		return ErrNotValidPassword.GenWithStack("Require Password Lowercase Count: %d", mixedCaseCount)
+	} else if upperCaseCount < mixedCaseCount {
+		return ErrNotValidPassword.GenWithStack("Require Password Uppercase Count: %d", mixedCaseCount)
+	}
+	if requireNumberCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
+		return err
+	} else if requireNumberCount, err := strconv.ParseInt(requireNumberCountStr, 10, 64); err != nil {
+		return err
+	} else if numberCount < requireNumberCount {
+		return ErrNotValidPassword.GenWithStack("Require Password Digit Count: %d", requireNumberCount)
+	}
+	if requireSpecialCharCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
+		return err
+	} else if requireSpecialCharCount, err := strconv.ParseInt(requireSpecialCharCountStr, 10, 64); err != nil {
+		return err
+	} else if specialCharCount < requireSpecialCharCount {
+		return ErrNotValidPassword.GenWithStack("Require Password Non-alphanumeric Count: %d", requireSpecialCharCount)
+	}
+	if validatePolicy == "MEDIUM" {
+		return nil
+	}
+
+	// STRONG
+	return e.checkDictionary(pwd)
+}
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -873,6 +983,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
+		}
+		if e.authUsingCleartextPwd(spec.AuthOpt) {
+			if err := e.validatePassword(spec.AuthOpt.AuthString); err != nil {
+				return err
+			}
 		}
 		pwd, ok := spec.EncodedPassword()
 
@@ -1086,6 +1201,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+			if e.authUsingCleartextPwd(spec.AuthOpt) {
+				if err := e.validatePassword(spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
@@ -1601,6 +1721,9 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	authplugin, err := e.userAuthPlugin(u, h)
 	if err != nil {
+		return err
+	}
+	if err := e.validatePassword(s.Password); err != nil {
 		return err
 	}
 	var pwd string
