@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -160,10 +161,12 @@ func TestTruncateLog(t *testing.T) {
 	})
 	require.Len(t, fs, 15)
 
+	var lock sync.Mutex
 	remainedFiles := []string{}
 	remainedDataFiles := []string{}
 	removedMetaFiles := []string{}
 	s.BeforeDoWriteBack = func(path string, replaced *backuppb.Metadata) bool {
+		lock.Lock()
 		require.NotNil(t, replaced)
 		if len(replaced.GetFileGroups()) > 0 {
 			remainedFiles = append(remainedFiles, path)
@@ -173,11 +176,16 @@ func TestTruncateLog(t *testing.T) {
 		} else {
 			removedMetaFiles = append(removedMetaFiles, path)
 		}
+		lock.Unlock()
 		return false
 	}
 
 	var total int64 = 0
-	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) { total += num })
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) {
+		lock.Lock()
+		total += num
+		lock.Unlock()
+	})
 	require.NoError(t, err)
 	require.Equal(t, len(notDeleted), 0)
 	require.ElementsMatch(t, remainedFiles, []string{"v1/backupmeta/0003.meta"})
@@ -225,10 +233,12 @@ func TestTruncateLogV2(t *testing.T) {
 	})
 	require.Len(t, fs, 15)
 
+	var lock sync.Mutex
 	remainedFiles := []string{}
 	remainedDataFiles := []string{}
 	removedMetaFiles := []string{}
 	s.BeforeDoWriteBack = func(path string, replaced *backuppb.Metadata) bool {
+		lock.Lock()
 		require.NotNil(t, replaced)
 		if len(replaced.GetFileGroups()) > 0 {
 			remainedFiles = append(remainedFiles, path)
@@ -238,11 +248,16 @@ func TestTruncateLogV2(t *testing.T) {
 		} else {
 			removedMetaFiles = append(removedMetaFiles, path)
 		}
+		lock.Unlock()
 		return false
 	}
 
 	var total int64 = 0
-	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) { total += num })
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) {
+		lock.Lock()
+		total += num
+		lock.Unlock()
+	})
 	require.NoError(t, err)
 	require.Equal(t, len(notDeleted), 0)
 	require.ElementsMatch(t, remainedFiles, []string{"v1/backupmeta/0003.meta"})
@@ -463,7 +478,7 @@ func fakeMetaDataV2s(t *testing.T, helper *stream.MetadataHelper, cf string) []*
 }
 
 func ff(minTS, maxTS uint64) *backuppb.DataFileGroup {
-	return f(minTS, maxTS, stream.DefaultCF, 0)
+	return f(0, minTS, maxTS, stream.DefaultCF, 0)
 }
 
 func TestReplaceMetadataTs(t *testing.T) {
@@ -517,9 +532,9 @@ func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 	}
 }
 
-func f(minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup {
+func f(storeId int64, minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup {
 	return &backuppb.DataFileGroup{
-		Path: logName(minTS, maxTS),
+		Path: logName(storeId, minTS, maxTS),
 		DataFilesInfo: []*backuppb.DataFileInfo{
 			{
 				NumberOfEntries:       1,
@@ -529,9 +544,8 @@ func f(minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup
 				MinBeginTsInDefaultCf: defaultTS,
 			},
 		},
-		MinTs:  minTS,
-		MaxTs:  maxTS,
-		Length: 1,
+		MinTs: minTS,
+		MaxTs: maxTS,
 	}
 }
 
@@ -539,7 +553,7 @@ func f(minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup
 func m_1(storeId int64, minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.Metadata {
 	meta := m(storeId, minTS, maxTS)
 	meta.FileGroups = []*backuppb.DataFileGroup{
-		f(minTS, maxTS, cf, defaultTS),
+		f(storeId, minTS, maxTS, cf, defaultTS),
 	}
 	return meta
 }
@@ -552,8 +566,8 @@ func m_2(
 ) *backuppb.Metadata {
 	meta := m(storeId, minTSL, maxTSR)
 	meta.FileGroups = []*backuppb.DataFileGroup{
-		f(minTSL, maxTSL, cfL, defaultTSL),
-		f(minTSR, maxTSR, cfR, defaultTSR),
+		f(storeId, minTSL, maxTSL, cfL, defaultTSL),
+		f(storeId, minTSR, maxTSR, cfR, defaultTSR),
 	}
 	return meta
 }
@@ -581,8 +595,8 @@ func metaName(storeId int64) string {
 	return fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), storeId)
 }
 
-func logName(minTS, maxTS uint64) string {
-	return fmt.Sprintf("%04d_%04d.log", minTS, maxTS)
+func logName(storeId int64, minTS, maxTS uint64) string {
+	return fmt.Sprintf("%04d_%04d_%04d.log", storeId, minTS, maxTS)
 }
 
 // generate the files to the external storage
@@ -605,7 +619,7 @@ func generateFiles(ctx context.Context, s storage.ExternalStorage, metas []*back
 		}
 
 		for _, group := range meta.FileGroups {
-			fname := logName(group.MinTs, group.MaxTs)
+			fname := logName(meta.StoreId, group.MinTs, group.MaxTs)
 			err = s.WriteFile(ctx, fname, []byte("test"))
 			if err != nil {
 				return err
@@ -635,7 +649,7 @@ func checkFiles(ctx context.Context, s storage.ExternalStorage, metas []*backupp
 		require.Equal(t, meta.MaxTs, metaRead.MaxTs)
 		for i, group := range meta.FileGroups {
 			require.Equal(t, metaRead.FileGroups[i].Path, group.Path)
-			logPath := logName(group.MinTs, group.MaxTs)
+			logPath := logName(meta.StoreId, group.MinTs, group.MaxTs)
 			pathSet[logPath] = struct{}{}
 			exists, err := s.FileExists(ctx, logPath)
 			require.NoError(t, err)
