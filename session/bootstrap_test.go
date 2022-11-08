@@ -137,7 +137,6 @@ func globalVarsCount() int64 {
 
 func TestInitDDLJobTables(t *testing.T) {
 	ctx := context.Background()
-	ddl.EnableDistReorg = false
 	store, _ := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -162,7 +161,10 @@ func TestInitDDLJobTables(t *testing.T) {
 	require.NoError(t, err)
 	domap.Delete(store)
 	dom.Close()
-	ddl.EnableDistReorg = true
+	ddl.DistReorgEnable()
+	defer func() {
+		ddl.DistReorgDisable()
+	}()
 	err = InitDDLJobTables(store)
 	require.NoError(t, err)
 	dom1, err := BootstrapSession(store)

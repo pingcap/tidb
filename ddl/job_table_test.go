@@ -260,7 +260,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjTestCases = append(bjTestCases, bJobs1...)
 	bjTestCases = append(bjTestCases, bJobs2...)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
+<<<<<<< HEAD
 	// ID     jobID     eleID    InstanceID
+=======
+	// ID     jobID     eleID    Instance_ID
+>>>>>>> 757f0e149... ddl, parser: add two UTs
 	// -------------------------------------
 	// 0      jobID     eleID1    uuid
 	// 1      jobID     eleID1    ""
@@ -369,8 +373,8 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
 
 	// test the BackfillJob's AbbrStr
-	require.Equal(t, fmt.Sprintf("ID:2, JobID:3, EleID:4, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
-	require.Equal(t, "ID:3, JobID:3, EleID:4, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
-	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
-	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
+	require.Equal(t, fmt.Sprintf("ID:2, JobID:3, EleID:4, Type:add index, State:rollingback, Instance_ID:%s, Instance_Lease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
+	require.Equal(t, "ID:3, JobID:3, EleID:4, Type:add index, State:cancelling, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
+	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
 }
