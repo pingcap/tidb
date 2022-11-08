@@ -4976,7 +4976,7 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, QbNameMap4View map[string][]ast.HintTable, ViewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
@@ -5019,30 +5019,30 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	currentQbHints := make(map[int][]*ast.TableOptimizerHint)
 	currentQbNameMap := make(map[string]int)
 
-	for qbName, viewQbNameHint := range QbNameMap4View {
+	for qbName, viewQbNameHint := range qbNameMap4View {
 		selectOffset := -1
 		viewQbNameHint = viewQbNameHint[1:]
-		QbNameMap4View[qbName] = viewQbNameHint
+		qbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
 			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
 		} else {
 			currentQbNameMap4View[qbName] = viewQbNameHint
-			currentQbHints4View[qbName] = ViewHints[qbName]
+			currentQbHints4View[qbName] = viewHints[qbName]
 		}
 
 		if selectOffset != -1 {
-			currentQbHints[selectOffset] = ViewHints[qbName]
+			currentQbHints[selectOffset] = viewHints[qbName]
 			currentQbNameMap[qbName] = selectOffset
 
-			delete(QbNameMap4View, qbName)
-			delete(ViewHints, qbName)
+			delete(qbNameMap4View, qbName)
+			delete(viewHints, qbName)
 		}
 	}
 
-	hintProcessor.QbNameMap4View = QbNameMap4View
-	hintProcessor.QbHints4View = ViewHints
+	hintProcessor.QbNameMap4View = qbNameMap4View
+	hintProcessor.QbHints4View = viewHints
 	hintProcessor.QbHints = currentQbHints
 	hintProcessor.QbNameMap = currentQbNameMap
 
