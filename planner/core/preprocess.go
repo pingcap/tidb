@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1726,6 +1727,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		p.InfoSchema = &infoschema.SessionExtendedInfoSchema{InfoSchema: p.InfoSchema}
 		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx
@@ -1803,10 +1805,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	}
 	tableInfo := tbl.Meta()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
-		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
-			if se.MdlTables == nil {
-				return tbl, nil
-			}
+		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
 				return tbl, nil
@@ -1879,14 +1878,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
-			sessiontxn.GetTxnManager(sctx).SetTxnInfoSchema(se)
-			sctx.GetSessionVars().TxnCtx.InfoSchema = se
+			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
+			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err
+		}
+		curTxn, err := sctx.Txn(false)
+		if err != nil {
+			return nil, err
+		}
+		if curTxn.Valid() {
+			curTxn.SetOption(kv.TableToColumnMaps, nil)
 		}
 		return tbl, nil
 	}
