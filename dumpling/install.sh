@@ -23,4 +23,3 @@ wget https://github.com/facebook/zstd/releases/download/v1.5.2/zstd-1.5.2.tar.gz
 tar xvfz zstd-1.5.2.tar.gz
 cd zstd-1.5.2
 make
-make install
