@@ -400,7 +400,7 @@ func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTa
 			// the overhead of loading the DDL related global variables.
 			err := scheduler.adjustWorkerSize()
 			if err != nil {
-				logutil.BgLogger().Warn("cannot adjust backfill worker size", zap.Error(err))
+				logutil.BgLogger().Warn("[ddl] cannot adjust backfill worker size", zap.Error(err))
 			}
 		}
 	}
