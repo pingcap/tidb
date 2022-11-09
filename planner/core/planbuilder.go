@@ -1024,7 +1024,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, error) {
 	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByDigest(v.PlanDigest)
 	if bindableStmt == nil {
-		return nil, errors.New("plan digest '" + v.PlanDigest + "' doesn't exist")
+		return nil, errors.New("plan digest '" + v.PlanDigest + "' invalid")
 	}
 
 	parser4binding := parser.New() // todo: set parser's sql mode and so

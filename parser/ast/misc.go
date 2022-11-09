@@ -1826,13 +1826,18 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord("SESSION ")
 	}
-	ctx.WriteKeyWord("BINDING FOR ")
-	if err := n.OriginNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	ctx.WriteKeyWord(" USING ")
-	if err := n.HintedNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
+	if n.FromDigest {
+		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
+		ctx.WriteString(n.PlanDigest)
+	} else {
+		ctx.WriteKeyWord("BINDING FOR ")
+		if err := n.OriginNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		ctx.WriteKeyWord(" USING ")
+		if err := n.HintedNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
