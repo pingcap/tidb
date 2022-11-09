@@ -291,8 +291,17 @@ func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, boo
 		leadingHintInfo = hintInfo[0]
 		// One join group has one leading hint at most. Check whether there are different join order hints.
 		for i := 1; i < leadingHintNum; i++ {
-			if hintInfo[i] != hintInfo[i-1] {
+			if len(hintInfo[i].leadingJoinOrder) != len(hintInfo[i-1].leadingJoinOrder) {
 				hasDiffLeadingHint = true
+				break
+			}
+			for j := 0; j < len(hintInfo[i].leadingJoinOrder); j++ {
+				if !hintInfo[i].leadingJoinOrder[j].Equal(hintInfo[i-1].leadingJoinOrder[j]) {
+					hasDiffLeadingHint = true
+					break
+				}
+			}
+			if hasDiffLeadingHint {
 				break
 			}
 		}

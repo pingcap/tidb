@@ -5016,6 +5016,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
 			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
+			if selectOffset == -1 {
+				hintProcessor.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Unknown query block name %s in view hint", viewQbNameHint[0].QBName))
+			}
 		} else {
 			currentQbNameMap4View[qbName] = viewQbNameHint
 			currentQbHints4View[qbName] = viewHints[qbName]

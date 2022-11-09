@@ -448,6 +448,10 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 						break
 					}
 				}
+				if !ok {
+					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
+					usedHints[i] = true
+				}
 			}
 		}
 
