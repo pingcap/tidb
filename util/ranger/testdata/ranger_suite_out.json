@@ -32,9 +32,9 @@
       {
         "SQL": "explain format = 'brief' select * from t0 where c0",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  test.t0.c0",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {
@@ -56,17 +56,17 @@
       {
         "SQL": "explain format = 'brief' select * from t0 where c0 is true",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  istrue(cast(test.t0.c0, double BINARY))",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  istrue(cast(test.t0.c0, double BINARY))",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t0 where c0 is false",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  isfalse(cast(test.t0.c0, double BINARY))",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  isfalse(cast(test.t0.c0, double BINARY))",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {
