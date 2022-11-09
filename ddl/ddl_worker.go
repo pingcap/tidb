@@ -395,7 +395,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.put(sess)
-	job, err := getJobsBySQL(newSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	job, err := getJobsBySQL(NewSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -520,7 +520,7 @@ func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client) {
 	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.get()
 	defer pool.put(sctx)
-	sess := newSession(sctx)
+	sess := NewSession(sctx)
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := sess.execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
@@ -540,7 +540,7 @@ func checkMDLInfo(jobID int64, pool *sessionPool) (bool, error) {
 	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.get()
 	defer pool.put(sctx)
-	sess := newSession(sctx)
+	sess := NewSession(sctx)
 	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
 	if err != nil {
 		return false, err

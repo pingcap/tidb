@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -135,60 +134,6 @@ func globalVarsCount() int64 {
 	return count
 }
 
-func TestInitDDLJobTables(t *testing.T) {
-	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	se := createSessionAndSetID(t, store)
-	mustExec(t, se, "USE mysql")
-	r := mustExec(t, se, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'tidb_ddl_job' or table_name = 'tidb_ddl_reorg' or table_name = 'tidb_ddl_history'")
-	req := r.NewChunk(nil)
-	err := r.Next(ctx, req)
-	require.NoError(t, err)
-	v := req.GetRow(0)
-	require.Equal(t, int64(3), v.GetInt64(0))
-	require.NoError(t, r.Close())
-	r = mustExec(t, se, "SELECT count(*) FROM information_schema.tables WHERE table_name like 'tidb_ddl_backfill%'")
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	v = req.GetRow(0)
-	require.Equal(t, int64(0), v.GetInt64(0))
-	require.NoError(t, r.Close())
-
-	dom, err := domap.Get(store)
-	require.NoError(t, err)
-	domap.Delete(store)
-	dom.Close()
-	ddl.DistReorgEnable()
-	defer func() {
-		ddl.DistReorgDisable()
-	}()
-	err = InitDDLJobTables(store)
-	require.NoError(t, err)
-	dom1, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom1.Close()
-
-	se = createSessionAndSetID(t, store)
-	mustExec(t, se, "USE mysql")
-	r = mustExec(t, se, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'tidb_ddl_job' or table_name = 'tidb_ddl_reorg' or table_name = 'tidb_ddl_history'")
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	v = req.GetRow(0)
-	require.Equal(t, int64(3), v.GetInt64(0))
-	require.NoError(t, r.Close())
-	r = mustExec(t, se, "SELECT count(*) FROM information_schema.tables WHERE table_name like 'tidb_ddl_backfill%'")
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	v = req.GetRow(0)
-	require.Equal(t, int64(2), v.GetInt64(0))
-	require.NoError(t, r.Close())
-}
-
 // testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
@@ -210,9 +155,11 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store)
+		err := InitDDLJobTables(store, meta.DDLTableVersion1)
 		require.NoError(t, err)
 		err = InitMDLTable(store)
+		require.NoError(t, err)
+		err = InitDDLJobTables(store, meta.DDLTableVersion3)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)

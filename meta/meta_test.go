@@ -842,16 +842,21 @@ func TestDDLTable(t *testing.T) {
 
 	m := meta.NewMeta(txn)
 
-	exists, err := m.CheckDDLTableExists()
+	ver, err := m.CheckDDLTableVersion()
 	require.NoError(t, err)
-	require.False(t, exists)
+	require.Equal(t, "", ver)
 
-	err = m.SetDDLTables()
+	err = m.SetMDLTables()
 	require.NoError(t, err)
+	ver, err = m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.Equal(t, meta.DDLTableVersion2, ver)
 
-	exists, err = m.CheckDDLTableExists()
+	err = m.SetDDLTables(meta.DDLTableVersion3)
 	require.NoError(t, err)
-	require.True(t, exists)
+	ver, err = m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.Equal(t, meta.DDLTableVersion3, ver)
 
 	err = m.SetConcurrentDDL(true)
 	require.NoError(t, err)

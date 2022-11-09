@@ -1239,7 +1239,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 			return nil
 		}
 		defer d.sessPool.put(sess)
-		se := newSession(sess)
+		se := NewSession(sess)
 		_, err = se.execute(ctx, sql, "disableMDL")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
@@ -1259,7 +1259,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	se := newSession(sess)
+	se := NewSession(sess)
 	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
@@ -1749,6 +1749,7 @@ type session struct {
 	sessionctx.Context
 }
 
+// NewSession news the session and it is export for testing.
 func NewSession(s sessionctx.Context) *session {
 	return &session{s}
 }

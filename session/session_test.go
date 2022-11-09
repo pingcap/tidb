@@ -33,7 +33,7 @@ func TestInitMetaTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	for _, sql := range session.DDLJobTables {
+	for _, sql := range session.DDLJobTablesVer1 {
 		tk.MustExec(sql.SQL)
 	}
 
@@ -73,4 +73,13 @@ func TestMetaTableRegion(t *testing.T) {
 	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.JobTableID))
 
 	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
+
+	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][0]
+	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillTableID))
+	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][0]
+	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillHistoryTableID))
+
+	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
 }
