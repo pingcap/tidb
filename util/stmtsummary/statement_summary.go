@@ -508,7 +508,8 @@ func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByDigest(planDigest string) 
 		ssbd := value.(*stmtSummaryByDigest)
 		ssbd.Lock()
 		defer ssbd.Unlock()
-		if ssbd.initialized && ssbd.planDigest == planDigest && ssbd.history.Len() > 0 {
+		if ssbd.initialized && ssbd.planDigest == planDigest && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" ||
+			ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") && ssbd.history.Len() > 0 {
 			ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 			ssElement.Lock()
 			defer ssElement.Unlock()
