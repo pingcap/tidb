@@ -377,20 +377,27 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 
 func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTask,
 	totalAddedCount *int64) (kv.Key, int64, error) {
-	var addedCount int64
+	var (
+		firstErr   error
+		addedCount int64
+	)
 	keeper := newDoneTaskKeeper(batchTasks[0].startKey)
 	taskSize := len(batchTasks)
 	for i := 0; i < taskSize; i++ {
 		result := <-scheduler.resultCh
 		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
 			logutil.BgLogger().Warn("[ddl] backfill worker failed",
 				zap.String("result next key", hex.EncodeToString(result.nextKey)),
 				zap.Error(result.err))
 			// Drain tasks.
-			for len(scheduler.taskCh) > 0 {
-				<-scheduler.taskCh
-			}
-			return keeper.nextKey, addedCount, errors.Trace(result.err)
+			cnt := drainTasks(scheduler.taskCh)
+			// We need to wait all the tasks to finish before closing it
+			// to prevent send on closed channel error.
+			taskSize -= cnt
+			continue
 		}
 		*totalAddedCount += int64(result.addedCount)
 		addedCount += int64(result.addedCount)
@@ -404,8 +411,16 @@ func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTa
 			}
 		}
 	}
+	return keeper.nextKey, addedCount, errors.Trace(firstErr)
+}
 
-	return keeper.nextKey, addedCount, nil
+func drainTasks(taskCh chan *reorgBackfillTask) int {
+	cnt := 0
+	for len(taskCh) > 0 {
+		<-taskCh
+		cnt++
+	}
+	return cnt
 }
 
 // sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
@@ -548,7 +563,7 @@ var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
 	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(16)
+	TestCheckWorkerNumber = int32(1)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
 	TestCheckReorgTimeout = int32(0)
 )
