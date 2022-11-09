@@ -29,6 +29,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int)")
+	h := dom.StatsHandle()
+	h.SetLease(1)
+
+	// no item would be loaded
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems", `return(0)`))
+	tk.MustQuery("trace plan select * from t where a > 10")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems")
+	tk.MustExec("analyze table t1")
+	// one column would be loaded
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems", `return(1)`))
+	tk.MustQuery("trace plan select * from t1 where a > 10")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertSyncLoadItems")
+}
+
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
