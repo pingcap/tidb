@@ -195,7 +195,7 @@ func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 	}
 
 	// The converted go time did not map back to the same time, probably it was between a
-	// daylight saving transition, adjust the time to the closes Zone bound.
+	// daylight saving transition, adjust the time to the closest Zone bound.
 	start, end := tm.ZoneBounds()
 	// time zone transitions are normally 1 hour, allow up to 4 hours before returning error
 	if start.Sub(tm).Abs().Hours() > 4.0 && end.Sub(tm).Abs().Hours() > 4.0 {
