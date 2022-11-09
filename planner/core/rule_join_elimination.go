@@ -148,10 +148,10 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 // It extracts all the columns from the duplicate agnostic aggregate functions.
 // The returned column set is nil if not all the aggregate functions are duplicate agnostic.
 // Only the following functions are considered to be duplicate agnostic:
-// 1. MAX(arg)
-// 2. MIN(arg)
-// 3. FIRST_ROW(arg)
-// 4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
+//   1. MAX(arg)
+//   2. MIN(arg)
+//   3. FIRST_ROW(arg)
+//   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
 func GetDupAgnosticAggCols(
 	p LogicalPlan,
 	oldAggCols []*expression.Column, // Reuse the original buffer.
