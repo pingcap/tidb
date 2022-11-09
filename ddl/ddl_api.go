@@ -4670,6 +4670,7 @@ func GetModifiableColumnJob(
 			newTblInfo.Columns = newCols
 
 			var buf bytes.Buffer
+			// TODO: update the partitioning columns with new names if column is renamed
 			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
 			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
 			// Ignoring warnings
