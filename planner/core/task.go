@@ -297,12 +297,11 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	return t
 }
 
-func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {
+func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = stats.HistColl.GetAvgRowSizeListInDisk(schema.Columns)
+		size = stats.HistColl.GetAvgRowSizeListInDisk(cols)
 	} else {
 		// Estimate using just the type info.
-		cols := schema.Columns
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}

@@ -29,7 +29,7 @@ go_rules_dependencies()
 
 go_register_toolchains(
     nogo = "@//build:tidb_nogo",
-    version = "1.19.2",
+    version = "1.19.3",
 )
 
 gazelle_dependencies()
