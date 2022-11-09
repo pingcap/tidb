@@ -155,13 +155,13 @@ func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
 	alloc.customStep = true
 }
 
-// // AllocOptionTableInfoVersion is used to pass the TableInfo.Version to the allocator.
-// type AllocOptionTableInfoVersion uint16
+// AllocOptionTableInfoVersion is used to pass the TableInfo.Version to the allocator.
+type AllocOptionTableInfoVersion uint16
 
-// // ApplyOn implements the AllocOption interface.
-// func (v AllocOptionTableInfoVersion) ApplyOn(alloc *allocator) {
-// 	alloc.tbVersion = uint16(v)
-// }
+// ApplyOn implements the AllocOption interface.
+func (v AllocOptionTableInfoVersion) ApplyOn(alloc *allocator) {
+	alloc.tbVersion = uint16(v)
+}
 
 // AllocOption is a interface to define allocator custom options coming in future.
 type AllocOption interface {
@@ -264,8 +264,7 @@ type allocator struct {
 	// dbID is current database's ID.
 	dbID          int64
 	tbID          int64
-	// tbVersion     uint16
-	sepAutoInc bool
+	tbVersion     uint16
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
@@ -504,7 +503,6 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
-		fmt.Println("force rebase to ==", requiredBase, "and alloc type is", alloc.allocType, alloc.sepAutoInc)
 		if err1 != nil {
 			return err1
 		}
@@ -653,22 +651,17 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-	// tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
+	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		// alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
-		// alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
-		// alloc = NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt)
-		// allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
-		// alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if tblInfo.IsSequence() {
@@ -1170,13 +1163,7 @@ func (alloc *allocator) getIDAccessor(txn kv.Transaction) meta.AutoIDAccessor {
 	case RowIDAllocType:
 		return acc.RowID()
 	case AutoIncrementType:
-		fmt.Println("sepAutoInc ==", alloc.sepAutoInc)
-		if alloc.sepAutoInc {
-			return acc.IncrementID(model.TableInfoVersion4 + 1)
-		} else {
-			return acc.RowID()
-			// return acc.IncrementID(0)
-		}
+		return acc.IncrementID(alloc.tbVersion)
 	case AutoRandomType:
 		return acc.RandomID()
 	case SequenceType:
