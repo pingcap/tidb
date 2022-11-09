@@ -137,6 +137,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 	require.NoError(t, conn.HandleQuery(context.Background(), "SET tidb_multi_statement_mode='ON'"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create table t1(a int, b int)"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "create table t2(id int primary key)"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create database test2"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create table test2.t1(c int, d int)"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "set @a=1"))
@@ -157,6 +158,10 @@ func TestExtensionStmtEvents(t *testing.T) {
 	require.NoError(t, conn.Dispatch(context.Background(), cmd))
 	stmtID3 := getPreparedID(t, conn.Context())
 	require.NoError(t, conn.HandleQuery(context.Background(), "drop table tnoexist"))
+
+	cmd = append([]byte{mysql.ComStmtPrepare}, []byte("insert into t2 values(?)")...)
+	require.NoError(t, conn.Dispatch(context.Background(), cmd))
+	stmtID4 := getPreparedID(t, conn.Context())
 
 	connID := conn.Context().Session.GetSessionVars().ConnectionID
 	require.NotEqual(t, uint64(0), connID)
@@ -187,6 +192,14 @@ func TestExtensionStmtEvents(t *testing.T) {
 			},
 		},
 		{
+			sql:          "insert into t2 values(1)",
+			redactText:   "insert into `t2` values ( ? )",
+			affectedRows: 1,
+			tables: []stmtctx.TableEntry{
+				{DB: "test", Table: "t2"},
+			},
+		},
+		{
 			binaryExecute: stmtID2,
 			executeParams: []paramInfo{
 				{value: 3},
@@ -206,7 +219,22 @@ func TestExtensionStmtEvents(t *testing.T) {
 			},
 			originalText: "select * from tnoexist where n=?",
 			redactText:   "select * from `tnoexist` where `n` = ?",
-			err:          "select * from tnoexist where n=? [arguments: 5]: [planner:8113]Schema change caused error: [schema:1146]Table 'test.tnoexist' doesn't exist",
+			tables: []stmtctx.TableEntry{
+				{DB: "test", Table: "tnoexist"},
+			},
+			err: "select * from tnoexist where n=? [arguments: 5]: [planner:8113]Schema change caused error: [schema:1146]Table 'test.tnoexist' doesn't exist",
+		},
+		{
+			binaryExecute: stmtID4,
+			executeParams: []paramInfo{
+				{value: 3},
+			},
+			originalText: "insert into t2 values(?)",
+			redactText:   "insert into `t2` values ( ? )",
+			affectedRows: 1,
+			tables: []stmtctx.TableEntry{
+				{DB: "test", Table: "t2"},
+			},
 		},
 		{
 			sql:        "prepare s from 'select * from t1 where a=1 and b>? and b<?'",
@@ -243,6 +271,15 @@ func TestExtensionStmtEvents(t *testing.T) {
 			},
 		},
 		{
+			sql:          "insert into t2 values(1)",
+			redactText:   "insert into `t2` values ( ? )",
+			affectedRows: 0,
+			err:          "[kv:1062]Duplicate entry '1' for key 't2.PRIMARY'",
+			tables: []stmtctx.TableEntry{
+				{DB: "test", Table: "t2"},
+			},
+		},
+		{
 			sql: "select 1;select * from t1 where a > 1",
 			multiQueryCases: []stmtEventCase{
 				{
@@ -256,6 +293,19 @@ func TestExtensionStmtEvents(t *testing.T) {
 						{DB: "test", Table: "t1"},
 					},
 				},
+			},
+		},
+		{
+			binaryExecute: stmtID4,
+			executeParams: []paramInfo{
+				{value: 3},
+			},
+			err:          "insert into t2 values(?) [arguments: 3]: [kv:1062]Duplicate entry '3' for key 't2.PRIMARY'",
+			originalText: "insert into t2 values(?)",
+			redactText:   "insert into `t2` values ( ? )",
+			affectedRows: 0,
+			tables: []stmtctx.TableEntry{
+				{DB: "test", Table: "t2"},
 			},
 		},
 	}

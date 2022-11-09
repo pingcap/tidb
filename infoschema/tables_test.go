@@ -1543,14 +1543,15 @@ func TestVariablesInfo(t *testing.T) {
 	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
 	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
 	stmt.Check(testkit.Rows(
-		"last_sql_use_alloc OFF ON",                 // for test stability
-		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
-		"tidb_enable_collect_execution_info ON OFF", // for test stability
-		"tidb_enable_mutation_checker OFF ON",       // for new installs
-		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
-		"tidb_row_format_version 1 2",               // for new installs
-		"tidb_txn_assertion_level OFF FAST",         // for new installs
-		"timestamp 0 123456789",                     // always dynamic
+		"last_sql_use_alloc OFF ON",                   // for test stability
+		"tidb_enable_auto_analyze ON OFF",             // always changed for tests
+		"tidb_enable_collect_execution_info ON OFF",   // for test stability
+		"tidb_enable_mutation_checker OFF ON",         // for new installs
+		"tidb_enable_plan_replayer_capture OFF false", // for enable plan replayer capture
+		"tidb_mem_oom_action CANCEL LOG",              // always changed for tests
+		"tidb_row_format_version 1 2",                 // for new installs
+		"tidb_txn_assertion_level OFF FAST",           // for new installs
+		"timestamp 0 123456789",                       // always dynamic
 	))
 }
 

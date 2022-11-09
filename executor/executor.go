@@ -132,6 +132,7 @@ type baseExecutor struct {
 	children      []Executor
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.BasicRuntimeStats
+	AllocPool     chunk.Allocator
 }
 
 const (
@@ -234,7 +235,7 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 func tryNewCacheChunk(e Executor) *chunk.Chunk {
 	base := e.base()
 	s := base.ctx.GetSessionVars()
-	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize)
+	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize, base.AllocPool)
 }
 
 // newList creates a new List to buffer current executor's result.
@@ -267,6 +268,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
@@ -1954,6 +1956,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.ResetMaxConsumed()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
