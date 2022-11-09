@@ -122,6 +122,27 @@ type hintTableInfo struct {
 	matched      bool
 }
 
+func (h *hintTableInfo) Equal(ht hintTableInfo) bool {
+	if h.dbName != ht.dbName {
+		return false
+	}
+	if h.tblName != ht.tblName {
+		return false
+	}
+	if len(h.partitions) != len(ht.partitions) {
+		return false
+	}
+	for i := 0; i < len(h.partitions); i++ {
+		if h.partitions[i] != ht.partitions[i] {
+			return false
+		}
+	}
+	if h.selectOffset != ht.selectOffset {
+		return false
+	}
+	return true
+}
+
 type indexHintInfo struct {
 	dbName     model.CIStr
 	tblName    model.CIStr
