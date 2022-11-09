@@ -407,6 +407,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -1766,6 +1767,7 @@ func TestIndexJoinHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`drop table if exists test.t1, test.t2, test.t;`)
 	tk.MustExec(`create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	tk.MustExec(`create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
