@@ -20,7 +20,6 @@ SQL="$1"
 shift
 
 echo "[$(date)] Executing SQL: $SQL" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
-
 mysql -uroot -h127.0.0.1 -P4000 \
     --ssl-ca="$TEST_DIR/certs/ca.pem" \
     --ssl-cert="$TEST_DIR/certs/curl.pem" \
