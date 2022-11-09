@@ -93,7 +93,7 @@ type HashJoinExec struct {
 	prepared    bool
 	isOuterJoin bool
 
-	finished atomic.Value
+	finished atomic.Bool
 
 	stats *hashJoinRuntimeStats
 
@@ -206,7 +206,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	hasWaitedForBuild := false
 	for {
-		if e.finished.Load().(bool) {
+		if e.finished.Load() {
 			return
 		}
 
@@ -295,7 +295,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		}
 	})
 	for {
-		if e.finished.Load().(bool) {
+		if e.finished.Load() {
 			return
 		}
 		chk := e.ctx.GetSessionVars().GetNewChunk(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
@@ -477,7 +477,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyCo
 		naKeyColIdx: probeNAKeyColIdx,
 	}
 	for ok := true; ok; {
-		if e.finished.Load().(bool) {
+		if e.finished.Load() {
 			break
 		}
 		select {
@@ -1210,7 +1210,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
-		if e.finished.Load().(bool) {
+		if e.finished.Load() {
 			return nil
 		}
 		if !e.useOuterToBuild {
