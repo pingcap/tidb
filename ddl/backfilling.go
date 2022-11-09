@@ -311,39 +311,37 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
 			return
 		}
-		select {
-		case task, more := <-w.taskCh:
-			if !more {
-				logutil.BgLogger().Info("[ddl] backfill worker exit",
-					zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
-				return
-			}
-			curTaskID = task.id
-			d.setDDLLabelForTopSQL(job)
-
-			logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-			failpoint.Inject("mockBackfillRunErr", func() {
-				if w.id == 0 {
-					result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
-					w.resultCh <- result
-					failpoint.Continue()
-				}
-			})
-
-			failpoint.Inject("mockHighLoadForAddIndex", func() {
-				sqlPrefixes := []string{"alter"}
-				topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
-			})
-
-			failpoint.Inject("mockBackfillSlow", func() {
-				time.Sleep(100 * time.Millisecond)
-			})
-
-			// Change the batch size dynamically.
-			w.batchCnt = int(variable.GetDDLReorgBatchSize())
-			result := w.handleBackfillTask(d, task, bf)
-			w.resultCh <- result
+		task, more := <-w.taskCh
+		if !more {
+			logutil.BgLogger().Info("[ddl] backfill worker exit",
+				zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
+			return
 		}
+		curTaskID = task.id
+		d.setDDLLabelForTopSQL(job)
+
+		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+		failpoint.Inject("mockBackfillRunErr", func() {
+			if w.id == 0 {
+				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
+				w.resultCh <- result
+				failpoint.Continue()
+			}
+		})
+
+		failpoint.Inject("mockHighLoadForAddIndex", func() {
+			sqlPrefixes := []string{"alter"}
+			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
+		})
+
+		failpoint.Inject("mockBackfillSlow", func() {
+			time.Sleep(100 * time.Millisecond)
+		})
+
+		// Change the batch size dynamically.
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
+		result := w.handleBackfillTask(d, task, bf)
+		w.resultCh <- result
 	}
 }
 
