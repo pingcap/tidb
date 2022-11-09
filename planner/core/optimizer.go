@@ -373,6 +373,8 @@ func mergeContinuousSelections(p PhysicalPlan) {
 }
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	// some cases from update optimize will require avoiding projection elimination.
+	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -380,6 +382,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
+	propagateProbeParents(plan, nil)
 	return plan
 }
 
@@ -521,6 +524,42 @@ func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 }
 
+// propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
+// It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
+// see comments in PhysicalPlan for details.
+func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
+	plan.setProbeParents(probeParents)
+	switch x := plan.(type) {
+	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+
+			// The core logic of this method:
+			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
+			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
+			copy(newParents, probeParents)
+			newParents = append(newParents, plan)
+			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+		}
+	case *PhysicalTableReader:
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+	case *PhysicalIndexLookUpReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexMergeReader:
+		for _, pchild := range x.partialPlans {
+			propagateProbeParents(pchild, probeParents)
+		}
+		propagateProbeParents(x.tablePlan, probeParents)
+	default:
+		for _, child := range plan.Children() {
+			propagateProbeParents(child, probeParents)
+		}
+	}
+}
+
 // useTiFlash used to check whether the plan use the TiFlash engine.
 func useTiFlash(p PhysicalPlan) bool {
 	switch x := p.(type) {
@@ -654,8 +693,11 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	err = t.plan().ResolveIndices()
-	return t.plan(), t.cost(), err
+	if err = t.plan().ResolveIndices(); err != nil {
+		return nil, 0, err
+	}
+	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
+	return t.plan(), cost, err
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.

@@ -439,44 +439,30 @@
     "Cases": [
       {
         "Plan": [
-          "Sort_10 4.00 root  test.thash.a",
-          "└─PartitionUnion_12 4.00 root  ",
-          "  ├─Batch_Point_Get_13 2.00 root table:thash handle:[1 200], keep order:false, desc:false",
-          "  └─Batch_Point_Get_14 2.00 root table:thash handle:[1 200], keep order:false, desc:false"
+          "Sort_6 2.00 root  test.thash.a",
+          "└─TableReader_9 2.00 root partition:p0,p1 data:TableRangeScan_8",
+          "  └─TableRangeScan_8 2.00 cop[tikv] table:thash range:[1,1], [200,200], keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
-          "Sort_12 400.00 root  test.thash.a",
-          "└─PartitionUnion_14 400.00 root  ",
-          "  ├─TableReader_16 100.00 root  data:TableRangeScan_15",
-          "  │ └─TableRangeScan_15 100.00 cop[tikv] table:thash, partition:p0 range:[50,150], keep order:false, stats:pseudo",
-          "  ├─TableReader_18 100.00 root  data:TableRangeScan_17",
-          "  │ └─TableRangeScan_17 100.00 cop[tikv] table:thash, partition:p1 range:[50,150], keep order:false, stats:pseudo",
-          "  ├─TableReader_20 100.00 root  data:TableRangeScan_19",
-          "  │ └─TableRangeScan_19 100.00 cop[tikv] table:thash, partition:p2 range:[50,150], keep order:false, stats:pseudo",
-          "  └─TableReader_22 100.00 root  data:TableRangeScan_21",
-          "    └─TableRangeScan_21 100.00 cop[tikv] table:thash, partition:p3 range:[50,150], keep order:false, stats:pseudo"
+          "Sort_6 100.00 root  test.thash.a",
+          "└─TableReader_9 100.00 root partition:all data:TableRangeScan_8",
+          "  └─TableRangeScan_8 100.00 cop[tikv] table:thash range:[50,150], keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
-          "Sort_10 4.00 root  test.trange.a",
-          "└─PartitionUnion_12 4.00 root  ",
-          "  ├─TableReader_14 2.00 root  data:TableRangeScan_13",
-          "  │ └─TableRangeScan_13 2.00 cop[tikv] table:trange, partition:p0 range:[1,1], [200,200], keep order:false, stats:pseudo",
-          "  └─TableReader_16 2.00 root  data:TableRangeScan_15",
-          "    └─TableRangeScan_15 2.00 cop[tikv] table:trange, partition:p2 range:[1,1], [200,200], keep order:false, stats:pseudo"
+          "Sort_6 2.00 root  test.trange.a",
+          "└─TableReader_9 2.00 root partition:p0,p2 data:TableRangeScan_8",
+          "  └─TableRangeScan_8 2.00 cop[tikv] table:trange range:[1,1], [200,200], keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
-          "Sort_10 200.00 root  test.trange.a",
-          "└─PartitionUnion_12 200.00 root  ",
-          "  ├─TableReader_14 100.00 root  data:TableRangeScan_13",
-          "  │ └─TableRangeScan_13 100.00 cop[tikv] table:trange, partition:p0 range:[50,150], keep order:false, stats:pseudo",
-          "  └─TableReader_16 100.00 root  data:TableRangeScan_15",
-          "    └─TableRangeScan_15 100.00 cop[tikv] table:trange, partition:p1 range:[50,150], keep order:false, stats:pseudo"
+          "Sort_6 100.00 root  test.trange.a",
+          "└─TableReader_9 100.00 root partition:p0,p1 data:TableRangeScan_8",
+          "  └─TableRangeScan_8 100.00 cop[tikv] table:trange range:[50,150], keep order:false, stats:pseudo"
         ]
       }
     ]

@@ -170,6 +170,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	return newID, err
 }
 
+// AdvanceGlobalIDs advances the global ID by n.
+// return the old global ID.
+func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	if err != nil {
+		return 0, err
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	origID := newID - int64(n)
+	return origID, nil
+}
+
 // GenGlobalIDs generates the next n global IDs.
 func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	globalIDMutex.Lock()
@@ -549,6 +566,12 @@ func (m *Meta) SetDDLTables(ddlTableVersion string) error {
 	return errors.Trace(err)
 }
 
+// SetMDLTables write a key into storage.
+func (m *Meta) SetMDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	return errors.Trace(err)
+}
+
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -592,6 +615,15 @@ func (m *Meta) CheckDDLTableVersion() (string, error) {
 		return "", errors.Trace(err)
 	}
 	return string(v), nil
+}
+
+// CheckMDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckMDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Equal(v, []byte("2")), nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

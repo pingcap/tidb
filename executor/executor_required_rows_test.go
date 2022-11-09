@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -862,6 +861,11 @@ func (mp *mockPlan) Schema() *expression.Schema {
 	return mp.exec.Schema()
 }
 
+// MemoryUsage of mockPlan is only for testing
+func (mp *mockPlan) MemoryUsage() (sum int64) {
+	return
+}
+
 func TestVecGroupCheckerDATARACE(t *testing.T) {
 	ctx := mock.NewContext()
 
@@ -890,7 +894,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(123)
 		case mysql.TypeJSON:
 			chk.Column(0).ReserveJSON(1)
-			j := new(json.BinaryJSON)
+			j := new(types.BinaryJSON)
 			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))))
 			chk.Column(0).AppendJSON(*j)
 		}
@@ -917,7 +921,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())
 			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
 			chk.Column(0).ReserveJSON(1)
-			j := new(json.BinaryJSON)
+			j := new(types.BinaryJSON)
 			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))))
 			chk.Column(0).AppendJSON(*j)
 			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())

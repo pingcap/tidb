@@ -16,11 +16,15 @@ package txninfo
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -39,20 +43,62 @@ const (
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
+	// TxnStateCounter is a marker of the number of states, ensuring we don't miss any of them
+	TxnStateCounter
 )
 
-// StateLabel is used to translate TxnRunningState to its prometheus label name.
-var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
-	TxnIdle:          "idle",
-	TxnRunning:       "executing_sql",
-	TxnLockAcquiring: "acquiring_lock",
-	TxnCommitting:    "committing",
-	TxnRollingBack:   "rolling_back",
+var txnDurationHistogramForState [][]prometheus.Observer = [][]prometheus.Observer{
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
+	},
 }
 
-// StateLabel is used to translate TxnRunningState to its prometheus label name.
-func StateLabel(state TxnRunningState) string {
-	return stateLabel[state]
+var txnStatusEnteringCounterForState []prometheus.Counter = []prometheus.Counter{
+	metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+}
+
+func init() {
+	if len(txnDurationHistogramForState) != int(TxnStateCounter) {
+		panic("len(txnDurationHistogramForState) != TxnStateCounter")
+	}
+	if len(txnStatusEnteringCounterForState) != int(TxnStateCounter) {
+		panic("len(txnStatusEnteringCounterForState) != TxnStateCounter")
+	}
+}
+
+// TxnDurationHistogram returns the observer for the given state and hasLock type.
+func TxnDurationHistogram(state TxnRunningState, hasLock bool) prometheus.Observer {
+	hasLockInt := 0
+	if hasLock {
+		hasLockInt = 1
+	}
+	return txnDurationHistogramForState[state][hasLockInt]
+}
+
+// TxnStatusEnteringCounter returns the counter for the given state.
+func TxnStatusEnteringCounter(state TxnRunningState) prometheus.Counter {
+	return txnStatusEnteringCounterForState[state]
 }
 
 const (
@@ -80,6 +126,8 @@ const (
 	DBStr = "DB"
 	// AllSQLDigestsStr is the column name of the TIDB_TRX table's AllSQLDigests column.
 	AllSQLDigestsStr = "ALL_SQL_DIGESTS"
+	// RelatedTableIDsStr is the table id of the TIDB_TRX table's RelatedTableIDs column.
+	RelatedTableIDsStr = "RELATED_TABLE_IDS"
 )
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
@@ -124,6 +172,8 @@ type TxnInfo struct {
 	Username string
 	// The schema this transaction works on
 	CurrentDB string
+	// The related table IDs.
+	RelatedTableIDs map[int64]struct{}
 }
 
 var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
@@ -182,6 +232,20 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 			return types.NewDatum(nil)
 		}
 		return types.NewDatum(string(res))
+	},
+	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
+		relatedTableIDs := info.RelatedTableIDs
+		str := strings.Builder{}
+		first := true
+		for tblID := range relatedTableIDs {
+			if !first {
+				str.Write([]byte(","))
+			} else {
+				first = false
+			}
+			str.WriteString(fmt.Sprintf("%d", tblID))
+		}
+		return types.NewDatum(str.String())
 	},
 }
 

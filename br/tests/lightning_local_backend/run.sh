@@ -20,6 +20,8 @@ check_cluster_version 4 0 0 'local backend' || exit 0
 
 ENGINE_COUNT=6
 
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+
 # Test check table contains data
 rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 rm -rf $TEST_DIR/lightning.log
@@ -80,7 +82,11 @@ set -e
 
 export GO_FAILPOINTS=''
 echo "******** Verify checkpoint no-op ********"
-run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml"
+run_lightning --backend local --enable-checkpoint=1 --config "tests/$TEST_NAME/config.toml" --log-file $res_file -L debug
+check_not_contains "failed to set system var"
+check_not_contains "unknown system var"
+check_contains "skip read-only variable"
+check_contains "lc_time_names"
 
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
 check_contains 'count(*): 4'

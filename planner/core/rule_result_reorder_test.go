@@ -147,6 +147,7 @@ func TestOrderedResultModeOnJoin(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runTestData(t, tk, "TestOrderedResultModeOnJoin")
 }
 
@@ -178,7 +179,9 @@ func TestOrderedResultModeOnPartitionTable(t *testing.T) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
-	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk.MustExec(`analyze table thash`)
+	tk.MustExec(`analyze table trange`)
+	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
 	runTestData(t, tk, "TestOrderedResultModeOnPartitionTable")
 }
 

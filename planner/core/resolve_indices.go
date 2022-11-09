@@ -95,6 +95,19 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
+	for i, fun := range p.NAEqualConditions {
+		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
+		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
 		if err != nil {
@@ -566,6 +579,13 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 			return err
 		}
 		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
+	}
+	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
+		newSf, err := cond.ResolveIndices(joinedSchema)
+		if err != nil {
+			return err
+		}
+		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	return
 }

@@ -673,7 +673,7 @@ func TestAddColumn(t *testing.T) {
 	checkOK := false
 
 	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -690,7 +690,7 @@ func TestAddColumn(t *testing.T) {
 			checkOK = true
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
@@ -741,7 +741,7 @@ func TestAddColumns(t *testing.T) {
 	require.NoError(t, err)
 
 	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -762,7 +762,7 @@ func TestAddColumns(t *testing.T) {
 			}
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
@@ -811,7 +811,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 
 	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -824,7 +824,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 			return
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
@@ -873,7 +873,7 @@ func TestDropColumns(t *testing.T) {
 
 	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -888,7 +888,7 @@ func TestDropColumns(t *testing.T) {
 			}
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)

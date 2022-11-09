@@ -8,6 +8,7 @@ go_test(
         "statistics_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//statistics/handle",
         "//testkit",

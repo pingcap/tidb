@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -129,20 +127,10 @@ func TestIndexOnCacheTable(t *testing.T) {
 }
 
 func TestAlterTableCache(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	session.SetSchemaLease(600 * time.Millisecond)
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	dom.SetStatsUpdating(true)
 
-	t.Cleanup(func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	})
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -157,6 +145,7 @@ func TestAlterTableCache(t *testing.T) {
 	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("CREATE TABLE t1 (a int)")
@@ -268,7 +257,7 @@ func TestIssue34069(t *testing.T) {
 	defer sem.Disable()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test;")
 	tk.MustExec("create table t_34069 (t int);")
 	// No error when SEM is enabled.

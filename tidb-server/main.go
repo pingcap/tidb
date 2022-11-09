@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -188,6 +189,8 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	setupExtensions()
+
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
@@ -204,7 +207,6 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -567,7 +569,7 @@ func setGlobalVars() {
 				case "check-mb4-value-in-utf8":
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
-					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+					cfg.Instance.EnableCollectExecutionInfo.Store(cfg.EnableCollectExecutionInfo)
 				case "max-server-connections":
 					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				case "run-ddl":
@@ -586,8 +588,6 @@ func setGlobalVars() {
 				switch oldName {
 				case "force-priority":
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
-				case "memory-usage-alarm-ratio":
-					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
 				}
 			case "plugin":
 				switch oldName {
@@ -638,6 +638,7 @@ func setGlobalVars() {
 
 	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 
@@ -725,6 +726,16 @@ func setupLog() {
 	util.InternalHTTPClient()
 }
 
+func setupExtensions() *extension.Extensions {
+	err := extension.Setup()
+	terror.MustNil(err)
+
+	extensions, err := extension.GetExtensions()
+	terror.MustNil(err)
+
+	return extensions
+}
+
 func printInfo() {
 	// Make sure the TiDB info is always printed.
 	level := log.GetLevel()
@@ -745,6 +756,8 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
+	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
+	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 	return svr
 }

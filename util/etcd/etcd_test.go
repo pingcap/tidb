@@ -32,7 +32,7 @@ var (
 )
 
 func TestCreate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	etcdClient := etcdMockCluster.RandClient()
@@ -54,7 +54,7 @@ func TestCreate(t *testing.T) {
 }
 
 func TestCreateWithTTL(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binlogttl/ttlkey"
@@ -73,7 +73,7 @@ func TestCreateWithTTL(t *testing.T) {
 }
 
 func TestCreateWithKeyExist(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj := "existtest"
@@ -88,7 +88,7 @@ func TestCreateWithKeyExist(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj1 := "updatetest"
@@ -126,7 +126,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestUpdateOrCreate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj := "updatetest"
@@ -136,7 +136,7 @@ func TestUpdateOrCreate(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binloglist/testkey"
@@ -175,7 +175,7 @@ func TestList(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binlogdelete/testkey"
@@ -205,7 +205,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDoTxn(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	// case1: create two keys in one transaction

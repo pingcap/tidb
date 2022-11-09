@@ -997,7 +997,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		Columns:       make(map[int64]*Column),
 		Indices:       make(map[int64]*Index),
 		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
+		ColID2IdxIDs:  coll.ColID2IdxIDs,
 		Count:         coll.Count,
 	}
 	for _, node := range statsNodes {
@@ -1567,6 +1567,16 @@ func NewStatsFullLoadStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
 		evictedStatus:    allLoaded,
+	}
+}
+
+// NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
+// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// loaded when we really need column stats.
+func NewStatsAllEvictedStatus() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allEvicted,
 	}
 }
 

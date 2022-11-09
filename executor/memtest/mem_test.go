@@ -17,30 +17,30 @@ package memtest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGlobalMemoryTrackerOnCleanUp(t *testing.T) {
-	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+func TestInsertUpdateTrackerOnCleanUp(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 
+	originConsume := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	// assert insert
 	tk.MustExec("insert t (id) values (1)")
 	tk.MustExec("insert t (id) values (2)")
 	tk.MustExec("insert t (id) values (3)")
-	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	afterConsume := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	require.Equal(t, afterConsume, originConsume)
 
+	originConsume = tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	// assert update
 	tk.MustExec("update t set id = 4 where id = 1")
 	tk.MustExec("update t set id = 5 where id = 2")
 	tk.MustExec("update t set id = 6 where id = 3")
-	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	afterConsume = tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	require.Equal(t, afterConsume, originConsume)
 }

@@ -797,7 +797,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 		wg.Add(1)
 		go func(storeID uint64) {
 			defer wg.Done()
-			start = time.Now()
+			start := time.Now()
 			var gotTokens int
 			for {
 				n := rand.Intn(50)
