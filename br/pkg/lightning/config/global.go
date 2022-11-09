@@ -277,8 +277,6 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	if *db2LobDir != "" {
 		cfg.Mydumper.Db2LobDir = *db2LobDir
-	} else {
-		cfg.Mydumper.Db2LobDir = cfg.Mydumper.SourceDir
 	}
 
 	cfg.App.Config.Adjust()
