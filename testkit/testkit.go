@@ -143,7 +143,6 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	defer func() {
-		tk.Session().GetSessionVars().ClearAlloc()
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
@@ -280,7 +279,8 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API
-func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()

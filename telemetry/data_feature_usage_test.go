@@ -129,6 +129,26 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestAutoIDNoCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.CachedTable)
+	tk.MustExec("drop table if exists tele_autoid")
+	tk.MustExec("create table tele_autoid (id int) auto_id_cache 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.AutoIDNoCache)
+	tk.MustExec("alter table tele_autoid auto_id_cache=0")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.AutoIDNoCache)
+}
+
 func TestAccountLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -479,6 +499,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 
 	allow := ddl.IsEnableFastReorg()
 	require.Equal(t, false, allow)
+	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
 	tk.MustExec("create table tele_t(id int, b int)")
