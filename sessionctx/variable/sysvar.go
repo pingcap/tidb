@@ -787,7 +787,8 @@ var defaultSysVars = []*SysVar{
 			if floatValue < 0 && floatValue > 0.9 {
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
 			}
-			if globalMemoryLimitTuner < floatValue+0.05 {
+			// globalMemoryLimitTuner must not be 0. it will be 0 when tidb_server_memory_limit_gc_trigger is not set during startup.
+			if globalMemoryLimitTuner != 0 && globalMemoryLimitTuner < floatValue+0.05 {
 				return "", errors.New("tidb_gogc_tuner_threshold should be less than tidb_server_memory_limit_gc_trigger - 0.05")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
@@ -868,7 +869,8 @@ var defaultSysVars = []*SysVar{
 			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
-			if floatValue < gogcTunerThreshold+0.05 {
+			// gogcTunerThreshold must not be 0. it will be 0 when tidb_gogc_tuner_threshold is not set during startup.
+			if gogcTunerThreshold != 0 && floatValue < gogcTunerThreshold+0.05 {
 				return "", errors.New("tidb_server_memory_limit_gc_trigger should be greater than tidb_gogc_tuner_threshold + 0.05")
 			}
 
@@ -1078,6 +1080,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+			EnablePlanReplayerCapture.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatBool(EnablePlanReplayerCapture.Load()), nil
+		}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
