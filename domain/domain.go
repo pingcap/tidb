@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1455,7 +1456,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Debug("handle ddl event failed", zap.Error(err))
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
@@ -1502,11 +1503,19 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		analyzeTicker.Stop()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
+	lastTime := time.Now()
 	for {
 		select {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
-				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				analyzed, reasons := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				if !analyzed {
+					t := time.Now()
+					if t.Sub(lastTime) > 30*time.Minute {
+						logutil.BgLogger().Info(strings.Join(reasons, " | "))
+					}
+					lastTime = t
+				}
 			}
 		case <-do.exit:
 			return

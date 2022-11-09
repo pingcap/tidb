@@ -207,7 +207,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					globalOpts = v2Options.FilledOpts
 				}
 			}
+			t := time.Now()
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
+			logutil.BgLogger().Info("merging partition stats to global stats finished",
+				zap.Int64("tableID", globalStatsID.tableID),
+				zap.Int("isIndex", info.isIndex),
+				zap.Int64s("histIDs", info.histIDs),
+				zap.Duration("cost", time.Since(t)),
+				zap.Error(err))
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.

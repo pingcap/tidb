@@ -2624,7 +2624,8 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(is), comment)
+			analyzed, _ := h.HandleAutoAnalyze(is)
+			require.True(t, analyzed, comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2698,7 +2699,8 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSlowAnalyzeIndex"))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()), comment)
+			analyzed, _ := h.HandleAutoAnalyze(dom.InfoSchema())
+			require.True(t, analyzed, comment)
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.

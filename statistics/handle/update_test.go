@@ -531,11 +531,13 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	// test if it will be limited by the time range
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ := dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.False(t, analyzed)
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ = dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.True(t, analyzed)
 }
 
 func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
@@ -566,15 +568,18 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ := dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.False(t, analyzed)
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("alter table t add index ia(a)")
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ = dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.False(t, analyzed)
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ = dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.True(t, analyzed)
 }
 
 func TestIssue25700(t *testing.T) {
@@ -598,7 +603,8 @@ func TestIssue25700(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ := dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	require.True(t, analyzed)
 	require.Equal(t, "finished", tk.MustQuery("show analyze status").Rows()[1][7])
 }
 
@@ -2211,17 +2217,20 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.True(t, h.HandleAutoAnalyze(is))
+	analyzed, _ := h.HandleAutoAnalyze(is)
+	require.True(t, analyzed)
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.False(t, h.HandleAutoAnalyze(is))
+	analyzed, _ = h.HandleAutoAnalyze(is)
+	require.False(t, analyzed)
 
 	tk.MustExec("delete from t limit 4")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	analyzed, _ = h.HandleAutoAnalyze(dom.InfoSchema())
+	require.True(t, analyzed)
 }
 
 func TestDumpColumnStatsUsage(t *testing.T) {
