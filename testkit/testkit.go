@@ -52,6 +52,10 @@ type TestKit struct {
 	alloc   chunk.Allocator
 }
 
+func (t *TestKit) GetAlloc() *chunk.Allocator {
+	return &t.alloc
+}
+
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	tk := &TestKit{
@@ -114,18 +118,19 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	defer func() {
-		tk.Session().GetSessionVars().ClearAlloc()
-		if tk.alloc != nil {
-			tk.alloc.Reset()
-		}
-	}()
 	tk.MustExecWithContext(context.Background(), sql, args...)
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...interface{}) {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	res, err := tk.ExecWithContext(ctx, sql, args...)
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
 
@@ -143,6 +148,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 			tk.alloc.Reset()
 		}
 	}()
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
 
@@ -201,11 +207,13 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	res, err := tk.Exec(sql, args...)
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(res, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
 	tk.require.NoError(res.Close())
+	tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	return resErr
 }
 
@@ -219,6 +227,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment string) *Resu
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment string) *Result {
 	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
 	tk.require.NoError(err, comment)
+	tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
@@ -285,7 +294,6 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
-		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
@@ -314,8 +322,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		return nil, errors.Trace(err)
 	}
 	params := expression.Args2Expressions4Test(args...)
-	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
-	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
+	rs, err = tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
 	}
@@ -328,7 +335,9 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 
 // ExecToErr executes a sql statement and discard results.
 func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	res, err := tk.Exec(sql, args...)
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if res != nil {
 		tk.require.NoError(res.Close())
 	}
@@ -337,7 +346,9 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 
 // MustExecToErr executes a sql statement and must return Error.
 func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	res, err := tk.Exec(sql, args...)
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if res != nil {
 		tk.require.NoError(res.Close())
 	}
@@ -360,7 +371,9 @@ func (tk *TestKit) RefreshConnectionID() {
 
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	_, err := tk.Exec(sql)
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)

@@ -1565,11 +1565,13 @@ func TestRandomPanicConsume(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency=%v", distConcurrency))
 			var err error
 			for err == nil {
+				tk.Session().GetSessionVars().SetAlloc(*tk.GetAlloc())
 				res, err = tk.Exec(sql)
 				if err == nil {
 					_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
 					require.NoError(t, res.Close())
 				}
+				tk.Session().GetSessionVars().ClearAlloc(tk.GetAlloc(), err != nil)
 			}
 			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 		}
