@@ -882,7 +882,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
+	err := h.SaveStatsToStorage(tableID, -1, 0, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -1402,10 +1402,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count, t.ModifyCount)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, t.ModifyCount, true)
 	}
 	q.Expected = int64(expected)
 	return err

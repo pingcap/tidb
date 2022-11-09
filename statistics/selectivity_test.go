@@ -128,7 +128,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -147,8 +147,9 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	modifyCount := int64(float64(statsTbl.Count) * 0.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
+		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -551,6 +552,7 @@ func TestSelectivity(t *testing.T) {
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.Count *= 10
+		histColl.ModifyCount = histColl.Count * 9
 		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
@@ -762,7 +764,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, statsTbl.ModifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
