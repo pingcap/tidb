@@ -812,8 +812,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseRowIDType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(d, d.store, t, job, autoid.RowIDAllocType)
+func onRebaseAutoIncrementIDType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(d, d.store, t, job, autoid.AutoIncrementType)
 }
 
 func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -862,7 +862,7 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		newBase = newBaseTemp
 	}
 
-	if tp == autoid.RowIDAllocType {
+	if tp == autoid.AutoIncrementType {
 		tblInfo.AutoIncID = newBase
 	} else {
 		tblInfo.AutoRandID = newBase

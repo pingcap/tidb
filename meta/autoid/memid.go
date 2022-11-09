@@ -26,11 +26,15 @@ func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	var alloc Allocator
+	allocType := RowIDAllocType
+	if hasAutoIncID {
+		allocType = AutoIncrementType
+	}
 	// Temporary tables don't support auto_random and sequence.
 	if hasRowID || hasAutoIncID {
 		alloc = &inMemoryAllocator{
 			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
-			allocType:  RowIDAllocType,
+			allocType:  allocType,
 		}
 	}
 	// Rebase the allocator if the base is specified.

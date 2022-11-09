@@ -1232,7 +1232,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseRowIDType(d, t, job)
+		fmt.Println("yyyyyyyyyyyyyyyyyyyyyyyyyyy rebase auto id??")
+		ver, err = onRebaseAutoIncrementIDType(d, t, job)
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d, t, job)
 	case model.ActionRenameTable:
