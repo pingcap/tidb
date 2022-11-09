@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	validator "github.com/pingcap/tidb/util/validate-password"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -121,4 +122,44 @@ func TestUserAttributes(t *testing.T) {
 	tk.MustQueryWithContext(ctx, `SELECT user, host, attribute FROM information_schema.user_attributes ORDER BY user`).Check(
 		testkit.Rows("root % <nil>", "testuser % {\"comment\": \"1234\"}", "testuser1 % {\"age\": 20, \"name\": \"Tom\"}", "testuser2 % <nil>"))
 	tk.MustGetErrCode(`SELECT user, host, user_attributes FROM mysql.user ORDER BY user`, mysql.ErrTableaccessDenied)
+}
+
+func TestValidatePassword(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
+	tk.MustExec("DROP USER IF EXISTS testuser")
+	tk.MustExec("CREATE USER testuser IDENTIFIED BY '12345678'")
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
+
+	tk.MustExec("SET GLOBAL validate_password.policy = 'LOW'")
+
+	// check user name
+	tk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY 'abcdroot1234'", "Password Contains User Name")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY 'abcdtoor1234'", "Password Contains Reversed User Name")
+
+	// LOW: Length
+	tk.MustQuery("SELECT @@global.validate_password.length").Check(testkit.Rows("8"))
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '1234567'", "Require Password Length: 8")
+
+	// MEDIUM: Length; numeric, lowercase/uppercase, and special characters
+	tk.MustExec("SET GLOBAL validate_password.policy = 'MEDIUM'")
+	tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc1234567'")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!ABC1234567'", "Require Password Lowercase Count: 1")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!abc1234567'", "Require Password Uppercase Count: 1")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!ABCDabcd'", "Require Password Digit Count: 1")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY 'Abc1234567'", "Require Password Non-alphanumeric Count: 1")
+
+	// STRONG: Length; numeric, lowercase/uppercase, and special characters; dictionary file
+	tk.MustExec("SET GLOBAL validate_password.policy = 'STRONG'")
+	dictFile, err := validator.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
+	require.NoError(t, err)
+	tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary_file = '%s'", dictFile))
+	tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc123567'")
+	tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc43218765'")
+	tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abc1234567'", "Password contains word in the dictionary")
 }

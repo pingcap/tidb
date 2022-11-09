@@ -790,9 +790,10 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption) bool {
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	if authOpt.AuthString == mysql.AuthNativePassword ||
-		authOpt.AuthString == mysql.AuthTiDBSM3Password ||
-		authOpt.AuthString == mysql.AuthCachingSha2Password {
+	if authOpt.AuthPlugin == mysql.AuthNativePassword ||
+		authOpt.AuthPlugin == mysql.AuthTiDBSM3Password ||
+		authOpt.AuthPlugin == mysql.AuthCachingSha2Password ||
+		authOpt.AuthPlugin == "" {
 		return true
 	}
 	return false
@@ -818,31 +819,34 @@ func (e *SimpleExec) validateUserNameInPassword(pwd, username string) error {
 	return nil
 }
 
-func (e *SimpleExec) validatePassword(pwd string) error {
-	if validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+func (e *SimpleExec) validatePassword(pwd string, currentUser *auth.UserIdentity) error {
+	globalVars := e.ctx.GetSessionVars().GlobalVarsAccessor
+	if validatePwdEnable, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
 		return err
 	} else if !variable.TiDBOptOn(validatePwdEnable) {
 		return nil
 	}
 
 	runes := []rune(pwd)
-	// LOW
-	if validateLengthStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
+	validatePolicy, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordPolicy)
+	if err != nil {
+		return err
+	}
+	if validateLengthStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
 		return err
 	} else if validateLength, err := strconv.ParseInt(validateLengthStr, 10, 64); err != nil {
 		return err
 	} else if (int64)(len(runes)) < validateLength {
 		return ErrNotValidPassword.GenWithStack("Require Password Length: %d", validateLength)
 	}
-	validatePolicy, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordPolicy)
-	if err != nil {
-		return err
+	if currentUser != nil {
+		if err = e.validateUserNameInPassword(pwd, currentUser.AuthUsername); err != nil {
+			return err
+		} else if err = e.validateUserNameInPassword(pwd, currentUser.Username); err != nil {
+			return err
+		}
 	}
-	if err = e.validateUserNameInPassword(pwd, e.ctx.GetSessionVars().User.AuthUsername); err != nil {
-		return err
-	} else if err = e.validateUserNameInPassword(pwd, e.ctx.GetSessionVars().User.Username); err != nil {
-		return err
-	}
+	// LOW
 	if validatePolicy == "LOW" {
 		return nil
 	}
@@ -860,7 +864,7 @@ func (e *SimpleExec) validatePassword(pwd string) error {
 			specialCharCount++
 		}
 	}
-	if mixedCaseCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
+	if mixedCaseCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
 		return err
 	} else if mixedCaseCount, err := strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
 		return err
@@ -869,14 +873,14 @@ func (e *SimpleExec) validatePassword(pwd string) error {
 	} else if upperCaseCount < mixedCaseCount {
 		return ErrNotValidPassword.GenWithStack("Require Password Uppercase Count: %d", mixedCaseCount)
 	}
-	if requireNumberCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
+	if requireNumberCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
 		return err
 	} else if requireNumberCount, err := strconv.ParseInt(requireNumberCountStr, 10, 64); err != nil {
 		return err
 	} else if numberCount < requireNumberCount {
 		return ErrNotValidPassword.GenWithStack("Require Password Digit Count: %d", requireNumberCount)
 	}
-	if requireSpecialCharCountStr, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
+	if requireSpecialCharCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
 		return err
 	} else if requireSpecialCharCount, err := strconv.ParseInt(requireSpecialCharCountStr, 10, 64); err != nil {
 		return err
@@ -986,7 +990,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			continue
 		}
 		if e.authUsingCleartextPwd(spec.AuthOpt) {
-			if err := e.validatePassword(spec.AuthOpt.AuthString); err != nil {
+			if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
 				return err
 			}
 		}
@@ -1204,7 +1208,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			if e.authUsingCleartextPwd(spec.AuthOpt) {
-				if err := e.validatePassword(spec.AuthOpt.AuthString); err != nil {
+				if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
 					return err
 				}
 			}
@@ -1724,7 +1728,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	if err := e.validatePassword(s.Password); err != nil {
+	if err := e.validatePassword(s.Password, e.ctx.GetSessionVars().User); err != nil {
 		return err
 	}
 	var pwd string

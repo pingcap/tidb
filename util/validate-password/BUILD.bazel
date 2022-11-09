@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "validate-password",
@@ -10,4 +10,11 @@ go_library(
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
     ],
+)
+
+go_test(
+    name = "validate-password_test",
+    srcs = ["dictionary_test.go"],
+    embed = [":validate-password"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

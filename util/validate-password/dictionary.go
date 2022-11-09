@@ -31,6 +31,9 @@ type dictionaryImpl struct {
 	m     sync.RWMutex
 }
 
+const maxPwdLength int = 100
+const minPwdLength int = 4
+
 var dictionary = dictionaryImpl{cache: make(map[string]struct{})}
 
 // UpdateDictionaryFile update the dictionary for validating password.
@@ -50,7 +53,7 @@ func UpdateDictionaryFile(filePath string) error {
 	s := bufio.NewScanner(file)
 	for s.Scan() {
 		line := strings.ToLower(string(hack.String(s.Bytes())))
-		if len(line) >= 4 && len(line) <= 100 {
+		if len(line) >= minPwdLength && len(line) <= maxPwdLength {
 			newDictionary[line] = struct{}{}
 		}
 	}
@@ -68,9 +71,9 @@ func ValidateDictionaryPassword(pwd string) bool {
 	if len(dictionary.cache) == 0 {
 		return true
 	}
-	pwdLen := len(pwd)
-	for subStrLen := mathutil.Min(100, pwdLen); subStrLen >= 4; subStrLen-- {
-		for subStrPos := 0; subStrPos+subStrLen <= pwdLen; subStrPos++ {
+	pwdLength := len(pwd)
+	for subStrLen := mathutil.Min(maxPwdLength, pwdLength); subStrLen >= minPwdLength; subStrLen-- {
+		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
 			subStr := pwd[subStrPos : subStrPos+subStrLen]
 			if _, ok := dictionary.cache[subStr]; ok {
 				return false
@@ -78,4 +81,40 @@ func ValidateDictionaryPassword(pwd string) bool {
 		}
 	}
 	return true
+}
+
+// CreateTmpDictWithSize is only used for test.
+func CreateTmpDictWithSize(filename string, size int) (string, error) {
+	filename = filepath.Join(os.TempDir(), filename)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	if size > 0 {
+		n, err := file.Write(make([]byte, size))
+		if err != nil {
+			return "", err
+		} else if n != size {
+			return "", errors.New("")
+		}
+	}
+	return filename, file.Close()
+}
+
+// CreateTmpDictWithContent is only used for test.
+func CreateTmpDictWithContent(filename string, content []byte) (string, error) {
+	filename = filepath.Join(os.TempDir(), filename)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	if len(content) > 0 {
+		n, err := file.Write(content)
+		if err != nil {
+			return "", err
+		} else if n != len(content) {
+			return "", errors.New("")
+		}
+	}
+	return filename, file.Close()
 }
