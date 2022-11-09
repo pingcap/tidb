@@ -213,7 +213,7 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	tk.require.NotNil(res, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
 	tk.require.NoError(res.Close())
-	tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
+	tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil || resErr != nil)
 	return resErr
 }
 
