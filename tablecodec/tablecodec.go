@@ -500,6 +500,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	return DecodeHandleToDatumMapIfSkip(handle, handleColIDs, cols, loc, row, true)
 }
 
+// DecodeHandleToDatumMapIfSkip  exists to skip NeedRestoredData when exec DecodeHandleToDatumMap,such fast analyze
 func DecodeHandleToDatumMapIfSkip(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, dtSkip bool) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
