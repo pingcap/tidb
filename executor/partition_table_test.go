@@ -3120,3 +3120,15 @@ func (s *partitionTableSuite) TestIssue26251(c *C) {
 		c.Fail()
 	}
 }
+
+func (s *partitionTableSuite) TestIssue35181(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database TestIssue35181")
+	tk.MustExec("use TestIssue35181")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) PARTITION BY RANGE (`a`) (PARTITION `p0` VALUES LESS THAN (2021), PARTITION `p1` VALUES LESS THAN (3000))")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
+}
