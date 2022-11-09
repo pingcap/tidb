@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
@@ -356,10 +357,6 @@ func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestInsertWrongValueForField(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-=======
 func TestIssue37187(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -373,10 +370,8 @@ func TestIssue37187(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestInsertWrongValueForField(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
->>>>>>> d5b2c9b17... planner: fix panic when prepare and execute the insert on duplicate (#37924)
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`create table t1(a bigint);`)
