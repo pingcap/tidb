@@ -194,17 +194,18 @@ func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 		return tm, nil
 	}
 
+	// The converted go time did not map back to the same time, probably it was between a
+	// daylight saving transition, adjust the time to the closes Zone bound.
 	start, end := tm.ZoneBounds()
 	// time zone transitions are normally 1 hour, allow up to 4 hours before returning error
 	if start.Sub(tm).Abs().Hours() > 4.0 && end.Sub(tm).Abs().Hours() > 4.0 {
 		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tm))
 	}
-	// use the closest transition time (in practice always start).
+	// use the closest transition time
 	if tm.Sub(start).Abs() <= tm.Sub(end).Abs() {
 		return start, nil
 	}
-	return end, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tm))
-	//return end, nil
+	return end, nil
 }
 
 // IsLeapYear returns if it's leap year.
