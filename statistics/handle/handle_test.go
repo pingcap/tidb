@@ -2264,7 +2264,7 @@ func TestIndexUsageInformation(t *testing.T) {
 	tk.MustQuery("select b from t_idx where b=0")
 	err = do.StatsHandle().DumpIndexUsageToKV()
 	require.NoError(t, err)
-	tk.MustQuery(querySQL).Check(testkit.Rows(
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
 		"test t_idx idx_a 3 2",
 		"test t_idx idx_b 2 2",
 	))
