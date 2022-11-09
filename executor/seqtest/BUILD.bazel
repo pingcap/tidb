@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "seqtest_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "main_test.go",
         "prepared_test.go",
@@ -23,7 +23,6 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
-        "//parser/terror",
         "//planner/core",
         "//server",
         "//session",

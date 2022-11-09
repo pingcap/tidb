@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "brietest_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",
@@ -18,11 +18,14 @@ go_test(
         "//sessionctx/binloginfo",
         "//store/mockstore/mockcopr",
         "//testkit",
+        "//testkit/testsetup",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_goleak//:goleak",
     ],
 )
