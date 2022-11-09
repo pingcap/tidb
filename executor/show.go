@@ -1520,7 +1520,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
-	passwordExpired := rows[0].GetString(4)
+	passwordExpired := rows[0].GetEnum(4).String()
 	passwordLifetime := int64(-1)
 	if !rows[0].IsNull(5) {
 		passwordLifetime = rows[0].GetInt64(5)

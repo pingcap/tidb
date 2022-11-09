@@ -811,14 +811,34 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	lockAccount := "N"
+	passwordExpire := "N"
+	var passwordExpireInterval any = nil
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
 		for i := length - 1; i >= 0; i-- {
-			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+			switch s.PasswordOrLockOptions[i].Type {
+			case ast.Lock:
 				lockAccount = "Y"
 				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+			case ast.Unlock:
+				break
+			}
+		}
+		// If PASSWORD EXPIRATION appears many times,
+		// the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			switch s.PasswordOrLockOptions[i].Type {
+			case ast.PasswordExpire:
+				passwordExpire = "Y"
+				break
+			case ast.PasswordExpireDefault:
+				break
+			case ast.PasswordExpireNever:
+				passwordExpireInterval = 0
+				break
+			case ast.PasswordExpireInterval:
+				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
 				break
 			}
 		}
@@ -845,7 +865,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer) VALUES `, mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql,
+		`INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime) VALUES `,
+		mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -901,7 +923,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+			hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer, passwordExpire, passwordExpireInterval)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -966,15 +989,35 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	lockAccount := ""
-	if len(s.PasswordOrLockOptions) > 0 {
+	passwordExpire := ""
+	var passwordExpireInterval any = -1
+	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
-		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				lockAccount = "N"
+				break
+			}
+		}
+		// If PASSWORD EXPIRATION appears many times,
+		// the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			switch s.PasswordOrLockOptions[i].Type {
+			case ast.PasswordExpire:
+				passwordExpire = "Y"
+				break
+			case ast.PasswordExpireDefault:
+				passwordExpireInterval = nil
+				break
+			case ast.PasswordExpireNever:
+				passwordExpireInterval = 0
+				break
+			case ast.PasswordExpireInterval:
+				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
 				break
 			}
 		}
@@ -1066,7 +1109,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		type alterField struct {
 			expr  string
-			value string
+			value any
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
@@ -1099,6 +1142,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", lockAccount})
+		}
+
+		if len(passwordExpire) != 0 {
+			fields = append(fields, alterField{"password_expired=%?", passwordExpire})
+		}
+		if passwordExpireInterval != -1 {
+			fields = append(fields, alterField{"password_lifetime=%v", passwordExpireInterval})
 		}
 
 		if s.CommentOrAttributeOption != nil {
