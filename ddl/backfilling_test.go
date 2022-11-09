@@ -27,14 +27,18 @@ func TestDoneTaskKeeper(t *testing.T) {
 	n.updateNextKey(0, kv.Key("b"))
 	n.updateNextKey(1, kv.Key("c"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("c")))
+	require.Len(t, n.doneTaskNextKey, 0)
 
 	n.updateNextKey(4, kv.Key("f"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("c")))
+	require.Len(t, n.doneTaskNextKey, 1)
 	n.updateNextKey(3, kv.Key("e"))
 	n.updateNextKey(5, kv.Key("g"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("c")))
+	require.Len(t, n.doneTaskNextKey, 3)
 	n.updateNextKey(2, kv.Key("d"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("g")))
+	require.Len(t, n.doneTaskNextKey, 0)
 
 	n.updateNextKey(6, kv.Key("h"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))

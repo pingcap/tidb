@@ -306,12 +306,12 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}
 	}, false)
 	for {
-		exit := false
 		select {
 		case task, more := <-w.taskCh:
-			if !more {
-				exit = true
-				break
+			if !more || util.HasCancelled(w.ctx) {
+				logutil.BgLogger().Info("[ddl] backfill worker exit",
+					zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
+				return
 			}
 			curTaskID = task.id
 			d.setDDLLabelForTopSQL(job)
@@ -339,15 +339,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			result := w.handleBackfillTask(d, task, bf)
 			w.resultCh <- result
 		case <-w.ctx.Done():
-			exit = true
-		}
-		if exit {
-			break
+			logutil.BgLogger().Info("[ddl] backfill worker exit",
+				zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
+			return
 		}
 	}
-	logutil.BgLogger().Info("[ddl] backfill worker exit",
-		zap.Stringer("type", w.tp),
-		zap.Int("workerID", w.id))
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
