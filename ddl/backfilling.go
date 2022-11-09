@@ -306,9 +306,14 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}
 	}, false)
 	for {
+		if util.HasCancelled(w.ctx) {
+			logutil.BgLogger().Info("[ddl] backfill worker exit on context done",
+				zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
+			return
+		}
 		select {
 		case task, more := <-w.taskCh:
-			if !more || util.HasCancelled(w.ctx) {
+			if !more {
 				logutil.BgLogger().Info("[ddl] backfill worker exit",
 					zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
 				return
@@ -338,10 +343,6 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			w.batchCnt = int(variable.GetDDLReorgBatchSize())
 			result := w.handleBackfillTask(d, task, bf)
 			w.resultCh <- result
-		case <-w.ctx.Done():
-			logutil.BgLogger().Info("[ddl] backfill worker exit",
-				zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
-			return
 		}
 	}
 }
@@ -726,11 +727,6 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		closeBackfillWorkers(workers)
 	}
 	return injectCheckBackfillWorkerNum(len(b.workers))
-}
-
-func assignTaskResultChannels(w *backfillWorker, taskCh chan *reorgBackfillTask, resultCh chan *backfillResult) {
-	w.taskCh = taskCh
-	w.resultCh = resultCh
 }
 
 func (b *backfillScheduler) Close() {
