@@ -689,34 +689,35 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		if err != nil {
 			return err
 		}
+		var (
+			runner *backfillWorker
+			worker backfiller
+		)
 		switch b.tp {
 		case typeAddIndexWorker:
 			idxWorker, err := newAddIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc, job)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			b.workers = append(b.workers, idxWorker.backfillWorker)
-			go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+			worker, runner = idxWorker, idxWorker.backfillWorker
 		case typeAddIndexMergeTmpWorker:
 			tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, b.tbl, reorgInfo, jc)
-			b.workers = append(b.workers, tmpIdxWorker.backfillWorker)
-			go tmpIdxWorker.backfillWorker.run(reorgInfo.d, tmpIdxWorker, job)
+			worker, runner = tmpIdxWorker, tmpIdxWorker.backfillWorker
 		case typeUpdateColumnWorker:
 			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
 			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			b.workers = append(b.workers, updateWorker.backfillWorker)
-			go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
+			worker, runner = updateWorker, updateWorker.backfillWorker
 		case typeCleanUpIndexWorker:
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			b.workers = append(b.workers, idxWorker.backfillWorker)
-			go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+			worker, runner = idxWorker, idxWorker.backfillWorker
 		default:
 			return errors.New("unknown backfill type")
 		}
-		lastWorker := b.workers[i]
-		lastWorker.taskCh = b.taskCh
-		lastWorker.resultCh = b.resultCh
+		runner.taskCh = b.taskCh
+		runner.resultCh = b.resultCh
+		b.workers = append(b.workers, runner)
+		go runner.run(reorgInfo.d, worker, job)
 	}
 	// Decrease the worker.
 	if len(b.workers) > workerCnt {
@@ -725,6 +726,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		closeBackfillWorkers(workers)
 	}
 	return injectCheckBackfillWorkerNum(len(b.workers))
+}
+
+func assignTaskResultChannels(w *backfillWorker, taskCh chan *reorgBackfillTask, resultCh chan *backfillResult) {
+	w.taskCh = taskCh
+	w.resultCh = resultCh
 }
 
 func (b *backfillScheduler) Close() {
