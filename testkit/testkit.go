@@ -52,8 +52,9 @@ type TestKit struct {
 	alloc   chunk.Allocator
 }
 
-func (t *TestKit) GetAlloc() *chunk.Allocator {
-	return &t.alloc
+// GetAlloc return alloc address
+func (tk *TestKit) GetAlloc() *chunk.Allocator {
+	return &tk.alloc
 }
 
 // NewTestKit returns a new *TestKit.
