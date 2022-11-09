@@ -125,8 +125,8 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func setTiDBEnableAutoAnalyze(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAutoAnalyze, value)
+func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
 
 func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
@@ -137,8 +137,8 @@ func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
 	return val, nil
 }
 
-func setTiDBSuperReadOnly(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBSuperReadOnly, value)
+func setTiDBSuperReadOnly(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBSuperReadOnly, value)
 }
 
 func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
@@ -160,10 +160,10 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(sess, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(d.ctx, sess, variable.Off); err != nil {
 		return err
 	}
-	if err = setTiDBSuperReadOnly(sess, variable.On); err != nil {
+	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
 		return err
 	}
 
@@ -638,10 +638,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-		if err = setTiDBSuperReadOnly(sess, readOnlyValue); err != nil {
+		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
 			return err
 		}
-		return setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue)
+		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
 		return err
