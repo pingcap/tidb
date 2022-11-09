@@ -2097,6 +2097,8 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// DefaultPasswordLifetime is the name for 'default_password_lifetime' system variable.
+	DefaultPasswordLifetime = "default_password_lifetime"
 	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
 	SQLSelectLimit = "sql_select_limit"
 	// MaxConnectErrors is the name for 'max_connect_errors' system variable.

@@ -1531,7 +1531,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	} else if passwordLifetime == 0 {
 		passwordExpiredStr = "PASSWORD EXPIRE NEVER"
 	} else if passwordLifetime > 0 {
-		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %s DAY", passwordLifetime)
+		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
