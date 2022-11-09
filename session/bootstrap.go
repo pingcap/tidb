@@ -654,7 +654,7 @@ const (
 	version99 = 99
 	// version100 converts server-memory-quota to a sysvar
 	version100 = 100
-	// version101 add a table
+	// version101 add mysql.plan_replayer_status table
 	version101 = 101
 )
 
