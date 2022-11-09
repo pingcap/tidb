@@ -203,8 +203,8 @@ func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 	if tm.Sub(start).Abs() <= tm.Sub(end).Abs() {
 		return start, nil
 	}
-	panic("ever true?")
-	return end, nil
+	return end, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tm))
+	//return end, nil
 }
 
 // IsLeapYear returns if it's leap year.
