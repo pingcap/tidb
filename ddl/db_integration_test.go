@@ -2690,6 +2690,7 @@ func TestCreateTableWithAutoIdCache(t *testing.T) {
 	// Test both auto_increment and rowid exist.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
+	fmt.Println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
 	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

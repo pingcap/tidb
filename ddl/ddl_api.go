@@ -2147,7 +2147,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
-	_, err := tables.TableFromMeta(nil, tblInfo)
+	_, err := tables.TableFromMeta(autoid.Allocators{}, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -3445,6 +3445,8 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
 		actionType = model.ActionRebaseAutoID
+	default:
+		panic("fuck!")
 	}
 
 	if !force {
