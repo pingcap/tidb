@@ -2249,6 +2249,7 @@ func newChunkRestore(
 		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
 	}
 
+	parser.SetColumnTypes(getColumnTypes(tableInfo.Core))
 	return &chunkRestore{
 		parser: parser,
 		index:  index,
@@ -2286,6 +2287,14 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 		}
 	}
 	return names
+}
+
+func getColumnTypes(tableInfo *model.TableInfo) map[int]byte {
+	colTypes := make(map[int]byte, 0)
+	for i := 0; i < len(tableInfo.Columns); i++ {
+		colTypes[i] = tableInfo.Columns[i].FieldType.GetType()
+	}
+	return colTypes
 }
 
 var (

@@ -585,6 +585,10 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
+func (pp *ParquetParser) SetColumnTypes(colTypes map[int]byte) {
+	// just do nothing
+}
+
 func jdToTime(jd int32, nsec int64) time.Time {
 	sec := int64(jd-jan011970) * secPerDay
 	// it's fine not to check the value of nsec

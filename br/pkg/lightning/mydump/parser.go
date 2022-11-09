@@ -44,7 +44,8 @@ type blockParser struct {
 	isLastChunk bool
 
 	// The list of column names of the last INSERT statement.
-	columns []string
+	columns     []string
+	columnTypes map[int]byte
 
 	rowPool *sync.Pool
 	lastRow Row
@@ -137,6 +138,8 @@ type Parser interface {
 	// SetColumns set restored column names to parser
 	SetColumns([]string)
 
+	// SetColumnTypes set column type to parser
+	SetColumnTypes(map[int]byte)
 	SetLogger(log.Logger)
 
 	SetRowID(rowID int64)
@@ -211,6 +214,10 @@ func (parser *blockParser) SetLogger(logger log.Logger) {
 // SetRowID changes the reported row ID when we firstly read compressed files.
 func (parser *blockParser) SetRowID(rowID int64) {
 	parser.lastRow.RowID = rowID
+}
+
+func (parser *blockParser) SetColumnTypes(colTypes map[int]byte) {
+	parser.columnTypes = colTypes
 }
 
 type token byte

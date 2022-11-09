@@ -17,7 +17,11 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/parser/mysql"
 	"io"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -534,7 +538,31 @@ func (parser *CSVParser) ReadRow() error {
 		if isNull {
 			row.Row[i].SetNull()
 		} else {
-			row.Row[i].SetString(unescaped, "utf8mb4_bin")
+			if parser.cfg.Db2LobDir != "" && (parser.columnTypes[i] == mysql.TypeBlob ||
+				parser.columnTypes[i] == mysql.TypeTinyBlob ||
+				parser.columnTypes[i] == mysql.TypeMediumBlob ||
+				parser.columnTypes[i] == mysql.TypeLongBlob) {
+				lobFileField := strings.Split(unescaped, ".")
+				lobFileHandler, err := os.Open(filepath.Join(parser.cfg.Db2LobDir, strings.Join(lobFileField[0:4], ".")))
+				defer lobFileHandler.Close()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				startIndex, err := strconv.ParseInt(lobFileField[4], 10, 32)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				length, err := strconv.Atoi(strings.ReplaceAll(lobFileField[5], "/", ""))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				buffer := make([]byte, length)
+				lobFileHandler.Seek(startIndex, 0)
+				lobFileHandler.Read(buffer)
+				row.Row[i].SetBytes(buffer)
+			} else {
+				row.Row[i].SetString(unescaped, "utf8mb4_bin")
+			}
 		}
 	}
 
@@ -572,4 +600,8 @@ func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
 			return parser.pos, err
 		}
 	}
+}
+
+func (parser *CSVParser) SetColumnTypes(colTypes map[int]byte) {
+	parser.columnTypes = colTypes
 }

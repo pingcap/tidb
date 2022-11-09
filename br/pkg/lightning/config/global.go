@@ -56,6 +56,7 @@ type GlobalMydumper struct {
 	NoSchema      bool             `toml:"no-schema" json:"no-schema"`
 	Filter        []string         `toml:"filter" json:"filter"`
 	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
+	Db2LobDir     string           `toml:"db2-lob-dir" json:"db2-lob-dir"`
 }
 
 type GlobalImporter struct {
@@ -163,6 +164,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tlsCertPath := fs.String("cert", "", "certificate path for TLS connection")
 	tlsKeyPath := fs.String("key", "", "private key path for TLS connection")
 	redactInfoLog := fs.Bool("redact-info-log", false, "whether to redact sensitive info in log")
+	db2LobDir := fs.String("db2-lob-dir", "", "db2 lob directory")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -271,6 +273,12 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
 		return nil, common.ErrInvalidConfig.GenWithStack("If server-mode is enabled, the status-addr must be a valid listen address")
+	}
+
+	if *db2LobDir != "" {
+		cfg.Mydumper.Db2LobDir = *db2LobDir
+	} else {
+		cfg.Mydumper.Db2LobDir = cfg.Mydumper.SourceDir
 	}
 
 	cfg.App.Config.Adjust()

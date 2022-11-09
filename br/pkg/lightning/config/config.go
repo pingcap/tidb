@@ -448,6 +448,7 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	Db2LobDir       string `toml:"db2-lob-dir" json:"db2-lob-dir"`
 }
 
 type MydumperRuntime struct {
@@ -768,6 +769,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.App.CheckRequirements = global.App.CheckRequirements
 	cfg.Security = global.Security
 	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
+	cfg.Mydumper.CSV.Db2LobDir = global.Mydumper.Db2LobDir
 	return nil
 }
 
