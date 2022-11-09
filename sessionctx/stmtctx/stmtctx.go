@@ -341,6 +341,8 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 }
