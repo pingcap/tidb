@@ -1049,6 +1049,12 @@ var autoAnalyzeStatus = map[int64]autoAnalyzeInfo{}
 
 // DumpAutoAnalyzeStatus dumps auto analyze status
 func DumpAutoAnalyzeStatus(is infoschema.InfoSchema) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("DumpAutoAnalyzeStatus panicked", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+
 	visited := make(map[int64]struct{})
 	dbs := is.AllSchemaNames()
 	for _, db := range dbs {
@@ -1109,6 +1115,12 @@ func DumpAutoAnalyzeStatus(is infoschema.InfoSchema) {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+
 	err := h.UpdateSessionVar()
 	if err != nil {
 		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
