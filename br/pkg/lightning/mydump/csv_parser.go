@@ -17,7 +17,6 @@ package mydump
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/parser/mysql"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 )
