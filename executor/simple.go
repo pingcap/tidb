@@ -816,30 +816,32 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
+	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.Lock:
 				lockAccount = "Y"
-				break
+				break Loop1
 			case ast.Unlock:
-				break
+				break Loop1
 			}
 		}
 		// If PASSWORD EXPIRATION appears many times,
 		// the last declaration takes effect.
+	Loop2:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpire = "Y"
-				break
+				break Loop2
 			case ast.PasswordExpireDefault:
-				break
+				break Loop2
 			case ast.PasswordExpireNever:
 				passwordExpireInterval = 0
-				break
+				break Loop2
 			case ast.PasswordExpireInterval:
 				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
-				break
+				break Loop2
 			}
 		}
 	}
@@ -994,31 +996,33 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
+	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-				break
+				break Loop1
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				lockAccount = "N"
-				break
+				break Loop1
 			}
 		}
 		// If PASSWORD EXPIRATION appears many times,
 		// the last declaration takes effect.
+	Loop2:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpire = "Y"
-				break
+				break Loop2
 			case ast.PasswordExpireDefault:
 				passwordExpireInterval = nil
-				break
+				break Loop2
 			case ast.PasswordExpireNever:
 				passwordExpireInterval = 0
-				break
+				break Loop2
 			case ast.PasswordExpireInterval:
 				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
-				break
+				break Loop2
 			}
 		}
 	}
