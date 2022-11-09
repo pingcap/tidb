@@ -1200,7 +1200,7 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	defer func() {
 		if err != nil && !toConcurrentDDL {
 			sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
-				mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+				mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
 			sess, err := d.sessPool.get()
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
