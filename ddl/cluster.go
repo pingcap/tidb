@@ -60,12 +60,15 @@ var pdScheduleKey = []string{
 const (
 	flashbackMaxBackoff = 1800000         // 1800s
 	flashbackTimeout    = 3 * time.Minute // 3min
+)
 
-	pdScheduleArgsOffset     = 1
-	gcEnabledArgsOffset      = 2
-	autoAnalyzeOffset        = 3
-	totalLockedRegionsOffset = 4
-	commitTSOffset           = 5
+const (
+	pdScheduleArgsOffset = 1 + iota
+	gcEnabledOffset
+	autoAnalyzeOffset
+	readOnlyOffset
+	totalLockedRegionsOffset
+	commitTSOffset
 )
 
 func closePDSchedule() error {
@@ -122,12 +125,24 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func setTiDBEnableAutoAnalyze(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAutoAnalyze, value)
+func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
 
 func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAutoAnalyze)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return val, nil
+}
+
+func setTiDBSuperReadOnly(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBSuperReadOnly, value)
+}
+
+func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSuperReadOnly)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -145,7 +160,10 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(sess, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(d.ctx, sess, variable.Off); err != nil {
+		return err
+	}
+	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
 		return err
 	}
 
@@ -465,9 +483,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS, lockedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue string
+	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &commitTS); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -494,13 +512,19 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[gcEnabledArgsOffset] = &gcEnableValue
+		job.Args[gcEnabledOffset] = &gcEnableValue
 		autoAnalyzeValue, err = getTiDBEnableAutoAnalyze(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
+		readOnlyValue, err = getTiDBSuperReadOnly(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[readOnlyOffset] = &readOnlyValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -593,10 +617,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	var flashbackTS, lockedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue string
+	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &commitTS); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -614,7 +638,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-		return setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue)
+		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
+			return err
+		}
+		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
 		return err
