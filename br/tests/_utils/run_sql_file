@@ -21,7 +21,7 @@ shift
 
 prepare="set global tidb_enable_clustered_index = 'int_only';"
 echo "[$(date)] Executing SQL_FILE: $SQL_FILE" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
-mysql -uroot -h127.0.0.1 -P4000 --default-character-set utf8 -E -e "${prepare}" | tee -a "$OUT_DIR/sql_res.$TEST_NAME.txt"
+mysql -uroot -h127.0.0.1 -P4000 --default-character-set utf8 -E -e "${prepare}" | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
 cat $SQL_FILE | mysql -uroot -h127.0.0.1 -P4000 \
     --ssl-ca="$TEST_DIR/certs/ca.pem" \
     --ssl-cert="$TEST_DIR/certs/curl.pem" \
