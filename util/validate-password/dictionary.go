@@ -36,6 +36,13 @@ const minPwdLength int = 4
 
 var dictionary = dictionaryImpl{cache: make(map[string]struct{})}
 
+// Clean removes all the words in the dictionary.
+func Clean() {
+	dictionary.m.Lock()
+	defer dictionary.m.Unlock()
+	dictionary.cache = make(map[string]struct{})
+}
+
 // UpdateDictionaryFile update the dictionary for validating password.
 func UpdateDictionaryFile(filePath string) error {
 	dictionary.m.Lock()

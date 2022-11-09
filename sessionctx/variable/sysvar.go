@@ -520,6 +520,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionaryFile, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		// Use 'SET @@global.validate_password.dictionary_file = ""' to clean the dictionary.
+		if len(val) == 0 {
+			validatePwd.Clean()
+			return nil
+		}
 		return validatePwd.UpdateDictionaryFile(val)
 	}},
 

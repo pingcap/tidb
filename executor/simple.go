@@ -786,14 +786,13 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption) bool {
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	if authOpt.AuthPlugin == mysql.AuthNativePassword ||
-		authOpt.AuthPlugin == mysql.AuthTiDBSM3Password ||
-		authOpt.AuthPlugin == mysql.AuthCachingSha2Password ||
-		authOpt.AuthPlugin == "" {
+	if authPlugin == mysql.AuthNativePassword ||
+		authPlugin == mysql.AuthTiDBSM3Password ||
+		authPlugin == mysql.AuthCachingSha2Password {
 		return true
 	}
 	return false
@@ -819,13 +818,16 @@ func (e *SimpleExec) validateUserNameInPassword(pwd, username string) error {
 	return nil
 }
 
+func (e *SimpleExec) enableValidatePassword() bool {
+	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return false
+	}
+	return variable.TiDBOptOn(validatePwdEnable)
+}
+
 func (e *SimpleExec) validatePassword(pwd string, currentUser *auth.UserIdentity) error {
 	globalVars := e.ctx.GetSessionVars().GlobalVarsAccessor
-	if validatePwdEnable, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
-		return err
-	} else if !variable.TiDBOptOn(validatePwdEnable) {
-		return nil
-	}
 
 	runes := []rune(pwd)
 	validatePolicy, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordPolicy)
@@ -989,7 +991,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
-		if e.authUsingCleartextPwd(spec.AuthOpt) {
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
+		if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
 			if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
 				return err
 			}
@@ -998,10 +1004,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
-		}
-		authPlugin := mysql.AuthNativePassword
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
-			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 
 		switch authPlugin {
@@ -1191,11 +1193,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
-				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
 					return err
 				}
-				spec.AuthOpt.AuthPlugin = authplugin
+				spec.AuthOpt.AuthPlugin = curAuthplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1207,7 +1209,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
-			if e.authUsingCleartextPwd(spec.AuthOpt) {
+			if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
 				if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
 					return err
 				}
@@ -1728,8 +1730,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	if err := e.validatePassword(s.Password, e.ctx.GetSessionVars().User); err != nil {
-		return err
+	if e.enableValidatePassword() {
+		if err := e.validatePassword(s.Password, e.ctx.GetSessionVars().User); err != nil {
+			return err
+		}
 	}
 	var pwd string
 	switch authplugin {
