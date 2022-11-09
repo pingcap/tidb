@@ -1493,6 +1493,7 @@ const (
 	PasswordExpireDefault
 	PasswordExpireNever
 	PasswordExpireInterval
+
 	Lock
 	Unlock
 
@@ -1514,9 +1515,7 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	case PasswordExpireNever:
 		ctx.WriteKeyWord("PASSWORD EXPIRE NEVER")
 	case PasswordExpireInterval:
-		ctx.WriteKeyWord("PASSWORD EXPIRE INTERVAL")
-		ctx.WritePlainf(" %d", p.Count)
-		ctx.WriteKeyWord(" DAY")
+		ctx.WritePlainf("PASSWORD EXPIRE INTERVAL %d DAY", p.Count)
 	case Lock:
 		ctx.WriteKeyWord("ACCOUNT LOCK")
 	case Unlock:

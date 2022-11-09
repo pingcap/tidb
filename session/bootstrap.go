@@ -99,7 +99,10 @@ const (
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
-		PRIMARY KEY (Host, User));`
+    	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+    	Password_last_changed	TIMESTAMP,
+    	Password_lifetime		SMALLINT UNSIGNED,
+    	PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
@@ -644,11 +647,13 @@ const (
 	version99 = 99
 	// version100 converts server-memory-quota to a sysvar
 	version100 = 100
+	// version101 add columns related to password expiration
+	version101 = 101
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version100
+var currentBootstrapVersion int64 = version101
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -753,6 +758,7 @@ var (
 		upgradeToVer97,
 		upgradeToVer98,
 		upgradeToVer100,
+		upgradeToVer101,
 	}
 )
 
@@ -2026,6 +2032,15 @@ func upgradeToVer100(s Session, ver int64) {
 	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
+func upgradeToVer101(s Session, ver int64) {
+	if ver >= version101 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
+		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP,"+
+		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2146,7 +2161,7 @@ func doDMLWorks(s Session) {
 		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "", "N", null, null)`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value
