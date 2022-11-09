@@ -1659,7 +1659,7 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
-	require.NoError(t,dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
+	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 
