@@ -136,18 +136,15 @@ func TestValidatePassword(t *testing.T) {
 	authPlugins := []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}
 	dictFile, err := validator.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
 	require.NoError(t, err)
-	tk.MustExec("CREATE USER \"\"@localhost")
-	tk.MustExec("GRANT ALL PRIVILEGES ON test.* TO \"\"@localhost;")
+	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
 
 	for _, authPlugin := range authPlugins {
-		tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
 		tk.MustExec("DROP USER IF EXISTS testuser")
-		tk.MustExec(fmt.Sprintf("CREATE USER testuser IDENTIFIED WITH %s BY '12345678'", authPlugin))
-		tk.MustExec("SET GLOBAL validate_password.enable = 1")
-		tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
+		tk.MustExec(fmt.Sprintf("CREATE USER testuser IDENTIFIED WITH %s BY '!Abc12345678'", authPlugin))
 
 		tk.MustExec("SET GLOBAL validate_password.policy = 'LOW'")
-
 		// check user name
 		tk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
 		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdroot1234'", "Password Contains User Name")
@@ -187,15 +184,18 @@ func TestValidatePassword(t *testing.T) {
 
 		// "IDENTIFIED AS 'xxx'" is not affected by validation
 		tk.MustExec(fmt.Sprintf("ALTER USER testuser IDENTIFIED WITH '%s' AS ''", authPlugin))
-
-		// if the username is '', all password can pass the check_user_name
-		subtk := testkit.NewTestKit(t, store)
-		require.NoError(t, subtk.Session().Auth(&auth.UserIdentity{Hostname: "localhost"}, nil, nil))
-		subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
-		subtk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
-		subtk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
-		subtk.MustExec("ALTER USER ''@localhost IDENTIFIED BY ''")
-
-		tk.MustExec("SET GLOBAL validate_password.enable = 0")
 	}
+
+	// if the username is '', all password can pass the check_user_name
+	tk.MustExec("CREATE USER ''@'localhost'")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO ''@'localhost';")
+	subtk := testkit.NewTestKit(t, store)
+	require.NoError(t, subtk.Session().Auth(&auth.UserIdentity{Hostname: "localhost"}, nil, nil))
+	subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
+	subtk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
+	subtk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
+	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY ''")
+	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY 'abcd'")
+
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
 }
