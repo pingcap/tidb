@@ -101,8 +101,10 @@ const (
 
 	// DDLTableVersion1 is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
 	DDLTableVersion1 = "1"
-	// DDLTableVersion2 is for support distributed reorg stage, it added tidb_ddl_backfill.
+	// DDLTableVersion2 is for support MDL tables.
 	DDLTableVersion2 = "2"
+	// DDLTableVersion3 is for support distributed reorg stage, it added tidb_ddl_backfill.
+	DDLTableVersion3 = "3"
 )
 
 var (
@@ -568,7 +570,7 @@ func (m *Meta) SetDDLTables(ddlTableVersion string) error {
 
 // SetMDLTables write a key into storage.
 func (m *Meta) SetMDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	err := m.txn.Set(mDDLTableVersion, []byte(DDLTableVersion2))
 	return errors.Trace(err)
 }
 
@@ -623,7 +625,7 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return bytes.Equal(v, []byte("2")), nil
+	return bytes.Equal(v, []byte(DDLTableVersion2)), nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

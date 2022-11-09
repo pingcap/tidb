@@ -33,7 +33,7 @@ func TestInitMetaTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	for _, sql := range session.DDLJobTables {
+	for _, sql := range session.DDLJobTablesVer1 {
 		tk.MustExec(sql.SQL)
 	}
 

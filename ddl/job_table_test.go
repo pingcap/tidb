@@ -218,8 +218,8 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 	require.Equal(t, a.EleID, b.EleID)
 	require.Equal(t, a.EleKey, b.EleKey)
 	require.Equal(t, a.StoreID, b.StoreID)
-	require.Equal(t, a.Instance_ID, b.Instance_ID)
-	require.GreaterOrEqual(t, b.Instance_Lease.Compare(lessTime), 0)
+	require.Equal(t, a.InstanceID, b.InstanceID)
+	require.GreaterOrEqual(t, b.InstanceLease.Compare(lessTime), 0)
 	require.Equal(t, a.State, b.State)
 	require.Equal(t, a.Mate, b.Mate)
 }
@@ -263,7 +263,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjTestCases = append(bjTestCases, bJobs1...)
 	bjTestCases = append(bjTestCases, bJobs2...)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
-	// ID     jobID     eleID    Instance_ID
+	// ID     jobID     eleID    InstanceID
 	// -------------------------------------
 	// 0      jobID     eleID1    uuid
 	// 1      jobID     eleID1    ""
@@ -281,12 +281,12 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
 	bjRet := bjTestCases[0]
-	bjRet.Instance_ID = uuid
+	bjRet.InstanceID = uuid
 	equalBackfillJob(t, bjRet, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
 	currTime, err := ddl.GetOracleTime(se.GetStore())
 	require.NoError(t, err)
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
-	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].Instance_Lease), 0)
+	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].InstanceLease), 0)
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
@@ -317,11 +317,12 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 
 	// test history backfill jobs
 	err = ddl.AddBackfillHistoryJob(se, []*ddl.BackfillJob{bJobs1[0]})
+	require.NoError(t, err)
 	// ID     jobID     eleID
 	// ------------------------
 	// 0      jobID     eleID1
-	require.NoError(t, err)
 	currTime, err = ddl.GetOracleTime(se.GetStore())
+	require.NoError(t, err)
 	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and job_id = %d order by job_id", currTime.Add(-instanceLease), jobID)
 	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
@@ -363,8 +364,8 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
 
 	// test the BackfillJob's AbbrStr
-	require.Equal(t, fmt.Sprintf("ID:2, JobID:3, EleID:4, Type:add index, State:rollingback, Instance_ID:%s, Instance_Lease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
-	require.Equal(t, "ID:3, JobID:3, EleID:4, Type:add index, State:cancelling, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
-	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
-	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, Instance_ID:, Instance_Lease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
+	require.Equal(t, fmt.Sprintf("ID:2, JobID:3, EleID:4, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
+	require.Equal(t, "ID:3, JobID:3, EleID:4, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
+	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
 }

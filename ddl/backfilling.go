@@ -61,6 +61,7 @@ const (
 	typeCleanUpIndexWorker     backfillWorkerType = 2
 	typeAddIndexMergeTmpWorker backfillWorkerType = 3
 
+	// InstanceLease is the instance lease.
 	InstanceLease = 60 // s
 )
 
@@ -83,24 +84,27 @@ func IsDistReorgEnable() bool {
 	return enableDistReorg.Load()
 }
 
+// BackfillJob is for a tidb_ddl_backfill table's record.
 type BackfillJob struct {
-	ID             int64
-	JobID          int64
-	EleID          int64
-	EleKey         []byte
-	Tp             model.BackfillType
-	State          model.JobState
-	StoreID        int64
-	Instance_ID    string
-	Instance_Lease types.Time
-	Mate           *model.BackfillMeta
+	ID            int64
+	JobID         int64
+	EleID         int64
+	EleKey        []byte
+	Tp            model.BackfillType
+	State         model.JobState
+	StoreID       int64
+	InstanceID    string
+	InstanceLease types.Time
+	Mate          *model.BackfillMeta
 }
 
+// AbbrStr returns the BackfillJob's info without the Mate info.
 func (bj *BackfillJob) AbbrStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
-		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
 }
 
+// GetOracleTime returns the current time from TS.
 func GetOracleTime(store kv.Storage) (time.Time, error) {
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
@@ -109,6 +113,7 @@ func GetOracleTime(store kv.Storage) (time.Time, error) {
 	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
+// GetLeaseGoTime returns a types.Time by adding a lease.
 func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 	leaseTime := currTime.Add(lease)
 	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
