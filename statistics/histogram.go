@@ -778,7 +778,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 /*
@@ -795,7 +795,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -879,8 +879,8 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
