@@ -136,14 +136,6 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 	return &newHRC
 }
 
-// GetMatchedRows get matched rows from probeRow. It can be called
-// in multiple goroutines while each goroutine should keep its own
-// h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row) ([]chunk.Row, error) {
-	matchedRows, _, err := c.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx, matched, nil, false)
-	return matchedRows, err
-}
-
 func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildRowPos, needCheckProbeRowPos []int) ([]chunk.Row, error) {
 	// for NAAJ probe row with null, we should match them with all build rows.
@@ -209,35 +201,32 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
-	var err error
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
-		return nil, nil, err
+		return
 	}
-	matched = matched[:0]
+	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
-	matchedPtrs = matchedPtrs[:0]
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		if !ok {
 			atomic.AddInt64(&c.stat.probeCollision, 1)
 			continue
 		}
 		matched = append(matched, matchedRow)
-		if needPtr {
-			matchedPtrs = append(matchedPtrs, ptr)
-		}
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
-	return matched, matchedPtrs, err
+	return
 }
 
 func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRow chunk.Row,
