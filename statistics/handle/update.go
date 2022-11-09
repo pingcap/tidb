@@ -983,7 +983,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
-		return false, ""
+		return false, "autoAnalyzeRatio is 0"
 	}
 	// No need to analyze it.
 	tblCnt := float64(tbl.Count)
@@ -991,7 +991,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		tblCnt = histCnt
 	}
 	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
-		return false, ""
+		return false, fmt.Sprintf("too few modifications(%v/%v<=%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 	}
 	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
@@ -1031,6 +1031,80 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	}
 	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
 	return s, e, err
+}
+
+type autoAnalyzeInfo struct {
+	checkInfo string
+	checkTime time.Time
+}
+
+func newAutoAnalyzeCheck(checkInfo string) autoAnalyzeInfo {
+	return autoAnalyzeInfo{
+		checkInfo: checkInfo,
+		checkTime: time.Now(),
+	}
+}
+
+var autoAnalyzeStatus = map[int64]autoAnalyzeInfo{}
+
+// DumpAutoAnalyzeStatus dumps auto analyze status
+func DumpAutoAnalyzeStatus(is infoschema.InfoSchema) {
+	visited := make(map[int64]struct{})
+	dbs := is.AllSchemaNames()
+	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
+		tbls := is.SchemaTables(model.NewCIStr(db))
+		for _, tbl := range tbls {
+			tblInfo := tbl.Meta()
+			if tblInfo.IsView() {
+				continue
+			}
+			pi := tblInfo.GetPartitionInfo()
+			if pi == nil {
+				if info, ok := autoAnalyzeStatus[tblInfo.ID]; ok {
+					logutil.BgLogger().Info("last auto analyze status check",
+						zap.Int64("physicalID", tblInfo.ID),
+						zap.String("db", db),
+						zap.String("table", tblInfo.Name.O),
+						zap.Time("checkTime", info.checkTime),
+						zap.String("checkInfo", info.checkInfo))
+					visited[tblInfo.ID] = struct{}{}
+				} else {
+					logutil.BgLogger().Info("auto analyze status unchecked",
+						zap.Int64("physicalID", tblInfo.ID),
+						zap.String("db", db),
+						zap.String("table", tblInfo.Name.O))
+				}
+			} else {
+				for _, def := range pi.Definitions {
+					if info, ok := autoAnalyzeStatus[def.ID]; ok {
+						logutil.BgLogger().Info("last auto analyze status check",
+							zap.Int64("physicalID", def.ID),
+							zap.String("db", db),
+							zap.String("table", tblInfo.Name.O),
+							zap.String("partition", def.Name.O),
+							zap.Time("checkTime", info.checkTime),
+							zap.String("checkInfo", info.checkInfo))
+						visited[def.ID] = struct{}{}
+					} else {
+						logutil.BgLogger().Info("auto analyze status unchecked",
+							zap.Int64("physicalID", def.ID),
+							zap.String("db", db),
+							zap.String("table", tblInfo.Name.O),
+							zap.String("partition", def.Name.O))
+					}
+				}
+			}
+		}
+	}
+	// We need to delete items whose table has been already deleted.
+	for physicalID := range autoAnalyzeStatus {
+		if _, ok := visited[physicalID]; !ok {
+			delete(autoAnalyzeStatus, physicalID)
+		}
+	}
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -1106,12 +1180,21 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
+	physicalID := statsTbl.PhysicalID
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+		if statsTbl.Pseudo {
+			autoAnalyzeStatus[physicalID] = newAutoAnalyzeCheck("stats pseudo")
+		} else {
+			autoAnalyzeStatus[physicalID] = newAutoAnalyzeCheck(fmt.Sprintf("too few rows, count:%v", statsTbl.Count))
+		}
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio); needAnalyze {
+	needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio)
+	autoAnalyzeStatus[physicalID] = newAutoAnalyzeCheck(reason)
+	if needAnalyze {
 		escaped, err := sqlexec.EscapeSQL(sql, params...)
 		if err != nil {
+			logutil.BgLogger().Info("EscapeSQL failed", zap.Error(err))
 			return false
 		}
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
@@ -1122,10 +1205,12 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+			autoAnalyzeStatus[physicalID] = newAutoAnalyzeCheck(fmt.Sprintf("unanalyzed index %v", idx.Name.O))
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
+				logutil.BgLogger().Info("EscapeSQL failed", zap.Error(err))
 				return false
 			}
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
@@ -1146,9 +1231,16 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
+			if partitionStatsTbl.Pseudo {
+				autoAnalyzeStatus[partitionStatsTbl.PhysicalID] = newAutoAnalyzeCheck("stats pseudo")
+			} else {
+				autoAnalyzeStatus[partitionStatsTbl.PhysicalID] = newAutoAnalyzeCheck(fmt.Sprintf("too few rows, count:%v", partitionStatsTbl.Count))
+			}
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio); needAnalyze {
+		needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio)
+		autoAnalyzeStatus[partitionStatsTbl.PhysicalID] = newAutoAnalyzeCheck(reason)
+		if needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
@@ -1181,6 +1273,7 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 		for _, def := range pi.Definitions {
 			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+				autoAnalyzeStatus[partitionStatsTbl.PhysicalID] = newAutoAnalyzeCheck(fmt.Sprintf("unanalyzed index %v", idx.Name.O))
 				partitionNames = append(partitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 			}
