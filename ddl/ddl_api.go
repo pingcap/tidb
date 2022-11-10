@@ -2716,9 +2716,10 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			true,        /* tidb_gc_enable */
-			variable.On, /* tidb_enable_auto_analyze */
-			0,           /* totalRegions */
+			true,         /* tidb_gc_enable */
+			variable.On,  /* tidb_enable_auto_analyze */
+			variable.Off, /* tidb_super_read_only */
+			0,            /* totalRegions */
 			0 /* newCommitTS */},
 	}
 	err := d.DoDDLJob(ctx, job)
@@ -4670,6 +4671,7 @@ func GetModifiableColumnJob(
 			newTblInfo.Columns = newCols
 
 			var buf bytes.Buffer
+			// TODO: update the partitioning columns with new names if column is renamed
 			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
 			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
 			// Ignoring warnings

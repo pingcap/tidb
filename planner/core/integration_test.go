@@ -615,6 +615,7 @@ func TestMPPJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists d1_t")
 	tk.MustExec("create table d1_t(d1_k int, value int)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
@@ -1320,6 +1321,7 @@ func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, tt, ttt")
 	tk.MustExec("create table t(a int, b int, index ia(a))")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
@@ -5697,6 +5699,7 @@ func TestOutputSkylinePruningInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
 
@@ -5726,6 +5729,7 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int unsigned primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9), (10,11,12), (13,14,15)")
@@ -6083,6 +6087,7 @@ func TestRejectSortForMPP(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
@@ -6709,6 +6714,7 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@tidb_enforce_mpp = on")
 	tk.MustExec("drop table if exists t1;")
@@ -7086,6 +7092,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json);")
 	tk.MustExec("insert into t values(null);")
@@ -7107,26 +7114,26 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
+		{"HashAgg_8", "root", "funcs:avg(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_14", "root", "data:TableFullScan_13"},
+		{"    └─TableFullScan_13", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
+		{"HashAgg_8", "root", "funcs:sum(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_14", "root", "data:TableFullScan_13"},
+		{"    └─TableFullScan_13", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
+		{"HashAgg_8", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
 		{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
-		{"  └─TableReader_10", "root", "data:TableFullScan_9"},
-		{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
