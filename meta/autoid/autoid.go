@@ -234,7 +234,10 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 		}
 	}
 
+	fmt.Println("Get alloc ===", allocType)
+
 	for _, a := range all.Allocs {
+		fmt.Println("alloc a==", a, a.GetType())
 		if a.GetType() == allocType {
 			return a
 		}
@@ -622,6 +625,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 
 	// Use the MySQL compatible AUTO_INCREMENT mode.
 	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 {
+		fmt.Println("single point alloc ...")
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1
@@ -655,8 +659,14 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	fmt.Println("hasAutoIncID ===", hasAutoIncID )
 	if hasRowID || hasAutoIncID {
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
+		allocs = append(allocs, alloc)
+	}
+	if hasAutoIncID {
+		fmt.Println("run here ... and new ??")
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()

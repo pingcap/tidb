@@ -27,9 +27,9 @@ func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	var alloc Allocator
 	allocType := RowIDAllocType
-	if hasAutoIncID {
-		allocType = AutoIncrementType
-	}
+	// if hasAutoIncID {
+	// 	allocType = AutoIncrementType
+	// }
 	// Temporary tables don't support auto_random and sequence.
 	if hasRowID || hasAutoIncID {
 		alloc = &inMemoryAllocator{

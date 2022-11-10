@@ -1235,3 +1235,26 @@ func TestIssue33214(t *testing.T) {
 		}
 	}
 }
+
+func TestIssue982(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	fmt.Println("88888888888888")
+	tk.MustExec("create table t (c int auto_increment, key(c)) auto_id_cache 1;")
+	tk.MustExec("insert into t values();")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1","2"))
+}
+
+func TestIssue24627(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table test(id float primary key AUTO_INCREMENT, col1 int) auto_id_cache 1;")
+	tk.MustExec("replace into test(col1) values(1);")
+	tk.MustExec("replace into test(col1) values(2);")
+	tk.MustQuery("select * from test;").Check(testkit.Rows("1 1", "2 2"))
+}
