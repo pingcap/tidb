@@ -5963,25 +5963,34 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
         "Plan": [
-          "Selection 2658.67 root  lt(test.t.a, 18)",
-          "└─CTEFullScan 3323.33 root CTE:cte data:CTE_0",
-          "CTE_0 3323.33 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 3323.33 root  data:ExchangeSender",
-          "  └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 3544.89 root  data:ExchangeSender",
+          "└─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3544.89 mpp[tiflash]  Column#14, Column#15",
+          "    └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, funcs:firstrow(Column#14)->Column#14, funcs:firstrow(Column#15)->Column#15",
+          "      └─ExchangeReceiver 3544.89 mpp[tiflash]  ",
+          "        └─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
+          "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
+          "            └─Union 4431.11 mpp[tiflash]  ",
+          "              ├─Projection 3323.33 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
+          "              │ └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
+          "              │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "              └─Projection 1107.78 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
+          "                └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE."
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v8, v8.@sel_2), merge(@qb_v8) */ * from v8;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
         "Plan": [
-          "HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
+          "HashAgg 16000.00 root  group by:Column#21, funcs:firstrow(Column#21)->Column#21",
+          "└─Union 1000000010000.00 root  ",
+          "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
+          "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "CTE_1 100000000.00 root  Non-Recursive CTE",
           "└─HashJoin(Seed Part) 100000000.00 root  CARTESIAN inner join",
           "  ├─CTEFullScan(Build) 10000.00 root CTE:cte4 data:CTE_3",
