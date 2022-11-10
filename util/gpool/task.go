@@ -19,6 +19,12 @@ import (
 	"sync/atomic"
 )
 
+type Components int
+
+const (
+	DDL Components = iota
+)
+
 // Context is a interface that can be used to create a context.
 type Context[T any] interface {
 	GetContext() T

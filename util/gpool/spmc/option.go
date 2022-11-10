@@ -16,6 +16,8 @@ package spmc
 
 import (
 	"time"
+
+	"github.com/pingcap/tidb/util/gpool"
 )
 
 // Option represents the optional function.
@@ -51,6 +53,9 @@ type Options struct {
 	// ErrPoolOverload will be returned when Pool.Submit cannot be done at once.
 	// When Nonblocking is true, MaxBlockingTasks is inoperative.
 	Nonblocking bool
+
+	// ComponentType is to tell scheduler which component is using the pool and scheduler will adjust the priority of the component.
+	ComponentType gpool.Components
 }
 
 // DefaultOption is the default option.
@@ -65,6 +70,13 @@ func DefaultOption() *Options {
 func WithExpiryDuration(expiryDuration time.Duration) Option {
 	return func(opts *Options) {
 		opts.ExpiryDuration = expiryDuration
+	}
+}
+
+// WithComponentType indicates whether it should malloc for workers.
+func WithComponentType(t gpool.Components) Option {
+	return func(opts *Options) {
+		opts.ComponentType = t
 	}
 }
 
