@@ -1455,7 +1455,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Debug("handle ddl event failed", zap.Error(err))
+				logutil.BgLogger().Error("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
@@ -1502,11 +1502,17 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		analyzeTicker.Stop()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
+	lastTime := time.Now()
 	for {
 		select {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				t := time.Now()
+				if t.Sub(lastTime) > 30*time.Minute {
+					handle.DumpAutoAnalyzeStatus(do.InfoSchema())
+					lastTime = t
+				}
 			}
 		case <-do.exit:
 			return
