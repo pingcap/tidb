@@ -2895,7 +2895,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
+	ses, err := createSessions(store, 7)
 	if err != nil {
 		return nil, err
 	}
@@ -2969,21 +2969,33 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
+	// setup dumpFileGcChecker
+	dom.SetupPlanReplayerHandle(ses[6])
+	dom.DumpFileGcCheckerLoop()
+
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
+	syncStatsCtxs, err := createSessions(store, cnt)
+	if err != nil {
+		return nil, err
+	}
 	subCtxs := make([]sessionctx.Context, cnt)
 	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(ses[6+i])
+		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
+
+	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
+	if err != nil {
+		return nil, err
+	}
 	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
 	for i := 0; i < analyzeConcurrencyQuota; i++ {
-		subCtxs2[i] = ses[7+concurrency+i]
+		subCtxs2[i] = analyzeCtxs[i]
 	}
 	dom.SetupAnalyzeExec(subCtxs2)
-	dom.DumpFileGcCheckerLoop()
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
