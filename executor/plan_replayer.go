@@ -299,8 +299,6 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		err = zf.Close()
 		if err != nil {
 			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
-		}
-		if err != nil {
 			for i, record := range records {
 				record.FailedReason = err.Error()
 				records[i] = record
