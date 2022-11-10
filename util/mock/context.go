@@ -439,17 +439,15 @@ func (*Context) GetExtensions() *extension.SessionExtensions {
 }
 
 // EnableSandBoxMode enable the sandbox mode.
-func (s *Context) EnableSandBoxMode() {
-	return
+func (*Context) EnableSandBoxMode() {
 }
 
 // DisableSandBoxMode enable the sandbox mode.
-func (s *Context) DisableSandBoxMode() {
-	return
+func (*Context) DisableSandBoxMode() {
 }
 
 // SandBoxMode checks if sandbox mode is enable.
-func (s *Context) SandBoxMode() bool {
+func (*Context) SandBoxMode() bool {
 	return false
 }
 
