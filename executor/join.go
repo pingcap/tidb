@@ -99,7 +99,6 @@ type HashJoinExec struct {
 
 	joinChkResourceCh    []chan *chunk.Chunk
 	joinResultCh         chan *hashjoinWorkerResult
-	rowContainerForProbe []*hashRowContainer
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
