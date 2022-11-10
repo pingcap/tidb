@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
@@ -169,4 +170,35 @@ func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededInd
 	}
 	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
+}
+
+func recordTableRuntimeStats(sctx sessionctx.Context, tbls map[int64]struct{}) {
+	tblStats := sctx.GetSessionVars().StmtCtx.TableStats
+	if tblStats == nil {
+		tblStats = map[int64]interface{}{}
+	}
+	for tblID := range tbls {
+		tblJSONStats, err := recordSingleTableRuntimeStats(sctx, tblID)
+		if err != nil {
+			logutil.BgLogger().Warn("record table json stats failed", zap.Int64("tblID", tblID), zap.Error(err))
+		}
+		if tblJSONStats == nil {
+			logutil.BgLogger().Warn("record table json stats failed due to empty", zap.Int64("tblID", tblID))
+		}
+		tblStats[tblID] = tblJSONStats
+	}
+	sctx.GetSessionVars().StmtCtx.TableStats = tblStats
+}
+
+func recordSingleTableRuntimeStats(sctx sessionctx.Context, tblID int64) (*statistics.Table, error) {
+	dom := domain.GetDomain(sctx)
+	is := dom.InfoSchema()
+	statsHandle := dom.StatsHandle()
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return nil, nil
+	}
+	tableInfo := tbl.Meta()
+	stats := statsHandle.GetTableStats(tableInfo)
+	return stats, nil
 }
