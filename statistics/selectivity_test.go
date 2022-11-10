@@ -1028,3 +1028,49 @@ type outputType struct {
 	SQL    string
 	Result []string
 }
+
+func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned) " +
+		"partition by range (a) " +
+		"(partition p0 values less than (400), " +
+		"partition p1 values less than (600), " +
+		"partition p2 values less than (800)," +
+		"partition p3 values less than (1000)," +
+		"partition p4 values less than (1200))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+	//testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
+	//require.Nil(t, h.Update(dom.InfoSchema()))
+	//for i := range input {
+	//	testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	//}
+}
