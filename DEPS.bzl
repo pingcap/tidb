@@ -2898,8 +2898,8 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
-        sum = "h1:URLoJ61DmmY++Sa/yyPEQHG2s/ZBeV1FbIswHEMrdoY=",
-        version = "v1.1.1-0.20221015072633-39906604fb81",
+        sum = "h1:T7e5Low0BU2ZazI2dz2mh3W1qv+w8wtvq1YR8DneA0c=",
+        version = "v1.1.1-0.20221110065318-21a4942860b3",
     )
     go_repository(
         name = "com_github_pingcap_sysutil",
