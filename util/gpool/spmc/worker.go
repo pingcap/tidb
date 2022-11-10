@@ -83,7 +83,6 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				f.SetStatus(pooltask.StopTask)
 			}
 			if ok := w.pool.revertWorker(w); !ok {
-				//log.Info("exit here")
 				return
 			}
 		}
