@@ -665,7 +665,6 @@ func TestCompressChunkRestore(t *testing.T) {
 	// Produce a mock table info
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
-	se := tmock.NewContext()
 	node, err := p.ParseOneStmt(`
 	CREATE TABLE "table" (
 		a INT,
@@ -675,7 +674,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	)
 `, "", "")
 	require.NoError(t, err)
-	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	core.State = model.StatePublic
 

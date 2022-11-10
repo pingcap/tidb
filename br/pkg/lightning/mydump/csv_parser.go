@@ -573,8 +573,3 @@ func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
 		}
 	}
 }
-
-// SetRowID sets the rowID in a csv file when we start a compressed file.
-func (parser *CSVParser) SetRowID(rowID int64) {
-	parser.lastRow.RowID = rowID
-}
