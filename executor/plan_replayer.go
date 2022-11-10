@@ -290,6 +290,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	sessionVars := task.SessionVars
 	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
+	records := generateRecords(task)
 	defer func() {
 		err = zw.Close()
 		if err != nil {
@@ -298,7 +299,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		err = zf.Close()
 		if err != nil {
 			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+			for i, record := range records {
+				record.FailedReason = err.Error()
+				records[i] = record
+			}
 		}
+		domain.GetDomain(sctx).GetPlanReplayerHandle().InsertPlanReplayerStatus(ctx, records)
 	}()
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
@@ -365,6 +371,20 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 	// Dump explain
 	return dumpExplain(sctx, zw, execStmts, task.Analyze)
+}
+
+func generateRecords(task *PlanReplayerDumpTask) []domain.PlanReplayerStatusRecord {
+	records := make([]domain.PlanReplayerStatusRecord, 0)
+	if len(task.ExecStmts) > 0 {
+		for _, execStmt := range task.ExecStmts {
+			records = append(records, domain.PlanReplayerStatusRecord{
+				OriginSQL: execStmt.Text(),
+				Token:     task.FileName,
+				Internal:  false,
+			})
+		}
+	}
+	return records
 }
 
 func dumpConfig(zw *zip.Writer) error {
