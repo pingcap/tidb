@@ -595,7 +595,7 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 		return storage.Gzip, nil
 	case "snappy":
 		return storage.Snappy, nil
-	case "zst":
+	case "zstd", "zst":
 		return storage.Zstd, nil
 	default:
 		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
