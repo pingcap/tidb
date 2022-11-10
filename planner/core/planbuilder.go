@@ -633,7 +633,7 @@ func (b *PlanBuilder) GetIsForUpdateRead() bool {
 }
 
 // GetDBTableInfo gets the accessed dbs and tables info.
-func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
+func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	var tables []stmtctx.TableEntry
 	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
 		for _, t := range tbls {
@@ -643,7 +643,7 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 		}
 		return false
 	}
-	for _, v := range b.visitInfo {
+	for _, v := range visitInfo {
 		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
 		if !existsFunc(tables, tbl) {
 			tables = append(tables, *tbl)
@@ -3631,7 +3631,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if err != nil {
 		return nil, err
 	}
-	err = insertPlan.buildOnInsertFKChecks(b.ctx, b.is, tn.DBInfo.Name.L)
+	err = insertPlan.buildOnInsertFKTriggers(b.ctx, b.is, tn.DBInfo.Name.L)
 	return insertPlan, err
 }
 

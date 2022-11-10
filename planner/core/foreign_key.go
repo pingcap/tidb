@@ -17,6 +17,7 @@ package core
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -45,6 +46,8 @@ type FKCascade struct {
 	ReferredFK *model.ReferredFKInfo
 	ChildTable table.Table
 	FK         *model.FKInfo
+	FKCols     []*model.ColumnInfo
+	FKIdx      *model.IndexInfo
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
@@ -82,20 +85,24 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
+func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
 	tblInfo := p.Table.Meta()
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	fkCascades := make([]*FKCascade, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
 	if len(updateCols) > 0 {
-		referredFKChecks, _, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
+		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
 		if err != nil {
 			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks = append(fkChecks, referredFKChecks...)
+		}
+		if len(referredFKCascades) > 0 {
+			fkCascades = append(fkCascades, referredFKCascades...)
 		}
 	}
 	for _, fk := range tblInfo.ForeignKeys {
@@ -112,6 +119,7 @@ func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.Inf
 		}
 	}
 	p.FKChecks = fkChecks
+	p.FKCascades = fkCascades
 	return nil
 }
 
@@ -294,13 +302,8 @@ func buildOnDeleteOrUpdateFKTrigger(is infoschema.InfoSchema, referredFK *model.
 	}
 	switch fkReferOption {
 	case model.ReferOptionCascade, model.ReferOptionSetNull:
-		fkCascade := &FKCascade{
-			Tp:         tp,
-			ReferredFK: referredFK,
-			ChildTable: childTable,
-			FK:         fk,
-		}
-		return nil, fkCascade, nil
+		fkCascade, err := buildFKCascade(tp, referredFK, childTable, fk)
+		return nil, fkCascade, err
 	default:
 		fkCheck, err := buildFKCheckForReferredFK(childTable, fk, referredFK)
 		return fkCheck, nil, err
@@ -389,4 +392,35 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
 		FailedErr:       failedErr,
 	}, nil
+}
+
+func buildFKCascade(tp FKCascadeType, referredFK *model.ReferredFKInfo, childTable table.Table, fk *model.FKInfo) (*FKCascade, error) {
+	cols := make([]*model.ColumnInfo, len(fk.Cols))
+	childTableColumns := childTable.Meta().Columns
+	for i, c := range fk.Cols {
+		col := model.FindColumnInfo(childTableColumns, c.L)
+		if col == nil {
+			return nil, errors.Errorf("foreign key column %s is not found in table %s", c.L, childTable.Meta().Name)
+		}
+		cols[i] = col
+	}
+	fkCascade := &FKCascade{
+		Tp:         tp,
+		ReferredFK: referredFK,
+		ChildTable: childTable,
+		FK:         fk,
+		FKCols:     cols,
+	}
+	if childTable.Meta().PKIsHandle && len(cols) == 1 {
+		refColInfo := model.FindColumnInfo(childTableColumns, cols[0].Name.L)
+		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+			return fkCascade, nil
+		}
+	}
+	indexForFK := model.FindIndexByColumns(childTable.Meta(), fk.Cols...)
+	if indexForFK == nil {
+		return nil, errors.Errorf("Missing index for '%s' foreign key columns in the table '%s'", fk.Name, childTable.Meta().Name)
+	}
+	fkCascade.FKIdx = indexForFK
+	return fkCascade, nil
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
@@ -662,6 +663,20 @@ func checkTooLongTable(table model.CIStr) error {
 func checkTooLongIndex(index model.CIStr) error {
 	if utf8.RuneCountInString(index.L) > mysql.MaxIndexIdentifierLen {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(index)
+	}
+	return nil
+}
+
+func checkTooLongColumn(col model.CIStr) error {
+	if utf8.RuneCountInString(col.L) > mysql.MaxColumnNameLength {
+		return dbterror.ErrTooLongIdent.GenWithStackByArgs(col)
+	}
+	return nil
+}
+
+func checkTooLongForeignKey(fk model.CIStr) error {
+	if utf8.RuneCountInString(fk.L) > mysql.MaxForeignKeyIdentifierLen {
+		return dbterror.ErrTooLongIdent.GenWithStackByArgs(fk)
 	}
 	return nil
 }
@@ -1596,11 +1611,10 @@ func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) erro
 	return nil
 }
 
-func checkTooLongColumn(cols []*model.ColumnInfo) error {
+func checkTooLongColumns(cols []*model.ColumnInfo) error {
 	for _, col := range cols {
-		colName := col.Name.O
-		if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
-			return dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
+		if err := checkTooLongColumn(col.Name); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2047,7 +2061,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkDuplicateColumn(tbInfo.Columns); err != nil {
 		return err
 	}
-	if err := checkTooLongColumn(tbInfo.Columns); err != nil {
+	if err := checkTooLongColumns(tbInfo.Columns); err != nil {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
@@ -2818,23 +2832,30 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	return checkListPartitionValue(ctx, tbInfo)
 }
 
+func isColTypeAllowedAsPartitioningCol(fieldType types.FieldType) bool {
+	// The permitted data types are shown in the following list:
+	// All integer types
+	// DATE and DATETIME
+	// CHAR, VARCHAR, BINARY, and VARBINARY
+	// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
+	// Note that also TIME is allowed in MySQL. Also see https://bugs.mysql.com/bug.php?id=84362
+	switch fieldType.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
+	case mysql.TypeVarchar, mysql.TypeString:
+	default:
+		return false
+	}
+	return true
+}
+
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
 		colInfo := tbInfo.FindPublicColumnByName(col.L)
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
-		// The permitted data types are shown in the following list:
-		// All integer types
-		// DATE and DATETIME
-		// CHAR, VARCHAR, BINARY, and VARBINARY
-		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
-		// Note that also TIME is allowed in MySQL. Also see https://bugs.mysql.com/bug.php?id=84362
-		switch colInfo.FieldType.GetType() {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
-		case mysql.TypeVarchar, mysql.TypeString:
-		default:
+		if !isColTypeAllowedAsPartitioningCol(colInfo.FieldType) {
 			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
 		}
 	}
@@ -4591,6 +4612,88 @@ func GetModifiableColumnJob(
 		}
 	}
 
+	// Check that the column change does not affect the partitioning column
+	// It must keep the same type, int [unsigned], [var]char, date[time]
+	if t.Meta().Partition != nil {
+		pt, ok := t.(table.PartitionedTable)
+		if !ok {
+			// Should never happen!
+			return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+		}
+		isPartitioningColumn := false
+		for _, name := range pt.GetPartitionColumnNames() {
+			if strings.EqualFold(name.L, col.Name.L) {
+				isPartitioningColumn = true
+			}
+		}
+		if isPartitioningColumn {
+			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
+				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+			}
+			pi := pt.Meta().GetPartitionInfo()
+			if len(pi.Columns) == 0 {
+				// non COLUMNS partitioning, only checks INTs, not their actual range
+				// There are many edge cases, like when truncating SQL Mode is allowed
+				// which will change the partitioning expression value resulting in a
+				// different partition. Better be safe and not allow decreasing of length.
+				// TODO: Should we allow it in strict mode? Wait for a use case / request.
+				if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
+					return nil, dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+				}
+			}
+			// Basically only allow changes of the length/decimals for the column
+			// Note that enum is not allowed, so elems are not checked
+			// TODO: support partition by ENUM
+			if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
+				newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
+				newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
+				newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+			}
+			// Generate a new PartitionInfo and validate it together with the new column definition
+			// Checks if all partition definition values are compatible.
+			// Similar to what buildRangePartitionDefinitions would do in terms of checks.
+
+			tblInfo := pt.Meta()
+			newTblInfo := *tblInfo
+			// Replace col with newCol and see if we can generate a new SHOW CREATE TABLE
+			// and reparse it and build new partition definitions (which will do additional
+			// checks columns vs partition definition values
+			newCols := make([]*model.ColumnInfo, 0, len(newTblInfo.Columns))
+			for _, c := range newTblInfo.Columns {
+				if c.ID == col.ID {
+					newCols = append(newCols, newCol.ColumnInfo)
+					continue
+				}
+				newCols = append(newCols, c)
+			}
+			newTblInfo.Columns = newCols
+
+			var buf bytes.Buffer
+			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
+			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
+			// Ignoring warnings
+			stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
+			if err != nil {
+				// Should never happen!
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+			}
+			at, ok := stmt[0].(*ast.AlterTableStmt)
+			if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+			}
+			pAst := at.Specs[0].Partition
+			sv := sctx.GetSessionVars().StmtCtx
+			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
+			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
+			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
+			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+			if err != nil {
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
+			}
+		}
+	}
+
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
 		return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
@@ -6165,6 +6268,15 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 	if len(keys) != len(refer.IndexPartSpecifications) {
 		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(fkName, "Key reference and table reference don't match")
 	}
+	if err := checkTooLongForeignKey(fkName); err != nil {
+		return nil, err
+	}
+	if err := checkTooLongSchema(refer.Table.Schema); err != nil {
+		return nil, err
+	}
+	if err := checkTooLongTable(refer.Table.Name); err != nil {
+		return nil, err
+	}
 
 	// all base columns of stored generated columns
 	baseCols := make(map[string]struct{})
@@ -6236,6 +6348,9 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 
 	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexPartSpecifications))
 	for i, key := range refer.IndexPartSpecifications {
+		if err := checkTooLongColumn(key.Column.Name); err != nil {
+			return nil, err
+		}
 		fkInfo.RefCols[i] = key.Column.Name
 	}
 
@@ -6275,6 +6390,24 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	err = checkAddForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, fkCheck)
 	if err != nil {
 		return err
+	}
+	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
+		// Need to auto create index for fk cols
+		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
+		}
+		indexPartSpecifications := make([]*ast.IndexPartSpecification, 0, len(fkInfo.Cols))
+		for _, col := range fkInfo.Cols {
+			indexPartSpecifications = append(indexPartSpecifications, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: types.UnspecifiedLength, // Index prefixes on foreign key columns are not supported.
+			})
+		}
+		indexOption := &ast.IndexOption{}
+		err = d.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
+		if err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
