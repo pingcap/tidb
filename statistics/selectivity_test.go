@@ -922,8 +922,8 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	var (
 		input  []string
-		output []struct{
-			SQL string
+		output []struct {
+			SQL    string
 			Result []string
 		}
 	)
