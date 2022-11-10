@@ -205,8 +205,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	p.planCostInit = true
 
 	// consider tidb_enforce_mpp
-	_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
-	if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() &&
+	if p.StoreType == kv.TiFlash && p.ctx.GetSessionVars().IsMPPEnforced() &&
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 		p.planCostVer2 = divCostVer2(p.planCostVer2, 1000000000)
 	}

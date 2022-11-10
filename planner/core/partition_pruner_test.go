@@ -68,6 +68,7 @@ func TestHashPartitionPruner(t *testing.T) {
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
 	tk.MustExec("use test_range_col_in")
@@ -88,16 +89,14 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select /*+ HASH_AGG() */ count(1) from t1 where dt in ('2020-11-27','2020-11-28')`).Check(
 		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
 			"└─PartitionUnion 2.00 root  ",
-			"  ├─HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-			"  │ └─IndexReader 1.00 root  index:HashAgg",
-			"  │   └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
-			"  │     └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
-			"  │       └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201127, index:PRIMARY(id, dt) keep order:false, stats:pseudo",
-			"  └─HashAgg 1.00 root  funcs:count(Column#10)->Column#5",
-			"    └─IndexReader 1.00 root  index:HashAgg",
-			"      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
-			"        └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
-			"          └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201128, index:PRIMARY(id, dt) keep order:false, stats:pseudo"))
+			"  ├─HashAgg 1.00 root  funcs:count(1)->Column#5",
+			"  │ └─IndexReader 20.00 root  index:Selection",
+			"  │   └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
+			"  │     └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201127, index:PRIMARY(id, dt) keep order:false, stats:pseudo",
+			"  └─HashAgg 1.00 root  funcs:count(1)->Column#5",
+			"    └─IndexReader 20.00 root  index:Selection",
+			"      └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
+			"        └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201128, index:PRIMARY(id, dt) keep order:false, stats:pseudo"))
 
 	tk.MustExec(`insert into t1 values (1, "2020-11-25")`)
 	tk.MustExec(`insert into t1 values (2, "2020-11-26")`)

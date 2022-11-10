@@ -321,6 +321,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t_unistore_act_rows")
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
@@ -363,7 +364,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 		{
 			sql:      "select count(*) from t_unistore_act_rows group by b",
-			expected: []string{"2", "2", "2", "4"},
+			expected: []string{"2", "4", "4"},
 		},
 		{
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
@@ -383,6 +384,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	for _, test := range tests {
+		fmt.Println(">>> ", test.sql)
 		checkActRows(t, tk, test.sql, test.expected)
 	}
 }

@@ -1937,6 +1937,7 @@ func TestIssue17813(t *testing.T) {
 func TestHintWithRequiredProperty(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -2683,6 +2684,7 @@ func TestIndexJoinOnClusteredIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
@@ -5799,6 +5801,7 @@ func TestIssues27130(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));")
 	tk.MustQuery(`explain format=brief select * from t1 where a like "A%"`).Check(testkit.Rows(
 		"TableReader 8000.00 root  data:Selection",
@@ -5814,14 +5817,14 @@ func TestIssues27130(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));")
 	tk.MustQuery(`explain format=brief select * from t2 where a like "A%"`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
+		"IndexReader 8000.00 root  index:Selection",
 		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a, b) keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`explain format=brief select * from t2 where a like "A%" and b like "A%"`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
+		"IndexReader 8000.00 root  index:Selection",
 		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92), like(test.t2.b, \"A%\", 92)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a, b) keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("drop table if exists t3")
@@ -6585,6 +6588,7 @@ func TestIssue31240(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t31240(a int, b int);")
 	tk.MustExec("set @@tidb_allow_mpp = 0")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
 	require.NoError(t, err)
