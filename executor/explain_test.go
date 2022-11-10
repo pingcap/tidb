@@ -384,7 +384,6 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	for _, test := range tests {
-		fmt.Println(">>> ", test.sql)
 		checkActRows(t, tk, test.sql, test.expected)
 	}
 }
