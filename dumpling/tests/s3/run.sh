@@ -107,7 +107,6 @@ do
     gzip "${HOST_DIR}/compress/s3.t.000000000.sql.gz" -d
     diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
   ;;
-
   "snappy")
     snappy -d "${HOST_DIR}/compress/s3-schema-create.sql.snappy"
     diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
@@ -118,7 +117,6 @@ do
     snappy -d "${HOST_DIR}/compress/s3.t.000000000.sql.snappy"
     diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
   ;;
-
   "zst")
     zstd "${HOST_DIR}/compress/s3-schema-create.sql.zst" -d
     diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
