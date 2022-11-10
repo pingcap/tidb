@@ -47,6 +47,8 @@ var (
 	_ Executor = &NestedLoopApplyExec{}
 )
 
+var paddingCnt uint = 4
+
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	baseExecutor
@@ -349,8 +351,8 @@ func (e *HashJoinExec) initializeForProbe() {
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
-	e.buildSideRows = make([][]chunk.Row, e.concurrency)
-	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency)
+	e.buildSideRows = make([][]chunk.Row, e.concurrency*paddingCnt)
+	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency*paddingCnt)
 	e.needCheckBuildRowPos = make([][]int, e.concurrency)
 	e.needCheckProbeRowPos = make([][]int, e.concurrency)
 }
@@ -519,8 +521,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyCo
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], true)
-	buildSideRows, rowsPtrs := e.buildSideRows[workerID], e.buildSideRowPtrs[workerID]
+	e.buildSideRows[workerID*paddingCnt], e.buildSideRowPtrs[workerID*paddingCnt], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID*paddingCnt], e.buildSideRowPtrs[workerID*paddingCnt], true)
+	buildSideRows, rowsPtrs := e.buildSideRows[workerID*paddingCnt], e.buildSideRowPtrs[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -568,8 +570,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		// because AntiLeftOuterSemiJoin cares about the scalar value. If we both have a match from null
 		// bucket and same key bucket, we should return the result as <rhs-row, 0> from same-key bucket
 		// rather than <rhs-row, null> from null bucket.
-		e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-		buildSideRows := e.buildSideRows[workerID]
+		e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID*paddingCnt])
+		buildSideRows := e.buildSideRows[workerID*paddingCnt]
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -598,8 +600,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			}
 		}
 		// step2: match the null bucket secondly.
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows = e.buildSideRows[workerID]
+		e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+		buildSideRows = e.buildSideRows[workerID*paddingCnt]
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -643,8 +645,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 	// case1: <?, null> NOT IN (empty set):             ----------------------> result is <rhs, 1>.
 	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> result is <rhs, null>.
 	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows := e.buildSideRows[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -673,8 +675,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		}
 	}
 	// Step2: match all hash table bucket build rows (use probeKeyNullBits to filter if any).
-	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows = e.buildSideRows[workerID]
+	e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows = e.buildSideRows[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -723,8 +725,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	if probeKeyNullBits == nil {
 		// step1: match null bucket first.
 		// need fetch the "valid" rows every time. (nullBits map check is necessary)
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows := e.buildSideRows[workerID]
+		e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+		buildSideRows := e.buildSideRows[workerID*paddingCnt]
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -753,8 +755,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			}
 		}
 		// step2: then same key bucket.
-		e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-		buildSideRows = e.buildSideRows[workerID]
+		e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID*paddingCnt])
+		buildSideRows = e.buildSideRows[workerID*paddingCnt]
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -798,8 +800,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	// case1: <?, null> NOT IN (empty set):             ----------------------> accept rhs row.
 	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> unknown result, refuse rhs row.
 	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows := e.buildSideRows[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -828,8 +830,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		}
 	}
 	// Step2: match all hash table bucket build rows.
-	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows = e.buildSideRows[workerID]
+	e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID*paddingCnt], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows = e.buildSideRows[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -904,8 +906,8 @@ func (e *HashJoinExec) joinNAAJMatchProbeSideRow2Chunk(workerID uint, probeKey u
 func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	e.buildSideRows[workerID*paddingCnt], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID*paddingCnt])
+	buildSideRows := e.buildSideRows[workerID*paddingCnt]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
