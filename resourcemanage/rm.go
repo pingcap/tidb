@@ -16,14 +16,17 @@ package resourcemanage
 
 import "github.com/pingcap/errors"
 
+// GlobalReourceManage is a global resource manage
 var GlobalReourceManage ResourceManage = NewResourceMange()
 
+// ResourceManage is a resource manage
 type ResourceManage struct {
 	highPriorityPoolMap   map[string]*PoolContainer
 	normalPriorityPoolMap map[string]*PoolContainer
 	lowPriorityPoolMap    map[string]*PoolContainer
 }
 
+// NewResourceMange is to create a new resource manage
 func NewResourceMange() ResourceManage {
 	return ResourceManage{
 		highPriorityPoolMap:   make(map[string]*PoolContainer),
@@ -78,6 +81,7 @@ type GorotinuePool interface {
 	Tune(size int)
 }
 
+// PoolContainer is a pool container
 type PoolContainer struct {
 	pool      GorotinuePool
 	component Component
@@ -98,6 +102,4 @@ type Component int
 const (
 	UNKNOWN Component = iota // it is only for test
 	DDL
-	PLANNER
-	EXECUTOR
 )

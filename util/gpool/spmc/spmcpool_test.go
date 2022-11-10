@@ -77,7 +77,7 @@ func TestPoolWithEnoughCapacity(t *testing.T) {
 		poolsize    = 30
 		concurrency = 6
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", poolsize, resourcemanage.HighPriority, resourcemanage.UNKNOWN, WithExpiryDuration(DefaultExpiredTime), WithComponentType(gpool.DDL))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", poolsize, resourcemanage.HighPriority, resourcemanage.UNKNOWN, WithExpiryDuration(DefaultExpiredTime), WithComponentType(resourcemanage.DDL))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {

@@ -17,7 +17,7 @@ package spmc
 import (
 	"time"
 
-	"github.com/pingcap/tidb/util/gpool"
+	"github.com/pingcap/tidb/resourcemanage"
 )
 
 // Option represents the optional function.
@@ -55,7 +55,7 @@ type Options struct {
 	Nonblocking bool
 
 	// ComponentType is to tell scheduler which component is using the pool and scheduler will adjust the priority of the component.
-	ComponentType gpool.Components
+	ComponentType resourcemanage.Component
 }
 
 // DefaultOption is the default option.
@@ -74,7 +74,7 @@ func WithExpiryDuration(expiryDuration time.Duration) Option {
 }
 
 // WithComponentType indicates whether it should malloc for workers.
-func WithComponentType(t gpool.Components) Option {
+func WithComponentType(t resourcemanage.Component) Option {
 	return func(opts *Options) {
 		opts.ComponentType = t
 	}
