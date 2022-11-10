@@ -116,7 +116,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := math.Max(getAvgRowSize(p.stats, p.schema.Columns), 2.0) // consider all index columns
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.planCostInit = true
@@ -139,7 +139,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 		rowSize = getAvgRowSize(p.stats, p.schema.Columns)
 	}
 	rowSize = math.Max(rowSize, 2.0)
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
@@ -878,9 +878,12 @@ func getTaskMemFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Fa
 	}
 }
 
-func getTaskScanFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+func getTaskScanFactorVer2(p PhysicalPlan, storeType kv.StoreType, taskType property.TaskType) costVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
+	}
+	if storeType == kv.TiFlash {
+		return defaultVer2Factors.TiFlashScan
 	}
 	switch taskType {
 	case property.MppTaskType: // TiFlash
