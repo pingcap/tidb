@@ -122,7 +122,7 @@ go_library(
 
 go_test(
     name = "server_test",
-    timeout = "long",
+    timeout = "moderate",
     srcs = [
         "column_test.go",
         "conn_stmt_test.go",

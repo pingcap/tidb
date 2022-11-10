@@ -188,6 +188,7 @@ go_test(
         "plan_cost_detail_test.go",
         "plan_cost_ver1_test.go",
         "plan_cost_ver2_test.go",
+        "plan_replayer_capture_test.go",
         "plan_stats_test.go",
         "plan_test.go",
         "plan_to_pb_test.go",
