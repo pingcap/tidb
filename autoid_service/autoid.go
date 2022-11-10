@@ -16,12 +16,14 @@ package autoid
 
 import (
 	"context"
+	"crypto/tls"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -31,6 +33,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -245,10 +248,22 @@ type Service struct {
 }
 
 // New return a Service instance.
-func New(selfAddr string, etcdAddr []string, store kv.Storage) *Service {
+func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
+	cfg := config.GetGlobalConfig()
+	etcdLogCfg := zap.NewProductionConfig()
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   etcdAddr,
-		DialTimeout: time.Second,
+		LogConfig:        &etcdLogCfg,
+		Endpoints:        etcdAddr,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		},
+		TLS: tlsConfig,
 	})
 	if err != nil {
 		panic(err)

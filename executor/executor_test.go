@@ -165,6 +165,13 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustQuery("plan replayer dump explain select * from v1")
 	tk.MustQuery("plan replayer dump explain select * from v2")
 	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
+
+	// clear the status table and assert
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	token := tk.Session().GetSessionVars().LastPlanReplayerToken
+	rows := tk.MustQuery(fmt.Sprintf("select * from mysql.plan_replayer_status where token = '%v'", token)).Rows()
+	require.Len(t, rows, 1)
 }
 
 func TestShow(t *testing.T) {
@@ -6227,22 +6234,4 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	err = rs.Close()
 	require.NoError(t, err)
 	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
-}
-
-func TestServerMemoryQuota(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ServerMemoryQuota = 123456789000
-	})
-	defer config.RestoreFunc()()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
-	tk.MustExec("set global tidb_server_memory_limit = 3 << 30")
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(-1))
-	tk.MustExec("set global tidb_server_memory_limit = 0")
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
-	require.Equal(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest(), memory.GlobalMemoryUsageTracker)
-	tk.Session().Close()
-	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest())
 }

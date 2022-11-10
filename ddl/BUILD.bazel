@@ -140,6 +140,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "attributes_sql_test.go",
+        "backfilling_test.go",
         "callback_test.go",
         "cancel_test.go",
         "cluster_test.go",
@@ -256,6 +257,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//util",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_x_exp//slices",
