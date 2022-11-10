@@ -13,3 +13,7 @@
 // limitations under the License.
 
 package resourcemanage
+
+func (r *ResourceManage) schedule() {
+
+}

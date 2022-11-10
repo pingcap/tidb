@@ -14,7 +14,11 @@
 
 package resourcemanage
 
-import "github.com/pingcap/errors"
+import (
+	"time"
+
+	"github.com/pingcap/errors"
+)
 
 // GlobalReourceManage is a global resource manage
 var GlobalReourceManage ResourceManage = NewResourceMange()
@@ -24,6 +28,8 @@ type ResourceManage struct {
 	highPriorityPoolMap   map[string]*PoolContainer
 	normalPriorityPoolMap map[string]*PoolContainer
 	lowPriorityPoolMap    map[string]*PoolContainer
+
+	exitCh chan struct{}
 }
 
 // NewResourceMange is to create a new resource manage
@@ -32,6 +38,18 @@ func NewResourceMange() ResourceManage {
 		highPriorityPoolMap:   make(map[string]*PoolContainer),
 		normalPriorityPoolMap: make(map[string]*PoolContainer),
 		lowPriorityPoolMap:    make(map[string]*PoolContainer),
+	}
+}
+
+func (r *ResourceManage) Start() {
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+		case <-r.exitCh:
+			return
+		}
 	}
 }
 

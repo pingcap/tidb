@@ -14,21 +14,10 @@
 
 package scheduler
 
-import (
-	"time"
-
-	"github.com/pingcap/tidb/resourcemanage"
+const (
+	DefaultHighCPULoad float64 = 0.6
 )
 
-const minCPUSchedulerInterval = 5 * time.Second
-
-type CPUScheduler struct {
-	next time.Time
-}
-
-func (c *CPUScheduler) Tune(component resourcemanage.Component, pool resourcemanage.PoolContainer) {
-	if component != resourcemanage.DDL || time.Since(c.next) < minCPUSchedulerInterval {
-		return
-	}
-
+type Scheduler interface {
+	Tune()
 }
