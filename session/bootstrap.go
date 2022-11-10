@@ -102,7 +102,7 @@ const (
     	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
     	Password_last_changed	TIMESTAMP,
     	Password_lifetime		SMALLINT UNSIGNED,
-    	PRIMARY KEY (Host, User));`
+		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
@@ -433,6 +433,16 @@ const (
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
+
+	// CreatePlanReplayerStatusTable is a table about plan replayer status
+	CreatePlanReplayerStatusTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_status (
+		sql_digest VARCHAR(128),
+		plan_digest VARCHAR(128),
+		origin_sql TEXT,
+		token VARCHAR(128),
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		fail_reason TEXT,
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`
 )
 
 // bootstrap initiates system DB for a store.
@@ -647,13 +657,15 @@ const (
 	version99 = 99
 	// version100 converts server-memory-quota to a sysvar
 	version100 = 100
-	// version101 add columns related to password expiration
+	// version101 add mysql.plan_replayer_status table
 	version101 = 101
+	// version102 add columns related to password expiration
+	version102 = 102
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version101
+var currentBootstrapVersion int64 = version102
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -759,6 +771,7 @@ var (
 		upgradeToVer98,
 		upgradeToVer100,
 		upgradeToVer101,
+		upgradeToVer102,
 	}
 )
 
@@ -2036,6 +2049,13 @@ func upgradeToVer101(s Session, ver int64) {
 	if ver >= version101 {
 		return
 	}
+	doReentrantDDL(s, CreatePlanReplayerStatusTable)
+}
+
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
 		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP,"+
 		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED")
@@ -2137,6 +2157,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
+	//  Create plan_replayer_status table
+	mustExecute(s, CreatePlanReplayerStatusTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
