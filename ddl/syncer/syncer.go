@@ -284,18 +284,16 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			// Set updatedMap according to the serverInfos, and remove some invalid serverInfos.
 			for _, info := range serverInfos {
 				instance := fmt.Sprintf("%s:%d", info.IP, info.Port)
-				insertSererInfo := func() {
-					updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
-					instance2id[instance] = info.ID
-				}
 				if id, ok := instance2id[instance]; ok {
 					if info.StartTimestamp > serverInfos[id].StartTimestamp {
 						// Replace it.
 						delete(updatedMap, id)
-						insertSererInfo()
+						updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+						instance2id[instance] = info.ID
 					}
 				} else {
-					insertSererInfo()
+					updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+					instance2id[instance] = info.ID
 				}
 			}
 		}
