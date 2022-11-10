@@ -100,7 +100,7 @@ const (
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
     	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
-    	Password_last_changed	TIMESTAMP,
+    	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
     	Password_lifetime		SMALLINT UNSIGNED,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -2057,7 +2057,7 @@ func upgradeToVer102(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
-		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP,"+
+		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),"+
 		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED")
 }
 

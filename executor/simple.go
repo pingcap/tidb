@@ -868,7 +868,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql,
-		`INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_last_changed, Password_lifetime) VALUES `,
+		`INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime) VALUES `,
 		mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
@@ -925,7 +925,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?, %?, current_timestamp(), %?)`,
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer, passwordExpire, passwordExpireInterval)
 		users = append(users, spec.User)
 	}

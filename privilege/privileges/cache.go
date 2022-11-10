@@ -659,15 +659,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.GetType() == mysql.TypeEnum:
-			if row.GetEnum(i).String() != "Y" {
-				continue
-			}
-			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
-			if !ok {
-				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
-			}
-			value.Privileges |= priv
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
 		case f.ColumnAsName.L == "user_attributes":
@@ -691,18 +682,27 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				value.PasswordExpired = true
 			}
 		case f.ColumnAsName.L == "password_last_changed":
-			var err error
 			t := row.GetTime(i)
-			value.PasswordLastChanged, err = t.GoTime(time.UTC)
+			gotime, err := t.GoTime(time.UTC)
 			if err != nil {
 				return err
 			}
+			value.PasswordLastChanged = gotime
 		case f.ColumnAsName.L == "password_lifetime":
 			if row.IsNull(i) {
 				value.PasswordLifeTime = -1
 				continue
 			}
 			value.PasswordLifeTime = row.GetInt64(i)
+		case f.Column.GetType() == mysql.TypeEnum:
+			if row.GetEnum(i).String() != "Y" {
+				continue
+			}
+			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+			if !ok {
+				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
+			}
+			value.Privileges |= priv
 		default:
 			value.assignUserOrHost(row, i, f)
 		}

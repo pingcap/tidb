@@ -60,7 +60,7 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, "<token-issuer>", user[4].AuthTokenIssuer)
 	require.Equal(t, true, user[5].PasswordExpired)
 	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[5].PasswordLastChanged)
-	require.Equal(t, 3, user[5].PasswordLifeTime)
+	require.Equal(t, int64(3), user[5].PasswordLifeTime)
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {
@@ -417,12 +417,14 @@ func TestAbnormalMySQLTable(t *testing.T) {
   max_user_connections int(11) unsigned NOT NULL DEFAULT '0',
   plugin char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password',
   authentication_string text COLLATE utf8_bin,
-  password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   token_issuer varchar(255),
   user_attributes json,
+  password_expired		ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+  password_lifetime		SMALLINT UNSIGNED,
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N', '', 'null');
+	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','', '', 'null', 'N', current_timestamp(), null);
 `)
 	var p privileges.MySQLPrivilege
 	require.NoError(t, p.LoadUserTable(tk.Session()))
