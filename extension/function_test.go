@@ -193,9 +193,7 @@ func TestExtensionFuncDynamicArgLen(t *testing.T) {
 }
 
 func TestRegisterExtensionFunc(t *testing.T) {
-	defer func() {
-		extension.Reset()
-	}()
+	defer extension.Reset()
 
 	// nil func
 	extension.Reset()
