@@ -433,6 +433,8 @@ generate_grafana_scripts:
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
+	mv tmp.txt DEPS.bzl
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
@@ -448,6 +450,9 @@ bazel_prepare:
 	bazel run \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
+	bazel run  //cmd/mirror -- --mirror> tmp.txt
+	cp tmp.txt DEPS.bzl
+	rm tmp.txt
 
 bazel_ci_prepare_rbe:
 	bazel run //:gazelle
@@ -473,7 +478,7 @@ bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
-bazel_build: bazel_ci_prepare
+bazel_build:
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=true
@@ -555,3 +560,11 @@ docker:
 
 docker-test:
 	docker buildx build --platform linux/amd64,linux/arm64 --push -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
+
+bazel_mirror:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
+	cp tmp.txt DEPS.bzl
+	rm tmp.txt
+
+bazel_sync:
+	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
