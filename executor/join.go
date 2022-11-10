@@ -90,7 +90,7 @@ type HashJoinExec struct {
 	prepared    bool
 	isOuterJoin bool
 
-	finished atomic.Bool
+	finished atomic.Value
 
 	stats *hashJoinRuntimeStats
 }
@@ -195,7 +195,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	hasWaitedForBuild := false
 	for {
-		if e.finished.Load() {
+		if e.finished.Load().(bool) {
 			return
 		}
 
@@ -278,7 +278,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		}
 	})
 	for {
-		if e.finished.Load() {
+		if e.finished.Load().(bool) {
 			return
 		}
 		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
@@ -449,7 +449,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		keyColIdx: probeKeyColIdx,
 	}
 	for ok := true; ok; {
-		if e.finished.Load() {
+		if e.finished.Load().(bool) {
 			break
 		}
 		select {
@@ -680,14 +680,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
 			}
 		}
-<<<<<<< HEAD
-		go util.WithRecovery(func() {
-=======
-		for i := uint(0); i < e.concurrency; i++ {
-			e.rowIters = append(e.rowIters, chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice))
-		}
 		e.worker.RunWithRecover(func() {
->>>>>>> 208478bf20 (executor: fix hashjoin goleak (#39023))
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
 		}, e.handleFetchAndBuildHashTablePanic)
@@ -781,7 +774,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
-		if e.finished.Load() {
+		if e.finished.Load().(bool) {
 			return nil
 		}
 		if !e.useOuterToBuild {
