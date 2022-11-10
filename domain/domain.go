@@ -1538,11 +1538,21 @@ func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupPlanReplayerHandle(do.planReplayerHandle)
 }
 
+var planReplayerHandleLease = 10 * time.Second
+
+// DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
+func DisablePlanReplayerBackgroundJob4Test() {
+	planReplayerHandleLease = 0
+}
+
 // StartPlanReplayerHandle start plan replayer handle job
 func (do *Domain) StartPlanReplayerHandle() {
+	if planReplayerHandleLease < 1 {
+		return
+	}
 	do.wg.Add(1)
 	go func() {
-		tikcer := time.NewTicker(10 * time.Second)
+		tikcer := time.NewTicker(planReplayerHandleLease)
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
