@@ -161,7 +161,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.indexPlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.indexPlan.Stats(), p.indexPlan.Schema().Columns)
+	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -186,7 +186,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.tablePlan.Stats(), p.tablePlan.Schema().Columns)
+	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType

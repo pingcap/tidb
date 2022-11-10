@@ -158,6 +158,7 @@ func TestOrderedResultModeOnOtherOperators(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")

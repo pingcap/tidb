@@ -435,6 +435,7 @@ func TestCorrelatedEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
