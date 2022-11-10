@@ -2690,7 +2690,6 @@ func TestCreateTableWithAutoIdCache(t *testing.T) {
 	// Test both auto_increment and rowid exist.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
-	fmt.Println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
 	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -2924,7 +2923,6 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t force auto_increment = 2;")
 	tk.MustExec("insert into t values (1),(2);")
-	fmt.Println("6666666666666666666666666666")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
 	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)

@@ -17,7 +17,6 @@ package meta
 import (
 	"fmt"
 	"strconv"
-	"runtime/debug"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
@@ -45,22 +44,18 @@ type autoIDAccessor struct {
 func (a *autoIDAccessor) Get() (int64, error) {
 	m := a.m
 	ret, err := m.txn.HGetInt64(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID))
-	fmt.Println("get ==", a.databaseID, a.tableID, ret)
 	return ret, err
 }
 
 // Put implements the interface AutoIDAccessor.
 func (a *autoIDAccessor) Put(val int64) error {
 	m := a.m
-	fmt.Println("id accessor put ===", val)
 	return m.txn.HSet(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID), []byte(strconv.FormatInt(val, 10)))
 }
 
 // Inc implements the interface AutoIDAccessor.
 func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	m := a.m
-	fmt.Println("id accessor inc ===", step, a.databaseID, a.tableID)
-	debug.PrintStack()
 	dbKey := m.dbKey(a.databaseID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
@@ -109,7 +104,7 @@ type autoIDAccessors struct {
 	access autoIDAccessor
 }
 
-const sepAutoIncVer = model.TableInfoVersion4 + 1
+const sepAutoIncVer = model.TableInfoVersion5
 
 // Get implements the interface AutoIDAccessors.
 func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
@@ -127,7 +122,6 @@ func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
 
 // Put implements the interface AutoIDAccessors.
 func (a *autoIDAccessors) Put(autoIDs AutoIDGroup) error {
-	fmt.Println("id accessors put ===", autoIDs)
 	if err := a.RowID().Put(autoIDs.RowID); err != nil {
 		return err
 	}

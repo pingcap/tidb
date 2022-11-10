@@ -744,7 +744,6 @@ func TestRebaseAutoID(t *testing.T) {
 	tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
 	tk.MustExec("insert tidb.test values (null, 1);")
 	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
-	fmt.Println("=====================================")
 	tk.MustExec("alter table tidb.test auto_increment = 6000;")
 	tk.MustExec("insert tidb.test values (null, 1);")
 	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))

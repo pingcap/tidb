@@ -1542,10 +1542,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
 			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				fmt.Println("global temporary table ... change auto inc to ", alloc)
-				// return &autoid.Allocators{
-				// 	allocs: alloc,
-				// }
 				return autoid.NewAllocators(false, alloc)
 			}
 			// If the session is not in a txn, for example, in "show create table", use the original allocator.

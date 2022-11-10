@@ -3446,7 +3446,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	case autoid.RowIDAllocType:
 		actionType = model.ActionRebaseAutoID
 	default:
-		panic("fuck!")
+		panic(fmt.Sprintf("unimplemented rebase autoid type %s", tp))
 	}
 
 	if !force {

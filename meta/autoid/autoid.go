@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"runtime/debug"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -208,21 +207,21 @@ type Allocator interface {
 // Allocators represents a set of `Allocator`s.
 type Allocators struct {
 	SepAutoInc bool
-	Allocs []Allocator
+	Allocs     []Allocator
 }
 
 // NewAllocators packs multiple `Allocator`s into Allocators.
 func NewAllocators(sepAutoInc bool, allocators ...Allocator) Allocators {
 	return Allocators{
 		SepAutoInc: sepAutoInc,
-		Allocs: allocators,
+		Allocs:     allocators,
 	}
 }
 
 func (all Allocators) Append(a Allocator) Allocators {
 	return Allocators{
 		SepAutoInc: all.SepAutoInc,
-		Allocs: append(all.Allocs, a),
+		Allocs:     append(all.Allocs, a),
 	}
 }
 
@@ -234,10 +233,7 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 		}
 	}
 
-	fmt.Println("Get alloc ===", allocType)
-
 	for _, a := range all.Allocs {
-		fmt.Println("alloc a==", a, a.GetType())
 		if a.GetType() == allocType {
 			return a
 		}
@@ -255,7 +251,7 @@ func (all Allocators) Filter(pred func(Allocator) bool) Allocators {
 	}
 	return Allocators{
 		SepAutoInc: all.SepAutoInc,
-		Allocs: ret,
+		Allocs:     ret,
 	}
 }
 
@@ -307,7 +303,6 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		fmt.Println("get next global auto id ==", autoID, "alloc type ==", alloc.allocType)
 		return nil
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -404,7 +399,6 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 		}
-		fmt.Println("alloc type ===", alloc.allocType, "new base ==", requiredBase)
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -483,8 +477,6 @@ func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error)
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
 func (alloc *allocator) Rebase(ctx context.Context, requiredBase int64, allocIDs bool) error {
-	debug.PrintStack()
-	fmt.Println("in Rebase, requiredBase ==", requiredBase)
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
@@ -495,7 +487,6 @@ func (alloc *allocator) Rebase(ctx context.Context, requiredBase int64, allocIDs
 
 // ForceRebase implements autoid.Allocator ForceRebase interface.
 func (alloc *allocator) ForceRebase(requiredBase int64) error {
-	debug.PrintStack()
 	if requiredBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
@@ -624,8 +615,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	}
 
 	// Use the MySQL compatible AUTO_INCREMENT mode.
-	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 {
-		fmt.Println("single point alloc ...")
+	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 && tbVersion >= model.TableInfoVersion5 {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1
@@ -651,7 +641,6 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
-	// debug.PrintStack()
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
@@ -659,13 +648,11 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	fmt.Println("hasAutoIncID ===", hasAutoIncID )
 	if hasRowID || hasAutoIncID {
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if hasAutoIncID {
-		fmt.Println("run here ... and new ??")
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
@@ -735,14 +722,11 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 		nr := SeekToFirstAutoIDUnSigned(uint64(base), uint64(increment), uint64(offset))
 		// Calculate the total batch size needed.
 		nr += (uint64(n) - 1) * uint64(increment)
-		fmt.Println("fuck is unsigned??", nr, base)
 		return int64(nr - uint64(base))
 	}
 	nr := SeekToFirstAutoIDSigned(base, increment, offset)
-	fmt.Println("seek to first auto signed", nr)
 	// Calculate the total batch size needed.
 	nr += (n - 1) * increment
-	fmt.Println("then xxx", nr, (n-1), increment)
 	return nr - base
 }
 
@@ -881,12 +865,10 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		var newBase, newEnd int64
 		startTime := time.Now()
 		nextStep := alloc.step
-		fmt.Println("alloc.step ==", alloc.step)
 		if !alloc.customStep && alloc.end > 0 {
 			// Although it may skip a segment here, we still think it is consumed.
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
-			fmt.Println("next.step ==", nextStep, alloc.lastAllocTime)
 		}
 
 		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
@@ -916,21 +898,18 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			if err1 != nil {
 				return err1
 			}
-			fmt.Println("alloc type ==", alloc.allocType, "get", newBase)
 			// CalcNeededBatchSize calculates the total batch size needed on global base.
 			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			fmt.Println("newBase", newBase, "nextStep", nextStep, n, increment, offset, n1)
 			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
 
-			fmt.Println("............................", tmpStep)
 			newEnd, err1 = idAcc.Inc(tmpStep)
 			return err1
 		})

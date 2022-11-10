@@ -1241,11 +1241,10 @@ func TestIssue982(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	fmt.Println("88888888888888")
 	tk.MustExec("create table t (c int auto_increment, key(c)) auto_id_cache 1;")
 	tk.MustExec("insert into t values();")
 	tk.MustExec("insert into t values();")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1","2"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
 }
 
 func TestIssue24627(t *testing.T) {
@@ -1267,7 +1266,7 @@ func TestIssue24627(t *testing.T) {
 	for _, sql := range []string{
 		"create table test2(id double primary key clustered AUTO_INCREMENT, col1 int);",
 		"create table test2(id double primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
-	}{
+	} {
 		tk.MustExec(sql)
 		tk.MustExec("replace into test2(col1) values(1);")
 		tk.MustExec("insert into test2(col1) values(1);")
