@@ -1047,13 +1047,28 @@ func newAutoAnalyzeCheck(checkInfo string) autoAnalyzeInfo {
 
 var autoAnalyzeStatus = map[int64]autoAnalyzeInfo{}
 
+func (h *Handle) checkAutoAnalyzeStatus() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	valInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBCheckAutoAnalyzeStatus)
+	if err != nil {
+		logutil.BgLogger().Info("GetGlobalSysVar failed", zap.String("var", variable.TiDBCheckAutoAnalyzeStatus), zap.Error(err))
+		return false
+	}
+	return variable.TiDBOptOn(valInString)
+}
+
 // DumpAutoAnalyzeStatus dumps auto analyze status
-func DumpAutoAnalyzeStatus(is infoschema.InfoSchema) {
+func (h *Handle) DumpAutoAnalyzeStatus(is infoschema.InfoSchema, lastDumpTime time.Time) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("DumpAutoAnalyzeStatus panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+
+	if !h.checkAutoAnalyzeStatus() || time.Since(lastDumpTime) < 30*time.Minute {
+		return false
+	}
 
 	visited := make(map[int64]struct{})
 	dbs := is.AllSchemaNames()
@@ -1111,6 +1126,7 @@ func DumpAutoAnalyzeStatus(is infoschema.InfoSchema) {
 			delete(autoAnalyzeStatus, physicalID)
 		}
 	}
+	return true
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.

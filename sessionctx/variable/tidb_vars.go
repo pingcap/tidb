@@ -708,6 +708,8 @@ const (
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
 	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
+	// TiDBCheckAutoAnalyzeStatus indicates whether to log the reasons why tables need or don't need auto analyze.
+	TiDBCheckAutoAnalyzeStatus = "tidb_check_auto_analyze_status"
 )
 
 // TiDB intentional limits
@@ -898,6 +900,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
+	DefTiDBCheckAutoAnalyzeStatus                = true
 )
 
 // Process global variables.
