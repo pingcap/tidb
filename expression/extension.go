@@ -197,6 +197,10 @@ func (b *extensionFuncSig) ActiveRoles() []*auth.RoleIdentity {
 	return b.ctx.GetSessionVars().ActiveRoles
 }
 
+func (b *extensionFuncSig) CurrentDB() string {
+	return b.ctx.GetSessionVars().CurrentDB
+}
+
 func init() {
 	extension.RegisterExtensionFunc = registerExtensionFunc
 	extension.RemoveExtensionFunc = removeExtensionFunc

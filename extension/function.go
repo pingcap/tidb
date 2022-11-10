@@ -29,6 +29,7 @@ type FunctionContext interface {
 	context.Context
 	User() *auth.UserIdentity
 	ActiveRoles() []*auth.RoleIdentity
+	CurrentDB() string
 	ConnectionInfo() *variable.ConnectionInfo
 	EvalArgs(row chunk.Row) ([]types.Datum, error)
 }

@@ -75,6 +75,7 @@ func TestExtensionFuncCtx(t *testing.T) {
 
 	invoked := false
 	var user *auth.UserIdentity
+	var currentDB string
 	var activeRoles []*auth.RoleIdentity
 	var conn *variable.ConnectionInfo
 
@@ -86,6 +87,7 @@ func TestExtensionFuncCtx(t *testing.T) {
 				require.False(t, invoked)
 				invoked = true
 				user = ctx.User()
+				currentDB = ctx.CurrentDB()
 				activeRoles = ctx.ActiveRoles()
 				conn = ctx.ConnectionInfo()
 				return "done", false, nil
@@ -99,10 +101,12 @@ func TestExtensionFuncCtx(t *testing.T) {
 	tk.MustExec("create user u1@localhost")
 	tk.MustExec("create role r1")
 	tk.MustExec("grant r1 to u1@localhost")
+	tk.MustExec("grant ALL ON test.* to u1@localhost")
 
 	tk1 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	tk1.MustExec("set role r1")
+	tk1.MustExec("use test")
 	tk1.Session().GetSessionVars().ConnectionInfo = &variable.ConnectionInfo{
 		ConnectionID: 12345,
 		User:         "u1",
@@ -113,6 +117,7 @@ func TestExtensionFuncCtx(t *testing.T) {
 	require.True(t, invoked)
 	require.NotNil(t, user)
 	require.Equal(t, *tk1.Session().GetSessionVars().User, *user)
+	require.Equal(t, "test", currentDB)
 	require.NotNil(t, conn)
 	require.Equal(t, *tk1.Session().GetSessionVars().ConnectionInfo, *conn)
 	require.Equal(t, 1, len(activeRoles))
