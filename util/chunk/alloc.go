@@ -128,15 +128,36 @@ func (a *allocator) Reset() {
 	a.allocated = a.allocated[:0]
 
 	//column objects and put them to the column allocator for reuse.
-	for _, pool := range a.columnAlloc.pool {
+	for id, pool := range a.columnAlloc.pool {
 		for _, col := range pool.allocColumns {
-			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && (!col.avoidReusing) && (cap(col.data) < MaxCachedLen) {
+			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && checkColumnType(id, col) {
 				col.reset()
 				pool.freeColumns = append(pool.freeColumns, col)
 			}
 		}
 		pool.allocColumns = pool.allocColumns[:0]
 	}
+}
+
+// checkColumnType check whether the conditions for entering the corresponding queue are met
+// column Reset may change type
+func checkColumnType(id int, col *Column) bool {
+	if col.avoidReusing {
+		return false
+	}
+
+	if id == varElemLen {
+		//Take up too much memory,
+		if cap(col.data) > MaxCachedLen {
+			return false
+		}
+		return col.elemBuf == nil
+	}
+
+	if col.elemBuf == nil {
+		return false
+	}
+	return id == cap(col.elemBuf)
 }
 
 var _ ColumnAllocator = &poolColumnAllocator{}

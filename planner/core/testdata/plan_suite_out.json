@@ -935,7 +935,7 @@
     "Cases": [
       {
         "SQL": "select distinct b from t",
-        "Best": "TableReader(Table(t))->HashAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select count(*) from (select * from t order by b) t group by b",
@@ -959,15 +959,15 @@
       },
       {
         "SQL": "select sum(e), avg(e + c) from t where c = 1 group by c",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->StreamAgg"
       },
       {
         "SQL": "select sum(e), avg(e + c) from t where c = 1 group by e",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->HashAgg"
       },
       {
         "SQL": "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->HashAgg"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->Projection->StreamAgg"
       },
       {
         "SQL": "select sum(e), avg(b + c) from t where c = 1 and b = 1",
@@ -975,11 +975,11 @@
       },
       {
         "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort"
       },
       {
         "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort"
       },
       {
         "SQL": "select sum(to_base64(e)) from t where c = 1",
@@ -987,7 +987,7 @@
       },
       {
         "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,test.t.a)->Projection"
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
@@ -1104,7 +1104,7 @@
       },
       {
         "SQL": "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection"
+        "Best": "TableReader(Table(t)->Sel([or(or(eq(test.t.c, 1), eq(test.t.c, 2)), or(eq(test.t.c, 3), or(eq(test.t.c, 4), eq(test.t.c, 5))))]))->Projection"
       },
       {
         "SQL": "select a from t where c = 5",
@@ -1609,11 +1609,11 @@
       },
       {
         "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_2)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
       },
       {
         "SQL": "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_2)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
       }
     ]
   },
@@ -5171,9 +5171,10 @@
         "SQL": "SELECT /*+ hash_join_probe(t1) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
         "Plan": [
           "HashJoin 10000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─HashAgg(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "│ └─TableReader 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "├─StreamAgg(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─TableReader 8000.00 root  data:StreamAgg",
+          "│   └─StreamAgg 8000.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -5189,9 +5190,10 @@
           "HashJoin 10000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─StreamAgg(Probe) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─TableReader 8000.00 root  data:StreamAgg",
+          "    └─StreamAgg 8000.00 cop[tikv]  group by:test.t2.a, ",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -5239,9 +5241,10 @@
           "HashJoin 10000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─StreamAgg(Probe) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─TableReader 8000.00 root  data:StreamAgg",
+          "    └─StreamAgg 8000.00 cop[tikv]  group by:test.t2.a, ",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -5253,9 +5256,10 @@
         "SQL": "SELECT /*+ hash_join_build(t2@sel_2) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
         "Plan": [
           "HashJoin 10000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─HashAgg(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "│ └─TableReader 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "├─StreamAgg(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─TableReader 8000.00 root  data:StreamAgg",
+          "│   └─StreamAgg 8000.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
