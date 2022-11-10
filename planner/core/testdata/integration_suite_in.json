@@ -775,9 +775,8 @@
       "explain format = 'brief' select /*+ qb_name(qb_v6, v6.@sel_2), NO_DECORRELATE(@qb_v6) */ * from v6;",
 
       // cte hint
-      // TODO: need a further check for CTE
       "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
-      "explain format = 'brief' select /*+ qb_name(qb_v8, v8.@sel_2), merge(@qb_v8) */ * from v8;",
+      "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
 
       // agg to cop hint
       "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
