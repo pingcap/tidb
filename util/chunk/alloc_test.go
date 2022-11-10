@@ -270,3 +270,22 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	alloc = NewAllocator()
 	require.False(t, alloc.CheckReuseAllocSize())
 }
+
+func TestColumnAllocatorCheck(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+	InitChunkAllocSize(10, 20)
+	alloc := NewAllocator()
+	for i := 0; i < 4; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	col := alloc.columnAlloc.NewColumn(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(), 10)
+	col.Reset(types.ETDatetime)
+	alloc.Reset()
+	num := alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP())].Len()
+	require.Equal(t, num, 4)
+	num = alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP())].Len()
+	require.Equal(t, num, 4)
+}
