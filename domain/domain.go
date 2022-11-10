@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -113,6 +114,7 @@ type Domain struct {
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 
@@ -125,6 +127,11 @@ type Domain struct {
 	sysProcesses SysProcesses
 
 	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
 }
 
 type mdlCheckTableInfo struct {
@@ -1524,6 +1531,19 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
+	do.planReplayerHandle = &planReplayerHandle{
+		sctx: ctx,
+	}
+	do.dumpFileGcChecker.setupPlanReplayerHandle(do.planReplayerHandle)
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
@@ -1572,6 +1592,46 @@ func (do *Domain) SetStatsUpdating(val bool) {
 		do.statsUpdating.Store(1)
 	} else {
 		do.statsUpdating.Store(0)
+	}
+}
+
+// ReleaseAnalyzeExec returned extra exec for Analyze
+func (do *Domain) ReleaseAnalyzeExec(sctxs []sessionctx.Context) {
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for _, ctx := range sctxs {
+		do.analyzeMu.sctxs[ctx] = false
+	}
+}
+
+// FetchAnalyzeExec get needed exec for analyze
+func (do *Domain) FetchAnalyzeExec(need int) []sessionctx.Context {
+	if need < 1 {
+		return nil
+	}
+	count := 0
+	r := make([]sessionctx.Context, 0)
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for sctx, used := range do.analyzeMu.sctxs {
+		if used {
+			continue
+		}
+		r = append(r, sctx)
+		do.analyzeMu.sctxs[sctx] = true
+		count++
+		if count >= need {
+			break
+		}
+	}
+	return r
+}
+
+// SetupAnalyzeExec setups exec for Analyze Executor
+func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
+	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
+	for _, ctx := range ctxs {
+		do.analyzeMu.sctxs[ctx] = false
 	}
 }
 
@@ -1718,6 +1778,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -1725,6 +1786,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
+		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -1773,6 +1835,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
+
+		case <-readMemTricker.C:
+			memory.ForceReadMemStats()
 		}
 	}
 }
@@ -1892,7 +1957,10 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 }
 
 // LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
-func (do *Domain) LoadSigningCertLoop() {
+func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
+	sessionstates.SetCertPath(signingCert)
+	sessionstates.SetKeyPath(signingKey)
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {

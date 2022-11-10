@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -32,8 +33,14 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 
 // Process global variables for memory limit.
 var (
+	ServerMemoryLimitOriginText  = atomicutil.NewString("0")
 	ServerMemoryLimit            = atomicutil.NewUint64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+
+	QueryForceDisk       = atomicutil.NewInt64(0)
+	TriggerMemoryLimitGC = atomicutil.NewBool(false)
+	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
+	MemoryLimitGCTotal   = atomicutil.NewInt64(0)
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -225,6 +232,17 @@ func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
 	return t.actionMuForHardLimit.actionOnExceed
 }
 
+// UnbindActions unbinds actionForHardLimit and actionForSoftLimit.
+func (t *Tracker) UnbindActions() {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = nil
+
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {
@@ -287,6 +305,16 @@ func (t *Tracker) Detach() {
 	if parent.isGlobal {
 		t.DetachFromGlobalTracker()
 		return
+	}
+	if parent.IsRootTrackerOfSess {
+		parent.actionMuForHardLimit.Lock()
+		parent.actionMuForHardLimit.actionOnExceed = nil
+		parent.actionMuForHardLimit.Unlock()
+
+		parent.actionMuForSoftLimit.Lock()
+		parent.actionMuForSoftLimit.actionOnExceed = nil
+		parent.actionMuForSoftLimit.Unlock()
+		parent.NeedKill.Store(false)
 	}
 	parent.remove(t)
 	t.mu.Lock()
@@ -528,8 +556,27 @@ func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
 
+// ResetMaxConsumed should be invoked before executing a new statement in a session.
+func (t *Tracker) ResetMaxConsumed() {
+	t.maxConsumed.Store(t.BytesConsumed())
+}
+
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
+		return t
+	}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
+	}
+	return nil
+}
+
+// SearchTrackerWithLock searches the specific tracker under this tracker with lock.
+func (t *Tracker) SearchTrackerWithLock(label int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.label == label {
 		return t
 	}
@@ -785,6 +832,10 @@ const (
 	LabelForAnalyzeMemory int = -24
 	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
 	LabelForGlobalAnalyzeMemory int = -25
+	// LabelForPreparedPlanCache represents the label of the prepared plan cache memory usage
+	LabelForPreparedPlanCache int = -26
+	// LabelForSession represents the label of a session.
+	LabelForSession int = -27
 )
 
 // MetricsTypes is used to get label for metrics

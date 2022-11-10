@@ -709,6 +709,10 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
 func canUseIngest(w *worker) bool {
+	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
+	if len(ingest.LitBackCtxMgr.Keys()) > 0 {
+		return false
+	}
 	ctx, err := w.sessPool.get()
 	if err != nil {
 		return false
@@ -1210,7 +1214,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexWorker),
+			backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexWorker),
 			indexes:        []table.Index{index},
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
@@ -1289,7 +1293,10 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 		recordKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), lastHandle)
 		return recordKey.Next()
 	}
-	return taskRange.endKey.Next()
+	if taskRange.endInclude {
+		return taskRange.endKey.Next()
+	}
+	return taskRange.endKey
 }
 
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
@@ -1705,7 +1712,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeCleanUpIndexWorker),
+			backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeCleanUpIndexWorker),
 			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),

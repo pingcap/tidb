@@ -398,6 +398,14 @@ func TestInsertWrongValueForField(t *testing.T) {
 	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
 	tk.MustGetErrMsg(`INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00')`, `[table:1292]Incorrect timestamp value: '1018-12-24 00:00:00' for column 'time1' at row 1`)
 	tk.MustExec(`DROP TABLE ts`)
+
+	tk.MustExec(`CREATE TABLE t0(c0 SMALLINT AUTO_INCREMENT PRIMARY KEY);`)
+	tk.MustExec(`INSERT IGNORE  INTO t0(c0) VALUES (194626268);`)
+	tk.MustExec(`INSERT IGNORE  INTO t0(c0) VALUES ('*')`)
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(
+		`Warning 1366 Incorrect smallint value: '*' for column 'c0' at row 1`,
+		`Warning 1690 constant 32768 overflows smallint`,
+		`Warning 1467 Failed to read auto-increment value from storage engine`))
 }
 
 func TestInsertValueForCastDecimalField(t *testing.T) {
@@ -1545,6 +1553,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
+	stats.FKCheckTime = time.Second
+	stats.FKCheckStats = &executor.FKCheckRuntimeStats{Keys: 20}
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s, fk_num: 20}", stats.String())
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {

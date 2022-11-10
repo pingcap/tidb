@@ -633,7 +633,7 @@ func (b *PlanBuilder) GetIsForUpdateRead() bool {
 }
 
 // GetDBTableInfo gets the accessed dbs and tables info.
-func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
+func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	var tables []stmtctx.TableEntry
 	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
 		for _, t := range tbls {
@@ -643,7 +643,7 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 		}
 		return false
 	}
-	for _, v := range b.visitInfo {
+	for _, v := range visitInfo {
 		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
 		if !existsFunc(tables, tbl) {
 			tables = append(tables, *tbl)
@@ -3283,6 +3283,16 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			p.StaleTxnStartTS = readTS
 			// consume read ts here
 			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		} else if b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL {
+			// try to get the stale ts from external timestamp
+			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx)
+			if err != nil {
+				return nil, err
+			}
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil
@@ -3621,7 +3631,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if err != nil {
 		return nil, err
 	}
-	insertPlan.FKChecks, err = insertPlan.buildOnInsertFKChecks(b.ctx, b.is, tn.DBInfo.Name.L)
+	err = insertPlan.buildOnInsertFKTriggers(b.ctx, b.is, tn.DBInfo.Name.L)
 	return insertPlan, err
 }
 
@@ -4552,6 +4562,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			v.TableToTables[0].NewTable.Name.L, "", authErr)
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt, *ast.FlashBackDatabaseStmt:
 		// Recover table command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.FlashBackToTimestampStmt:
+		// Flashback cluster can only be executed by user with `super` privilege.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.LockTablesStmt:
 		user := b.ctx.GetSessionVars().User

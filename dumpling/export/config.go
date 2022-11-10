@@ -221,6 +221,9 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg.MaxAllowedPacket = 0
 	if conf.Security.DriveTLSName != "" {
 		driverCfg.TLSConfig = conf.Security.DriveTLSName
+	} else {
+		// Use TLS first.
+		driverCfg.TLSConfig = "preferred"
 	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
@@ -621,9 +624,9 @@ const (
 	// DefaultTableFilter is the default exclude table filter. It will exclude all system databases
 	DefaultTableFilter = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
 
-	defaultDumpThreads        = 128
-	defaultDumpGCSafePointTTL = 5 * 60
-	defaultEtcdDialTimeOut    = 3 * time.Second
+	defaultTaskChannelCapacity = 128
+	defaultDumpGCSafePointTTL  = 5 * 60
+	defaultEtcdDialTimeOut     = 3 * time.Second
 
 	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
 	LooseCollationCompatible = "loose"

@@ -18,6 +18,8 @@ import (
 	"crypto/tls"
 	"sync"
 
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/util"
@@ -78,6 +80,11 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 			return item, true
 		}
 	}
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if sess := msm.conn[id]; sess != nil {
+		return sess.ShowProcess(), true
+	}
 	return &util.ProcessInfo{}, false
 }
 
@@ -107,6 +114,23 @@ func (*MockSessionManager) DeleteInternalSession(interface{}) {}
 // GetInternalSessionStartTSList is to get all startTS of every transactions running in the current internal sessions
 func (*MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
+}
+
+// KillNonFlashbackClusterConn implement SessionManager interface.
+func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
+	for _, se := range msm.conn {
+		processInfo := se.ShowProcess()
+		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
+		if !ok {
+			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			continue
+		}
+		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
+		if !ok {
+			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			continue
+		}
+	}
 }
 
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions

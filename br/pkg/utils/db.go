@@ -71,7 +71,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 // we use `sqlexec.RestrictedSQLExecutor` as parameter because it's easy to mock.
 // it should return error.
 func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
-	valStr := "show config where name = 'log-backup.enable'"
+	valStr := "show config where name = 'log-backup.enable' and type = 'tikv'"
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
 	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
 	if errSQL != nil {
