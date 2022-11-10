@@ -66,6 +66,7 @@ type probeWorker struct {
 	// for every naaj probe worker,  pre-allocate the int slice for store the join column index to check.
 	needCheckBuildRowPos [][]int
 	needCheckProbeRowPos [][]int
+	rowContainerForProbe []*hashRowContainer
 }
 
 // HashJoinExec implements the hash join algorithm.
@@ -259,8 +260,8 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			}
 			// after building is finished. the hash null bucket slice is allocated and determined.
 			// copy it for multi probe worker.
-			for i := range e.rowContainerForProbe {
-				e.rowContainerForProbe[i].hashNANullBucket = e.rowContainer.hashNANullBucket
+			for i := range e.probeWorker.rowContainerForProbe {
+				e.probeWorker.rowContainerForProbe[i].hashNANullBucket = e.rowContainer.hashNANullBucket
 			}
 			hasWaitedForBuild = true
 		}
@@ -497,9 +498,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyCo
 		}
 		start := time.Now()
 		if e.useOuterToBuild {
-			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult)
+			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, e.probeWorker.rowContainerForProbe[workerID], joinResult)
 		} else {
-			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult, selected)
+			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, e.probeWorker.rowContainerForProbe[workerID], joinResult, selected)
 		}
 		probeTime += int64(time.Since(start))
 		if !ok {
@@ -1112,12 +1113,12 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx, retTypes(e.buildSideExec))
 		// we shallow copies rowContainer for each probe worker to avoid lock contention
-		e.rowContainerForProbe = make([]*hashRowContainer, e.concurrency)
+		e.probeWorker.rowContainerForProbe = make([]*hashRowContainer, e.concurrency)
 		for i := uint(0); i < e.concurrency; i++ {
 			if i == 0 {
-				e.rowContainerForProbe[i] = e.rowContainer
+				e.probeWorker.rowContainerForProbe[i] = e.rowContainer
 			} else {
-				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
+				e.probeWorker.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
 			}
 		}
 		for i := uint(0); i < e.concurrency; i++ {
