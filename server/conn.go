@@ -1299,6 +1299,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	if cc.ctx.SandBoxMode() {
+		if cmd != mysql.ComQuery {
+			return errMustChangePassword.GenWithStackByArgs()
+		}
+	}
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}

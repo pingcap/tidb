@@ -783,7 +783,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInnodbIndexCorrupt:                                    mysql.Message("Index corrupt: %s", nil),
 	ErrInvalidYearColumnLength:                               mysql.Message("Supports only YEAR or YEAR(4) column", nil),
 	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements", nil),
-	ErrMustChangePassword:                                    mysql.Message("You must SET PASSWORD before executing this statement", nil),
+	ErrMustChangePassword:                                    mysql.Message("You must reset your password using ALTER USER statement before executing this statement", nil),
 	ErrFkNoIndexChild:                                        mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the foreign table '%s'", nil),
 	ErrForeignKeyNoIndexInParent:                             mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'", nil),
 	ErrFkFailAddSystem:                                       mysql.Message("Failed to add the foreign key constraint '%s' to system tables", nil),

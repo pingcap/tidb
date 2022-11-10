@@ -227,6 +227,13 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
+	if tc.SandBoxMode() {
+		switch stmt.(type) {
+		case *ast.SetPwdStmt, *ast.AlterUserStmt:
+		default:
+			return nil, errMustChangePassword.GenWithStackByArgs()
+		}
+	}
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {

@@ -182,6 +182,12 @@ type Context interface {
 	ReleaseAllAdvisoryLocks() int
 	// GetExtensions returns the `*extension.SessionExtensions` object
 	GetExtensions() *extension.SessionExtensions
+	// SandBoxMode indicates that this Session is in sandbox mode
+	SandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

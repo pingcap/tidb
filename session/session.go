@@ -291,6 +291,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1881,6 +1883,21 @@ func (s *session) GetExtensions() *extension.SessionExtensions {
 // SetExtensions sets the `*extension.SessionExtensions` object
 func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
+}
+
+// SandBoxMode checks if sandbox mode is enable.
+func (s *session) SandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
 }
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test

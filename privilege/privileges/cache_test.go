@@ -17,6 +17,7 @@ package privileges_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,6 +44,7 @@ func TestLoadUserTable(t *testing.T) {
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, user_attributes, token_issuer) VALUES ("%", "root1111", "{\"metadata\": {\"email\": \"user@pingcap.com\"}}", "<token-issuer>")`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed, password_lifetime) VALUES ("%", "root2", "Y", "2022-10-10 12:00:00", 3)`)
 
 	p = privileges.MySQLPrivilege{}
 	require.NoError(t, p.LoadUserTable(tk.Session()))
@@ -56,6 +58,9 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv, user[3].Privileges)
 	require.Equal(t, "user@pingcap.com", user[4].Email)
 	require.Equal(t, "<token-issuer>", user[4].AuthTokenIssuer)
+	require.Equal(t, true, user[5].PasswordExpired)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[5].PasswordLastChanged)
+	require.Equal(t, 3, user[5].PasswordLifeTime)
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {

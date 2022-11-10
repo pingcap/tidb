@@ -438,6 +438,21 @@ func (*Context) GetExtensions() *extension.SessionExtensions {
 	return nil
 }
 
+// EnableSandBoxMode enable the sandbox mode.
+func (s *Context) EnableSandBoxMode() {
+	return
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *Context) DisableSandBoxMode() {
+	return
+}
+
+// SandBoxMode checks if sandbox mode is enable.
+func (s *Context) SandBoxMode() bool {
+	return false
+}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 

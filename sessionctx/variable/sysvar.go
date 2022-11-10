@@ -2099,6 +2099,8 @@ const (
 	ErrorCount = "error_count"
 	// DefaultPasswordLifetime is the name for 'default_password_lifetime' system variable.
 	DefaultPasswordLifetime = "default_password_lifetime"
+	// DisconnectOnExpiredPassword is the name for 'disconnect_on_expired_password' system variable.
+	DisconnectOnExpiredPassword = "disconnect_on_expired_password"
 	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
 	SQLSelectLimit = "sql_select_limit"
 	// MaxConnectErrors is the name for 'max_connect_errors' system variable.

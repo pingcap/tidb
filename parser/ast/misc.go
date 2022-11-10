@@ -98,6 +98,7 @@ type AuthOption struct {
 	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
 	ByAuthString bool
 	AuthString   string
+	ByHashString bool
 	HashString   string
 	AuthPlugin   string
 }

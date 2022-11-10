@@ -122,3 +122,46 @@ func TestUserAttributes(t *testing.T) {
 		testkit.Rows("root % <nil>", "testuser % {\"comment\": \"1234\"}", "testuser1 % {\"age\": 20, \"name\": \"Tom\"}", "testuser2 % <nil>"))
 	tk.MustGetErrCode(`SELECT user, host, user_attributes FROM mysql.user ORDER BY user`, mysql.ErrTableaccessDenied)
 }
+
+func expectedPasswordExpiration(t *testing.T, tk *testkit.TestKit, testuser, expired string, lifetime string) {
+	res := tk.MustQuery(fmt.Sprintf("SELECT password_expired, password_last_changed, password_lifetime FROM mysql.user WHERE user = '%s'", testuser))
+	rows := res.Rows()
+	require.NotEmpty(t, rows)
+	row := rows[0]
+	require.Equal(t, 3, len(row))
+	require.Equal(t, expired, row[0].(string), testuser)
+	require.True(t, len(row[1].(string)) > 0, testuser)
+	require.Equal(t, lifetime, row[2].(string), testuser)
+}
+
+func TestPasswordExpiration(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// CREATE USER
+	tk.MustExec(`CREATE USER testuser`)
+	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	tk.MustExec(`CREATE USER testuser1 PASSWORD EXPIRE`)
+	expectedPasswordExpiration(t, tk, "testuser1", "Y", "<nil>")
+	tk.MustExec(`CREATE USER testuser2 PASSWORD EXPIRE DEFAULT`)
+	expectedPasswordExpiration(t, tk, "testuser2", "N", "<nil>")
+	tk.MustExec(`CREATE USER testuser3 PASSWORD EXPIRE NEVER`)
+	expectedPasswordExpiration(t, tk, "testuser3", "N", "0")
+	tk.MustExec(`CREATE USER testuser4 PASSWORD EXPIRE INTERVAL 3 DAY`)
+	expectedPasswordExpiration(t, tk, "testuser4", "N", "3")
+
+	// ALTER USER
+	tk.MustExec("ALTER USER testuser IDENTIFIED BY '' PASSWORD EXPIRE")
+	expectedPasswordExpiration(t, tk, "testuser", "Y", "<nil>")
+	tk.MustExec("ALTER USER testuser IDENTIFIED WITH 'mysql_native_password' AS ''")
+	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	tk.MustExec("ALTER USER testuser PASSWORD EXPIRE")
+	tk.MustExec("ALTER USER testuser IDENTIFIED BY ''")
+	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE NEVER`)
+	expectedPasswordExpiration(t, tk, "testuser", "N", "0")
+	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE DEFAULT`)
+	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE INTERVAL 3 DAY`)
+	expectedPasswordExpiration(t, tk, "testuser", "N", "3")
+}
