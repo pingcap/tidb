@@ -751,6 +751,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
+	// ConstraintCheckInPlacePessimistic is the default value for the session variable `tidb_constraint_check_in_place_pessimistic`
+	ConstraintCheckInPlacePessimistic bool `toml:"constraint-check-in-place-pessimistic" json:"constraint-check-in-place-pessimistic"`
 }
 
 // TrxSummary is the config for transaction summary collecting.
@@ -772,10 +774,11 @@ func (config *TrxSummary) Valid() error {
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:                   256,
-		DeadlockHistoryCapacity:         10,
-		DeadlockHistoryCollectRetryable: false,
-		PessimisticAutoCommit:           *NewAtomicBool(false),
+		MaxRetryCount:                     256,
+		DeadlockHistoryCapacity:           10,
+		DeadlockHistoryCollectRetryable:   false,
+		PessimisticAutoCommit:             *NewAtomicBool(false),
+		ConstraintCheckInPlacePessimistic: true,
 	}
 }
 
@@ -1040,7 +1043,7 @@ var removedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},

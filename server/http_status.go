@@ -477,7 +477,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
 				break
 			}
-			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store)
+			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store, ebd.TLSConfig())
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
 			s.autoIDService = service
 			break

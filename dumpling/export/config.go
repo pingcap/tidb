@@ -221,6 +221,9 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg.MaxAllowedPacket = 0
 	if conf.Security.DriveTLSName != "" {
 		driverCfg.TLSConfig = conf.Security.DriveTLSName
+	} else {
+		// Use TLS first.
+		driverCfg.TLSConfig = "preferred"
 	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true

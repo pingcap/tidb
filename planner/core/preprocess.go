@@ -675,6 +675,10 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		// ignore constraint check
+		if c.Tp == ast.ConstraintCheck {
+			continue
+		}
 		if c.Keys[0].Expr != nil {
 			continue
 		}
@@ -1727,6 +1731,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		p.InfoSchema = &infoschema.SessionExtendedInfoSchema{InfoSchema: p.InfoSchema}
 		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx

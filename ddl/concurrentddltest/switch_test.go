@@ -87,6 +87,8 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		ch <- struct{}{}
 	}()
 
+	// sleep 2s to make sure the ddl jobs is into table.
+	time.Sleep(2 * time.Second)
 	ticker := time.NewTicker(time.Second)
 	count := 0
 	done := false
