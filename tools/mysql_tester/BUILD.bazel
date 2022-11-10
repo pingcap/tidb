@@ -9,7 +9,7 @@ go_library(
         "util.go",
         "xml.go",
     ],
-    importpath = "github.com/pingcap/tidb/tools/mysql-tester",
+    importpath = "github.com/pingcap/tidb/tools/mysql_tester",
     visibility = ["//visibility:private"],
     deps = [
         "//parser",
@@ -33,4 +33,10 @@ go_test(
     name = "mysql-tester_test",
     srcs = ["query_test.go"],
     embed = [":mysql-tester_lib"],
+)
+
+go_test(
+    name = "mysql_tester_test",
+    srcs = ["query_test.go"],
+    embed = [":mysql_tester_lib"],
 )

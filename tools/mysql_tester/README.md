@@ -43,9 +43,9 @@ Usage of ./mysql-tester:
 
 By default, it connects to the TiDB/MySQL server at `127.0.0.1:4000` with `root` and no passward:
 ```sh
-./mysql-tester # run all the tests
-./mysql-tester example # run a specified test
-./mysql-tester example1 example2   example3 # seperate different tests with one or more spaces
+./mysql_tester # run all the tests
+./mysql_tester example # run a specified test
+./mysql_tester example1 example2   example3 # seperate different tests with one or more spaces
 ```
 
 For more details about how to run and write test cases, see the [Wiki](https://github.com/pingcap/mysql-tester/wiki) page.
