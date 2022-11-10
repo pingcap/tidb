@@ -160,6 +160,42 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	}
 }
 
+// TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
+// The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
+func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct{
+			SQL string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestEstimationForUnknownValues(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

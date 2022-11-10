@@ -879,6 +879,12 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
 	if rowCount > float64(modifyCount) {
 		return float64(modifyCount)
 	}
