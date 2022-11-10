@@ -1508,10 +1508,8 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
-				t := time.Now()
-				if t.Sub(lastTime) > 30*time.Minute {
-					handle.DumpAutoAnalyzeStatus(do.InfoSchema())
-					lastTime = t
+				if statsHandle.DumpAutoAnalyzeStatus(do.InfoSchema(), lastTime) {
+					lastTime = time.Now()
 				}
 			}
 		case <-do.exit:
