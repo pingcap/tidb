@@ -106,7 +106,6 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if err != nil {
 			return ver, err
 		}
-		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
@@ -116,10 +115,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			subJobs[i] = *sub
 			proxyJob := sub.ToProxyJob(job)
-			if schemaVersionGenerated {
+			if i != len(job.MultiSchemaInfo.SubJobs)-1 {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
-			} else {
-				schemaVersionGenerated = true
 			}
 			ver, err = w.runDDLJob(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
@@ -376,8 +373,8 @@ func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
 	}
 	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
 	if err != nil {
-		return ver, err
+		return 0, err
 	}
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-	return ver, err
+	return 0, err
 }
