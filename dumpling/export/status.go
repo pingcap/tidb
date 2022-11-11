@@ -71,6 +71,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
 	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(ret.FinishedBytes)
 	if d.metrics.progressReady.Load() {
+		// chunks will be zero when upstream has no data
 		if d.metrics.totalChunks.Load() == 0 {
 			ret.Progress = "100 %"
 			return ret
