@@ -508,7 +508,7 @@ func (w *partialTableWorker) syncErr(resultCh chan<- *lookupTableTask, err error
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := w.sc.GetSessionVars().GetNewChunk(retTypes(w.tableReader), w.maxChunkSize)
+	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
 	var basic *execdetails.BasicRuntimeStats
 	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
 		basic = be.runtimeStats
@@ -817,7 +817,7 @@ func (w *partialIndexWorker) fetchHandles(
 	resultCh chan<- *lookupTableTask,
 	finished <-chan struct{},
 	handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := w.sc.GetSessionVars().GetNewChunk(handleCols.GetFieldsTypes(), w.maxChunkSize)
+	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.stats != nil {
 		if w.idxID != 0 {

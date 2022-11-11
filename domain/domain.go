@@ -114,6 +114,7 @@ type Domain struct {
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 
@@ -1528,6 +1529,53 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 			}
 		}
 	}()
+}
+
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
+	do.planReplayerHandle = &planReplayerHandle{}
+	do.planReplayerHandle.sctxMu.sctx = ctx
+	do.dumpFileGcChecker.setupPlanReplayerHandle(do.planReplayerHandle)
+}
+
+var planReplayerHandleLease = 10 * time.Second
+
+// DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
+func DisablePlanReplayerBackgroundJob4Test() {
+	planReplayerHandleLease = 0
+}
+
+// StartPlanReplayerHandle start plan replayer handle job
+func (do *Domain) StartPlanReplayerHandle() {
+	if planReplayerHandleLease < 1 {
+		return
+	}
+	do.wg.Add(1)
+	go func() {
+		tikcer := time.NewTicker(planReplayerHandleLease)
+		defer func() {
+			tikcer.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-tikcer.C:
+				err := do.planReplayerHandle.CollectPlanReplayerTask(context.Background())
+				if err != nil {
+					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
