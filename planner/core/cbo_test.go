@@ -609,6 +609,7 @@ func TestIssue9562(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	var input [][]string
 	var output []struct {
 		SQL  []string
