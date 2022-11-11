@@ -226,7 +226,7 @@ func generatePlanReplayerFileName() (string, error) {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	task := &PlanReplayerDumpTask{
+	task := &domain.PlanReplayerDumpTask{
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
@@ -240,18 +240,6 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
-}
-
-// PlanReplayerDumpTask wrap the params for plan replayer dump
-type PlanReplayerDumpTask struct {
-	SessionBindings []*bindinfo.BindRecord
-	EncodedPlan     string
-	FileName        string
-	Zf              *os.File
-	SessionVars     *variable.SessionVars
-	TblStats        map[int64]*handle.JSONTable
-	ExecStmts       []ast.StmtNode
-	Analyze         bool
 }
 
 // DumpPlanReplayerInfo will dump the information about sqls.
@@ -284,7 +272,7 @@ type PlanReplayerDumpTask struct {
      |-....
 */
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
-	task *PlanReplayerDumpTask) (err error) {
+	task *domain.PlanReplayerDumpTask) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
 	sessionVars := task.SessionVars
@@ -373,7 +361,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	return dumpExplain(sctx, zw, execStmts, task.Analyze)
 }
 
-func generateRecords(task *PlanReplayerDumpTask) []domain.PlanReplayerStatusRecord {
+func generateRecords(task *domain.PlanReplayerDumpTask) []domain.PlanReplayerStatusRecord {
 	records := make([]domain.PlanReplayerStatusRecord, 0)
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
