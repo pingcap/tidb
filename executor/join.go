@@ -61,8 +61,8 @@ type probeWorker struct {
 
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	joiner   joiner
-	rowIters *chunk.Iterator4Slice
+	joiner               joiner
+	rowIters             *chunk.Iterator4Slice
 	rowContainerForProbe *hashRowContainer
 	// for every naaj probe worker,  pre-allocate the int slice for store the join column index to check.
 	needCheckBuildRowPos []int
@@ -162,12 +162,7 @@ func (e *HashJoinExec) Close() error {
 		e.waiter.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
-	for _, w := range e.probeWorkers {
-		w.buildSideRows = nil
-		w.buildSideRowPtrs = nil
-		w.needCheckBuildRowPos = nil
-		w.needCheckProbeRowPos = nil
-	}
+	e.probeWorkers = nil
 
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
