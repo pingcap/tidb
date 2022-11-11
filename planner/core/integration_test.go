@@ -7119,26 +7119,26 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"HashAgg_8", "root", "funcs:avg(Column#4)->Column#3"},
+		{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-		{"  └─TableReader_14", "root", "data:TableFullScan_13"},
-		{"    └─TableFullScan_13", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"HashAgg_8", "root", "funcs:sum(Column#4)->Column#3"},
+		{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
 		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-		{"  └─TableReader_14", "root", "data:TableFullScan_13"},
-		{"    └─TableFullScan_13", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"HashAgg_8", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
+		{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
 		{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
-		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"  └─TableReader_10", "root", "data:TableFullScan_9"},
+		{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
