@@ -658,7 +658,7 @@
     "cases": [
       // Hint for view v
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;",
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;",
@@ -672,7 +672,7 @@
 
       // Hint for view v2
       "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;",
-      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v1@sel_1 .@sel_1), merge_join(t@qb_v2_1) */ * from v2;"
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v2), merge_join(t@qb_v2_1) */ * from v2;"
     ]
   },
   {
@@ -721,7 +721,7 @@
 
       // The view contains the hint when creation
       "explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;",
-      "explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), hash_join(t@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), merge_join(t@qb_v3_1) */ * from v3;"
+      "explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;"
     ]
   },
   {
