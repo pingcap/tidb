@@ -4,7 +4,6 @@ package streamhelper
 
 import (
 	"context"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -58,12 +57,6 @@ type CheckpointAdvancer struct {
 	// once tick begin, this should not be changed for now.
 	cfg config.Config
 
-	// the cache of region checkpoints.
-	// so we can advance only ranges with huge gap.
-	cache CheckpointsCache
-
-	// the internal state of advancer.
-	state advancerState
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
 	lastCheckpoint uint64
@@ -72,54 +65,12 @@ type CheckpointAdvancer struct {
 	checkpointsMu sync.Mutex
 }
 
-// advancerState is the sealed type for the state of advancer.
-// the advancer has two stage: full scan and update small tree.
-type advancerState interface {
-	// Note:
-	// Go doesn't support sealed classes or ADTs currently.
-	// (it can only be used at generic constraints...)
-	// Leave it empty for now.
-
-	// ~*fullScan | ~*updateSmallTree
-}
-
-// fullScan is the initial state of advancer.
-// in this stage, we would "fill" the cache:
-// insert ranges that union of them become the full range of task.
-type fullScan struct {
-	fullScanTick int
-}
-
-// updateSmallTree is the "incremental stage" of advancer.
-// we have build a "filled" cache, and we can pop a subrange of it,
-// try to advance the checkpoint of those ranges.
-type updateSmallTree struct {
-	consistencyCheckTick int
-}
-
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
-		env:   env,
-		cfg:   config.Default(),
-		cache: NewCheckpoints(),
-		state: &fullScan{},
+		env: env,
+		cfg: config.Default(),
 	}
-}
-
-// disableCache removes the cache.
-// note this won't lock the checkpoint advancer at `fullScan` state forever,
-// you may need to change the config `AdvancingByCache`.
-func (c *CheckpointAdvancer) disableCache() {
-	c.cache = NoOPCheckpointCache{}
-	c.state = &fullScan{}
-}
-
-// enable the cache.
-// also check `AdvancingByCache` in the config.
-func (c *CheckpointAdvancer) enableCache() {
-	c.cache = NewCheckpoints()
-	c.state = &fullScan{}
 }
 
 // UpdateConfig updates the config for the advancer.
@@ -127,15 +78,7 @@ func (c *CheckpointAdvancer) enableCache() {
 // TODO: support updating config when advancer starts working.
 // (Maybe by applying changes at begin of ticking, and add locks.)
 func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
-	needRefreshCache := newConf.AdvancingByCache != c.cfg.AdvancingByCache
 	c.cfg = newConf
-	if needRefreshCache {
-		if c.cfg.AdvancingByCache {
-			c.enableCache()
-		} else {
-			c.disableCache()
-		}
-	}
 }
 
 // UpdateConfigWith updates the config by modifying the current config.
@@ -250,43 +193,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	return ts, nil
 }
 
-// CalculateGlobalCheckpoint calculates the global checkpoint, which won't use the cache.
-func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uint64, error) {
-	var (
-		cp                    = uint64(math.MaxInt64)
-		thisRun []kv.KeyRange = c.taskRange
-		nextRun []kv.KeyRange
-	)
-	defer c.recordTimeCost("record all")
-	for {
-		coll := NewClusterCollector(ctx, c.env)
-		coll.setOnSuccessHook(c.cache.InsertRange)
-		for _, u := range thisRun {
-			err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
-			if err != nil {
-				return 0, err
-			}
-		}
-		result, err := coll.Finish(ctx)
-		if err != nil {
-			return 0, err
-		}
-		log.Debug("full: a run finished", zap.Any("checkpoint", result))
-
-		nextRun = append(nextRun, result.FailureSubRanges...)
-		if cp > result.Checkpoint {
-			cp = result.Checkpoint
-		}
-		if len(nextRun) == 0 {
-			return cp, nil
-		}
-		thisRun = nextRun
-		nextRun = nil
-		log.Debug("backoffing with subranges", zap.Int("subranges", len(thisRun)))
-		time.Sleep(c.cfg.BackoffTime)
-	}
-}
-
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
 	for {
 		select {
@@ -379,13 +285,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.taskRange = nil
-		c.state = &fullScan{}
 		c.checkpoints = nil
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
-		c.cache.Clear()
 	case EventErr:
 		return e.Err
 	}
@@ -417,23 +321,6 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	}
 	c.lastCheckpoint = cp
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
-	return nil
-}
-
-func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
-	if s.consistencyCheckTick > 0 {
-		s.consistencyCheckTick--
-		return nil
-	}
-	defer c.recordTimeCost("consistency check")()
-	err := c.cache.ConsistencyCheck(c.taskRange)
-	if err != nil {
-		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
-		c.state = &fullScan{}
-		return err
-	}
-	log.Debug("consistency check passed.")
-	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
 	return nil
 }
 

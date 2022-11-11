@@ -29,7 +29,7 @@ func TestSortedBasic(t *testing.T) {
 			return true
 		})
 
-		require.ElementsMatchf(t, result, c.Result, "%s\nvs\n%s", result, c.Result)
+		require.True(t, spans.ValuedSetEquals(result, c.Result), "%s\nvs\n%s", result, c.Result)
 	}
 
 	cases := []Case{

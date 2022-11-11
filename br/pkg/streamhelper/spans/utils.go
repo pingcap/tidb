@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 // Overlaps checks whether two spans have overlapped part.
@@ -67,4 +69,61 @@ func Collapse(length int, getRange func(int) Span) []Span {
 // Full returns a full span crossing the key space.
 func Full() []Span {
 	return []Span{{}}
+}
+
+func (x Valued) Equals(y Valued) bool {
+	return x.Value == y.Value && bytes.Equal(x.Key.StartKey, y.Key.StartKey) && bytes.Equal(x.Key.EndKey, y.Key.EndKey)
+}
+
+func ValuedSetEquals(xs, ys []Valued) bool {
+	if len(xs) == 0 || len(ys) == 0 {
+		return len(ys) == len(xs)
+	}
+
+	sort.Slice(xs, func(i, j int) bool {
+		return bytes.Compare(xs[i].Key.StartKey, xs[j].Key.StartKey) < 0
+	})
+	sort.Slice(ys, func(i, j int) bool {
+		return bytes.Compare(ys[i].Key.StartKey, ys[j].Key.StartKey) < 0
+	})
+
+	xi := 0
+	yi := 0
+
+	for {
+		if xi >= len(xs) || yi >= len(ys) {
+			return (xi >= len(xs)) == (yi >= len(ys))
+		}
+		x := xs[xi]
+		y := ys[yi]
+
+		if !bytes.Equal(x.Key.StartKey, y.Key.StartKey) {
+			return false
+		}
+
+		for {
+			if xi >= len(xs) || yi >= len(ys) {
+				return (xi >= len(xs)) == (yi >= len(ys))
+			}
+			x := xs[xi]
+			y := ys[yi]
+
+			if x.Value != y.Value {
+				return false
+			}
+
+			c := utils.CompareBytesExt(x.Key.EndKey, true, y.Key.EndKey, true)
+			if c == 0 {
+				xi++
+				yi++
+				break
+			}
+			if c < 0 {
+				xi++
+			}
+			if c > 0 {
+				yi++
+			}
+		}
+	}
 }

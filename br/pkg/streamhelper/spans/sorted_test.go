@@ -47,7 +47,7 @@ func TestBasic(t *testing.T) {
 			return true
 		})
 
-		require.Equal(t, result, c.Result, "%s\nvs\n%s", result, c.Result)
+		require.True(t, spans.ValuedSetEquals(result, c.Result), "%s\nvs\n%s", result, c.Result)
 	}
 
 	cases := []Case{
@@ -87,6 +87,20 @@ func TestBasic(t *testing.T) {
 				kv(s("0001", "0004"), 4),
 				kv(s("0004", "0008"), 5),
 				kv(s("0008", ""), 0),
+			},
+		},
+		{
+			InputSequence: []spans.Valued{
+				kv(s("0001", "0004"), 3),
+				kv(s("0004", "0008"), 5),
+				kv(s("0001", "0009"), 4),
+			},
+			Result: []spans.Valued{
+				kv(s("", "0001"), 0),
+				kv(s("0001", "0004"), 4),
+				kv(s("0004", "0008"), 5),
+				kv(s("0008", "0009"), 4),
+				kv(s("0009", ""), 0),
 			},
 		},
 	}

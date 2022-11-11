@@ -21,14 +21,6 @@ func join(a, b Value) Value {
 	return b
 }
 
-// meet find the lower bound of two values.
-func meet(a, b Value) Value {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Span is the type of an adjacent sub key space.
 type Span = kv.KeyRange
 
