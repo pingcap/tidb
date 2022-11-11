@@ -12963,7 +12963,7 @@ AuthOption:
 		$$ = &ast.AuthOption{
 			AuthPlugin:   $3,
 			HashString:   $5,
-			ByHashString: true,
+			ByHashString: $5 != "",
 		}
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
@@ -12971,7 +12971,7 @@ AuthOption:
 		$$ = &ast.AuthOption{
 			AuthPlugin:   mysql.AuthNativePassword,
 			HashString:   $4,
-			ByHashString: true,
+			ByHashString: $4 != "",
 		}
 	}
 
