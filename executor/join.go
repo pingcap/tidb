@@ -168,7 +168,6 @@ func (e *HashJoinExec) Close() error {
 		w.needCheckBuildRowPos = nil
 		w.needCheckProbeRowPos = nil
 	}
-	e.probeWorkers = nil
 
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
