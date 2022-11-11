@@ -440,6 +440,13 @@ const (
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		fail_reason TEXT,
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`
+
+	// CreatePlanReplayerTaskTable is a table about plan replayer capture task
+	CreatePlanReplayerTaskTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_task (
+		sql_digest VARCHAR(128) NOT NULL,
+		plan_digest VARCHAR(128) NOT NULL,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (sql_digest,plan_digest));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -656,11 +663,13 @@ const (
 	version100 = 100
 	// version101 add mysql.plan_replayer_status table
 	version101 = 101
+	// version102 add mysql.plan_replayer_task table
+	version102 = 102
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version101
+var currentBootstrapVersion int64 = version102
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -766,6 +775,7 @@ var (
 		upgradeToVer98,
 		upgradeToVer100,
 		upgradeToVer101,
+		upgradeToVer102,
 	}
 )
 
@@ -2007,6 +2017,13 @@ func upgradeToVer101(s Session, ver int64) {
 	doReentrantDDL(s, CreatePlanReplayerStatusTable)
 }
 
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
+		return
+	}
+	doReentrantDDL(s, CreatePlanReplayerTaskTable)
+}
+
 func upgradeToVer99Before(s Session, ver int64) bool {
 	if ver >= version99 {
 		return false
@@ -2144,6 +2161,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateMDLView)
 	//  Create plan_replayer_status table
 	mustExecute(s, CreatePlanReplayerStatusTable)
+	// Create plan_replayer_task table
+	mustExecute(s, CreatePlanReplayerTaskTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

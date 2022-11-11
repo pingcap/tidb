@@ -26,10 +26,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -115,16 +121,23 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 }
 
 type planReplayerHandle struct {
-	sync.Mutex
-	sctx sessionctx.Context
+	sctxMu struct {
+		sync.Mutex
+		sctx sessionctx.Context
+	}
+
+	taskMu struct {
+		sync.RWMutex
+		tasks map[PlanReplayerTaskKey]struct{}
+	}
 }
 
 // DeletePlanReplayerStatus delete  mysql.plan_replayer_status record
 func (h *planReplayerHandle) deletePlanReplayerStatus(ctx context.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	h.Lock()
-	defer h.Unlock()
-	exec := h.sctx.(sqlexec.SQLExecutor)
+	h.sctxMu.Lock()
+	defer h.sctxMu.Unlock()
+	exec := h.sctxMu.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
 	if err != nil {
 		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
@@ -154,9 +167,9 @@ func (h *planReplayerHandle) InsertPlanReplayerStatus(ctx context.Context, recor
 }
 
 func (h *planReplayerHandle) insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, instance string, record PlanReplayerStatusRecord) {
-	h.Lock()
-	defer h.Unlock()
-	exec := h.sctx.(sqlexec.SQLExecutor)
+	h.sctxMu.Lock()
+	defer h.sctxMu.Unlock()
+	exec := h.sctxMu.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
 		record.OriginSQL, record.FailedReason, instance))
@@ -167,9 +180,9 @@ func (h *planReplayerHandle) insertExternalPlanReplayerErrorStatusRecord(ctx con
 }
 
 func (h *planReplayerHandle) insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, instance string, record PlanReplayerStatusRecord) {
-	h.Lock()
-	defer h.Unlock()
-	exec := h.sctx.(sqlexec.SQLExecutor)
+	h.sctxMu.Lock()
+	defer h.sctxMu.Unlock()
+	exec := h.sctxMu.sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
 		record.OriginSQL, record.Token, instance))
@@ -179,10 +192,119 @@ func (h *planReplayerHandle) insertExternalPlanReplayerSuccessStatusRecord(ctx c
 	}
 }
 
+// CollectPlanReplayerTask collects all unhandled plan replayer task
+func (h *planReplayerHandle) CollectPlanReplayerTask(ctx context.Context) error {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	allKeys, err := h.collectAllPlanReplayerTask(ctx1)
+	if err != nil {
+		return err
+	}
+	tasks := make([]PlanReplayerTaskKey, 0)
+	for _, key := range allKeys {
+		unhandled, err := h.checkUnHandledReplayerTask(ctx1, key)
+		if err != nil {
+			return err
+		}
+		if unhandled {
+			tasks = append(tasks, key)
+		}
+	}
+	h.setupTasks(tasks)
+	return nil
+}
+
+// GetTasks get all tasks
+func (h *planReplayerHandle) GetTasks() []PlanReplayerTaskKey {
+	tasks := make([]PlanReplayerTaskKey, 0)
+	h.taskMu.RLock()
+	defer h.taskMu.RUnlock()
+	for taskKey := range h.taskMu.tasks {
+		tasks = append(tasks, taskKey)
+	}
+	return tasks
+}
+
+func (h *planReplayerHandle) setupTasks(tasks []PlanReplayerTaskKey) {
+	r := make(map[PlanReplayerTaskKey]struct{})
+	for _, task := range tasks {
+		r[task] = struct{}{}
+	}
+	h.taskMu.Lock()
+	defer h.taskMu.Unlock()
+	h.taskMu.tasks = r
+}
+
+func (h *planReplayerHandle) collectAllPlanReplayerTask(ctx context.Context) ([]PlanReplayerTaskKey, error) {
+	h.sctxMu.Lock()
+	defer h.sctxMu.Unlock()
+	exec := h.sctxMu.sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	allKeys := make([]PlanReplayerTaskKey, 0, len(rows))
+	for _, row := range rows {
+		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
+		allKeys = append(allKeys, PlanReplayerTaskKey{
+			sqlDigest:  sqlDigest,
+			planDigest: planDigest,
+		})
+	}
+	return allKeys, nil
+}
+
+func (h *planReplayerHandle) checkUnHandledReplayerTask(ctx context.Context, task PlanReplayerTaskKey) (bool, error) {
+	h.sctxMu.Lock()
+	defer h.sctxMu.Unlock()
+	exec := h.sctxMu.sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.sqlDigest, task.planDigest))
+	if err != nil {
+		return false, err
+	}
+	if rs == nil {
+		return true, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(rows) > 0 {
+		return false, nil
+	}
+	return true, nil
+}
+
 // PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
 type PlanReplayerStatusRecord struct {
 	Internal     bool
 	OriginSQL    string
 	Token        string
 	FailedReason string
+}
+
+// PlanReplayerTaskKey indicates key of a plan replayer task
+type PlanReplayerTaskKey struct {
+	sqlDigest  string
+	planDigest string
+}
+
+// PlanReplayerDumpTask wrap the params for plan replayer dump
+type PlanReplayerDumpTask struct {
+	SessionBindings []*bindinfo.BindRecord
+	EncodedPlan     string
+	FileName        string
+	Zf              *os.File
+	SessionVars     *variable.SessionVars
+	TblStats        map[int64]*handle.JSONTable
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
 }
