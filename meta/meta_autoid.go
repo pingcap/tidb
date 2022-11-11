@@ -15,7 +15,6 @@
 package meta
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"

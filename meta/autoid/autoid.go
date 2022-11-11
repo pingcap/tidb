@@ -615,7 +615,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	}
 
 	// Use the MySQL compatible AUTO_INCREMENT mode.
-	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 && tbVersion >= model.TableInfoVersion5 {
+	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 && alloc.tbVersion >= model.TableInfoVersion5 {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1
