@@ -3467,18 +3467,19 @@
       {
         "SQL": "select count(distinct a) from (select count(distinct deptid) a from employee) x",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(distinct Column#5)->Column#6",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 1.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#7)->Column#5",
-          "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#7",
-          "              └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "                └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "                  └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#6",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#5)->Column#6",
+          "      └─Projection 1.00 mpp[tiflash]  Column#5",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
+          "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#8",
+          "                └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                    └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
       },
       {
