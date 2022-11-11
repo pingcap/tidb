@@ -175,6 +175,7 @@ func TestGetExtraColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`CREATE TABLE t (
 	  a int(11) DEFAULT NULL,
 	  b int(11) DEFAULT NULL,
@@ -188,7 +189,7 @@ func TestGetExtraColumn(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows(`Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustExec(`commit`)
 	tk.MustQuery(`explain format='brief' select count(_tidb_rowid) from t where a=1`).Check(testkit.Rows(
-		`StreamAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
+		`HashAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
 		`└─Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustQuery(`explain format='brief' select *, date_format(b, "") from t where a =1 for update`).Check(testkit.Rows(
 		`Projection 1.00 root  test.t.a, test.t.b, date_format(cast(test.t.b, datetime BINARY), )->Column#4`,
