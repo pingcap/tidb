@@ -165,6 +165,13 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustQuery("plan replayer dump explain select * from v1")
 	tk.MustQuery("plan replayer dump explain select * from v2")
 	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
+
+	// clear the status table and assert
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	token := tk.Session().GetSessionVars().LastPlanReplayerToken
+	rows := tk.MustQuery(fmt.Sprintf("select * from mysql.plan_replayer_status where token = '%v'", token)).Rows()
+	require.Len(t, rows, 1)
 }
 
 func TestShow(t *testing.T) {

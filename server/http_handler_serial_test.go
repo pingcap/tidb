@@ -310,13 +310,13 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
 	require.Equal(t, false, data[0].Available)
 
-	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":184,"region_count":3,"flash_region_count":3}`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "[schema:1146]Table which ID = 84 does not exist.", string(body))
+	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
 	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
