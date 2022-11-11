@@ -1412,6 +1412,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
@@ -1468,25 +1469,23 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
-		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"└─HashJoin 7.20 root  semi join, equal:[eq(test.t.l_orderkey, test.t.l_orderkey)], other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
-		"  └─IndexLookUp(Probe) 27.00 root  ",
-		"    ├─IndexRangeScan(Build) 27.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
-		"    └─Selection(Probe) 27.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
+		"  │   └─TableFullScan 9.00 cop[tikv] table:l2 keep order:false",
+		"  └─TableReader(Probe) 9.00 root  data:Selection",
+		"    └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false"))
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc format = 'brief' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#11",
-		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"HashAgg 1.00 root  funcs:count(1)->Column#11",
+		"└─HashJoin 7.20 root  semi join, equal:[eq(test.t.l_orderkey, test.t.l_orderkey)], other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
-		"  └─IndexLookUp(Probe) 27.00 root  ",
-		"    ├─IndexRangeScan(Build) 27.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
-		"    └─Selection(Probe) 27.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
+		"  │   └─TableFullScan 9.00 cop[tikv] table:l2 keep order:false",
+		"  └─TableReader(Probe) 9.00 root  data:Selection",
+		"    └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 
