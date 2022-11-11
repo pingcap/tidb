@@ -25,6 +25,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
+	validatePwd "github.com/pingcap/tidb/util/validate-password"
 	"hash"
 	"io"
 	"strings"
@@ -73,6 +74,7 @@ var (
 	_ builtinFunc = &builtinSHA2Sig{}
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
+	_ builtinFunc = &builtinValidatePasswordStrengthSig{}
 )
 
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
@@ -1010,5 +1012,64 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	sig := &builtinValidatePasswordStrengthSig{bf}
+	//sig.setPbCode(tipb.ScalarFuncSig_ValidatePasswordStrength)
+	return sig, nil
+}
+
+type builtinValidatePasswordStrengthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
+	newSig := &builtinValidatePasswordStrengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
+func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+		return 0, true, err
+	} else if !variable.TiDBOptOn(validation) {
+		return 0, false, nil
+	}
+
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	} else if isNull {
+		return 0, true, nil
+	} else if len(str) < 4 {
+		return 0, false, nil
+	}
+
+	if ok, err := validatePwd.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+		return 0, true, err
+	} else if !ok {
+		return 0, false, nil
+	}
+
+	if ok, err := validatePwd.ValidateLow(str, &globalVars); err != nil {
+		return 0, false, err
+	} else if !ok {
+		return 25, false, nil
+	}
+
+	// TODO
+
+	return 100, false, nil
 }

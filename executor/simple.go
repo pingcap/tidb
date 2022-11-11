@@ -19,13 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"syscall"
-	"time"
-	"unicode"
-
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -61,6 +54,10 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"os"
+	"strings"
+	"syscall"
+	"time"
 )
 
 var (
@@ -798,106 +795,12 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin s
 	return false
 }
 
-func (e *SimpleExec) validateUserNameInPassword(pwd, username string) error {
-	pwdBytes := hack.Slice(pwd)
-	usernameBytes := hack.Slice(username)
-	userNameLen := len(usernameBytes)
-	if userNameLen == 0 {
-		return nil
-	}
-	if bytes.Contains(pwdBytes, usernameBytes) {
-		return ErrNotValidPassword.GenWithStack("Password Contains User Name")
-	}
-	usernameReversedBytes := make([]byte, userNameLen)
-	for i := range usernameBytes {
-		usernameReversedBytes[i] = usernameBytes[userNameLen-1-i]
-	}
-	if bytes.Contains(pwdBytes, usernameReversedBytes) {
-		return ErrNotValidPassword.GenWithStack("Password Contains Reversed User Name")
-	}
-	return nil
-}
-
 func (e *SimpleExec) enableValidatePassword() bool {
 	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
 		return false
 	}
 	return variable.TiDBOptOn(validatePwdEnable)
-}
-
-func (e *SimpleExec) validatePassword(pwd string, currentUser *auth.UserIdentity) error {
-	globalVars := e.ctx.GetSessionVars().GlobalVarsAccessor
-
-	runes := []rune(pwd)
-	validatePolicy, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordPolicy)
-	if err != nil {
-		return err
-	}
-	if validateLengthStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
-		return err
-	} else if validateLength, err := strconv.ParseInt(validateLengthStr, 10, 64); err != nil {
-		return err
-	} else if (int64)(len(runes)) < validateLength {
-		return ErrNotValidPassword.GenWithStack("Require Password Length: %d", validateLength)
-	}
-	if currentUser != nil {
-		if err = e.validateUserNameInPassword(pwd, currentUser.AuthUsername); err != nil {
-			return err
-		} else if err = e.validateUserNameInPassword(pwd, currentUser.Username); err != nil {
-			return err
-		}
-	}
-	// LOW
-	if validatePolicy == "LOW" {
-		return nil
-	}
-
-	// MEDIUM
-	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
-	for _, r := range runes {
-		if unicode.IsUpper(r) {
-			upperCaseCount++
-		} else if unicode.IsLower(r) {
-			lowerCaseCount++
-		} else if unicode.IsDigit(r) {
-			numberCount++
-		} else {
-			specialCharCount++
-		}
-	}
-	if mixedCaseCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
-		return err
-	} else if mixedCaseCount, err := strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
-		return err
-	} else if lowerCaseCount < mixedCaseCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Lowercase Count: %d", mixedCaseCount)
-	} else if upperCaseCount < mixedCaseCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Uppercase Count: %d", mixedCaseCount)
-	}
-	if requireNumberCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
-		return err
-	} else if requireNumberCount, err := strconv.ParseInt(requireNumberCountStr, 10, 64); err != nil {
-		return err
-	} else if numberCount < requireNumberCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Digit Count: %d", requireNumberCount)
-	}
-	if requireSpecialCharCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
-		return err
-	} else if requireSpecialCharCount, err := strconv.ParseInt(requireSpecialCharCountStr, 10, 64); err != nil {
-		return err
-	} else if specialCharCount < requireSpecialCharCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Non-alphanumeric Count: %d", requireSpecialCharCount)
-	}
-	if validatePolicy == "MEDIUM" {
-		return nil
-	}
-
-	// STRONG
-	if !validatePwd.ValidateDictionaryPassword(pwd) {
-		return ErrNotValidPassword.GenWithStack("Password contains word in the dictionary")
-	}
-	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
@@ -996,7 +899,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 		if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-			if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
+			if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 				return err
 			}
 		}
@@ -1210,7 +1113,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
-				if err := e.validatePassword(spec.AuthOpt.AuthString, e.ctx.GetSessionVars().User); err != nil {
+				if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
 				}
 			}
@@ -1731,7 +1634,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	if e.enableValidatePassword() {
-		if err := e.validatePassword(s.Password, e.ctx.GetSessionVars().User); err != nil {
+		if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
 			return err
 		}
 	}

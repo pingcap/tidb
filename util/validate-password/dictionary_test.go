@@ -41,8 +41,8 @@ func TestValidateDictionaryPassword(t *testing.T) {
 	dict, err := CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
 	require.NoError(t, err)
 	require.NoError(t, UpdateDictionaryFile(dict))
-	require.True(t, ValidateDictionaryPassword("abcdefg"))
-	require.True(t, ValidateDictionaryPassword("abcd123efg"))
-	require.False(t, ValidateDictionaryPassword("abcd1234efg"))
-	require.False(t, ValidateDictionaryPassword("abcd12345efg"))
+	require.True(t, validateDictionaryPassword("abcdefg"))
+	require.True(t, validateDictionaryPassword("abcd123efg"))
+	require.False(t, validateDictionaryPassword("abcd1234efg"))
+	require.False(t, validateDictionaryPassword("abcd12345efg"))
 }

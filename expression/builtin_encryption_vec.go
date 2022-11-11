@@ -863,3 +863,12 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *ch
 	}
 	return nil
 }
+
+func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	// TODO
+	return nil
+}
