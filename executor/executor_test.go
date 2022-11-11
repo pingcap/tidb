@@ -1452,6 +1452,7 @@ func TestSetOperation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`drop table if exists t1, t2, t3`)
 	tk.MustExec(`create table t1(a int)`)
 	tk.MustExec(`create table t2 like t1`)
@@ -1513,6 +1514,7 @@ func TestIndexScanWithYearCol(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
 	tk.MustExec("insert into t values(2001, 1);")
@@ -3332,6 +3334,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -3372,7 +3375,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		"select /*+ inl_hash_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",
 		"SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t",
 		"select /*+ hash_agg() */ count(f) from t group by a",
-		"select /*+ stream_agg() */ count(f) from t group by a",
+		"select /*+ stream_agg() */ count(f) from t",
 		"select * from t order by a, f",
 		"select * from t order by a, f limit 1",
 		"select * from t limit 1",

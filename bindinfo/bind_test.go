@@ -36,6 +36,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -240,7 +241,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.False(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
+	require.True(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 	tk.MustExec("execute stmt1;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -297,6 +298,7 @@ func TestExplain(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
@@ -313,7 +315,7 @@ func TestExplain(t *testing.T) {
 
 	// Add test for SetOprStmt
 	tk.MustExec("create index index_id on t1(id)")
-	require.False(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
+	require.True(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
 	require.True(t, tk.HasPlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader"))
 
 	tk.MustExec("create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1")
