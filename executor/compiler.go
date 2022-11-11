@@ -16,6 +16,9 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -154,7 +157,40 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
+	if variable.EnablePlanReplayerCapture.Load() {
+		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+	}
+
 	return stmt, nil
+}
+
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
+	tasks := domain.GetDomain(sctx).GetPlanReplayerHandle().GetTasks()
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	for _, task := range tasks {
+		if task.SqlDigest == sqlDigest.String() && task.PlanDigest == planDigest.String() {
+			sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
+		}
+	}
+}
+
+func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	dumpTask := &domain.PlanReplayerDumpTask{
+		PlanReplayerTaskKey: domain.PlanReplayerTaskKey{
+			SqlDigest:  sqlDigest,
+			PlanDigest: planDigest,
+		},
+		EncodePlan:      GetEncodedPlan,
+		TblStats:        stmtCtx.TableStats,
+		SessionBindings: handle.GetAllBindRecord(),
+		SessionVars:     sctx.GetSessionVars(),
+		ExecStmts:       []ast.StmtNode{stmtNode},
+		Analyze:         false,
+	}
+	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority

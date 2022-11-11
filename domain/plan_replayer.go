@@ -16,8 +16,12 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,18 +124,6 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	}
 }
 
-type planReplayerHandle struct {
-	*planReplayerTaskCollectorHandle
-}
-
-type planReplayerTaskCollectorHandle struct {
-	taskMu struct {
-		sync.RWMutex
-		tasks map[PlanReplayerTaskKey]struct{}
-	}
-	sctx sessionctx.Context
-}
-
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.(sqlexec.SQLExecutor)
@@ -153,17 +145,15 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
 	}
 	for _, record := range records {
-		if !record.Internal {
-			if len(record.FailedReason) > 0 {
-				insertExternalPlanReplayerErrorStatusRecord(ctx1, sctx, instance, record)
-			} else {
-				insertExternalPlanReplayerSuccessStatusRecord(ctx1, sctx, instance, record)
-			}
+		if len(record.FailedReason) > 0 {
+			insertPlanReplayerErrorStatusRecord(ctx1, sctx, instance, record)
+		} else {
+			insertPlanReplayerSuccessStatusRecord(ctx1, sctx, instance, record)
 		}
 	}
 }
 
-func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
+func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
@@ -174,7 +164,7 @@ func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessi
 	}
 }
 
-func insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
+func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
@@ -185,8 +175,23 @@ func insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, sctx ses
 	}
 }
 
+type planReplayerHandle struct {
+	*planReplayerTaskCollectorHandle
+	*planReplayerTaskDumpHandle
+}
+
+type planReplayerTaskCollectorHandle struct {
+	ctx    context.Context
+	taskMu struct {
+		sync.RWMutex
+		tasks map[PlanReplayerTaskKey]struct{}
+	}
+	sctx sessionctx.Context
+}
+
 // CollectPlanReplayerTask collects all unhandled plan replayer task
-func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask(ctx context.Context) error {
+func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
+	ctx := h.ctx
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	allKeys, err := h.collectAllPlanReplayerTask(ctx1)
 	if err != nil {
@@ -245,16 +250,71 @@ func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context
 	for _, row := range rows {
 		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
 		allKeys = append(allKeys, PlanReplayerTaskKey{
-			sqlDigest:  sqlDigest,
-			planDigest: planDigest,
+			SqlDigest:  sqlDigest,
+			PlanDigest: planDigest,
 		})
 	}
 	return allKeys, nil
 }
 
+type planReplayerTaskDumpHandle struct {
+	ctx    context.Context
+	sctx   sessionctx.Context
+	taskCH chan *PlanReplayerDumpTask
+}
+
+func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
+	select {
+	case task := <-h.taskCH:
+		return task
+	default:
+	}
+	return nil
+}
+
+func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+	file, fileName, err := GeneratePlanReplayerFile()
+	if err != nil {
+		// TODO
+	}
+	task.Zf = file
+	task.FileName = fileName
+	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
+	jsStats := make(map[int64]*handle.JSONTable)
+	is := GetDomain(h.sctx).InfoSchema()
+	for tblID, stat := range task.TblStats {
+		tbl, ok := is.TableByID(tblID)
+		if !ok {
+			return
+		}
+		schema, ok := is.SchemaByTable(tbl.Meta())
+		if !ok {
+			return
+		}
+		r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
+		if err != nil {
+			// TODO
+			return
+		}
+		jsStats[tblID] = r
+	}
+	err = DumpPlanReplayerInfo(h.ctx, h.sctx, task)
+	if err != nil {
+		// TODO
+	}
+}
+
+func (h *planReplayerTaskDumpHandle) SendTask(task *PlanReplayerDumpTask) {
+	select {
+	case h.taskCH <- task:
+	default:
+		// TODO
+	}
+}
+
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.(sqlexec.SQLExecutor)
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.sqlDigest, task.planDigest))
+	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SqlDigest, task.PlanDigest))
 	if err != nil {
 		return false, err
 	}
@@ -274,7 +334,8 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 
 // PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
 type PlanReplayerStatusRecord struct {
-	Internal     bool
+	SQLDigest    string
+	PlanDigest   string
 	OriginSQL    string
 	Token        string
 	FailedReason string
@@ -282,18 +343,55 @@ type PlanReplayerStatusRecord struct {
 
 // PlanReplayerTaskKey indicates key of a plan replayer task
 type PlanReplayerTaskKey struct {
-	sqlDigest  string
-	planDigest string
+	SqlDigest  string
+	PlanDigest string
 }
 
 // PlanReplayerDumpTask wrap the params for plan replayer dump
 type PlanReplayerDumpTask struct {
+	PlanReplayerTaskKey
+
+	EncodePlan func(*stmtctx.StatementContext, bool) (string, string)
+	TblStats   map[int64]interface{}
+
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
-	FileName        string
-	Zf              *os.File
 	SessionVars     *variable.SessionVars
-	TblStats        map[int64]*handle.JSONTable
+	JSONTblStats    map[int64]*handle.JSONTable
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
+
+	FileName string
+	Zf       *os.File
+}
+
+// GeneratePlanReplayerFile generates plan replayer file
+func GeneratePlanReplayerFile() (*os.File, string, error) {
+	path := GetPlanReplayerDirName()
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	fileName, err := generatePlanReplayerFileName()
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	zf, err := os.Create(filepath.Join(path, fileName))
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	return zf, fileName, err
+}
+
+func generatePlanReplayerFileName() (string, error) {
+	// Generate key and create zip file
+	time := time.Now().UnixNano()
+	b := make([]byte, 16)
+	//nolint: gosec
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }

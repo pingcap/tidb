@@ -1532,10 +1532,17 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
-		sctx: ctx,
+		ctx:  ctx,
+		sctx: collectorSctx,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
+		ctx:    ctx,
+		sctx:   dumperSctx,
+		taskCH: make(chan *PlanReplayerDumpTask, 16),
 	}
 }
 
@@ -1569,7 +1576,7 @@ func (do *Domain) StartPlanReplayerHandle() {
 			case <-do.exit:
 				return
 			case <-tikcer.C:
-				err := do.planReplayerHandle.CollectPlanReplayerTask(context.Background())
+				err := do.planReplayerHandle.CollectPlanReplayerTask()
 				if err != nil {
 					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
 				}

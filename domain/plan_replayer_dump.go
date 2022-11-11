@@ -204,7 +204,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	// Dump stats
-	if err = dumpStats(zw, pairs, task.TblStats, do); err != nil {
+	if err = dumpStats(zw, pairs, task.JSONTblStats, do); err != nil {
 		return err
 	}
 
@@ -246,9 +246,10 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
-				OriginSQL: execStmt.Text(),
-				Token:     task.FileName,
-				Internal:  false,
+				SQLDigest:  task.SqlDigest,
+				PlanDigest: task.PlanDigest,
+				OriginSQL:  execStmt.Text(),
+				Token:      task.FileName,
 			})
 		}
 	}

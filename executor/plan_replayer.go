@@ -18,15 +18,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -39,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"os"
+	"strings"
 )
 
 var _ Executor = &PlanReplayerExec{}
@@ -95,42 +90,11 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PlanReplayerExec) createFile() error {
 	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = GeneratePlanReplayerFile()
+	e.DumpInfo.File, e.DumpInfo.FileName, err = domain.GeneratePlanReplayerFile()
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-// GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile() (*os.File, string, error) {
-	path := domain.GetPlanReplayerDirName()
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	fileName, err := generatePlanReplayerFileName()
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	zf, err := os.Create(filepath.Join(path, fileName))
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	return zf, fileName, err
-}
-
-func generatePlanReplayerFileName() (string, error) {
-	// Generate key and create zip file
-	time := time.Now().UnixNano()
-	b := make([]byte, 16)
-	//nolint: gosec
-	_, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	key := base64.URLEncoding.EncodeToString(b)
-	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }
 
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
