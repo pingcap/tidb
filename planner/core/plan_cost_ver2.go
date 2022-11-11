@@ -479,7 +479,7 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 		return zeroCostVer2, err
 	}
 
-	p.planCostVer2 = sumCostVer2(leftChildCost, rightChildCost, filterCost, groupCost)
+	p.planCostVer2 = sumCostVer2(maxCostVer2(leftChildCost, rightChildCost), filterCost, groupCost)
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
@@ -524,10 +524,10 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	}
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
-		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost,
+		p.planCostVer2 = sumCostVer2(maxCostVer2(buildChildCost, probeChildCost),
 			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
 	} else { // TiDB HashJoin
-		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
+		p.planCostVer2 = sumCostVer2(maxCostVer2(buildChildCost, probeChildCost), buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.planCostInit = true
@@ -996,6 +996,25 @@ func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64,
 	if ret.trace {
 		ret.factorCosts[factor.Name] = cost
 		ret.formula = fmt.Sprintf(formulaFormat, formulaArgs...)
+	}
+	return ret
+}
+
+func maxCostVer2(costs ...costVer2) costVer2 {
+	if len(costs) == 0 {
+		return newZeroCostVer2(false)
+	}
+	ret := newZeroCostVer2(costs[0].trace)
+	maxIdx := 0
+	for i, c := range costs {
+		if c.cost > ret.cost {
+			maxIdx = i
+			ret.cost = c.cost
+		}
+	}
+	if ret.trace {
+		ret.factorCosts = costs[maxIdx].factorCosts
+		ret.formula = fmt.Sprintf("max(%v)", costs[maxIdx].formula)
 	}
 	return ret
 }
