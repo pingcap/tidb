@@ -644,6 +644,12 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 		return false
 	}
 	for _, v := range visitInfo {
+		if v.db == "" && v.table == "" {
+			// when v.db == "" and v.table == "", it means this visitInfo is for dynamic privilege,
+			// so it is not related to any database or table.
+			continue
+		}
+
 		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
 		if !existsFunc(tables, tbl) {
 			tables = append(tables, *tbl)
