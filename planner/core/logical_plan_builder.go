@@ -4413,7 +4413,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
 		}
 
-		// Get the hint belong to the view.
+		// Get the hints belong to the current view.
 		currentQBNameMap4View := make(map[string][]ast.HintTable)
 		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
 		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
@@ -4429,8 +4429,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			} else {
 				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
 			}
+
+			// Check whether the current view can match the view name in the hint.
 			if viewQBNameHintTable[0].TableName.L == tblName.L && viewHintSelectOffset == viewSelectOffset {
-				currentQBNameMap4View[qbName] = viewQBNameHintTable
+				// If the view hint can match the current view, we pop the first view table in the query block hint's table list.
+				// It means the hint belong the current view, the first view name in hint is matched.
+				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
+				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
 				delete(b.hintProcessor.QbNameMap4View, qbName)
 				delete(b.hintProcessor.QbHints4View, qbName)
@@ -4966,6 +4971,9 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
+// qbNameMap4View and viewHints are used for the view's hint.
+// qbNameMap4View maps the query block name to the view table lists.
+// viewHints group the view hints based on the view's query block name.
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
@@ -5009,8 +5017,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	currentQbNameMap := make(map[string]int)
 
 	for qbName, viewQbNameHint := range qbNameMap4View {
+		// Check whether the view hint belong the current view or its nested views.
 		selectOffset := -1
-		viewQbNameHint = viewQbNameHint[1:]
 		qbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
@@ -5022,6 +5030,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		}
 
 		if selectOffset != -1 {
+			// If the hint belongs to the current view and not belongs to it's nested views, we should convert the view hint to the normal hint.
+			// After we convert the view hint to the normal hint, it can be reused the origin hint's infrastructure.
 			currentQbHints[selectOffset] = viewHints[qbName]
 			currentQbNameMap[qbName] = selectOffset
 
