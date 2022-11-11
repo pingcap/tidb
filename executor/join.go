@@ -162,6 +162,12 @@ func (e *HashJoinExec) Close() error {
 		e.waiter.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
+	for _, w := range e.probeWorkers {
+		w.buildSideRows = nil
+		w.buildSideRowPtrs = nil
+		w.needCheckBuildRowPos = nil
+		w.needCheckProbeRowPos = nil
+	}
 	e.probeWorkers = nil
 
 	if e.stats != nil && e.rowContainer != nil {
