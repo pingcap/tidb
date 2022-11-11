@@ -82,52 +82,40 @@ export DUMPLING_OUTPUT_DIR=s3://mybucket/dump-compress
 
 for compressType in "gzip" "snappy" "zst"
 do
-  echo "start ${compressType} test"
-  run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress $compressType
+  echo -e "\nstart ${compressType} test"
+  run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress ${compressType}
 
   mkdir -p "${HOST_DIR}/compress"
 
-  if [ "$compressType" = "gzip" ]; then
-    compressFormat="gz"
-  else
-    compressFormat=$compressType
-  fi
-  bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.${compressFormat} "${HOST_DIR}/compress/s3-schema-create.sql.${compressFormat}"
-  bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.${compressFormat} "${HOST_DIR}/compress/s3.t-schema.sql.${compressFormat}"
-  bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.${compressFormat} "${HOST_DIR}/compress/s3.t.000000000.sql.${compressFormat}"
-
   case $compressType in
   "gzip")
-    gzip "${HOST_DIR}/compress/s3-schema-create.sql.gz" -d
-    diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
-
-    gzip "${HOST_DIR}/compress/s3.t-schema.sql.gz" -d
-    diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
-
-    gzip "${HOST_DIR}/compress/s3.t.000000000.sql.gz" -d
-    diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+    suffix="gz"
+    binary=gzip
   ;;
+
   "snappy")
-    snappy -d "${HOST_DIR}/compress/s3-schema-create.sql.snappy"
-    diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
-
-    snappy -d "${HOST_DIR}/compress/s3.t-schema.sql.snappy"
-    diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
-
-    snappy -d "${HOST_DIR}/compress/s3.t.000000000.sql.snappy"
-    diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+    suffix="snappy"
+    binary=snappy
   ;;
+
   "zst")
-    zstd "${HOST_DIR}/compress/s3-schema-create.sql.zst" -d
-    diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
-
-    zstd "${HOST_DIR}/compress/s3.t-schema.sql.zst" -d
-    diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
-
-    zstd "${HOST_DIR}/compress/s3.t.000000000.sql.zst" -d
-    diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+    suffix="zst"
+    binary=zstd
   ;;
   esac
+
+  bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.${suffix} "${HOST_DIR}/compress/s3-schema-create.sql.${suffix}"
+  bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.${suffix} "${HOST_DIR}/compress/s3.t-schema.sql.${suffix}"
+  bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.${suffix} "${HOST_DIR}/compress/s3.t.000000000.sql.${suffix}"
+
+  ${binary} -d "${HOST_DIR}/compress/s3-schema-create.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
+
+  ${binary} -d "${HOST_DIR}/compress/s3.t-schema.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
+
+  ${binary} -d "${HOST_DIR}/compress/s3.t.000000000.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
 
   rm "${HOST_DIR}/compress/s3-schema-create.sql"
   rm "${HOST_DIR}/compress/s3.t-schema.sql"
