@@ -2986,8 +2986,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
-	// setup dumpFileGcChecker
+	// setup plan replayer handle
 	dom.SetupPlanReplayerHandle(ses[6])
+	dom.StartPlanReplayerHandle()
+	// setup dumpFileGcChecker
 	dom.DumpFileGcCheckerLoop()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
