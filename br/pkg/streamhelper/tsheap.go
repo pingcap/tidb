@@ -14,6 +14,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -231,8 +232,8 @@ func (h *Checkpoints) ConsistencyCheck(rangesIn []kv.KeyRange) error {
 	})
 	h.mu.Unlock()
 
-	r := CollapseRanges(len(rangesReal), func(i int) kv.KeyRange { return rangesReal[i] })
-	ri := CollapseRanges(len(rangesIn), func(i int) kv.KeyRange { return rangesIn[i] })
+	r := spans.Collapse(len(rangesReal), func(i int) kv.KeyRange { return rangesReal[i] })
+	ri := spans.Collapse(len(rangesIn), func(i int) kv.KeyRange { return rangesIn[i] })
 
 	return errors.Annotatef(checkIntervalIsSubset(r, ri), "ranges: (current) %s (not in) %s", logutil.StringifyKeys(r),
 		logutil.StringifyKeys(ri))

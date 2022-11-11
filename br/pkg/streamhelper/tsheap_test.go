@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
@@ -110,7 +111,7 @@ func TestMergeRanges(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		result := streamhelper.CollapseRanges(len(c.parameter), func(i int) kv.KeyRange {
+		result := spans.Collapse(len(c.parameter), func(i int) kv.KeyRange {
 			return c.parameter[i]
 		})
 		require.Equal(t, c.expected, result, "case = %d", i)

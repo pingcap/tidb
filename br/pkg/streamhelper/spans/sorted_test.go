@@ -28,15 +28,8 @@ func TestBasic(t *testing.T) {
 		Result        []spans.Valued
 	}
 
-	useGreater := func(a spans.Value, b spans.Value) spans.Value {
-		if a > b {
-			return a
-		}
-		return b
-	}
-
 	run := func(t *testing.T, c Case) {
-		full := spans.NewFullWith(0, useGreater)
+		full := spans.NewFullWith(spans.Full(), 0)
 		fmt.Println(t.Name())
 		for _, i := range c.InputSequence {
 			full.Merge(i)

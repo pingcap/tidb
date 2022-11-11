@@ -3,10 +3,8 @@
 package streamhelper
 
 import (
-	"bytes"
 	"context"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +188,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int, getRang
 	defer c.recordTimeCost("try advance", zap.Int("len", length))()
 	defer utils.PanicToErr(&err)
 
-	ranges := CollapseRanges(length, getRange)
+	ranges := spans.Collapse(length, getRange)
 	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
@@ -289,38 +287,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 	}
 }
 
-// CollapseRanges collapse ranges overlapping or adjacent.
-// Example:
-// CollapseRanges({[1, 4], [2, 8], [3, 9]}) == {[1, 9]}
-// CollapseRanges({[1, 3], [4, 7], [2, 3]}) == {[1, 3], [4, 7]}
-func CollapseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
-	frs := make([]kv.KeyRange, 0, length)
-	for i := 0; i < length; i++ {
-		frs = append(frs, getRange(i))
-	}
-
-	sort.Slice(frs, func(i, j int) bool {
-		return bytes.Compare(frs[i].StartKey, frs[j].StartKey) < 0
-	})
-
-	result := make([]kv.KeyRange, 0, len(frs))
-	i := 0
-	for i < len(frs) {
-		item := frs[i]
-		for {
-			i++
-			if i >= len(frs) || (len(item.EndKey) != 0 && bytes.Compare(frs[i].StartKey, item.EndKey) > 0) {
-				break
-			}
-			if len(item.EndKey) != 0 && bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
-				item.EndKey = frs[i].EndKey
-			}
-		}
-		result = append(result, item)
-	}
-	return result
-}
-
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
 	for {
 		select {
@@ -406,13 +372,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventAdd:
 		utils.LogBackupTaskCountInc()
 		c.task = e.Info
-		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
-		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Info.StartTs, func(v1, v2 spans.Value) spans.Value {
-			if v1 > v2 {
-				return v1
-			}
-			return v2
-		}))
+		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
+		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
 		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
 		utils.LogBackupTaskCountDec()

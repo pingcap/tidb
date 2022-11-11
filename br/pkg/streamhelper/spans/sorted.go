@@ -6,11 +6,33 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 )
 
+// Value is the value type of stored in the span tree.
 type Value = uint64
+
+// join finds the upper bound of two values.
+func join(a, b Value) Value {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// meet find the lower bound of two values.
+func meet(a, b Value) Value {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Span is the type of an adjacent sub key space.
 type Span = kv.KeyRange
+
+// Valued is span binding to a value, which is the entry type of span tree.
 type Valued struct {
 	Key   Span
 	Value Value
@@ -27,14 +49,15 @@ func (r Valued) Less(other btree.Item) bool {
 // ValuedFull represents a set of valued ranges, which doesn't overlap and union of them all is the full key space.
 type ValuedFull struct {
 	inner *btree.BTree
-
-	merge func(Value, Value) Value
 }
 
-func NewFullWith(init Value, merger func(Value, Value) Value) *ValuedFull {
+// NewFullWith creates a set of a subset of spans.
+func NewFullWith(initSpans []Span, init Value) *ValuedFull {
 	t := btree.New(16)
-	t.ReplaceOrInsert(Valued{Value: init, Key: Span{StartKey: []byte{}, EndKey: []byte{}}})
-	return &ValuedFull{inner: t, merge: merger}
+	for _, r := range Collapse(len(initSpans), func(i int) Span { return initSpans[i] }) {
+		t.ReplaceOrInsert(Valued{Value: init, Key: r})
+	}
+	return &ValuedFull{inner: t}
 }
 
 func (f *ValuedFull) Merge(val Valued) {
@@ -70,7 +93,7 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 		emitToCollected = func(rng Valued, standalone bool) {
 			merged := rng.Value
 			if !standalone {
-				merged = f.merge(val.Value, rng.Value)
+				merged = join(val.Value, rng.Value)
 			}
 			if !initialized {
 				collected = rng
@@ -91,7 +114,7 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 	)
 
 	leftmost := overlapped[0]
-	if !bytes.Equal(leftmost.Key.StartKey, val.Key.StartKey) {
+	if bytes.Compare(leftmost.Key.StartKey, val.Key.StartKey) < 0 {
 		emitToCollected(Valued{
 			Key:   Span{StartKey: leftmost.Key.StartKey, EndKey: val.Key.StartKey},
 			Value: leftmost.Value,
@@ -100,7 +123,7 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 	}
 
 	rightmost := overlapped[len(overlapped)-1]
-	if !bytes.Equal(rightmost.Key.EndKey, val.Key.EndKey) {
+	if utils.CompareBytesExt(rightmost.Key.EndKey, true, val.Key.EndKey, true) > 0 {
 		rightTrail = &Valued{
 			Key:   Span{StartKey: val.Key.EndKey, EndKey: rightmost.Key.EndKey},
 			Value: rightmost.Value,
