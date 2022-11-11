@@ -321,10 +321,13 @@ func extractHintWarns(warns []error) []error {
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap        map[string]int // Map from query block name to select stmt offset.
-	QbNameMap4View   map[string][]ast.HintTable
-	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
-	QbHints4View     map[string][]*ast.TableOptimizerHint
+	QbNameMap map[string]int                    // Map from query block name to select stmt offset.
+	QbHints   map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+
+	// Used for the view's hint
+	QbNameMap4View map[string][]ast.HintTable           // Map from view's query block name to view's table list.
+	QbHints4View   map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
+
 	Ctx              sessionctx.Context
 	selectStmtOffset int
 }
