@@ -202,23 +202,35 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 		}
 	}
 	dom.DDL().SetHook(hook)
-	// first try with `tidb_gc_enable` = on
+	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
 	tk.MustExec("set global tidb_gc_enable = on")
+	tk.MustExec("set global tidb_super_read_only = off")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
+
+	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
-	// second try with `tidb_gc_enable` = off
+	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
 	tk.MustExec("set global tidb_gc_enable = off")
+	tk.MustExec("set global tidb_super_read_only = on")
 
 	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)

@@ -975,6 +975,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
@@ -1062,6 +1063,7 @@ func TestSavedPartitionAnalyzeOptions(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2580,6 +2582,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2673,6 +2676,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2864,6 +2868,7 @@ func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -2943,6 +2948,7 @@ func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
