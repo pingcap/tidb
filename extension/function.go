@@ -18,13 +18,19 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// FunctionContext is a interface to provide context to the custom function
+// FunctionContext is an interface to provide context to the custom function
 type FunctionContext interface {
 	context.Context
+	User() *auth.UserIdentity
+	ActiveRoles() []*auth.RoleIdentity
+	CurrentDB() string
+	ConnectionInfo() *variable.ConnectionInfo
 	EvalArgs(row chunk.Row) ([]types.Datum, error)
 }
 
