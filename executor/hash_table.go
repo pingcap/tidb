@@ -124,6 +124,9 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		rowContainer: rc,
 		memTracker:   memory.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	if isNAAJ := len(hCtx.naKeyColIdx) == 0; isNAAJ {
+		c.hashNANullBucket = make([]*naEntry, 0)
+	}
 	rc.GetMemTracker().AttachTo(c.GetMemTracker())
 	return c
 }
