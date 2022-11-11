@@ -1550,7 +1550,8 @@ func (do *Domain) StartPlanReplayerHandle() {
 	if planReplayerHandleLease < 1 {
 		return
 	}
-	do.wg.Run(func() {
+	do.wg.Add(1)
+	go func() {
 		tikcer := time.NewTicker(planReplayerHandleLease)
 		defer func() {
 			tikcer.Stop()
@@ -1569,7 +1570,7 @@ func (do *Domain) StartPlanReplayerHandle() {
 				}
 			}
 		}
-	})
+	}()
 }
 
 // GetPlanReplayerHandle returns plan replayer handle
