@@ -1659,6 +1659,7 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
+	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 
@@ -1694,14 +1695,15 @@ partition by range (a) (
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tableInfo)
-	// global.count = p0.count(3) + p1.count(2) + p2.count(2)
-	// We did not analyze partition p1, so the value here has not changed
-	require.Equal(t, int64(7), globalStats.Count)
+	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
+	// modify count is 2 because we didn't analyze p1 after the second insert
+	require.Equal(t, int64(9), globalStats.Count)
+	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
-	// The value of p1.Count is correct now.
+	// The value of modify count is 0 now.
 	require.Equal(t, int64(9), globalStats.Count)
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
