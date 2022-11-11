@@ -1135,6 +1135,9 @@ func TestDBAStmt(t *testing.T) {
 		// for show stats_meta.
 		{"show stats_meta", true, "SHOW STATS_META"},
 		{"show stats_meta where table_name = 't'", true, "SHOW STATS_META WHERE `table_name`=_UTF8MB4't'"},
+		// for show stats_locked.
+		{"show stats_locked", true, "SHOW STATS_LOCKED"},
+		{"show stats_locked where table_name = 't'", true, "SHOW STATS_LOCKED WHERE `table_name`=_UTF8MB4't'"},
 		// for show stats_histograms
 		{"show stats_histograms", true, "SHOW STATS_HISTOGRAMS"},
 		{"show stats_histograms where col_name = 'a'", true, "SHOW STATS_HISTOGRAMS WHERE `col_name`=_UTF8MB4'a'"},
@@ -1174,6 +1177,12 @@ func TestDBAStmt(t *testing.T) {
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
+		// for lock stats
+		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
+		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		// for unlock stats
+		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
+		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
