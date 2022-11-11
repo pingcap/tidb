@@ -353,7 +353,6 @@ func (e *HashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
-	e.probeWorkers = make([]probeWorker, e.concurrency)
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
