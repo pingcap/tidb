@@ -97,8 +97,8 @@ type HashJoinExec struct {
 	waiter   util.WaitGroupWrapper
 	joinType plannercore.JoinType
 
-	joinChkResourceCh    []chan *chunk.Chunk
-	joinResultCh         chan *hashjoinWorkerResult
+	joinChkResourceCh []chan *chunk.Chunk
+	joinResultCh      chan *hashjoinWorkerResult
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
