@@ -218,6 +218,7 @@ func NewAllocators(sepAutoInc bool, allocators ...Allocator) Allocators {
 	}
 }
 
+// Append add an allocator to the allocators.
 func (all Allocators) Append(a Allocator) Allocators {
 	return Allocators{
 		SepAutoInc: all.SepAutoInc,
