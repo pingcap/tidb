@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/util/cpu"
 )
 
 const minCPUSchedulerInterval = 5 * time.Second
@@ -30,5 +31,8 @@ func (c *CPUScheduler) Tune(component resourcemanage.Component, pool resourceman
 	if component != resourcemanage.DDL || time.Since(c.next) < minCPUSchedulerInterval {
 		return
 	}
-
+	usage := cpu.GetCPUUsage()
+	if usage > 0.8 {
+		return
+	}
 }

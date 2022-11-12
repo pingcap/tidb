@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/cpu"
 )
 
 // GlobalReourceManage is a global resource manage
@@ -29,7 +30,8 @@ type ResourceManage struct {
 	normalPriorityPoolMap map[string]*PoolContainer
 	lowPriorityPoolMap    map[string]*PoolContainer
 
-	exitCh chan struct{}
+	cpuObserver cpu.Observer
+	exitCh      chan struct{}
 }
 
 // NewResourceMange is to create a new resource manage
@@ -42,6 +44,8 @@ func NewResourceMange() ResourceManage {
 }
 
 func (r *ResourceManage) Start() {
+	go r.cpuObserver.Start()
+
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -51,6 +55,11 @@ func (r *ResourceManage) Start() {
 			return
 		}
 	}
+}
+
+func (r *ResourceManage) Stop() {
+	r.cpuObserver.Stop()
+	close(r.exitCh)
 }
 
 // Register is to register pool into resource manage
@@ -97,6 +106,7 @@ type GorotinuePool interface {
 	Release()
 
 	Tune(size int)
+	Cap() int
 }
 
 // PoolContainer is a pool container

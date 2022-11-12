@@ -8,5 +8,8 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/resourcemanage/scheduler",
     visibility = ["//visibility:public"],
-    deps = ["//resourcemanage"],
+    deps = [
+        "//resourcemanage",
+        "//util/cpu",
+    ],
 )
