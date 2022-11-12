@@ -122,7 +122,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				schemaVersionGenerated = true
 			}
 			proxyJobVer, err := w.runDDLJob(d, t, &proxyJob)
-			if proxyJobVer != 0 {
+			if !proxyJob.MultiSchemaInfo.SkipVersion {
 				ver = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
