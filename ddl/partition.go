@@ -782,6 +782,9 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	}
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := collectColumnsType(tbInfo)
+		if len(colTypes) != len(tbInfo.Partition.Columns) {
+			return dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
 			return err
 		}
@@ -1081,6 +1084,9 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
+	if len(colTypes) != len(tbInfo.Partition.Columns) {
+		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+	}
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -1139,7 +1145,11 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := make([]types.FieldType, 0, len(tbInfo.Partition.Columns))
 		for _, col := range tbInfo.Partition.Columns {
-			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldType)
+			c := findColumnByName(col.L, tbInfo)
+			if c == nil {
+				return nil
+			}
+			colTypes = append(colTypes, c.FieldType)
 		}
 
 		return colTypes
@@ -1152,6 +1162,9 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
+	if len(colTypes) != len(tbInfo.Partition.Columns) {
+		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+	}
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err

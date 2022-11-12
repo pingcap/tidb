@@ -2898,8 +2898,8 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
-        sum = "h1:URLoJ61DmmY++Sa/yyPEQHG2s/ZBeV1FbIswHEMrdoY=",
-        version = "v1.1.1-0.20221015072633-39906604fb81",
+        sum = "h1:T7e5Low0BU2ZazI2dz2mh3W1qv+w8wtvq1YR8DneA0c=",
+        version = "v1.1.1-0.20221110065318-21a4942860b3",
     )
     go_repository(
         name = "com_github_pingcap_sysutil",
@@ -3495,8 +3495,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:x5L32xr5KE2C0UhlKfrsDTWQ/8fpFYQLq5xn+ph0sQ0=",
-        version = "v2.0.3-0.20221103084528-ec1202a9d26f",
+        sum = "h1:nFVdyTXcQYZwQQCdSJcFI1vBFyzG1hVuZ39MAK6wqK4=",
+        version = "v2.0.3-0.20221108030801-9c0835c80eba",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
