@@ -6542,10 +6542,7 @@ func CheckIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t 
 		if indexInfo == nil && !t.Meta().PKIsHandle {
 			return isPK, dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs("PRIMARY")
 		}
-		if t.Meta().PKIsHandle {
-			return isPK, dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
-		}
-		if t.Meta().IsCommonHandle {
+		if t.Meta().IsCommonHandle || t.Meta().PKIsHandle {
 			return isPK, dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
 		}
 	}

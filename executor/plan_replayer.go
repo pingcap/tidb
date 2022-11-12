@@ -226,7 +226,7 @@ func generatePlanReplayerFileName() (string, error) {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	task := &PlanReplayerDumpTask{
+	task := &domain.PlanReplayerDumpTask{
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
@@ -240,18 +240,6 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
-}
-
-// PlanReplayerDumpTask wrap the params for plan replayer dump
-type PlanReplayerDumpTask struct {
-	SessionBindings []*bindinfo.BindRecord
-	EncodedPlan     string
-	FileName        string
-	Zf              *os.File
-	SessionVars     *variable.SessionVars
-	TblStats        map[int64]*handle.JSONTable
-	ExecStmts       []ast.StmtNode
-	Analyze         bool
 }
 
 // DumpPlanReplayerInfo will dump the information about sqls.
@@ -284,12 +272,13 @@ type PlanReplayerDumpTask struct {
      |-....
 */
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
-	task *PlanReplayerDumpTask) (err error) {
+	task *domain.PlanReplayerDumpTask) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
 	sessionVars := task.SessionVars
 	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
+	records := generateRecords(task)
 	defer func() {
 		err = zw.Close()
 		if err != nil {
@@ -298,7 +287,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		err = zf.Close()
 		if err != nil {
 			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+			for i, record := range records {
+				record.FailedReason = err.Error()
+				records[i] = record
+			}
 		}
+		domain.GetDomain(sctx).GetPlanReplayerHandle().InsertPlanReplayerStatus(ctx, records)
 	}()
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
@@ -365,6 +359,20 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 	// Dump explain
 	return dumpExplain(sctx, zw, execStmts, task.Analyze)
+}
+
+func generateRecords(task *domain.PlanReplayerDumpTask) []domain.PlanReplayerStatusRecord {
+	records := make([]domain.PlanReplayerStatusRecord, 0)
+	if len(task.ExecStmts) > 0 {
+		for _, execStmt := range task.ExecStmts {
+			records = append(records, domain.PlanReplayerStatusRecord{
+				OriginSQL: execStmt.Text(),
+				Token:     task.FileName,
+				Internal:  false,
+			})
+		}
+	}
+	return records
 }
 
 func dumpConfig(zw *zip.Writer) error {

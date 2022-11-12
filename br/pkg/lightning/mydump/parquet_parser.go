@@ -579,6 +579,12 @@ func (pp *ParquetParser) SetLogger(l log.Logger) {
 	pp.logger = l
 }
 
+// SetRowID sets the rowID in a parquet file when we start a compressed file.
+// It implements the Parser interface.
+func (pp *ParquetParser) SetRowID(rowID int64) {
+	pp.lastRow.RowID = rowID
+}
+
 func jdToTime(jd int32, nsec int64) time.Time {
 	sec := int64(jd-jan011970) * secPerDay
 	// it's fine not to check the value of nsec
