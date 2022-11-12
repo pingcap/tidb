@@ -85,7 +85,6 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1580,7 +1579,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1628,17 +1626,6 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
-}
-
-func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
-	explain := &plannercore.Explain{
-		TargetPlan:       p.(plannercore.Plan),
-		Format:           types.ExplainFormatROW,
-		Analyze:          false,
-		RuntimeStatsColl: runtimeStatsColl,
-	}
-	explain.SetSCtx(s)
-	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {

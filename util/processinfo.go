@@ -43,7 +43,6 @@ type ProcessInfo struct {
 	Time                  time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
-	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
