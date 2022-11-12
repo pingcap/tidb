@@ -524,14 +524,14 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), add index t(b)", errno.ErrUnsupportedDDLOperation)
-	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */))
 
 	// Test add indexes with drop column.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
-	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */))
 
 	// Test add index failed.
 	tk.MustExec("drop table if exists t;")
@@ -539,7 +539,7 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);")
 	tk.MustGetErrCode("alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);",
 		errno.ErrDupEntry)
-	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */))
 	tk.MustExec("alter table t add index i1(a), add index i2(a, b), add index i3(c);")
 }
 
@@ -564,7 +564,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		"add index t2(a), add index t3(a, b);", errno.ErrCancelledDDLJob)
 	dom.DDL().SetHook(originHook)
 	cancelHook.MustCancelDone(t)
-	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
 
@@ -1071,9 +1071,9 @@ func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int, b int, index idx(b));")
 	tk.MustExec("alter table t add index idx2(a), alter index idx visible;")
-	tk.MustQuery("select * from t use index (idx, idx2);").Check(testkit.Rows( /* no rows */ ))
+	tk.MustQuery("select * from t use index (idx, idx2);").Check(testkit.Rows( /* no rows */))
 	tk.MustGetErrCode("alter table t drop column b, alter index idx invisible;", errno.ErrKeyDoesNotExist)
-	tk.MustQuery("select a, b from t;").Check(testkit.Rows( /* no rows */ ))
+	tk.MustQuery("select a, b from t;").Check(testkit.Rows( /* no rows */))
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
@@ -1139,6 +1139,32 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
+}
+
+func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+	tk.MustExec("insert into t values (1,2,3,4)")
+
+	schemaVerMap := map[int64]struct{}{}
+
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobSchemaStateChanged = func(schemaVer int64) {
+		if schemaVer != 0 {
+			// No same return schemaVer during multi-schema change
+			_, ok := schemaVerMap[schemaVer]
+			assert.False(t, ok)
+			schemaVerMap[schemaVer] = struct{}{}
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column b, drop column c")
+	tk.MustExec("alter table t add column b int, add column c int")
+	tk.MustExec("alter table t add index k(b), add column e int")
+	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
