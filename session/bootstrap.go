@@ -97,6 +97,8 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history  smallint unsigned DEFAULT NULL,
+        Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		PRIMARY KEY (Host, User));`
@@ -440,6 +442,15 @@ const (
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		fail_reason TEXT,
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`
+
+	// CreatePasswordHistory is a table save history passwd
+	CreatePasswordHistory = `CREATE TABLE mysql.password_history (
+         Host char(255)  NOT NULL DEFAULT '',
+         User char(32)  NOT NULL DEFAULT '',
+         Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+         Password text,
+         PRIMARY KEY (Host,User,Password_timestamp )
+        ) COMMENT='Password history for user accounts' `
 )
 
 // bootstrap initiates system DB for a store.
@@ -656,11 +667,13 @@ const (
 	version100 = 100
 	// version101 add mysql.plan_replayer_status table
 	version101 = 101
+	// version102 add mysql.password_history
+	version102 = 102
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version101
+var currentBootstrapVersion int64 = version102
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -766,6 +779,7 @@ var (
 		upgradeToVer98,
 		upgradeToVer100,
 		upgradeToVer101,
+		upgradeToVer102,
 	}
 )
 
@@ -2044,6 +2058,15 @@ func upgradeToVer100(s Session, ver int64) {
 	}
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
 	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
+		return
+	}
+	doReentrantDDL(s, CreatePasswordHistory)
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL  AFTER `Create_Tablespace_Priv` ")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL  AFTER `Password_reuse_history`")
 }
 
 func writeOOMAction(s Session) {
