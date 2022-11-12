@@ -852,6 +852,9 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+
+	TiDBPasswordReuseHistory = "password_history"
+	TiDBPasswordReuseTime    = "password_reuse_interval"
 )
 
 // TiDB intentional limits
@@ -1092,6 +1095,8 @@ const (
 	DefTiDBEnableReusechunk                  = true
 	DefTiDBUseAlloc                          = false
 	DefTiDBEnablePlanReplayerCapture         = false
+	DefTiDBPasswordReuseHistory              = 0
+	DefTiDBPasswordReuseTime                 = 0
 )
 
 // Process global variables.
@@ -1151,6 +1156,8 @@ var (
 	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
+	PasswordHistory           = atomic.NewInt64(DefTiDBPasswordReuseHistory)
+	PasswordReuseInterval     = atomic.NewInt64(DefTiDBPasswordReuseTime)
 )
 
 var (

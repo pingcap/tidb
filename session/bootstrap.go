@@ -97,6 +97,8 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history  smallint unsigned DEFAULT NULL,
+        Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		PRIMARY KEY (Host, User));`
@@ -454,6 +456,15 @@ const (
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
+
+	// CreatePasswordHistory is a table save history passwd
+	CreatePasswordHistory = `CREATE TABLE mysql.password_history (
+         Host char(255)  NOT NULL DEFAULT '',
+         User char(32)  NOT NULL DEFAULT '',
+         Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+         Password text,
+         PRIMARY KEY (Host,User,Password_timestamp )
+        ) COMMENT='Password history for user accounts' `
 )
 
 // bootstrap initiates system DB for a store.
@@ -674,11 +685,14 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
+	// version104 add mysql.password_history
+	version104 = 104
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version103
+
+var currentBootstrapVersion int64 = version104
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -786,6 +800,7 @@ var (
 		upgradeToVer101,
 		upgradeToVer102,
 		upgradeToVer103,
+		upgradeToVer104,
 	}
 )
 
@@ -2027,8 +2042,8 @@ func upgradeToVer101(s Session, ver int64) {
 	doReentrantDDL(s, CreatePlanReplayerStatusTable)
 }
 
-func upgradeToVer102(s Session, ver int64) {
-	if ver >= version102 {
+func upgradeToVer104(s Session, ver int64) {
+	if ver >= version104 {
 		return
 	}
 	doReentrantDDL(s, CreatePlanReplayerTaskTable)
@@ -2078,6 +2093,15 @@ func upgradeToVer100(s Session, ver int64) {
 	}
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
 	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
+		return
+	}
+	doReentrantDDL(s, CreatePasswordHistory)
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL  AFTER `Create_Tablespace_Priv` ")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL  AFTER `Password_reuse_history`")
 }
 
 func writeOOMAction(s Session) {

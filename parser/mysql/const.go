@@ -209,6 +209,8 @@ const (
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
+	// PasswordHistoryTable is the table in system db contains password history.
+	PasswordHistoryTable = "password_history"
 )
 
 // MySQL type maximum length.
