@@ -323,7 +323,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
-		if len(info.Info) != 0 && info.CanExplainAnalyze {
+		if len(info.Info) != 0 {
 			pinfo = append(pinfo, info)
 		}
 	}
