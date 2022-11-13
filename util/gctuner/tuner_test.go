@@ -53,8 +53,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(50))
-		require.LessOrEqual(t, tn.getGCPercent(), uint32(100))
+		require.GreaterOrEqual(t, tn.getGCPercent(), MinGCPercent)
+		require.LessOrEqual(t, tn.getGCPercent(), uint32(200))
 	}
 
 	// 3/4 threshold
