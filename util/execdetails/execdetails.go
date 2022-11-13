@@ -32,17 +32,17 @@ import (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
+	BackoffSleep     map[string]time.Duration
+	BackoffTimes     map[string]int
 	CommitDetail     *util.CommitDetails
 	LockKeysDetail   *util.LockKeysDetails
 	ScanDetail       *util.ScanDetail
-	BackoffSleep     map[string]time.Duration
-	BackoffTimes     map[string]int
 	CalleeAddress    string
 	TimeDetail       util.TimeDetail
-	RequestCount     int
 	CopTime          time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
+	RequestCount     int
 }
 
 type stmtExecDetailKeyType struct{}
@@ -368,8 +368,6 @@ type CopRuntimeStats struct {
 	scanDetail *util.ScanDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
-	// count CopRuntimeStats total rows
-	totalRows int64
 	sync.Mutex
 }
 
@@ -377,27 +375,26 @@ type CopRuntimeStats struct {
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
 	defer crs.Unlock()
-	currentRows := int64(*summary.NumProducedRows)
-	crs.totalRows += currentRows
 	crs.stats[address] = append(crs.stats[address],
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
-			rows:    currentRows},
+			rows:    int64(*summary.NumProducedRows)},
 			threads:   int32(summary.GetConcurrency()),
 			storeType: crs.storeType})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
-	crs.Lock()
-	defer crs.Unlock()
-	return crs.totalRows
+	for _, instanceStats := range crs.stats {
+		for _, stat := range instanceStats {
+			totalRows += stat.rows
+		}
+	}
+	return totalRows
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
-	crs.Lock()
-	defer crs.Unlock()
 	procTimes = make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
@@ -788,7 +785,9 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 
 // RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
 type RuntimeStatsWithConcurrencyInfo struct {
+	// executor concurrency information
 	concurrency []*ConcurrencyInfo
+	// protect concurrency
 	sync.Mutex
 }
 
