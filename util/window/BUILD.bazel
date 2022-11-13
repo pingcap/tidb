@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "window",
+    srcs = [
+        "counter.go",
+        "iterator.go",
+        "policy.go",
+        "reduce.go",
+        "window.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/window",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "window_test",
+    srcs = [
+        "counter_test.go",
+        "policy_test.go",
+        "window_test.go",
+    ],
+    embed = [":window"],
+    deps = ["@com_github_stretchr_testify//assert"],
+)
