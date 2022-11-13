@@ -41,11 +41,22 @@ func TestTuner(t *testing.T) {
 	}
 
 	// 1/4 threshold
+	fail := true
 	testHeap = make([]byte, threshold/4)
-	for i := 0; i < 100; i++ {
-		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(100))
-		require.LessOrEqual(t, tn.getGCPercent(), uint32(500))
+	for i := 0; i < 2; i++ {
+		// because nothing is in used. so the GOGC maybe be defaultGCPercent
+		if tn.getGCPercent() != defaultGCPercent {
+			for i := 0; i < 100; i++ {
+				runtime.GC()
+				require.GreaterOrEqual(t, tn.getGCPercent(), MaxGCPercent*1/4)
+				require.LessOrEqual(t, tn.getGCPercent(), MaxGCPercent)
+			}
+			fail = false
+			break
+		}
+	}
+	if fail {
+		t.Fatal()
 	}
 
 	// 1/2 threshold
@@ -54,7 +65,7 @@ func TestTuner(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		runtime.GC()
 		require.GreaterOrEqual(t, tn.getGCPercent(), MinGCPercent)
-		require.LessOrEqual(t, tn.getGCPercent(), uint32(200))
+		require.LessOrEqual(t, tn.getGCPercent(), MaxGCPercent/2)
 	}
 
 	// 3/4 threshold
