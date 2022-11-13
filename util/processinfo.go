@@ -43,7 +43,6 @@ type ProcessInfo struct {
 	Time                  time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
-	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
@@ -65,7 +64,6 @@ type ProcessInfo struct {
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
 	RedactSQL                 bool
-	CanExplainAnalyze         bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
