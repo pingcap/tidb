@@ -1720,52 +1720,6 @@ func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS 
 	return nil
 }
 
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFiles, metaFiles []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
-		if !exists {
-			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
-		}
-		for _, ds := range m.FileGroups {
-			metaRef := 0
-			for _, d := range ds.DataFilesInfo {
-				if d.MinTs > rc.restoreTS {
-					continue
-				} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-					continue
-				} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-					continue
-				}
-				// If ds.Path is empty, it is MetadataV1.
-				// Try to be compatible with newer metadata version
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = ds.Path
-				}
-				if d.IsMeta {
-					mFiles = append(mFiles, d)
-					metaRef += 1
-				} else {
-					dFiles = append(dFiles, d)
-				}
-				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
-			}
-			// metadatav1 doesn't use cache
-			// Try to be compatible with newer metadata version
-			if m.MetaVersion > backuppb.MetaVersion_V1 {
-				rc.helper.InitCacheEntry(ds.Path, metaRef)
-			}
-		}
-	}
-	return dFiles, mFiles, nil
-}
-
 // FixIndex tries to fix a single index.
 func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1840,7 +1794,7 @@ type FilesInTable struct {
 	regionMapFiles map[int64]*FilesInRegion
 }
 
-func applyKVFilesWithBatchMethod(
+func ApplyKVFilesWithBatchMethod(
 	ctx context.Context,
 	iter LogIter,
 	batchCount int,
@@ -1911,8 +1865,12 @@ func applyKVFilesWithBatchMethod(
 
 	for _, fwt := range tableMapFiles {
 		for _, fs := range fwt.regionMapFiles {
-			applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
-			applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+			if len(fs.defaultFiles) > 0 {
+				applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+			}
+			if len(fs.writeFiles) > 0 {
+				applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+			}
 
 			for _, d := range fs.deleteFiles {
 				tmpFiles = append(tmpFiles, d)
@@ -1935,7 +1893,7 @@ func applyKVFilesWithBatchMethod(
 	}
 }
 
-func applyKVFilesWithSingelMethod(
+func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
 	files LogIter,
 	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
@@ -2021,9 +1979,9 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	if supportBatch {
-		applyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		ApplyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 	} else {
-		applyKVFilesWithSingelMethod(ctx, files, applyFunc)
+		ApplyKVFilesWithSingelMethod(ctx, files, applyFunc)
 	}
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))

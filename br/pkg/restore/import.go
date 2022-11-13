@@ -384,6 +384,32 @@ func (importer *FileImporter) ClearFiles(ctx context.Context, pdClient pd.Client
 	return nil
 }
 
+func FilterFilesByRegion(
+	files []*backuppb.DataFileInfo,
+	ranges []kv.KeyRange,
+	r *split.RegionInfo,
+) ([]*backuppb.DataFileInfo, error) {
+	if len(files) != len(ranges) {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+			"count of files no equals count of ranges, file-count:%v, ranges-count:%v",
+			len(files), len(ranges))
+	}
+
+	output := make([]*backuppb.DataFileInfo, 0, len(files))
+	if r != nil && r.Region != nil {
+		for i, f := range files {
+			if bytes.Compare(r.Region.StartKey, ranges[i].EndKey) <= 0 &&
+				(len(r.Region.EndKey) == 0 || bytes.Compare(r.Region.EndKey, ranges[i].StartKey) >= 0) {
+				output = append(output, f)
+			}
+		}
+	} else {
+		output = files
+	}
+
+	return output, nil
+}
+
 // ImportKVFiles restores the kv events.
 func (importer *FileImporter) ImportKVFiles(
 	ctx context.Context,
@@ -429,18 +455,18 @@ func (importer *FileImporter) ImportKVFiles(
 	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
 	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
-		subfiles := make([]*backuppb.DataFileInfo, 0, len(files))
-		if supportBatch && len(files) > 1 && r != nil && r.Region != nil {
-			for i, f := range files {
-				if bytes.Compare(r.Region.StartKey, ranges[i].EndKey) <= 0 &&
-					(len(r.Region.EndKey) == 0 || bytes.Compare(r.Region.EndKey, ranges[i].StartKey) >= 0) {
-					subfiles = append(subfiles, f)
-				}
-			}
-		} else {
+		var (
+			subfiles  []*backuppb.DataFileInfo
+			errFilter error
+		)
+		if !supportBatch || len(files) == 1 {
 			subfiles = files
+		} else {
+			subfiles, errFilter = FilterFilesByRegion(files, ranges, r)
+			if errFilter != nil {
+				return RPCResultFromError(errFilter)
+			}
 		}
-
 		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
 	})
 
@@ -866,21 +892,20 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 			NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
 		}
 
-		var startSnapshotTs uint64
-		if file.Cf == stream.DefaultCF {
-			startSnapshotTs = shiftStartTS
-		} else {
-			startSnapshotTs = startTS
-		}
-
 		meta := &import_sstpb.KVMeta{
-			Name:            file.Path,
-			Cf:              file.Cf,
-			RangeOffset:     file.RangeOffset,
-			Length:          file.Length,
-			RangeLength:     file.RangeLength,
-			IsDelete:        file.Type == backuppb.FileType_Delete,
-			StartSnapshotTs: startSnapshotTs,
+			Name:        file.Path,
+			Cf:          file.Cf,
+			RangeOffset: file.RangeOffset,
+			Length:      file.Length,
+			RangeLength: file.RangeLength,
+			IsDelete:    file.Type == backuppb.FileType_Delete,
+			StartTs: func() uint64 {
+				if file.Cf == stream.DefaultCF {
+					return shiftStartTS
+				} else {
+					return startTS
+				}
+			}(),
 			RestoreTs:       restoreTS,
 			StartKey:        regionInfo.Region.GetStartKey(),
 			EndKey:          regionInfo.Region.GetEndKey(),
