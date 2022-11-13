@@ -1,8 +1,10 @@
 package window
 
+import "golang.org/x/exp/constraints"
+
 // Sum the values within the window.
-func Sum(iterator Iterator) float64 {
-	var result = 0.0
+func Sum[T constraints.Integer | constraints.Float](iterator Iterator[T]) T {
+	var result T
 	for iterator.Next() {
 		bucket := iterator.Bucket()
 		for _, p := range bucket.Points {
@@ -13,9 +15,9 @@ func Sum(iterator Iterator) float64 {
 }
 
 // Avg the values within the window.
-func Avg(iterator Iterator) float64 {
-	var result = 0.0
-	var count = 0.0
+func Avg[T constraints.Integer | constraints.Float](iterator Iterator[T]) T {
+	var result T
+	var count T
 	for iterator.Next() {
 		bucket := iterator.Bucket()
 		for _, p := range bucket.Points {
@@ -27,8 +29,8 @@ func Avg(iterator Iterator) float64 {
 }
 
 // Min the values within the window.
-func Min(iterator Iterator) float64 {
-	var result = 0.0
+func Min[T constraints.Integer | constraints.Float](iterator Iterator[T]) T {
+	var result T
 	var started = false
 	for iterator.Next() {
 		bucket := iterator.Bucket()
@@ -47,8 +49,8 @@ func Min(iterator Iterator) float64 {
 }
 
 // Max the values within the window.
-func Max(iterator Iterator) float64 {
-	var result = 0.0
+func Max[T constraints.Integer | constraints.Float](iterator Iterator[T]) T {
+	var result T
 	var started = false
 	for iterator.Next() {
 		bucket := iterator.Bucket()
@@ -67,11 +69,11 @@ func Max(iterator Iterator) float64 {
 }
 
 // Count sums the count value within the window.
-func Count(iterator Iterator) float64 {
+func Count[T constraints.Integer | constraints.Float](iterator Iterator[T]) int64 {
 	var result int64
 	for iterator.Next() {
 		bucket := iterator.Bucket()
 		result += bucket.Count
 	}
-	return float64(result)
+	return result
 }

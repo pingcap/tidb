@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func GetRollingPolicy() *RollingPolicy {
-	w := NewWindow(Options{Size: 3})
-	return NewRollingPolicy(w, RollingPolicyOpts{BucketDuration: 100 * time.Millisecond})
+func GetRollingPolicy() *RollingPolicy[float64] {
+	w := NewWindow[float64](Options{Size: 3})
+	return NewRollingPolicy[float64](w, RollingPolicyOpts{BucketDuration: 100 * time.Millisecond})
 }
 
 func TestRollingPolicy_Add(t *testing.T) {

@@ -28,10 +28,10 @@ func TestRollingCounterAdd(t *testing.T) {
 		Size:           size,
 		BucketDuration: bucketDuration,
 	}
-	r := NewRollingCounter(opts)
+	r := NewRollingCounter[float64](opts)
 	listBuckets := func() [][]float64 {
 		buckets := make([][]float64, 0)
-		r.Reduce(func(i Iterator) float64 {
+		r.Reduce(func(i Iterator[float64]) float64 {
 			for i.Next() {
 				bucket := i.Bucket()
 				buckets = append(buckets, bucket.Points)
@@ -64,7 +64,7 @@ func TestRollingCounterReduce(t *testing.T) {
 		Size:           size,
 		BucketDuration: bucketDuration,
 	}
-	r := NewRollingCounter(opts)
+	r := NewRollingCounter[float64](opts)
 	for x := 0; x < size; x = x + 1 {
 		for i := 0; i <= x; i++ {
 			r.Add(1)
@@ -73,7 +73,7 @@ func TestRollingCounterReduce(t *testing.T) {
 			time.Sleep(bucketDuration)
 		}
 	}
-	var result = r.Reduce(func(iterator Iterator) float64 {
+	var result = r.Reduce(func(iterator Iterator[float64]) float64 {
 		var result float64
 		for iterator.Next() {
 			bucket := iterator.Bucket()
@@ -93,7 +93,7 @@ func TestRollingCounterDataRace(t *testing.T) {
 		Size:           size,
 		BucketDuration: bucketDuration,
 	}
-	r := NewRollingCounter(opts)
+	r := NewRollingCounter[float64](opts)
 	var stop = make(chan bool)
 	go func() {
 		for {
@@ -112,7 +112,7 @@ func TestRollingCounterDataRace(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_ = r.Reduce(func(i Iterator) float64 {
+				_ = r.Reduce(func(i Iterator[float64]) float64 {
 					for i.Next() {
 						bucket := i.Bucket()
 						for range bucket.Points {
@@ -135,7 +135,7 @@ func BenchmarkRollingCounterIncr(b *testing.B) {
 		Size:           size,
 		BucketDuration: bucketDuration,
 	}
-	r := NewRollingCounter(opts)
+	r := NewRollingCounter[float64](opts)
 	b.ResetTimer()
 	for i := 0; i <= b.N; i++ {
 		r.Add(1)
@@ -149,14 +149,14 @@ func BenchmarkRollingCounterReduce(b *testing.B) {
 		Size:           size,
 		BucketDuration: bucketDuration,
 	}
-	r := NewRollingCounter(opts)
+	r := NewRollingCounter[float64](opts)
 	for i := 0; i <= 10; i++ {
 		r.Add(1)
 		time.Sleep(time.Millisecond * 500)
 	}
 	b.ResetTimer()
 	for i := 0; i <= b.N; i++ {
-		var _ = r.Reduce(func(i Iterator) float64 {
+		var _ = r.Reduce(func(i Iterator[float64]) float64 {
 			var result float64
 			for i.Next() {
 				bucket := i.Bucket()

@@ -14,22 +14,26 @@
 
 package window
 
-import "fmt"
+import (
+	"fmt"
+
+	"golang.org/x/exp/constraints"
+)
 
 // Iterator iterates the buckets within the window.
-type Iterator struct {
+type Iterator[T constraints.Integer | constraints.Float] struct {
 	count         int
 	iteratedCount int
-	cur           *Bucket
+	cur           *Bucket[T]
 }
 
 // Next returns true util all of the buckets has been iterated.
-func (i *Iterator) Next() bool {
+func (i *Iterator[T]) Next() bool {
 	return i.count != i.iteratedCount
 }
 
 // Bucket gets current bucket.
-func (i *Iterator) Bucket() Bucket {
+func (i *Iterator[T]) Bucket() Bucket[T] {
 	if !(i.Next()) {
 		panic(fmt.Errorf("stat/metric: iteration out of range iteratedCount: %d count: %d", i.iteratedCount, i.count))
 	}

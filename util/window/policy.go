@@ -17,16 +17,18 @@ package window
 import (
 	"sync"
 	"time"
+
+	"golang.org/x/exp/constraints"
 )
 
 // RollingPolicy is a policy for ring window based on time duration.
 // RollingPolicy moves bucket offset with time duration.
 // e.g. If the last point is appended one bucket duration ago,
 // RollingPolicy will increment current offset.
-type RollingPolicy struct {
+type RollingPolicy[T constraints.Integer | constraints.Float] struct {
 	mu     sync.RWMutex
 	size   int
-	window *Window
+	window *Window[T]
 	offset int
 
 	bucketDuration time.Duration
@@ -39,8 +41,8 @@ type RollingPolicyOpts struct {
 }
 
 // NewRollingPolicy creates a new RollingPolicy based on the given window and RollingPolicyOpts.
-func NewRollingPolicy(window *Window, opts RollingPolicyOpts) *RollingPolicy {
-	return &RollingPolicy{
+func NewRollingPolicy[T constraints.Integer | constraints.Float](window *Window[T], opts RollingPolicyOpts) *RollingPolicy[T] {
+	return &RollingPolicy[T]{
 		window: window,
 		size:   window.Size(),
 		offset: 0,
@@ -53,7 +55,7 @@ func NewRollingPolicy(window *Window, opts RollingPolicyOpts) *RollingPolicy {
 // timespan returns passed bucket number since lastAppendTime,
 // if it is one bucket duration earlier than the last recorded
 // time, it will return the size.
-func (r *RollingPolicy) timespan() int {
+func (r *RollingPolicy[T]) timespan() int {
 	v := int(time.Since(r.lastAppendTime) / r.bucketDuration)
 	if v > -1 { // maybe time backwards
 		return v
@@ -63,7 +65,7 @@ func (r *RollingPolicy) timespan() int {
 
 // apply applies function f with value val on
 // current offset bucket, expired bucket will be reset
-func (r *RollingPolicy) apply(f func(offset int, val float64), val float64) {
+func (r *RollingPolicy[T]) apply(f func(offset int, val T), val T) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -85,17 +87,17 @@ func (r *RollingPolicy) apply(f func(offset int, val float64), val float64) {
 }
 
 // Append appends the given points to the window.
-func (r *RollingPolicy) Append(val float64) {
+func (r *RollingPolicy[T]) Append(val T) {
 	r.apply(r.window.Append, val)
 }
 
 // Add adds the given value to the latest point within bucket.
-func (r *RollingPolicy) Add(val float64) {
+func (r *RollingPolicy[T]) Add(val T) {
 	r.apply(r.window.Add, val)
 }
 
 // Reduce applies the reduction function to all buckets within the window.
-func (r *RollingPolicy) Reduce(f func(Iterator) float64) (val float64) {
+func (r *RollingPolicy[T]) Reduce(f func(Iterator[T]) T) (val T) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
