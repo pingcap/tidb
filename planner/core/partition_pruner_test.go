@@ -68,6 +68,7 @@ func TestHashPartitionPruner(t *testing.T) {
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
 	tk.MustExec("use test_range_col_in")

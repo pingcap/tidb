@@ -753,6 +753,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	statsLocked                "STATS_LOCKED"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
@@ -915,6 +916,8 @@ import (
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
+	LockStatsStmt              "Lock statistic statement"
+	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
@@ -6415,6 +6418,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"STATS_LOCKED"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
@@ -11099,6 +11103,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"STATS_LOCKED" 
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsLocked, Table: &ast.TableName{Name: model.NewCIStr("STATS_TABLE_LOCKED"), Schema: model.NewCIStr(mysql.SystemDB)}}
+	}
 |	"HISTOGRAMS_IN_FLIGHT"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
@@ -11391,6 +11399,8 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
+|	LockStatsStmt
+|	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
@@ -13943,6 +13953,22 @@ LoadStatsStmt:
 	{
 		$$ = &ast.LoadStatsStmt{
 			Path: $3,
+		}
+	}
+
+LockStatsStmt:
+	"LOCK" "STATS" TableNameList
+	{
+		$$ = &ast.LockStatsStmt{
+			Tables: $3.([]*ast.TableName),
+		}
+	}
+
+UnlockStatsStmt:
+	"UNLOCK" "STATS" TableNameList
+	{
+		$$ = &ast.UnlockStatsStmt{
+			Tables: $3.([]*ast.TableName),
 		}
 	}
 

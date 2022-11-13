@@ -268,6 +268,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
 	tk.MustExec("set @@session.tidb_analyze_version=2")

@@ -775,6 +775,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_cost_model_version=2`)
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 
@@ -796,10 +797,10 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
-	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")

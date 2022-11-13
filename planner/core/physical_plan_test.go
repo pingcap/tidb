@@ -54,6 +54,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	var input []string
 	var output []struct {
@@ -184,6 +185,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.ExecutorConcurrency = 4
 	sessionVars.SetDistSQLScanConcurrency(15)
@@ -219,6 +221,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -406,6 +409,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -442,6 +446,7 @@ func TestRefine(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -473,6 +478,7 @@ func TestAggEliminator(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
@@ -599,6 +605,7 @@ func TestIndexJoinUnionScan(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
@@ -720,6 +727,7 @@ func TestSemiJoinToInner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -834,6 +842,7 @@ func TestHintScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -867,6 +876,7 @@ func TestJoinHints(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -975,6 +985,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t(a int, b int, c int)")
 
 	sessionVars := tk.Session().GetSessionVars()
@@ -1096,6 +1107,7 @@ func TestLimitToCopHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists tn")
 	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
@@ -1216,6 +1228,7 @@ func TestForceInlineCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
@@ -1316,6 +1329,7 @@ func TestPushdownDistinctEnable(t *testing.T) {
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 		"set session tidb_opt_agg_push_down = 1",
+		"set tidb_cost_model_version = 2",
 	}
 	doTestPushdownDistinct(t, vars, input, output)
 }
@@ -1353,6 +1367,7 @@ func TestPushdownDistinctEnableAggPushDownDisable(t *testing.T) {
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 		"set session tidb_opt_agg_push_down = 0",
+		"set tidb_cost_model_version=2",
 	}
 	doTestPushdownDistinct(t, vars, input, output)
 }
@@ -1550,6 +1565,7 @@ func TestIndexMergeHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -1603,6 +1619,7 @@ func TestQueryBlockHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -1691,13 +1708,14 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tests := []struct {
 		sql  string
 		plan string
 	}{
 		{
 			sql:  "select avg(a),avg(b),avg(c) from t",
-			plan: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+			plan: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG() */ avg(a),avg(b),avg(c) from t",
@@ -1758,6 +1776,7 @@ func TestIndexJoinHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`drop table if exists test.t1, test.t2, test.t;`)
 	tk.MustExec(`create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	tk.MustExec(`create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
@@ -2108,6 +2127,7 @@ func TestSkewDistinctAgg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11), `b` int(11), `c` int(11), `d` date)")
 	tk.MustExec("insert into t (a,b,c,d) value(1,4,5,'2019-06-01')")
@@ -2160,6 +2180,7 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("create table t2(a int primary key, b int not null)")
@@ -2196,6 +2217,7 @@ func TestHJBuildAndProbeHint4StaticPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
 	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
@@ -2270,6 +2292,7 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("create table t2(a int primary key, b int not null)")
@@ -2308,6 +2331,7 @@ func TestHJBuildAndProbeHintWithBinding(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
 	tk.MustExec("create table t(a int, b int, key(a));")
 	tk.MustExec("create table t1(a int, b int, key(a));")
@@ -2348,6 +2372,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
@@ -2409,6 +2434,7 @@ func TestNoDecorrelateHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int primary key, b int)")

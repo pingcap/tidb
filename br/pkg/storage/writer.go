@@ -48,16 +48,18 @@ type interceptBuffer interface {
 }
 
 func createSuffixString(compressType CompressType) string {
-	if compressType == Gzip {
-		return ".txt.gz"
+	txtSuffix := ".txt"
+	switch compressType {
+	case Gzip:
+		txtSuffix += ".gz"
+	case Snappy:
+		txtSuffix += ".snappy"
+	case Zstd:
+		txtSuffix += ".zst"
+	default:
+		return ""
 	}
-	if compressType == Snappy {
-		return ".txt.snappy"
-	}
-	if compressType == Zstd {
-		return ".txt.zst"
-	}
-	return ""
+	return txtSuffix
 }
 
 func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {

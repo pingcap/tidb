@@ -566,6 +566,20 @@ type LoadStats struct {
 	Path string
 }
 
+// LockStats represents a lock stats for table
+type LockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// UnlockStats represents a unlock stats for table
+type UnlockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
@@ -869,8 +883,8 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl != nil && runtimeStatsColl.ExistsCopStats(explainID) {
 		copStats = runtimeStatsColl.GetCopStats(explainID)
 	}
-	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithLock(p.ID())
-	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithLock(p.ID())
+	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
+	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	return
 }
 
