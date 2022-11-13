@@ -26,9 +26,7 @@ var GlobalReourceManage ResourceManage = NewResourceMange()
 
 // ResourceManage is a resource manage
 type ResourceManage struct {
-	highPriorityPoolMap   map[string]*PoolContainer
-	normalPriorityPoolMap map[string]*PoolContainer
-	lowPriorityPoolMap    map[string]*PoolContainer
+	poolMap map[string]*PoolContainer
 
 	cpuObserver cpu.Observer
 	exitCh      chan struct{}
@@ -37,9 +35,7 @@ type ResourceManage struct {
 // NewResourceMange is to create a new resource manage
 func NewResourceMange() ResourceManage {
 	return ResourceManage{
-		highPriorityPoolMap:   make(map[string]*PoolContainer),
-		normalPriorityPoolMap: make(map[string]*PoolContainer),
-		lowPriorityPoolMap:    make(map[string]*PoolContainer),
+		poolMap: make(map[string]*PoolContainer),
 	}
 }
 
@@ -63,41 +59,17 @@ func (r *ResourceManage) Stop() {
 }
 
 // Register is to register pool into resource manage
-func (r *ResourceManage) Register(pool GorotinuePool, name string, priority TaskPriority, component Component) error {
+func (r *ResourceManage) Register(pool GorotinuePool, name string, _ TaskPriority, component Component) error {
 	p := PoolContainer{pool: pool, component: component}
-	switch priority {
-	case HighPriority:
-		return r.registerHighPriorityPool(name, &p)
-	case NormalPriority:
-		return r.registerNormalPriorityPool(name, &p)
-	case LowPriority:
-		return r.registerLowPriorityPool(name, &p)
-	default:
-		return errors.New("priority is not valid")
-	}
+	return r.registerPool(name, &p)
+
 }
 
-func (r *ResourceManage) registerHighPriorityPool(name string, pool *PoolContainer) error {
-	if _, contain := r.highPriorityPoolMap[name]; contain {
+func (r *ResourceManage) registerPool(name string, pool *PoolContainer) error {
+	if _, contain := r.poolMap[name]; contain {
 		return errors.New("pool name is already exist")
 	}
-	r.highPriorityPoolMap[name] = pool
-	return nil
-}
-
-func (r *ResourceManage) registerNormalPriorityPool(name string, pool *PoolContainer) error {
-	if _, contain := r.normalPriorityPoolMap[name]; contain {
-		return errors.New("pool name is already exist")
-	}
-	r.normalPriorityPoolMap[name] = pool
-	return nil
-}
-
-func (r *ResourceManage) registerLowPriorityPool(name string, pool *PoolContainer) error {
-	if _, contain := r.lowPriorityPoolMap[name]; contain {
-		return errors.New("pool name is already exist")
-	}
-	r.lowPriorityPoolMap[name] = pool
+	r.poolMap[name] = pool
 	return nil
 }
 
