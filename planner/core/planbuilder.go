@@ -3771,11 +3771,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
-		err := b.checkSubQueryNameOfInsert(ctx, insert, tn)
-		if err != nil {
-			return nil, err
-		}
-		err = b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
 		}
@@ -4036,39 +4032,6 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	}
 	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
 	insertPlan.names4OnDuplicate = insertPlan.tableColNames
-	return nil
-}
-
-func (b *PlanBuilder) checkSubQueryNameOfInsert(ctx context.Context, insert *ast.InsertStmt, srcTbl *ast.TableName) error {
-	for _, list := range insert.Lists {
-		for _, query := range list {
-			switch query.(type) {
-			case *ast.SubqueryExpr:
-				sel := query.(*ast.SubqueryExpr).Query
-				switch sel.(type) {
-				case *ast.SelectStmt:
-					if sel.(*ast.SelectStmt).From != nil {
-						left := sel.(*ast.SelectStmt).From.TableRefs.Left
-						switch left.(type) {
-						case *ast.TableSource:
-							source := left.(*ast.TableSource).Source
-							switch source.(type) {
-							case *ast.TableName:
-								subTblname := source.(*ast.TableName).Name
-								srcTblname := srcTbl.Name
-								subAsName := left.(*ast.TableSource).AsName
-
-								if srcTblname == subTblname && subAsName.O == "" {
-									err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
-									return err
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
 	return nil
 }
 
