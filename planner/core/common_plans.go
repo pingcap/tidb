@@ -362,7 +362,8 @@ type Insert struct {
 
 	RowLen int
 
-	FKChecks []*FKCheck
+	FKChecks   []*FKCheck
+	FKCascades []*FKCascade
 }
 
 // MemoryUsage return the memory usage of Insert
@@ -565,6 +566,20 @@ type LoadStats struct {
 	Path string
 }
 
+// LockStats represents a lock stats for table
+type LockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// UnlockStats represents a unlock stats for table
+type UnlockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
@@ -764,7 +779,7 @@ func (e *Explain) RenderResult() error {
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
 				row := e.Rows[0]
-				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
+				tracker := e.SCtx().GetSessionVars().MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
 			}
 		}

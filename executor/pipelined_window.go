@@ -205,7 +205,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 
 func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 	// TODO: reuse chunks
-	childResult := newFirstChunk(e.children[0])
+	childResult := tryNewCacheChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -217,7 +217,7 @@ func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err err
 	}
 
 	// TODO: reuse chunks
-	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
+	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err
