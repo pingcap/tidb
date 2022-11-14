@@ -11,3 +11,15 @@ type Statistic struct {
 
 	prevScheduleTime atomic.Time
 }
+
+func NewStatistic() Statistic {
+	opts := window.RollingCounterOpts{
+
+	}
+	return Statistic{
+		passStat: window.NewRollingCounter[float64](opts),
+		rtStat:   window.NewRollingCounter[float64](opts),
+	}
+}
+
+}
