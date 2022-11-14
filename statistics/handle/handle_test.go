@@ -2157,11 +2157,13 @@ func TestPartitionPruneModeSessionVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set tidb_cost_model_version=1")
 	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk1.MustExec(`set @@tidb_analyze_version=2`)
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_cost_model_version=1")
 	tk2.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
 	tk2.MustExec(`set @@tidb_analyze_version=2`)
 
