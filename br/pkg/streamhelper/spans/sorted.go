@@ -54,7 +54,7 @@ func NewFullWith(initSpans []Span, init Value) *ValuedFull {
 
 func (f *ValuedFull) Merge(val Valued) {
 	overlaps := make([]Valued, 0, 16)
-	f.getOverlap(val.Key, &overlaps)
+	f.overlapped(val.Key, &overlaps)
 	f.mergeWithOverlap(val, overlaps, nil)
 }
 
@@ -134,7 +134,8 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 	flushCollected()
 }
 
-func (f *ValuedFull) getOverlap(k Span, result *[]Valued) {
+// overlapped inserts the overlapped ranges of the span into the `result` slice.
+func (f *ValuedFull) overlapped(k Span, result *[]Valued) {
 	var first Span
 	f.inner.DescendLessOrEqual(Valued{Key: k}, func(item btree.Item) bool {
 		first = item.(Valued).Key

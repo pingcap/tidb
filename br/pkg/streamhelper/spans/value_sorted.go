@@ -41,7 +41,7 @@ func (v *ValueSortedFull) MergeAll(newItems []Valued) {
 		overlapped = overlapped[0:]
 		inserted = inserted[0:]
 
-		v.getOverlap(item.Key, &overlapped)
+		v.overlapped(item.Key, &overlapped)
 		v.mergeWithOverlap(item, overlapped, &inserted)
 
 		for _, o := range overlapped {
