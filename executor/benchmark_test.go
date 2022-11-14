@@ -919,6 +919,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		probeSideTupleFetcher: probeSideTupleFetcher{
 			probeSideExec: outerExec,
 		},
+		probeWorkers:      make([]probeWorker, testCase.concurrency),
 		concurrency:       uint(testCase.concurrency),
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
@@ -932,9 +933,8 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
-	e.probeWorker.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.probeWorker.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
 			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)

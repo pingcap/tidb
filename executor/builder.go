@@ -201,6 +201,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
+	case *plannercore.LockStats:
+		return b.buildLockStats(v)
+	case *plannercore.UnlockStats:
+		return b.buildUnlockStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
 	case *plannercore.PlanReplayer:
@@ -960,6 +964,22 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) Executor {
+	e := &LockStatsExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) Executor {
+	e := &UnlockStatsExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor {
 	e := &IndexAdviseExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
@@ -1448,9 +1468,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	isNAJoin := len(v.LeftNAJoinKeys) > 0
 	e.buildSideEstCount = b.buildSideEstCount(v)
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	e.probeWorker.joiners = make([]joiner, e.concurrency)
+	e.probeWorkers = make([]probeWorker, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.probeWorker.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
+		e.probeWorkers[i].joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
 	}
 	executorCountHashJoinExec.Inc()
