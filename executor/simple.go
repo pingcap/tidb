@@ -1681,6 +1681,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete password history from mysql.password_history
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(user.Hostname), user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete privileges from mysql.global_priv
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.GlobalPrivTable, user.Hostname, user.Username)
