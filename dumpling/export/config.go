@@ -291,7 +291,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagReadTimeout)
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
-	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
+	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -596,6 +596,10 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 		return storage.NoCompression, nil
 	case "gzip", "gz":
 		return storage.Gzip, nil
+	case "snappy":
+		return storage.Snappy, nil
+	case "zstd", "zst":
+		return storage.Zstd, nil
 	default:
 		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}
