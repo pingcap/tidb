@@ -57,7 +57,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -68,8 +67,6 @@ const (
 	flagStreamStartTS    = "start-ts"
 	flagStreamEndTS      = "end-ts"
 	flagGCSafePointTTS   = "gc-ttl"
-
-	notDeletedBecameFatalThreshold = 128
 )
 
 var (
@@ -937,31 +934,24 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		Helper: stream.NewMetadataHelper(),
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
-			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFileGroups())),
-				zap.Int("data-file-after", len(current.GetFileGroups())))
-			return cfg.DryRun
-		},
+		DryRun: cfg.DryRun,
 	}
-	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
+	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
+	if err != nil {
 		return err
 	}
 	readMetaDone()
 
 	var (
-		fileCount    uint64 = 0
-		kvCount      int64  = 0
-		totalSize    uint64 = 0
-		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
+		fileCount int    = 0
+		kvCount   int64  = 0
+		totalSize uint64 = 0
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		for _, f := range d.DataFilesInfo {
-			kvCount += f.NumberOfEntries
-		}
+		kvCount += d.KVCount
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -979,83 +969,39 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove log
+	// begin to remove
 	p := console.StartProgressBar(
-		"Clearing Data Files", len(removed),
+		"Clearing Data Files and Metadata", fileCount,
 		glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
 	defer p.Close()
-	worker := utils.NewWorkerPool(128, "delete files")
-	eg, cx := errgroup.WithContext(ctx)
-	const keepFirstNFailure = 16
-	var notDeleted struct {
-		item []string
-		sync.Mutex
+
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, storage, p.IncBy)
+	if err != nil {
+		return err
 	}
-	for _, f := range removed {
-		f := f
-		worker.ApplyOnErrorGroup(eg, func() error {
-			if cx.Err() != nil {
-				p.Close()
-				return cx.Err()
-			}
-			defer p.Inc()
-			log.Debug("Deleting file", zap.String("path", f.Path))
-			if cfg.DryRun {
-				return nil
-			}
-			if err := storage.DeleteFile(ctx, f.Path); err != nil {
-				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				notDeleted.Lock()
-				defer notDeleted.Unlock()
-				notDeleted.item = append(notDeleted.item, f.Path)
-				if len(notDeleted.item) > notDeletedBecameFatalThreshold {
-					return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
-				}
-			}
-			return nil
-		})
-	}
+
 	if err := p.Wait(ctx); err != nil {
 		return err
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
 
-	notDeleted.Lock()
-	if len(notDeleted.item) > 0 {
+	if len(notDeleted) > 0 {
+		const keepFirstNFailure = 16
 		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
-		console.Println("- Total", em(len(notDeleted.item)), "items.")
-		if len(notDeleted.item) > keepFirstNFailure {
-			console.Println("-", em(len(notDeleted.item)-keepFirstNFailure), "items omitted.")
+		console.Println("- Total", em(len(notDeleted)), "items.")
+		if len(notDeleted) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
 			// TODO: maybe don't add them at the very first.
-			notDeleted.item = notDeleted.item[:keepFirstNFailure]
+			notDeleted = notDeleted[:keepFirstNFailure]
 		}
-		for _, f := range notDeleted.item {
+		for _, f := range notDeleted {
 			console.Println(f)
 		}
 	}
-	notDeleted.Unlock()
 
-	// remove metadata
-	pw := console.StartProgressBar("Removing Metadata", metas.PendingMeta(), glue.WithTimeCost(), glue.WithConstExtraField("metas", metas.PendingMeta()))
-	defer pw.Close()
-	metas.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) (skip bool) {
-		log.Info("Updating metadata.", zap.String("file", path),
-			zap.Int("data-file-before", len(last.GetFiles())),
-			zap.Int("data-file-after", len(current.GetFiles())))
-		pw.Inc()
-		return cfg.DryRun
-	}
-	if err := metas.DoWriteBack(ctx, storage); err != nil {
-		return err
-	}
-	return pw.Wait(ctx)
+	return nil
 }
 
 // RunStreamRestore restores stream log.
@@ -1200,31 +1146,9 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
-		return errors.Annotate(err, "failed to get shift TS")
-	}
-
-	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(metas) == 0 {
-		log.Info("nothing to restore.")
-		return nil
-	}
-
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
-
-	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
-		log.Info("nothing to restore.")
-		return nil
+		return err
 	}
 
 	// get full backup meta to generate rewrite rules.
@@ -1256,6 +1180,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
+	dataFileCount := 0
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
+	if err != nil {
+		return err
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
@@ -1271,7 +1200,8 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	dmlFiles, err := client.LoadDMLFiles(ctx)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
@@ -1357,8 +1287,6 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	client.InitMetadataHelper()
 
 	return client, nil
 }

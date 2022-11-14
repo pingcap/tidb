@@ -98,7 +98,8 @@ type InsertValues struct {
 	isLoadData bool
 	txnInUse   sync.Mutex
 	// fkChecks contains the foreign key checkers.
-	fkChecks []*FKCheckExec
+	fkChecks   []*FKCheckExec
+	fkCascades []*FKCascadeExec
 }
 
 type defaultVal struct {
@@ -459,7 +460,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
-	chk := newFirstChunk(selectExec)
+	chk := tryNewCacheChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
@@ -1090,6 +1091,10 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				BasicRuntimeStats:     e.runtimeStats,
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
+				FKCheckStats:          &FKCheckRuntimeStats{},
+			}
+			for _, fkc := range e.fkChecks {
+				fkc.stats = e.stats.FKCheckStats
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1145,6 +1150,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	if e.stats != nil {
+		e.stats.FKCheckTime += prefetchStart.Sub(start)
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
@@ -1292,6 +1298,8 @@ type InsertRuntimeStat struct {
 	*autoid.AllocatorRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
+	FKCheckTime     time.Duration
+	FKCheckStats    *FKCheckRuntimeStats
 }
 
 func (e *InsertRuntimeStat) String() string {
@@ -1314,9 +1322,8 @@ func (e *InsertRuntimeStat) String() string {
 			buf.WriteString(", rpc: {")
 			buf.WriteString(e.SnapshotRuntimeStats.String())
 			buf.WriteString("}")
-			return buf.String()
 		}
-		return ""
+		return buf.String()
 	}
 	if allocatorStatsStr != "" {
 		buf.WriteString("prepare: {total: ")
@@ -1334,6 +1341,11 @@ func (e *InsertRuntimeStat) String() string {
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
+		if e.FKCheckStats != nil && e.FKCheckStats.Keys > 0 {
+			buf.WriteString(fmt.Sprintf(", fk_check: %v, fk_num: %v",
+				execdetails.FormatDuration(e.FKCheckTime),
+				e.FKCheckStats.Keys))
+		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
 				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
@@ -1351,6 +1363,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	newRs := &InsertRuntimeStat{
 		CheckInsertTime: e.CheckInsertTime,
 		Prefetch:        e.Prefetch,
+		FKCheckTime:     e.FKCheckTime,
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
@@ -1362,6 +1375,10 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	if e.FKCheckStats != nil {
+		fkCheckStats := *e.FKCheckStats
+		newRs.FKCheckStats = &fkCheckStats
 	}
 	return newRs
 }
@@ -1396,6 +1413,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 		}
 	}
 	e.Prefetch += tmp.Prefetch
+	e.FKCheckTime += tmp.FKCheckTime
 	e.CheckInsertTime += tmp.CheckInsertTime
 }
 

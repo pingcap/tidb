@@ -186,7 +186,7 @@ func TestShowCreateTable(t *testing.T) {
 		"`END_TIME` datetime NOT NULL," +
 		"`USER_TYPE` int(11) DEFAULT NULL," +
 		"`APP_ID` int(11) DEFAULT NULL," +
-		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+		"PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED," +
 		"KEY `IDX_EndTime` (`END_TIME`)," +
 		"KEY `IDX_RoundId` (`ROUND_ID`)," +
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
@@ -330,7 +330,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `parent_id` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`)\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) /*T![FOREIGN KEY] INVALID */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -344,7 +344,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `parent_id` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE /*T![FOREIGN KEY] INVALID */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -357,7 +357,7 @@ func TestShowCreateTable(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`) /*T![FOREIGN KEY] INVALID */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test issue #20327
@@ -775,6 +775,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_cost_model_version=2`)
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 
@@ -796,10 +797,10 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
-	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
@@ -1118,6 +1119,12 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustQuery("SHOW CREATE USER commentUser").Check(testkit.Rows(`CREATE USER 'commentUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"comment": "1234"}`))
 	tk.MustExec(`CREATE USER attributeUser attribute '{"name": "Tom", "age": 19}'`)
 	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"age": 19, "name": "Tom"}`))
+
+	// Creating users with 'IDENTIFIED WITH 'tidb_auth_token''
+	tk.MustExec(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
+	tk.MustExec(`ALTER USER 'token_user'@'%' REQUIRE token_issuer 'issuer-ABC'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
