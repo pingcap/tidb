@@ -277,26 +277,34 @@ func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, bac
 		}
 
 		// sync the checkpoint meta to the external storage at first
-		err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta)
-		return errors.Trace(err)
-	}
-	// otherwise, the checkpoint meta is loaded from the external storage,
-	// no need to save it again
-
-	bc.checkpointMeta.CheckpointDataMap, err = bc.loadCheckpointRanges(ctx, progressCallBack)
-	if err != nil {
-		return errors.Trace(err)
+		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// otherwise, the checkpoint meta is loaded from the external storage,
+		// no need to save it again
+		// besides, there are exist checkpoint data need to be loaded before start checkpoint runner
+		bc.checkpointMeta.CheckpointDataMap, err = bc.loadCheckpointRanges(ctx, progressCallBack)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
 	return nil
 }
 
-// GetProgressRangeRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) GetProgressRange(ctx context.Context, r rtree.Range, progressCallBack func(ProgressUnit)) (*rtree.ProgressRange, error) {
+func (bc *Client) WaitForFinishCheckpoint() {
+	if bc.checkpointRunner != nil {
+		bc.checkpointRunner.WaitForFinish()
+	}
+}
+
+// GetProgressRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
+func (bc *Client) GetProgressRange(r rtree.Range) (*rtree.ProgressRange, error) {
+	// use groupKey to distinguish different ranges
+	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
 	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
-		// use groupKey to distinguish different ranges
-		groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
 		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
 		if exists {
 			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
@@ -317,7 +325,8 @@ func (bc *Client) GetProgressRange(ctx context.Context, r rtree.Range, progressC
 		Incomplete: []rtree.Range{
 			r,
 		},
-		Origin: r,
+		Origin:   r,
+		GroupKey: groupKey,
 	}, nil
 }
 
@@ -749,13 +758,12 @@ func (bc *Client) BackupRanges(
 		req := request
 		r := r
 		req.StartKey, req.EndKey = r.StartKey, r.EndKey
-
+		pr, err := bc.GetProgressRange(r)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			pr, err := bc.GetProgressRange(elctx, r, progressCallBack)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = bc.BackupRange(elctx, req, pr, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
@@ -768,17 +776,7 @@ func (bc *Client) BackupRanges(
 		})
 	}
 
-	err := eg.Wait()
-	if bc.checkpointRunner != nil {
-		if errFlush := bc.checkpointRunner.Finish(ctx); errFlush != nil {
-			if err != nil {
-				err = errors.Annotatef(errFlush, fmt.Sprintf("flush checkpoint error after backup ranges error: %v", err))
-			} else {
-				err = errFlush
-			}
-		}
-	}
-	return err
+	return eg.Wait()
 }
 
 // BackupRange make a backup of the given key range.
@@ -816,18 +814,23 @@ func (bc *Client) BackupRange(
 	// either the `incomplete` is origin range itself,
 	// or the `incomplete` is sub-ranges split by checkpoint of origin range
 	if len(progressRange.Incomplete) > 0 {
-		subRanges := make([]*kvrpcpb.KeyRange, 0, len(progressRange.Incomplete))
-		for _, r := range progressRange.Incomplete {
-			subRanges = append(subRanges, &kvrpcpb.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   r.EndKey,
-			})
-		}
-
 		// don't make the origin request dirty,
 		// since fineGrainedBackup need to use it.
 		req := request
-		req.SubRanges = subRanges
+		if len(progressRange.Incomplete) > 1 {
+			subRanges := make([]*kvrpcpb.KeyRange, 0, len(progressRange.Incomplete))
+			for _, r := range progressRange.Incomplete {
+				subRanges = append(subRanges, &kvrpcpb.KeyRange{
+					StartKey: r.StartKey,
+					EndKey:   r.EndKey,
+				})
+			}
+			req.SubRanges = subRanges
+		} else {
+			// compatible with older version of TiKV
+			req.StartKey = progressRange.Incomplete[0].StartKey
+			req.EndKey = progressRange.Incomplete[0].EndKey
+		}
 
 		push := newPushDown(bc.mgr, len(allStores))
 		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)

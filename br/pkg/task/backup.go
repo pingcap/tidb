@@ -585,6 +585,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
+	client.WaitForFinishCheckpoint()
 	err = metawriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)

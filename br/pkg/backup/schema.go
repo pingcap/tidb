@@ -124,30 +124,36 @@ func (ss *Schemas) BackupSchemas(
 
 				if !skipChecksum {
 					logger.Info("Calculate table checksum start")
-					var flushCost time.Duration
-					start := time.Now()
 					if exists && checksum != nil {
 						schema.crc64xor = checksum.Crc64xor
 						schema.totalKvs = checksum.TotalKvs
 						schema.totalBytes = checksum.TotalBytes
+						logger.Info("Calculate table checksum completed (from checkpoint)",
+							zap.Uint64("Crc64Xor", schema.crc64xor),
+							zap.Uint64("TotalKvs", schema.totalKvs),
+							zap.Uint64("TotalBytes", schema.totalBytes))
 					} else {
+						start := time.Now()
 						err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
 						if err != nil {
 							return errors.Trace(err)
 						}
+						calculateCost := time.Since(start)
+						var flushCost time.Duration
 						if checkpointRunner != nil {
+							// if checkpoint runner is running and the checksum is not from checkpoint
+							// then flush the checksum by the checkpoint runner
 							startFlush := time.Now()
-							checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes)
+							checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds())
 							flushCost = time.Since(startFlush)
 						}
+						logger.Info("Calculate table checksum completed",
+							zap.Uint64("Crc64Xor", schema.crc64xor),
+							zap.Uint64("TotalKvs", schema.totalKvs),
+							zap.Uint64("TotalBytes", schema.totalBytes),
+							zap.Duration("calculate-take", calculateCost),
+							zap.Duration("flush-take", flushCost))
 					}
-
-					logger.Info("Calculate table checksum completed",
-						zap.Uint64("Crc64Xor", schema.crc64xor),
-						zap.Uint64("TotalKvs", schema.totalKvs),
-						zap.Uint64("TotalBytes", schema.totalBytes),
-						zap.Duration("total-take", time.Since(start)),
-						zap.Duration("flush-take", flushCost))
 				}
 				if statsHandle != nil {
 					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
