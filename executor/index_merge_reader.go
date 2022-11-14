@@ -126,6 +126,7 @@ type IndexMergeReaderExecutor struct {
 type indexMergeTableTask struct {
 	lookupTableTask
 
+	// workerID and parTblIdx are only used in indexMergeProcessWorker.fetchLoopIntersection.
 	workerID  int
 	parTblIdx int
 }
