@@ -8,10 +8,17 @@ import (
 )
 
 type Statistic struct {
-	passStat window.RollingCounter[float64]
-	rtStat   window.RollingCounter[float64]
+	// stat is the statistic of the task complete count.
+	taskCntStat window.RollingCounter[uint64]
+	// rtStat is the statistic of the task complete time.
+	rtStat window.RollingCounter[uint64]
 
-	prevScheduleTime atomic.Time
+	inFlight        atomic.Uint64
+	maxTaskCntCache atomic.Uint64
+	maxPASSCache    atomic.Uint64
+	minRtCache      atomic.Uint64
+
+	bucketPerSecond int64
 }
 
 func NewStatistic() Statistic {
@@ -21,8 +28,10 @@ func NewStatistic() Statistic {
 		Size:           size,
 		BucketDuration: win / size,
 	}
+	bucketDuration := win / opts.BucketDuration
 	return Statistic{
-		passStat: window.NewRollingCounter[float64](opts),
-		rtStat:   window.NewRollingCounter[float64](opts),
+		taskCntStat:     window.NewRollingCounter[uint64](opts),
+		rtStat:          window.NewRollingCounter[uint64](opts),
+		bucketPerSecond: int64(time.Second / bucketDuration),
 	}
 }
