@@ -56,6 +56,7 @@ go_library(
         "joiner.go",
         "load_data.go",
         "load_stats.go",
+        "lock_stats.go",
         "mem_reader.go",
         "memtable_reader.go",
         "merge_join.go",

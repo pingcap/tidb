@@ -573,20 +573,6 @@ func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	return nil
 }
 
-// SearchTrackerWithLock searches the specific tracker under this tracker with lock.
-func (t *Tracker) SearchTrackerWithLock(label int) *Tracker {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.label == label {
-		return t
-	}
-	children := t.mu.children[label]
-	if len(children) > 0 {
-		return children[0]
-	}
-	return nil
-}
-
 // SearchTrackerConsumedMoreThanNBytes searches the specific tracker that consumes more than NBytes.
 func (t *Tracker) SearchTrackerConsumedMoreThanNBytes(limit int64) (res []*Tracker) {
 	t.mu.Lock()

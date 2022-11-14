@@ -201,6 +201,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
+	case *plannercore.LockStats:
+		return b.buildLockStats(v)
+	case *plannercore.UnlockStats:
+		return b.buildUnlockStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
 	case *plannercore.PlanReplayer:
@@ -956,6 +960,22 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	e := &LoadStatsExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		info:         &LoadStatsInfo{v.Path, b.ctx},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) Executor {
+	e := &LockStatsExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) Executor {
+	e := &UnlockStatsExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
 	}
 	return e
 }
