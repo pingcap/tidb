@@ -25,7 +25,7 @@ var testHeap []byte
 
 func TestTuner(t *testing.T) {
 	EnableGOGCTuner.Store(true)
-	memLimit := uint64(100 * 1024 * 1024) //100 MB
+	memLimit := uint64(1000 * 1024 * 1024) //1000 MB
 	threshold := memLimit / 2
 	tn := newTuner(threshold)
 	require.Equal(t, threshold, tn.threshold.Load())
@@ -44,8 +44,8 @@ func TestTuner(t *testing.T) {
 	testHeap = make([]byte, threshold/4)
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(100))
-		require.LessOrEqual(t, tn.getGCPercent(), uint32(500))
+		require.GreaterOrEqual(t, tn.getGCPercent(), MaxGCPercent/2)
+		require.LessOrEqual(t, tn.getGCPercent(), MaxGCPercent)
 	}
 
 	// 1/2 threshold
@@ -53,8 +53,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(50))
-		require.LessOrEqual(t, tn.getGCPercent(), uint32(100))
+		require.GreaterOrEqual(t, tn.getGCPercent(), MinGCPercent)
+		require.LessOrEqual(t, tn.getGCPercent(), MaxGCPercent/2)
 	}
 
 	// 3/4 threshold
