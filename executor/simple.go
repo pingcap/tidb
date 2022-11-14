@@ -19,6 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
+	"syscall"
+	"time"
+
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -53,10 +58,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"os"
-	"strings"
-	"syscall"
-	"time"
 )
 
 var (
