@@ -181,25 +181,23 @@ type planReplayerHandle struct {
 }
 
 type planReplayerTaskCollectorHandle struct {
-	ctx    context.Context
 	taskMu struct {
 		sync.RWMutex
 		tasks map[PlanReplayerTaskKey]struct{}
 	}
+	ctx  context.Context
 	sctx sessionctx.Context
 }
 
 // CollectPlanReplayerTask collects all unhandled plan replayer task
 func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
-	ctx := h.ctx
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	allKeys, err := h.collectAllPlanReplayerTask(ctx1)
+	allKeys, err := h.collectAllPlanReplayerTask(h.ctx)
 	if err != nil {
 		return err
 	}
 	tasks := make([]PlanReplayerTaskKey, 0)
 	for _, key := range allKeys {
-		unhandled, err := checkUnHandledReplayerTask(ctx1, h.sctx, key)
+		unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, key)
 		if err != nil {
 			return err
 		}

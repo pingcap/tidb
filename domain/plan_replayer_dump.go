@@ -41,12 +41,18 @@ import (
 )
 
 const (
-	PlanReplayerConfigFile          = "config.toml"
-	PlanReplayerMetaFile            = "meta.txt"
-	PlanReplayerVariablesFile       = "variables.toml"
+	// PlanReplayerConfigFile indicates config file path for plan replayer
+	PlanReplayerConfigFile = "config.toml"
+	// PlanReplayerMetaFile meta file path for plan replayer
+	PlanReplayerMetaFile = "meta.txt"
+	// PlanReplayerVariablesFile indicates for session variables file path for plan replayer
+	PlanReplayerVariablesFile = "variables.toml"
+	// PlanReplayerTiFlashReplicasFile indicates for table tiflash replica file path for plan replayer
 	PlanReplayerTiFlashReplicasFile = "table_tiflash_replica.txt"
-	PlanReplayerSessionBindingFile  = "session_bindings.sql"
-	PlanReplayerGlobalBindingFile   = "global_bindings.sql"
+	// PlanReplayerSessionBindingFile indicates session binding file path for plan replayer
+	PlanReplayerSessionBindingFile = "session_bindings.sql"
+	// PlanReplayerGlobalBindingFile indicates global binding file path for plan replayer
+	PlanReplayerGlobalBindingFile = "global_bindings.sql"
 )
 
 type tableNamePair struct {

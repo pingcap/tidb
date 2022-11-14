@@ -226,6 +226,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowStatsLocked:
+		return e.fetchShowStatsLocked()
 	case ast.ShowHistogramsInFlight:
 		e.fetchShowHistogramsInFlight()
 		return nil
