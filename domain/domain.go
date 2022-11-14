@@ -1538,7 +1538,6 @@ func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
 			sctx: ctx,
 		},
 	}
-
 }
 
 // SetupDumpFileGCChecker setup sctx
