@@ -333,7 +333,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
-	e.probeSideTupleFetcher = &probeSideTupleFetcher{hashJoinCtx: e.hashJoinCtx}
+	e.probeSideTupleFetcher.hashJoinCtx = e.hashJoinCtx
 	// e.probeSideTupleFetcher.probeResultChs is for transmitting the chunks which store the data of
 	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
@@ -359,7 +359,6 @@ func (e *HashJoinExec) initializeForProbe() {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 		e.joinChkResourceCh[i] <- newFirstChunk(e)
 	}
-
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
