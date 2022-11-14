@@ -478,6 +478,7 @@ func TestAggEliminator(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
@@ -1707,13 +1708,14 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tests := []struct {
 		sql  string
 		plan string
 	}{
 		{
 			sql:  "select avg(a),avg(b),avg(c) from t",
-			plan: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+			plan: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG() */ avg(a),avg(b),avg(c) from t",
