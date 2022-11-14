@@ -1543,6 +1543,20 @@ func TestPlanCacheSubquery(t *testing.T) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// exist sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where exists (select 1 from t t2 where t2.b<t1.b and t2.b<?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// decorrelated sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestPlanCacheHitInfo(t *testing.T) {
