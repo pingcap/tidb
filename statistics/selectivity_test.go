@@ -180,8 +180,8 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	var (
 		input  []string
-		output []struct{
-			SQL string
+		output []struct {
+			SQL    string
 			Result []string
 		}
 	)
@@ -1068,9 +1068,9 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
-	//testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
-	//require.Nil(t, h.Update(dom.InfoSchema()))
-	//for i := range input {
-	//	testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	//}
+	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	for i := range input {
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
 }
