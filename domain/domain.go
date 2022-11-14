@@ -1533,9 +1533,16 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
-	do.planReplayerHandle = &planReplayerHandle{}
-	do.planReplayerHandle.sctxMu.sctx = ctx
-	do.dumpFileGcChecker.setupPlanReplayerHandle(do.planReplayerHandle)
+	do.planReplayerHandle = &planReplayerHandle{
+		planReplayerTaskCollectorHandle: &planReplayerTaskCollectorHandle{
+			sctx: ctx,
+		},
+	}
+}
+
+// SetupDumpFileGCChecker setup sctx
+func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
+	do.dumpFileGcChecker.setupSctx(ctx)
 }
 
 var planReplayerHandleLease = 10 * time.Second

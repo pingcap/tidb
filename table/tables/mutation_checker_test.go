@@ -332,7 +332,7 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *
 	if err != nil {
 		return nil, nil, err
 	}
-	rsData := TryGetHandleRestoredDataWrapper(table, rowToInsert, nil, indexInfo)
+	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
 	value, err := tablecodec.GenIndexValuePortal(
 		sessVars.StmtCtx, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
 		distinct, false, indexedValues, handle, 0, rsData,
