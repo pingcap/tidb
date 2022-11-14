@@ -169,5 +169,4 @@ func TestSubRange(t *testing.T) {
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("#%d", i+1), func(t *testing.T) { run(t, c) })
 	}
-
 }
