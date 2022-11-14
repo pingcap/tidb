@@ -1357,7 +1357,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustExec("analyze table s;")
 
 	tk.MustQuery("desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1370,7 +1370,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexMergeJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1384,7 +1384,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexHashJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",

@@ -602,9 +602,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 
 func showAddIdxReorgTp(job *model.Job) string {
 	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		tp := job.ReorgMeta.ReorgTp.String()
-		if len(tp) > 0 {
-			return " /* " + tp + " */"
+		if job.ReorgMeta != nil {
+			tp := job.ReorgMeta.ReorgTp.String()
+			if len(tp) > 0 {
+				return " /* " + tp + " */"
+			}
 		}
 	}
 	return ""
