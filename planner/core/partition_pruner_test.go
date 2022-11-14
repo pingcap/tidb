@@ -68,6 +68,7 @@ func TestHashPartitionPruner(t *testing.T) {
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
 	tk.MustExec("use test_range_col_in")
@@ -260,6 +261,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
@@ -330,6 +332,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")

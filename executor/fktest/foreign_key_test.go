@@ -1964,7 +1964,7 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  `leader2` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("alter table t1 add constraint fk2 foreign key (leader2) references t1 (id)")
@@ -1974,9 +1974,11 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  `leader2` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */,\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,\n" +
 		"  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `test`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);")
 }
 
 func TestDMLExplainAnalyzeFKInfo(t *testing.T) {

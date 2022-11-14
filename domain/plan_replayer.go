@@ -15,7 +15,8 @@
 package domain
 
 import (
-	"errors"
+	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -24,8 +25,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -35,6 +47,7 @@ type dumpFileGcChecker struct {
 	sync.Mutex
 	gcLease time.Duration
 	paths   []string
+	sctx    sessionctx.Context
 }
 
 // GetPlanReplayerDirName returns plan replayer directory path.
@@ -42,6 +55,10 @@ type dumpFileGcChecker struct {
 func GetPlanReplayerDirName() string {
 	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 	return filepath.Join(tidbLogDir, "replayer")
+}
+
+func parseType(s string) string {
+	return strings.Split(s, "_")[0]
 }
 
 func parseTime(s string) (time.Time, error) {
@@ -68,6 +85,10 @@ func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
 	}
 }
 
+func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
+	p.sctx = sctx
+}
+
 func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
@@ -84,6 +105,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			logutil.BgLogger().Error("[dumpFileGcChecker] parseTime failed", zap.Error(err), zap.String("filename", fileName))
 			continue
 		}
+		isPlanReplayer := parseType(fileName) == "replayer"
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
@@ -91,6 +113,187 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 				continue
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
+			if isPlanReplayer && p.sctx != nil {
+				deletePlanReplayerStatus(context.Background(), p.sctx, fileName)
+			}
 		}
 	}
+}
+
+type planReplayerHandle struct {
+	*planReplayerTaskCollectorHandle
+}
+
+type planReplayerTaskCollectorHandle struct {
+	taskMu struct {
+		sync.RWMutex
+		tasks map[PlanReplayerTaskKey]struct{}
+	}
+	sctx sessionctx.Context
+}
+
+func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
+	if err != nil {
+		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
+	}
+}
+
+// insertPlanReplayerStatus insert mysql.plan_replayer_status record
+func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	var instance string
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		instance = "unknown"
+	} else {
+		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	}
+	for _, record := range records {
+		if !record.Internal {
+			if len(record.FailedReason) > 0 {
+				insertExternalPlanReplayerErrorStatusRecord(ctx1, sctx, instance, record)
+			} else {
+				insertExternalPlanReplayerSuccessStatusRecord(ctx1, sctx, instance, record)
+			}
+		}
+	}
+}
+
+func insertExternalPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
+		record.OriginSQL, record.FailedReason, instance))
+	if err != nil {
+		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.Error(err))
+	}
+}
+
+func insertExternalPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
+		record.OriginSQL, record.Token, instance))
+	if err != nil {
+		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.Error(err))
+	}
+}
+
+// CollectPlanReplayerTask collects all unhandled plan replayer task
+func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask(ctx context.Context) error {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	allKeys, err := h.collectAllPlanReplayerTask(ctx1)
+	if err != nil {
+		return err
+	}
+	tasks := make([]PlanReplayerTaskKey, 0)
+	for _, key := range allKeys {
+		unhandled, err := checkUnHandledReplayerTask(ctx1, h.sctx, key)
+		if err != nil {
+			return err
+		}
+		if unhandled {
+			tasks = append(tasks, key)
+		}
+	}
+	h.setupTasks(tasks)
+	return nil
+}
+
+// GetTasks get all tasks
+func (h *planReplayerTaskCollectorHandle) GetTasks() []PlanReplayerTaskKey {
+	tasks := make([]PlanReplayerTaskKey, 0)
+	h.taskMu.RLock()
+	defer h.taskMu.RUnlock()
+	for taskKey := range h.taskMu.tasks {
+		tasks = append(tasks, taskKey)
+	}
+	return tasks
+}
+
+func (h *planReplayerTaskCollectorHandle) setupTasks(tasks []PlanReplayerTaskKey) {
+	r := make(map[PlanReplayerTaskKey]struct{})
+	for _, task := range tasks {
+		r[task] = struct{}{}
+	}
+	h.taskMu.Lock()
+	defer h.taskMu.Unlock()
+	h.taskMu.tasks = r
+}
+
+func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context.Context) ([]PlanReplayerTaskKey, error) {
+	exec := h.sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	allKeys := make([]PlanReplayerTaskKey, 0, len(rows))
+	for _, row := range rows {
+		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
+		allKeys = append(allKeys, PlanReplayerTaskKey{
+			sqlDigest:  sqlDigest,
+			planDigest: planDigest,
+		})
+	}
+	return allKeys, nil
+}
+
+func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task PlanReplayerTaskKey) (bool, error) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.sqlDigest, task.planDigest))
+	if err != nil {
+		return false, err
+	}
+	if rs == nil {
+		return true, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(rows) > 0 {
+		return false, nil
+	}
+	return true, nil
+}
+
+// PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
+type PlanReplayerStatusRecord struct {
+	Internal     bool
+	OriginSQL    string
+	Token        string
+	FailedReason string
+}
+
+// PlanReplayerTaskKey indicates key of a plan replayer task
+type PlanReplayerTaskKey struct {
+	sqlDigest  string
+	planDigest string
+}
+
+// PlanReplayerDumpTask wrap the params for plan replayer dump
+type PlanReplayerDumpTask struct {
+	SessionBindings []*bindinfo.BindRecord
+	EncodedPlan     string
+	FileName        string
+	Zf              *os.File
+	SessionVars     *variable.SessionVars
+	TblStats        map[int64]*handle.JSONTable
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
 }

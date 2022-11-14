@@ -455,6 +455,7 @@ func TestSelPushDownTiFlash(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -551,6 +552,7 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 		}
 	}
 
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
@@ -592,6 +594,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 		}
 	}
 
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
@@ -721,6 +724,7 @@ func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a(id int, value int)")
 	tk.MustExec("insert into a values(1,2),(2,3)")
@@ -767,6 +771,7 @@ func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a(id int, value int)")
 	tk.MustExec("insert into a values(1,2),(2,3)")
@@ -813,6 +818,7 @@ func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a(id int, value int)")
 	tk.MustExec("insert into a values(1,2),(2,3)")
@@ -922,6 +928,7 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
 	tk.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
@@ -1203,6 +1210,7 @@ func TestAggPushDownEngine(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
 
@@ -1223,9 +1231,9 @@ func TestAggPushDownEngine(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
-		"└─TableReader 1.00 root  data:StreamAgg",
-		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
+		"HashAgg 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
+		"└─TableReader 1.00 root  data:HashAgg",
+		"  └─HashAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
 		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
@@ -1316,11 +1324,81 @@ func TestReadFromStorageHint(t *testing.T) {
 	}
 }
 
+func TestViewHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop view if exists v, v1")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 on t1.b=t2.b group by t2.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestViewHintScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop view if exists v, v1")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
 func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, tt, ttt")
 	tk.MustExec("create table t(a int, b int, index ia(a))")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
@@ -1936,6 +2014,7 @@ func TestIssue17813(t *testing.T) {
 func TestHintWithRequiredProperty(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -2682,6 +2761,7 @@ func TestIndexJoinOnClusteredIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
@@ -2800,6 +2880,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t1(a bit(8), b int)")
 	tk.MustExec("create table t2(a bit(8), b int)")
 	tk.MustExec("insert into t1 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
@@ -4596,6 +4677,7 @@ func TestMppUnionAll(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
@@ -5081,6 +5163,7 @@ func TestIssue24095(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int, value decimal(10,5));")
 	tk.MustExec("desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;")
@@ -5210,6 +5293,7 @@ func TestSequenceAsDataSource(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop sequence if exists s1, s2")
 	tk.MustExec("create sequence s1")
 	tk.MustExec("create sequence s2")
@@ -5610,6 +5694,7 @@ func TestIndexJoinCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`drop table if exists t_outer, t_inner_pk, t_inner_idx`)
 	tk.MustExec(`create table t_outer (a int)`)
 	tk.MustExec(`create table t_inner_pk (a int primary key)`)
@@ -5619,46 +5704,46 @@ func TestIndexJoinCost(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a`).Check(testkit.Rows( // IndexJoin with inner TableScan
-		`IndexJoin_11 12487.50 206368.09 root  inner join, inner:TableReader_8, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)`,
-		`├─TableReader_18(Build) 9990.00 36412.58 root  data:Selection_17`,
-		`│ └─Selection_17 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
-		`│   └─TableFullScan_16 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
-		`└─TableReader_8(Probe) 9990.00 3.88 root  data:TableRangeScan_7`,
-		`  └─TableRangeScan_7 9990.00 30.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
+		`IndexJoin_11 12487.50 11918182.35 root  inner join, inner:TableReader_8, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)`,
+		`├─TableReader_18(Build) 9990.00 211131.09 root  data:Selection_17`,
+		`│ └─Selection_17 9990.00 2534000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_16 10000.00 2035000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─TableReader_8(Probe) 9990.00 10.25 root  data:TableRangeScan_7`,
+		`  └─TableRangeScan_7 9990.00 122.10 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexScan
-		`IndexJoin_10 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
-		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
-		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
-		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
-		`└─IndexReader_9(Probe) 12487.50 5.89 root  index:Selection_8`,
-		`  └─Selection_8 12487.50 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 12500.00 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`IndexJoin_10 12487.50 11918207.26 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
+		`├─TableReader_20(Build) 9990.00 211131.09 root  data:Selection_19`,
+		`│ └─Selection_19 9990.00 2534000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_18 10000.00 2035000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexReader_9(Probe) 12487.50 23.02 root  index:Selection_8`,
+		`  └─Selection_8 12487.50 266.14 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 12500.00 203.70 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexLookup
-		`IndexJoin_11 12487.50 531469.38 root  inner join, inner:IndexLookUp_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
-		`├─TableReader_23(Build) 9990.00 36412.58 root  data:Selection_22`,
-		`│ └─Selection_22 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
-		`│   └─TableFullScan_21 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
-		`└─IndexLookUp_10(Probe) 12487.50 35.55 root  `,
-		`  ├─Selection_9(Build) 12487.50 75.08 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`  │ └─IndexRangeScan_7 12500.00 71.32 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
-		`  └─TableRowIDScan_8(Probe) 12487.50 71.25 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
+		`IndexJoin_11 12487.50 11922930.69 root  inner join, inner:IndexLookUp_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
+		`├─TableReader_23(Build) 9990.00 211131.09 root  data:Selection_22`,
+		`│ └─Selection_22 9990.00 2534000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_21 10000.00 2035000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexLookUp_10(Probe) 12487.50 2443.84 root  `,
+		`  ├─Selection_9(Build) 12487.50 317.07 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`  │ └─IndexRangeScan_7 12500.00 254.63 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan_8(Probe) 12487.50 284.13 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
 
 	tk.MustQuery("explain format=verbose select /*+ inl_hash_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
-		`IndexHashJoin_12 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
-		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
-		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
-		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
-		`└─IndexReader_9(Probe) 12487.50 5.89 root  index:Selection_8`,
-		`  └─Selection_8 12487.50 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 12500.00 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`IndexHashJoin_12 12487.50 11918207.26 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
+		`├─TableReader_20(Build) 9990.00 211131.09 root  data:Selection_19`,
+		`│ └─Selection_19 9990.00 2534000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_18 10000.00 2035000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexReader_9(Probe) 12487.50 23.02 root  index:Selection_8`,
+		`  └─Selection_8 12487.50 266.14 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 12500.00 203.70 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain format=verbose select /*+ inl_merge_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
-		`IndexMergeJoin_17 12487.50 229210.68 root  inner join, inner:IndexReader_15, outer key:test.t_outer.a, inner key:test.t_inner_idx.a`,
-		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
-		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
-		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
-		`└─IndexReader_15(Probe) 12487.50 5.89 root  index:Selection_14`,
-		`  └─Selection_14 12487.50 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_13 12500.00 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
+		`IndexMergeJoin_17 12487.50 11918207.26 root  inner join, inner:IndexReader_15, outer key:test.t_outer.a, inner key:test.t_inner_idx.a`,
+		`├─TableReader_20(Build) 9990.00 211131.09 root  data:Selection_19`,
+		`│ └─Selection_19 9990.00 2534000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_18 10000.00 2035000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexReader_15(Probe) 12487.50 23.02 root  index:Selection_14`,
+		`  └─Selection_14 12487.50 266.14 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_13 12500.00 203.70 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
 }
 
 func TestHeuristicIndexSelection(t *testing.T) {
@@ -5698,6 +5783,7 @@ func TestOutputSkylinePruningInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
 
@@ -5727,6 +5813,7 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int unsigned primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9), (10,11,12), (13,14,15)")
@@ -5796,6 +5883,7 @@ func TestIssues27130(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));")
 	tk.MustQuery(`explain format=brief select * from t1 where a like "A%"`).Check(testkit.Rows(
 		"TableReader 8000.00 root  data:Selection",
@@ -5811,14 +5899,14 @@ func TestIssues27130(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));")
 	tk.MustQuery(`explain format=brief select * from t2 where a like "A%"`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
+		"IndexReader 8000.00 root  index:Selection",
 		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a, b) keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`explain format=brief select * from t2 where a like "A%" and b like "A%"`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
+		"IndexReader 8000.00 root  index:Selection",
 		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92), like(test.t2.b, \"A%\", 92)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a, b) keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("drop table if exists t3")
@@ -6358,6 +6446,7 @@ func TestIndexMergeWithCorrelatedColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));")
 	tk.MustExec("insert into t1 values(1, 1, 1);")
@@ -6543,6 +6632,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`create table t32157(
   process_code varchar(8) NOT NULL,
   ctrl_class varchar(2) NOT NULL,
@@ -6556,7 +6646,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk.MustExec("alter table t32157 cache")
 
 	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
+		"HashAgg 1.00 root  funcs:count(1)->Column#8]\n" +
 			"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[  └─TableReader 10.00 root  data:Selection]\n" +
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
@@ -6582,6 +6672,7 @@ func TestIssue31240(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t31240(a int, b int);")
 	tk.MustExec("set @@tidb_allow_mpp = 0")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
 	require.NoError(t, err)
@@ -7089,6 +7180,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json);")
 	tk.MustExec("insert into t values(null);")
@@ -7783,6 +7875,7 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
 	tk.MustExec("create table t3(a int, b varchar(10), c int, primary key (a, b(5)) clustered)")
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
@@ -7821,8 +7914,19 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
-		"└─IndexReader_19 1.00 root  index:StreamAgg_9",
-		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
-		"    └─IndexRangeScan_17 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		"HashAgg_12 1.00 root  funcs:count(Column#6)->Column#5",
+		"└─IndexReader_13 1.00 root  index:HashAgg_6",
+		"  └─HashAgg_6 1.00 cop[tikv]  funcs:count(1)->Column#6",
+		"    └─IndexRangeScan_11 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+}
+
+func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		id INTEGER NOT NULL AUTO_INCREMENT,
+		CHECK (id IN (0, 1)),
+		KEY idx_autoinc_id (id)
+	)`)
 }
