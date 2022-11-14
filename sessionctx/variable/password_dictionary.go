@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
+// PasswordDictionaryImpl is the dictionary for validating password.
 type PasswordDictionaryImpl struct {
 	cache map[string]struct{}
 	m     sync.RWMutex
@@ -130,6 +131,7 @@ func CreateTmpDictWithContent(filename string, content []byte) (string, error) {
 	return filename, file.Close()
 }
 
+// ValidateUserNameInPassword checks whether pwd exists in the dictionary.
 func ValidateUserNameInPassword(pwd string, sessionVars *SessionVars) (string, error) {
 	currentUser := sessionVars.User
 	globalVars := sessionVars.GlobalVarsAccessor
@@ -158,6 +160,7 @@ func ValidateUserNameInPassword(pwd string, sessionVars *SessionVars) (string, e
 	return "", nil
 }
 
+// ValidatePasswordLowPolicy checks whether pwd satisfies the low policy of password validation.
 func ValidatePasswordLowPolicy(pwd string, globalVars *GlobalVarAccessor) (string, error) {
 	if validateLengthStr, err := (*globalVars).GetGlobalSysVar(ValidatePasswordLength); err != nil {
 		return "", err
@@ -169,14 +172,16 @@ func ValidatePasswordLowPolicy(pwd string, globalVars *GlobalVarAccessor) (strin
 	return "", nil
 }
 
+// ValidatePasswordMediumPolicy checks whether pwd satisfies the medium policy of password validation.
 func ValidatePasswordMediumPolicy(pwd string, globalVars *GlobalVarAccessor) (string, error) {
 	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
-	for _, r := range []rune(pwd) {
-		if unicode.IsUpper(r) {
+	runes := []rune(pwd)
+	for i := 0; i < len(runes); i++ {
+		if unicode.IsUpper(runes[i]) {
 			upperCaseCount++
-		} else if unicode.IsLower(r) {
+		} else if unicode.IsLower(runes[i]) {
 			lowerCaseCount++
-		} else if unicode.IsDigit(r) {
+		} else if unicode.IsDigit(runes[i]) {
 			numberCount++
 		} else {
 			specialCharCount++
@@ -208,6 +213,7 @@ func ValidatePasswordMediumPolicy(pwd string, globalVars *GlobalVarAccessor) (st
 	return "", nil
 }
 
+// ValidatePassword checks whether the pwd can be used.
 func ValidatePassword(sessionVars *SessionVars, pwd string) error {
 	globalVars := sessionVars.GlobalVarsAccessor
 

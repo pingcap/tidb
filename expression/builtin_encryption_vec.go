@@ -884,11 +884,11 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, resu
 	i64s := result.Int64s()
 	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
 	enableValidation := false
-	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
 		return err
-	} else {
-		enableValidation = variable.TiDBOptOn(validation)
 	}
+	enableValidation = variable.TiDBOptOn(validation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

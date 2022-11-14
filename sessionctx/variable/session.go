@@ -102,7 +102,7 @@ type ReuseChunkPool struct {
 	Alloc chunk.Allocator
 }
 
-// CleanPasswordDictionary does some clean work.
+// Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
 	r.autoRandomIDs.clean()
