@@ -332,6 +332,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 // NonTransactionalStmtCounter records the usages of non-transactional statements.
 type NonTransactionalStmtCounter struct {
 	DeleteCount int64 `json:"delete"`
+	UpdateCount int64 `json:"update"`
 	InsertCount int64 `json:"insert"`
 }
 
@@ -347,6 +348,7 @@ func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTra
 func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "delete"})),
+		UpdateCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "update"})),
 		InsertCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "insert"})),
 	}
 }

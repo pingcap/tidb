@@ -2222,7 +2222,7 @@ func (n *InsertStmt) SetWhereExpr(e ExprNode) {
 }
 
 // TableSource implements ShardableDMLStmt interface.
-func (n *InsertStmt) TableSource() (*TableSource, bool) {
+func (n *InsertStmt) TableRefsJoin() (*Join, bool) {
 	if n.Select == nil {
 		return nil, false
 	}
@@ -2230,8 +2230,7 @@ func (n *InsertStmt) TableSource() (*TableSource, bool) {
 	if !ok {
 		return nil, false
 	}
-	table, ok := s.From.TableRefs.Left.(*TableSource)
-	return table, ok
+	return s.From.TableRefs, true
 }
 
 // DeleteStmt is a statement to delete rows from table.
@@ -2411,9 +2410,9 @@ func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
 }
 
 // TableSource implements ShardableDMLStmt interface.
-func (n *DeleteStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+func (n *DeleteStmt) TableRefsJoin() (*Join, bool) {
+	table := n.TableRefs.TableRefs
+	return table, true
 }
 
 const (
@@ -2426,8 +2425,8 @@ type ShardableDMLStmt = interface {
 	StmtNode
 	WhereExpr() ExprNode
 	SetWhereExpr(ExprNode)
-	// TableSource returns the *only* target table source in the statement.
-	TableSource() (table *TableSource, ok bool)
+	// TableRefsJoin returns the table refs in the statement.
+	TableRefsJoin() (refs *Join, ok bool)
 }
 
 var _ ShardableDMLStmt = &DeleteStmt{}
@@ -2650,9 +2649,8 @@ func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
 }
 
 // TableSource implements ShardableDMLStmt interface.
-func (n *UpdateStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+func (n *UpdateStmt) TableRefsJoin() (*Join, bool) {
+	return n.TableRefs.TableRefs, true
 }
 
 // Limit is the limit clause.
