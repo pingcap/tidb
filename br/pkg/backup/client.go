@@ -264,59 +264,78 @@ func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
 	return bc.checkpointRunner
 }
 
-// StartCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
-func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
-	defer func() {
-		bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
-	}()
-	// sync the checkpoint meta to the external storage at first
-	if bc.checkpointMeta != nil {
-		// the checkpoint meta is loaded from the external storage,
-		// no need to save it again
-		return nil
+// StartCheckpointMeta will
+// 1. saves the initial status into the external storage;
+// 2. load the checkpoint data from external storage
+// 3. start checkpoint runner
+func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range, progressCallBack func(ProgressUnit)) (err error) {
+	if bc.checkpointMeta == nil {
+		bc.checkpointMeta = &checkpoint.CheckpointMetadata{
+			ConfigHash: cfgHash,
+			BackupTS:   backupTS,
+			Ranges:     ranges,
+		}
+
+		// sync the checkpoint meta to the external storage at first
+		err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta)
+		return errors.Trace(err)
 	}
-	bc.checkpointMeta = &checkpoint.CheckpointMetadata{
-		ConfigHash: cfgHash,
-		BackupTS:   backupTS,
-		Ranges:     ranges,
+	// otherwise, the checkpoint meta is loaded from the external storage,
+	// no need to save it again
+
+	bc.checkpointMeta.CheckpointDataMap, err = bc.loadCheckpointRanges(ctx, progressCallBack)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta)
-	return errors.Trace(err)
+	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
+	return nil
+}
+
+// GetProgressRangeRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
+func (bc *Client) GetProgressRange(ctx context.Context, r rtree.Range, progressCallBack func(ProgressUnit)) (*rtree.ProgressRange, error) {
+	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
+		// use groupKey to distinguish different ranges
+		groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
+		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
+		if exists {
+			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
+			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
+			return &rtree.ProgressRange{
+				Res:        rangeTree,
+				Incomplete: incomplete,
+				Origin:     r,
+				GroupKey:   groupKey,
+			}, nil
+		}
+	}
+
+	// the origin range are not recorded in checkpoint
+	// return the default progress range
+	return &rtree.ProgressRange{
+		Res: rtree.NewRangeTree(),
+		Incomplete: []rtree.Range{
+			r,
+		},
+		Origin: r,
+	}, nil
 }
 
 // LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progressCallBack func(ProgressUnit)) (*rtree.ProgressRange, error) {
-	rangeTree := rtree.NewRangeTree()
-	// not in the checkpoint mode
-	if bc.checkpointMeta == nil {
-		return &rtree.ProgressRange{
-			Res: rangeTree,
-			Incomplete: []rtree.Range{
-				r,
-			},
-			Origin: r,
-		}, nil
-	}
+func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
+	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	// use groupKey to distinguish different ranges
-	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
-	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(region *rtree.Range) {
-		rangeTree.Put(region.StartKey, region.EndKey, region.Files)
+	err := checkpoint.WalkCheckpointFile(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
+		rangeTree, exists := rangeDataMap[groupKey]
+		if !exists {
+			rangeTree = rtree.NewRangeTree()
+			rangeDataMap[groupKey] = rangeTree
+		}
+		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
 		progressCallBack(RegionUnit)
 	})
 
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
-
-	return &rtree.ProgressRange{
-		Res:        rangeTree,
-		Incomplete: incomplete,
-		Origin:     r,
-		GroupKey:   groupKey,
-	}, nil
+	return rangeDataMap, errors.Trace(err)
 }
 
 // SetStorage sets ExternalStorage for client.
@@ -733,7 +752,7 @@ func (bc *Client) BackupRanges(
 
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			pr, err := bc.LoadCheckpointRange(elctx, r, progressCallBack)
+			pr, err := bc.GetProgressRange(elctx, r, progressCallBack)
 			if err != nil {
 				return errors.Trace(err)
 			}

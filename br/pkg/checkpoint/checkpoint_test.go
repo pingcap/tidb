@@ -39,8 +39,7 @@ func TestCheckpointRunner(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	os.MkdirAll(base+"/checkpoints/index/+", 0o755)
-	os.MkdirAll(base+"/checkpoints/index/a", 0o755)
+	os.MkdirAll(base+"/checkpoints/data", 0o755)
 
 	cipher := &backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
@@ -109,7 +108,7 @@ func TestCheckpointRunner(t *testing.T) {
 	err = checkpointRunner.Finish(ctx)
 	require.NoError(t, err)
 
-	checker := func(resp *rtree.Range) {
+	checker := func(groupKey string, resp *rtree.Range) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -122,8 +121,8 @@ func TestCheckpointRunner(t *testing.T) {
 		require.Equal(t, d.Name2, resp.Files[1].Name)
 	}
 
-	err = checkpoint.WalkCheckpointFileWithSpecificKey(ctx, s, "a", cipher, checker)
+	err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
 	require.NoError(t, err)
-	err = checkpoint.WalkCheckpointFileWithSpecificKey(ctx, s, "+", cipher, checker)
+	err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
 	require.NoError(t, err)
 }

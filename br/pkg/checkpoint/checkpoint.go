@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -18,31 +19,41 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"go.uber.org/zap"
 )
 
 const (
 	CheckpointMetaPath = "checkpoint.meta"
 	CheckpointDir      = "/checkpoints"
 
-	CheckpointDirFormat      = CheckpointDir + "/%s"
-	CheckpointIndexDirFormat = CheckpointDirFormat + "/index"
-
-	CheckpointFilesPathFormat = CheckpointDirFormat + "/filegroups.%s.cpt"
-	CheckpointIndexPathFormat = CheckpointIndexDirFormat + "/file.%s.cpt"
-
+	CheckpointDataDir     = CheckpointDir + "/data"
 	CheckpointChecksumDir = CheckpointDir + "/checksum"
 )
 
 const tickDuration = 30 * time.Second
 
 type CheckpointMessage struct {
+	// start-key of the origin range
 	GroupKey string
 
 	Group *rtree.Range
 }
 
 type RangeGroups struct {
-	Groups []*rtree.Range `json:"groups"`
+	GroupKey string
+	Groups   []*rtree.Range `json:"groups"`
+}
+
+type RangeGroupData struct {
+	RangeGroupsEncriptedData []byte
+	Checksum                 []byte
+	CipherIv                 []byte
+
+	Size int
+}
+
+type CheckpointData struct {
+	RangeGroupMetas []*RangeGroupData `json:"range-group-metas"`
 }
 
 type CheckpointRunner struct {
@@ -100,7 +111,7 @@ func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	fname := fmt.Sprintf("%s/%d", CheckpointChecksumDir, tableID)
+	fname := fmt.Sprintf("%s/t%d", CheckpointChecksumDir, tableID)
 	return r.storage.WriteFile(ctx, fname, data)
 }
 
@@ -208,7 +219,8 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 				groups, exist := r.meta[msg.GroupKey]
 				if !exist {
 					groups = &RangeGroups{
-						Groups: make([]*rtree.Range, 0),
+						GroupKey: msg.GroupKey,
+						Groups:   make([]*rtree.Range, 0),
 					}
 					r.meta[msg.GroupKey] = groups
 				}
@@ -229,12 +241,21 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		return nil
 	}
 
-	for groupKey, group := range meta {
+	checkpointData := &CheckpointData{
+		RangeGroupMetas: make([]*RangeGroupData, 0, len(meta)),
+	}
+
+	var fname string
+
+	for _, group := range meta {
 		if len(group.Groups) == 0 {
 			continue
 		}
-		idenKey := base64.URLEncoding.EncodeToString(group.Groups[0].StartKey)
-		fname := fmt.Sprintf(CheckpointFilesPathFormat, groupKey, idenKey)
+
+		// use the first item's group-key and sub-range-key as the filename
+		if len(fname) == 0 {
+			fname = fmt.Sprintf("%s..%s", group.GroupKey, group.Groups[0].StartKey)
+		}
 
 		// Flush the metaFile to storage
 		content, err := json.Marshal(group)
@@ -247,74 +268,67 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 			return errors.Trace(err)
 		}
 
-		err = r.storage.WriteFile(ctx, fname, encryptBuff)
-
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		checksum := sha256.Sum256(content)
 
-		// Flush the indexFile (to metaFile) to storage
-		file := &backuppb.File{
-			Name:     fname,
-			Sha256:   checksum[:],
-			Size_:    uint64(len(content)),
-			CipherIv: iv,
-		}
+		checkpointData.RangeGroupMetas = append(checkpointData.RangeGroupMetas, &RangeGroupData{
+			RangeGroupsEncriptedData: encryptBuff,
+			Checksum:                 checksum[:],
+			Size:                     len(content),
+			CipherIv:                 iv,
+		})
+	}
 
-		fname = fmt.Sprintf(CheckpointIndexPathFormat, groupKey, idenKey)
-
-		content, err = file.Marshal()
+	if len(checkpointData.RangeGroupMetas) > 0 {
+		data, err := json.Marshal(checkpointData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = r.storage.WriteFile(ctx, fname, content)
-		if err != nil {
+		checksum := sha256.Sum256([]byte(fname))
+		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
+		path := fmt.Sprintf("%s/%s_%d.cpt", CheckpointDataDir, checksumEncoded, rand.Uint64())
+		log.Info("path", zap.String("path", path))
+		if err := r.storage.WriteFile(ctx, path, data); err != nil {
+			log.Info("error", zap.Error(err))
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalStorage, groupKey string, cipher *backuppb.CipherInfo, fn func(*rtree.Range)) error {
-	subDir := fmt.Sprintf(CheckpointIndexDirFormat, groupKey)
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, _ int64) error {
+func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
-				return err
-			}
-
-			metaIndex := &backuppb.File{}
-			if err = metaIndex.Unmarshal(content); err != nil {
 				return errors.Trace(err)
 			}
 
-			content, err = s.ReadFile(ctx, metaIndex.Name)
-			if err != nil {
-				return err
-			}
-
-			decryptContent, err := metautil.Decrypt(content, cipher, metaIndex.CipherIv)
-			if err != nil {
+			checkpointData := &CheckpointData{}
+			if err = json.Unmarshal(content, checkpointData); err != nil {
 				return errors.Trace(err)
 			}
 
-			checksum := sha256.Sum256(decryptContent)
-			if !bytes.Equal(metaIndex.Sha256, checksum[:]) {
-				return errors.Annotatef(berrors.ErrInvalidMetaFile,
-					"checksum mismatch expect %x, got %x", metaIndex.Sha256, checksum[:])
-			}
+			for _, meta := range checkpointData.RangeGroupMetas {
+				decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-			meta := &RangeGroups{}
-			if err = json.Unmarshal(decryptContent, meta); err != nil {
-				return errors.Trace(err)
-			}
+				checksum := sha256.Sum256(decryptContent)
+				if !bytes.Equal(meta.Checksum, checksum[:]) {
+					return errors.Annotatef(berrors.ErrInvalidMetaFile,
+						"checksum mismatch expect %x, got %x", meta.Checksum, checksum[:])
+				}
 
-			for _, g := range meta.Groups {
-				fn(g)
+				group := &RangeGroups{}
+				if err = json.Unmarshal(decryptContent, meta); err != nil {
+					return errors.Trace(err)
+				}
+
+				for _, g := range group.Groups {
+					fn(group.GroupKey, g)
+				}
 			}
 		}
 		return nil
@@ -335,7 +349,8 @@ type CheckpointMetadata struct {
 	BackupTS   uint64        `json:"backup-ts"`
 	Ranges     []rtree.Range `json:"ranges"`
 
-	CheckpointChecksum map[int64]*ChecksumItem `json:"-"`
+	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
+	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
 }
 
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {

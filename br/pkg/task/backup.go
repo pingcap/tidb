@@ -442,12 +442,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
@@ -549,6 +543,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 					}
 				}
 			})
+		}
+	}
+
+	if cfg.UseCheckpoint {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, progressCallBack); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
