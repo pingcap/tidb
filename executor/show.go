@@ -1142,7 +1142,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 		if fk.Version < model.FKVersion1 {
-			buf.WriteString(" /*T![FOREIGN KEY] INVALID */")
+			buf.WriteString(" /* FOREIGN KEY INVALID */")
 		}
 	}
 
