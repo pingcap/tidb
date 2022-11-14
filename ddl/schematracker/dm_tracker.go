@@ -369,6 +369,13 @@ func (d SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndex
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+func (d SchemaTracker) putTableIfNoError(err error, dbName model.CIStr, tbInfo *model.TableInfo) {
+	if err != nil {
+		return
+	}
+	_ = d.PutTable(dbName, tbInfo)
+}
+
 // createIndex is shared by CreateIndex and AlterTable.
 func (d SchemaTracker) createIndex(
 	ctx sessionctx.Context,
@@ -380,17 +387,12 @@ func (d SchemaTracker) createIndex(
 	ifNotExists bool,
 ) (err error) {
 	unique := keyType == ast.IndexKeyTypeUnique
-	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ti.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
 	t := tables.MockTableFromMeta(tblInfo)
 
@@ -456,17 +458,12 @@ func (d SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt
 
 // dropIndex is shared by DropIndex and AlterTable.
 func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) (err error) {
-	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ti.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
@@ -500,17 +497,12 @@ func (d SchemaTracker) addColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
-	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ti.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
 	t := tables.MockTableFromMeta(tblInfo)
 	colName := specNewColumn.Name.Name.O
@@ -543,17 +535,12 @@ func (d SchemaTracker) addColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast
 
 // dropColumn is used by AlterTable.
 func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ti.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
 	colName := spec.OldColumnName.Name
 	colInfo := tblInfo.FindPublicColumnByName(colName.L)
@@ -595,17 +582,12 @@ func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spe
 	oldColName := spec.OldColumnName.Name
 	newColName := spec.NewColumnName.Name
 
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	tbl := tables.MockTableFromMeta(tblInfo)
 
@@ -650,17 +632,12 @@ func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spe
 // alterColumn is used by AlterTable.
 func (d SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	specNewColumn := spec.NewColumns[0]
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	t := tables.MockTableFromMeta(tblInfo)
 
@@ -726,17 +703,12 @@ func (d SchemaTracker) handleModifyColumn(
 	originalColName model.CIStr,
 	spec *ast.AlterTableSpec,
 ) (err error) {
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
@@ -784,17 +756,12 @@ func (d SchemaTracker) handleModifyColumn(
 
 // renameIndex is used by AlterTable.
 func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return err
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	duplicate, err := ddl.ValidateRenameIndex(spec.FromKey, spec.ToKey, tblInfo)
 	if duplicate {
@@ -810,17 +777,12 @@ func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec
 
 // addTablePartitions is used by AlterTable.
 func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
@@ -837,17 +799,12 @@ func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Iden
 
 // dropTablePartitions is used by AlterTable.
 func (d SchemaTracker) dropTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ident.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ident.Schema, tblInfo)
 
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
@@ -891,17 +848,12 @@ func (d SchemaTracker) createPrimaryKey(
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 ) (err error) {
-	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tblInfo = tblInfo.Clone()
-	defer func() {
-		if err == nil {
-			_ = d.PutTable(ti.Schema, tblInfo)
-		}
-	}()
+	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
 	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
