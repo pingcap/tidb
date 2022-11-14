@@ -83,7 +83,17 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 					// fms for global stats doesn't need to dump to kv.
-					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
+					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
+						globalStats.Count,
+						globalStats.ModifyCount,
+						info.isIndex,
+						hg,
+						cms,
+						topN,
+						info.statsVersion,
+						1,
+						true,
+					)
 					if err != nil {
 						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 					}

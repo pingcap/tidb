@@ -119,6 +119,267 @@ type Handle struct {
 	sysProcTracker sessionctx.SysProcTracker
 	// serverIDGetter is used to get server ID for generating auto analyze ID.
 	serverIDGetter func() uint64
+	// tableLocked used to store locked tables
+	tableLocked []int64
+}
+
+// GetTableLockedAndClearForTest for unit test only
+func (h *Handle) GetTableLockedAndClearForTest() []int64 {
+	tableLocked := h.tableLocked
+	h.tableLocked = make([]int64, 0)
+	return tableLocked
+}
+
+// LoadLockedTables load locked tables from store
+func (h *Handle) LoadLockedTables() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	h.tableLocked = make([]int64, len(rows))
+	for i, row := range rows {
+		h.tableLocked[i] = row.GetInt64(0)
+	}
+
+	return nil
+}
+
+// AddLockedTables add locked tables id  to store
+func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
+	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return "", err
+	}
+
+	//load tables to check duplicate when insert
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
+	if err != nil {
+		return "", err
+	}
+
+	dupTables := make([]string, 0)
+	tableLocked := make([]int64, 0)
+	for _, row := range rows {
+		tableLocked = append(tableLocked, row.GetInt64(0))
+	}
+
+	strTids := fmt.Sprintf("%v", tids)
+	logutil.BgLogger().Info("[stats] lock table ", zap.String("tableIDs", strTids))
+	for i, tid := range tids {
+		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when insert mysql.stats_table_locked ", zap.Error(err))
+			return "", err
+		}
+		// update handle
+		if !isTableLocked(tableLocked, tid) {
+			tableLocked = append(tableLocked, tid)
+		} else {
+			dupTables = append(dupTables, tables[i].Schema.L+"."+tables[i].Name.L)
+		}
+	}
+
+	//insert related partitions while don't warning duplicate partitions
+	for _, tid := range pids {
+		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when insert mysql.stats_table_locked ", zap.Error(err))
+			return "", err
+		}
+		if !isTableLocked(tableLocked, tid) {
+			tableLocked = append(tableLocked, tid)
+		}
+	}
+
+	err = finishTransaction(ctx, exec, err)
+	if err != nil {
+		return "", err
+	}
+	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
+	h.tableLocked = tableLocked
+
+	if len(dupTables) > 0 {
+		tables := dupTables[0]
+		for i, table := range dupTables {
+			if i == 0 {
+				continue
+			}
+			tables += ", " + table
+		}
+		var msg string
+		if len(tids) > 1 {
+			if len(tids) > len(dupTables) {
+				msg = "skip locking locked tables: " + tables + ", other tables locked successfully"
+			} else {
+				msg = "skip locking locked tables: " + tables
+			}
+		} else {
+			msg = "skip locking locked table: " + tables
+		}
+		return msg, err
+	}
+	return "", err
+}
+
+// getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
+func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64) (int64, int64, uint64, error) {
+	rows, _, err := h.execRestrictedSQL(ctx, "select count, modify_count, version from mysql.stats_table_locked where table_id = %?", tableID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	if len(rows) == 0 {
+		return 0, 0, 0, nil
+	}
+	count := rows[0].GetInt64(0)
+	modifyCount := rows[0].GetInt64(1)
+	version := rows[0].GetUint64(2)
+	return count, modifyCount, version, nil
+}
+
+// RemoveLockedTables remove tables from table locked array
+func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return "", err
+	}
+
+	//load tables to check unlock the unlock table
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
+	if err != nil {
+		return "", err
+	}
+
+	nonlockedTables := make([]string, 0)
+	tableLocked := make([]int64, 0)
+	for _, row := range rows {
+		tableLocked = append(tableLocked, row.GetInt64(0))
+	}
+
+	strTids := fmt.Sprintf("%v", tids)
+	logutil.BgLogger().Info("[stats] unlock table ", zap.String("tableIDs", strTids))
+	for i, tid := range tids {
+		// get stats delta during table locked
+		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when getStatsDeltaFromTableLocked", zap.Error(err))
+			return "", err
+		}
+		// update stats_meta with stats delta
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
+			return "", err
+		}
+
+		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when delete from mysql.stats_table_locked ", zap.Error(err))
+			return "", err
+		}
+		var exist bool
+		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
+		if !exist {
+			nonlockedTables = append(nonlockedTables, tables[i].Schema.L+"."+tables[i].Name.L)
+		}
+	}
+	//delete related partitions while don't warning delete empty partitions
+	for _, tid := range pids {
+		// get stats delta during table locked
+		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when getStatsDeltaFromTableLocked", zap.Error(err))
+			return "", err
+		}
+		// update stats_meta with stats delta
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
+			return "", err
+		}
+
+		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when delete from mysql.stats_table_locked ", zap.Error(err))
+			return "", err
+		}
+		_, tableLocked = removeIfTableLocked(tableLocked, tid)
+	}
+
+	err = finishTransaction(ctx, exec, err)
+	if err != nil {
+		return "", err
+	}
+	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
+	h.tableLocked = tableLocked
+
+	if len(nonlockedTables) > 0 {
+		tables := nonlockedTables[0]
+		for i, table := range nonlockedTables {
+			if i == 0 {
+				continue
+			}
+			tables += ", " + table
+		}
+		var msg string
+		if len(tids) > 1 {
+			if len(tids) > len(nonlockedTables) {
+				msg = "skip unlocking non-locked tables: " + tables + ", other tables unlocked successfully"
+			} else {
+				msg = "skip unlocking non-locked tables: " + tables
+			}
+		} else {
+			msg = "skip unlocking non-locked table: " + tables
+		}
+		return msg, err
+	}
+	return "", err
+}
+
+// IsTableLocked check whether table is locked in handle
+func (h *Handle) IsTableLocked(tableID int64) bool {
+	return isTableLocked(h.tableLocked, tableID)
+}
+
+// isTableLocked check whether table is locked
+func isTableLocked(tableLocked []int64, tableID int64) bool {
+	return lockTableIndexOf(tableLocked, tableID) > -1
+}
+
+// lockTableIndexOf get the locked table's index in the array
+func lockTableIndexOf(tableLocked []int64, tableID int64) int {
+	for idx, id := range tableLocked {
+		if id == tableID {
+			return idx
+		}
+	}
+	return -1
+}
+
+// removeIfTableLocked try to remove the table from table locked array
+func removeIfTableLocked(tableLocked []int64, tableID int64) (bool, []int64) {
+	idx := lockTableIndexOf(tableLocked, tableID)
+	if idx > -1 {
+		tableLocked = append(tableLocked[:idx], tableLocked[idx+1:]...)
+	}
+	return idx > -1, tableLocked
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
@@ -399,12 +660,13 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num   int
-	Count int64
-	Hg    []*statistics.Histogram
-	Cms   []*statistics.CMSketch
-	TopN  []*statistics.TopN
-	Fms   []*statistics.FMSketch
+	Num         int
+	Count       int64
+	ModifyCount int64
+	Hg          []*statistics.Histogram
+	Cms         []*statistics.CMSketch
+	TopN        []*statistics.TopN
+	Fms         []*statistics.FMSketch
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -513,7 +775,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			_, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
@@ -527,7 +789,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
-				globalStats.Count += count
+				globalStats.Count += partitionStats.Count
+				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
@@ -1532,8 +1795,10 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 }
 
 // SaveStatsToStorage saves the stats to storage.
+// If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
+// fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -1559,7 +1824,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	version := txn.StartTS()
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count) values (%?, %?, %?)", version, tableID, count)
+		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
