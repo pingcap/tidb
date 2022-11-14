@@ -30,7 +30,7 @@ const (
 	CheckpointChecksumDir = CheckpointDir + "/checksum"
 )
 
-const maxChecksumTotalCost float64 = 60.0
+const MaxChecksumTotalCost float64 = 60.0
 
 const tickDuration = 30 * time.Second
 
@@ -70,16 +70,17 @@ type ChecksumInfo struct {
 }
 
 type ChecksumRunner struct {
+	sync.Mutex
+
 	checksumInfo ChecksumInfo
 
 	// when the total time cost is large than the threshold,
 	// begin to flush checksum
 	totalCost float64
 
-	err          error
-	checksumLock sync.Mutex
-	wg           sync.WaitGroup
-	workerPool   utils.WorkerPool
+	err        error
+	wg         sync.WaitGroup
+	workerPool utils.WorkerPool
 }
 
 func NewChecksumRunner() *ChecksumRunner {
@@ -106,10 +107,10 @@ func (cr *ChecksumRunner) FlushChecksum(
 		TotalBytes: totalBytes,
 	}
 	var toBeFlushedChecksumInfo *ChecksumInfo = nil
-	cr.checksumLock.Lock()
+	cr.Lock()
 	if cr.err != nil {
 		err := cr.err
-		cr.checksumLock.Unlock()
+		cr.Unlock()
 		return err
 	}
 	if cr.checksumInfo.ChecksumItems == nil {
@@ -119,13 +120,13 @@ func (cr *ChecksumRunner) FlushChecksum(
 	}
 	cr.totalCost += timeCost
 	cr.checksumInfo.ChecksumItems = append(cr.checksumInfo.ChecksumItems, checksumItem)
-	if cr.totalCost > maxChecksumTotalCost {
+	if cr.totalCost > MaxChecksumTotalCost {
 		toBeFlushedChecksumInfo = &ChecksumInfo{
 			ChecksumItems: cr.checksumInfo.ChecksumItems,
 		}
 		cr.checksumInfo.ChecksumItems = nil
 	}
-	cr.checksumLock.Unlock()
+	cr.Unlock()
 
 	if toBeFlushedChecksumInfo == nil {
 		return nil
@@ -135,9 +136,9 @@ func (cr *ChecksumRunner) FlushChecksum(
 	cr.workerPool.Apply(func() {
 		defer cr.wg.Done()
 		recordErr := func(err error) {
-			cr.checksumLock.Lock()
+			cr.Lock()
 			cr.err = err
-			cr.checksumLock.Unlock()
+			cr.Unlock()
 		}
 
 		data, err := json.Marshal(toBeFlushedChecksumInfo)
@@ -191,6 +192,8 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo) *CheckpointRunner {
 	runner := &CheckpointRunner{
 		meta: make(map[string]*RangeGroups),
+
+		checksumRunner: NewChecksumRunner(),
 
 		storage: storage,
 		cipher:  cipher,

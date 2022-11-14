@@ -3,6 +3,7 @@ package checkpoint_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,8 @@ func TestCheckpointRunner(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	os.MkdirAll(base+"/checkpoints/data", 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointDataDir, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDir, 0o755)
 
 	cipher := &backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
@@ -95,7 +97,11 @@ func TestCheckpointRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
+	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
 	time.Sleep(6 * time.Second)
+	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
 
 	for _, d := range data2 {
 		err = checkpointRunner.Append(ctx, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
@@ -105,8 +111,7 @@ func TestCheckpointRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	err = checkpointRunner.Finish(ctx)
-	require.NoError(t, err)
+	checkpointRunner.WaitForFinish()
 
 	checker := func(groupKey string, resp *rtree.Range) {
 		require.NotNil(t, resp)
@@ -125,4 +130,31 @@ func TestCheckpointRunner(t *testing.T) {
 	require.NoError(t, err)
 	err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
 	require.NoError(t, err)
+
+	checkpointMeta := &checkpoint.CheckpointMetadata{
+		ConfigHash: []byte("123456"),
+		BackupTS:   123456,
+	}
+
+	err = checkpoint.SaveCheckpointMetadata(ctx, s, checkpointMeta)
+	require.NoError(t, err)
+	meta, err := checkpoint.LoadCheckpointMetadata(ctx, s)
+	require.NoError(t, err)
+
+	var i int64
+	for i = 1; i <= 4; i++ {
+		require.Equal(t, meta.CheckpointChecksum[i].Crc64xor, uint64(i))
+	}
+
+	// only 2 checksum files exists, they are t2_and__ and t4_and__
+	count := 0
+	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDir}, func(s string, i int64) error {
+		count += 1
+		if !strings.Contains(s, "t2") {
+			require.True(t, strings.Contains(s, "t4"))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, count, 2)
 }
