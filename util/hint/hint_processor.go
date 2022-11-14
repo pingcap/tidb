@@ -556,9 +556,8 @@ func (p *BlockHintProcessor) isHint4View(hint *ast.TableOptimizerHint) bool {
 			_, ok := p.QbNameMap4View[hint.QBName.L]
 			if ok {
 				return true
-			} else {
-				return false
 			}
+			return false
 		}
 	}
 	allViewHints := true
