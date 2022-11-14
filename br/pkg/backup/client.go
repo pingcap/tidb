@@ -104,6 +104,16 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
 	}, nil
 }
 
+// GetTS gets a new timestamp from PD.
+func (bc *Client) GetCurerntTS(ctx context.Context) (uint64, error) {
+	p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	restoreTS := oracle.ComposeTS(p, l)
+	return restoreTS, nil
+}
+
 // GetTS returns the latest timestamp.
 func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) (uint64, error) {
 	var (

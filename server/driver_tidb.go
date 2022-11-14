@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -176,7 +177,7 @@ func (ts *TiDBStatement) Close() error {
 				return err
 			}
 			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+				ts.ctx.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
@@ -191,7 +192,7 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
@@ -208,6 +209,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	se.SetSessionStatesHandler(sessionstates.StatePrepareStmt, tc)
+	se.SetExtensions(extensions)
 	return tc, nil
 }
 
@@ -225,8 +227,8 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
-	if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-		rs, err = session.HandleNonTransactionalDelete(ctx, s, tc.Session)
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}

@@ -49,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/extension/extensionimpl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -73,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -83,6 +84,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -122,15 +124,29 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
-	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage         = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage          = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryCTEUsageRecurCTE       = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
+	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+
+	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage           = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage            = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage    = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
+	telemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
+	telemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
+	telemetryTablePartitionListColumnsUsage     = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage   = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
+	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
+	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
+
+	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
+	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
+	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -154,11 +170,11 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) error
+	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
+	// Deprecated: please use ExecuteStmt, this function is left for testing only.
+	// TODO: remove ExecutePreparedStmt.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
-	// ExecuteGeneralStmt executes a general statement.
-	ExecuteGeneralStmt(ctx context.Context, sql string, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
@@ -170,7 +186,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	Auth(user *auth.UserIdentity, auth []byte, salt []byte) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -186,6 +202,9 @@ type Session interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	GetDiskFullOpt() kvrpcpb.DiskFullOpt
 	ClearDiskFullOpt()
+
+	// SetExtensions sets the `*extension.SessionExtensions` object
+	SetExtensions(extensions *extension.SessionExtensions)
 }
 
 var _ Session = (*session)(nil)
@@ -229,7 +248,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache *kvcache.SimpleLRUCache
+	preparedPlanCache sessionctx.PlanCache
+	generalPlanCache  sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -267,6 +287,8 @@ type session struct {
 
 	// Contains a list of sessions used to collect advisory locks.
 	advisoryLocks map[string]*advisoryLock
+
+	extensions *extension.SessionExtensions
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -369,7 +391,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.PreparedPlanCache().Delete(cacheKey)
+				s.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -428,13 +450,27 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
+	if isGeneralPlanCache { // use the general plan cache
+		if !s.GetSessionVars().EnableGeneralPlanCache {
+			return nil
+		}
+		if s.generalPlanCache == nil { // lazy construction
+			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+				plannercore.PickPlanFromBucket)
+		}
+		return s.generalPlanCache
+	}
+
+	// use the prepared plan cache
 	if !s.GetSessionVars().EnablePreparedPlanCache {
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+			plannercore.PickPlanFromBucket)
 	}
 	return s.preparedPlanCache
 }
@@ -448,7 +484,7 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
 		return
 	}
 	if s.statsCollector != nil {
@@ -458,7 +494,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), s.GetSessionVars().GetEnablePseudoForOutdatedStats())
 		if err != nil {
 			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -543,6 +579,11 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
+	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
 
 	return &txnInfo
 }
@@ -622,12 +663,20 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
+	needCheckSchema := true
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
+	if s.GetSessionVars().TxnCtx != nil {
+		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
+	}
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if sessVars.EnableAmendPessimisticTxn {
-		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		if !variable.EnableFastReorg.Load() {
+			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		} else {
+			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
+		}
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
@@ -771,19 +820,23 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
+			ms := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(ms))
+		})
 		return txn.Commit(ctx)
 	}
 
 	sessionData := sessVars.TemporaryTableData
 	var (
 		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
+		localTempTables *infoschema.SessionTables
 	)
 
 	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
+		localTempTables = new(infoschema.SessionTables)
 	}
 
 	defer func() {
@@ -905,6 +958,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err = s.doCommit(ctx)
 	if err != nil {
+		// polish the Write Conflict error message
+		newErr := s.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
 			commitRetryLimit = 0
@@ -947,6 +1006,64 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	s.updateStatsDeltaToCollector()
 	return nil
+}
+
+// adds more information about the table in the error message
+// precondition: oldErr is a 9007:WriteConflict Error
+func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
+	if !kv.ErrWriteConflict.Equal(oldErr) {
+		return nil
+	}
+	if errors.RedactLogEnabled.Load() {
+		return nil
+	}
+	originErr := errors.Cause(oldErr)
+	inErr, _ := originErr.(*errors.Error)
+	args := inErr.Args()
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	if is == nil {
+		return nil
+	}
+	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
+	if ok {
+		args[3] = newKeyTableField
+	}
+	newPrimaryKeyTableField, ok := addTableNameInTableIDField(args[5], is)
+	if ok {
+		args[5] = newPrimaryKeyTableField
+	}
+	return kv.ErrWriteConflict.FastGenByArgs(args...)
+}
+
+// precondition: is != nil
+func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+	keyTableID, ok := tableIDField.(string)
+	if !ok {
+		return "", false
+	}
+	stringsInTableIDField := strings.Split(keyTableID, "=")
+	if len(stringsInTableIDField) == 0 {
+		return "", false
+	}
+	tableIDStr := stringsInTableIDField[len(stringsInTableIDField)-1]
+	tableID, err := strconv.ParseInt(tableIDStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	var tableName string
+	tbl, ok := is.TableByID(tableID)
+	if !ok {
+		tableName = "unknown"
+	} else {
+		dbInfo, ok := is.SchemaByTable(tbl.Meta())
+		if !ok {
+			tableName = "unknown." + tbl.Meta().Name.String()
+		} else {
+			tableName = dbInfo.Name.String() + "." + tbl.Meta().Name.String()
+		}
+	}
+	enhancedMsg = keyTableID + ", tableName=" + tableName
+	return enhancedMsg, true
 }
 
 func (s *session) updateStatsDeltaToCollector() {
@@ -1226,6 +1343,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBEnableWindowFunction, variable.BoolToOnOff(variable.DefEnableWindowFunction))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1245,6 +1366,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 			return nil, err
 		}
 		err = se.sessionVars.SetSystemVar(variable.MaxExecutionTime, "0")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1347,7 +1472,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 // it is called (but skipped) when setting instance scope
-func (s *session) SetGlobalSysVar(name, value string) (err error) {
+func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1355,7 +1480,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
@@ -1369,18 +1494,18 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
 // This is helpful to prevent duplicate warnings being appended from aliases, or recursion.
-func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
+func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, true); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
 		return nil
 	}
-	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -1436,21 +1561,23 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		Port:             s.sessionVars.Port,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          command,
-		Plan:             p,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:             t,
-		State:            s.Status(),
-		Info:             sql,
-		CurTxnStartTS:    curTxnStartTS,
-		StmtCtx:          s.sessionVars.StmtCtx,
-		StatsInfo:        plannercore.GetStatsInfo,
-		MaxExecutionTime: maxExecutionTime,
-		RedactSQL:        s.sessionVars.EnableRedactLog,
+		ID:                    s.sessionVars.ConnectionID,
+		Port:                  s.sessionVars.Port,
+		DB:                    s.sessionVars.CurrentDB,
+		Command:               command,
+		Plan:                  p,
+		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
+		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:                  t,
+		State:                 s.Status(),
+		Info:                  sql,
+		CurTxnStartTS:         curTxnStartTS,
+		StmtCtx:               s.sessionVars.StmtCtx,
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		StatsInfo:             plannercore.GetStatsInfo,
+		MaxExecutionTime:      maxExecutionTime,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1478,6 +1605,25 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
+	}
+}
+
+func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
+	explain := &plannercore.Explain{
+		TargetPlan:       p.(plannercore.Plan),
+		Format:           types.ExplainFormatROW,
+		Analyze:          false,
+		RuntimeStatsColl: runtimeStatsColl,
+	}
+	explain.SetSCtx(s)
+	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -1701,6 +1847,16 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 		delete(s.advisoryLocks, lockName)
 	}
 	return count
+}
+
+// GetExtensions returns the `*extension.SessionExtensions` object
+func (s *session) GetExtensions() *extension.SessionExtensions {
+	return s.extensions
+}
+
+// SetExtensions sets the `*extension.SessionExtensions` object
+func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
+	s.extensions = extensions
 }
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
@@ -1974,7 +2130,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := executor.GetStmtLabel(stmtNode)
+	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -2006,10 +2162,24 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 	}
 	s.currentPlan = stmt.Plan
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if execStmt.Name == "" {
+			// for exec-stmt on bin-protocol, ignore the plan detail in `show process` to gain performance benefits.
+			s.currentPlan = nil
+		}
+	}
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
-	recordSet, err := runStmt(ctx, s, stmt)
+
+	var recordSet sqlexec.RecordSet
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -2147,6 +2317,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
+			if !sessVars.InTxn() {
+				se.StmtCommit()
+				if err := se.CommitTxn(ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
@@ -2236,15 +2414,18 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 // The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) error {
+func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
 		// skip this step if there is already a PlanCacheStmt for this ql
-		return nil
+		return stmt, nil
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
 	prepareExec.IsGeneralStmt = true
-	return prepareExec.Next(context.Background(), nil)
+	if err := prepareExec.Next(context.Background(), nil); err != nil {
+		return nil, err
+	}
+	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -2286,49 +2467,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.PlanCacheStmt) (sqlexec.RecordSet, error) {
-	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
-		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
-		if prepareStmt.SnapshotTSEvaluator != nil {
-			staleread.AssertStmtStaleness(s, true)
-			ts, err := prepareStmt.SnapshotTSEvaluator(s)
-			if err != nil {
-				panic(err)
-			}
-			sessiontxn.AssertTxnManagerReadTS(s, ts)
-		}
-	})
-
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, st.Plan)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(st.Plan)
-		telemetry.CurrentExecuteCount.Inc()
-		if tiFlashPushDown {
-			telemetry.CurrentTiFlashPushDownCount.Inc()
-		}
-		if tiFlashExchangePushDown {
-			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
-		}
-	}
-	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logGeneralQuery(st, s, true)
-
-	if st.PsStmt != nil { // point plan short path
-		resultSet, err := st.PointGet(ctx)
-		s.txn.changeToInvalid()
-		return resultSet, err
-	}
-
-	return runStmt(ctx, s, st)
-}
-
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
@@ -2341,68 +2479,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
-	return s.executePlanCacheStmt(ctx, stmt, params)
-}
-
-// ExecuteGeneralStmt executes a general statement.
-func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
-	generalStmt := s.sessionVars.GetGeneralPlanCacheStmt(sql)
-	if generalStmt == nil {
-		err := plannercore.ErrStmtNotFound
-		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
-		return nil, err
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: params,
+		PrepStmt:   stmt,
 	}
-	stmt, ok := generalStmt.(*plannercore.PlanCacheStmt)
-	if !ok {
-		return nil, errors.Errorf("invalid PlanCacheStmt type")
-	}
-	return s.executePlanCacheStmt(ctx, stmt, params)
-}
-
-func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.PlanCacheStmt, params []expression.Expression) (sqlexec.RecordSet, error) {
-	var err error
-	if err = s.PrepareTxnCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	s.sessionVars.StartTime = time.Now()
-	execStmt := &ast.ExecuteStmt{PrepStmt: stmt, BinaryArgs: params}
-	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
-		return nil, err
-	}
-
-	staleReadProcessor := staleread.NewStaleReadProcessor(s)
-	if err = staleReadProcessor.OnExecutePreparedStmt(stmt.SnapshotTSEvaluator); err != nil {
-		return nil, err
-	}
-
-	if staleReadProcessor.IsStaleness() {
-		s.sessionVars.StmtCtx.IsStaleness = true
-		err = sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnWithReplaceProvider,
-			Provider: staleread.NewStalenessTxnContextProvider(
-				s,
-				staleReadProcessor.GetStalenessReadTS(),
-				staleReadProcessor.GetStalenessInfoSchema(),
-			),
-		})
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	executor.CountStmtNode(stmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	s.txn.onStmtStart(stmt.SQLDigest.String())
-	defer s.txn.onStmtEnd()
-
-	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
-		return nil, err
-	}
-	s.setRequestSource(ctx, stmt.PreparedAst.StmtType, stmt.PreparedAst.Stmt)
-	// even the txn is valid, still need to set session variable for coprocessor usage.
-	s.sessionVars.RequestSourceType = stmt.PreparedAst.StmtType
-	return s.preparedStmtExec(ctx, execStmt, stmt)
+	return s.ExecuteStmt(ctx, execStmt)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2498,20 +2579,24 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
+func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) error {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
+	}
 	pm := privilege.GetPrivilegeManager(s)
 	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
 	if err != nil {
-		return false
+		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
-		user.AuthUsername = authUser.Username
-		user.AuthHostname = authUser.Hostname
-		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-		return true
+	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+		return err
 	}
-	return false
+	user.AuthUsername = authUser.Username
+	user.AuthHostname = authUser.Hostname
+	s.sessionVars.User = user
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -2582,7 +2667,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache *kvcache.SimpleLRUCache
+	PreparedPlanCache sessionctx.PlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
@@ -2662,7 +2747,22 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
+	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
+
+func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
+	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		var regionIDs []uint64
+		for _, id := range tableIDs {
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+		}
+		if variable.DefTiDBScatterRegion {
+			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		}
+		cancel()
+	}
+}
 
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
 func InitDDLJobTables(store kv.Storage) error {
@@ -2676,15 +2776,13 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		tableIDs := make([]int64, 0, len(DDLJobTables))
+		for _, tbl := range DDLJobTables {
+			tableIDs = append(tableIDs, tbl.id)
+		}
+		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			id, err := t.GetGlobalID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
-			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2696,15 +2794,46 @@ func InitDDLJobTables(store kv.Storage) error {
 			tblInfo.State = model.StatePublic
 			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = t.CreateTableOrView(dbID, tblInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		return t.SetDDLTables()
+	})
+}
+
+// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
+func InitMDLTable(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckMDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		splitAndScatterTable(store, []int64{ddl.MDLTableID})
+		p := parser.New()
+		stmt, err := p.ParseOneStmt(mdlTable, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = ddl.MDLTableID
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return t.SetMDLTables()
 	})
 }
 
@@ -2725,6 +2854,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = InitMDLTable(store)
+	if err != nil {
+		return nil, err
+	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -2732,8 +2865,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
+	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency)
+	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
 	if err != nil {
 		return nil, err
 	}
@@ -2778,6 +2912,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
+		return nil, err
+	}
+
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
@@ -2812,9 +2950,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
-
+	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
+	for i := 0; i < analyzeConcurrencyQuota; i++ {
+		subCtxs2[i] = ses[7+concurrency+i]
+	}
+	dom.SetupAnalyzeExec(subCtxs2)
 	dom.DumpFileGcCheckerLoop()
-	dom.LoadSigningCertLoop()
+	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
@@ -2841,6 +2983,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
@@ -2876,13 +3020,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.sessionVars = variable.NewSessionVars(s)
+
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.preparedPlanCache = opt.PreparedPlanCache
@@ -2910,7 +3055,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
+		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
@@ -3027,11 +3172,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
+	}
+
+	if s.sessionVars.RetryInfo.Retrying {
+		txnMode = ast.Pessimistic
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
@@ -3332,15 +3480,19 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	ti := es.Ti
 	if ti.UseRecursive {
-		telemetryCTEUsage.WithLabelValues("recurCTE").Inc()
+		telemetryCTEUsageRecurCTE.Inc()
 	} else if ti.UseNonRecursive {
-		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
+		telemetryCTEUsageNonRecurCTE.Inc()
 	} else {
-		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+		telemetryCTEUsageNotCTE.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UesExchangePartition {
+		telemetryExchangePartitionUsage.Inc()
 	}
 
 	if ti.PartitionTelemetry != nil {
@@ -3360,9 +3512,33 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
 			telemetryTablePartitionRangeColumnsUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
+			telemetryTablePartitionRangeColumnsGt1Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
+			telemetryTablePartitionRangeColumnsGt2Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
+			telemetryTablePartitionRangeColumnsGt3Usage.Inc()
+		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseCreateIntervalPartition {
+			telemetryTablePartitionCreateIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseAddIntervalPartition {
+			telemetryTablePartitionAddIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseDropIntervalPartition {
+			telemetryTablePartitionDropIntervalUsage.Inc()
+		}
+	}
+
+	if ti.AccountLockTelemetry != nil {
+		telemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
+		telemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
+		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 }
 
@@ -3400,7 +3576,7 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
 		if localTempTables.Count() > 0 {
 			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}
@@ -3496,4 +3672,27 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			}
 		}
 	}
+}
+
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+	sv := s.GetSessionVars()
+	if sv.InRestrictedSQL {
+		return
+	}
+	sv.TxnCtxMu.Lock()
+	defer sv.TxnCtxMu.Unlock()
+	if sv.TxnCtx == nil {
+		return
+	}
+	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		for jobID, ver := range job2ver {
+			ids := util.Str2Int64Map(job2ids[jobID])
+			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
+				delete(job2ver, jobID)
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
+			}
+		}
+		return true
+	})
 }

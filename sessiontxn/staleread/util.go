@@ -26,8 +26,8 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
-	tsVal, err := expression.EvalAstExpr(sctx, asOfClause.TsExpr)
+func CalculateAsOfTsExpr(sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
 	if err != nil {
 		return 0, err
 	}

@@ -97,6 +97,8 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
+	// fkChecks contains the foreign key checkers.
+	fkChecks []*FKCheckExec
 }
 
 type defaultVal struct {
@@ -992,8 +994,8 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
-	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
+	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
 	if e.isLoadData {
@@ -1004,9 +1006,8 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
-	autoRandomID |= shard
-	return autoRandomID, nil
+	currentShard := e.ctx.GetSessionVars().TxnCtx.GetCurrentShard(1)
+	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 
 func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, fieldType *types.FieldType) error {
@@ -1016,8 +1017,8 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
-	autoRandomID := layout.IncrementalMask() & recordID
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
+	autoRandomID := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, autoRandomID, true)
 }
@@ -1070,8 +1071,8 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
-	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, autoid.RowIDBitLength)
+	newTiDBRowIDBase := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
 }
@@ -1125,6 +1126,13 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
+		}
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for _, fkc := range e.fkChecks {
+		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
+		if err != nil {
+			return err
 		}
 	}
 	prefetchStart := time.Now()
@@ -1265,6 +1273,14 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
+	}
+	if !vars.StmtCtx.BatchCheck {
+		for _, fkc := range e.fkChecks {
+			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

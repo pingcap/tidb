@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -140,6 +140,24 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ShowExec) fetchAll(ctx context.Context) error {
+	// Temporary disables select limit to avoid miss the result.
+	// Because some of below fetch show result stmt functions will generate
+	// a SQL stmt and then execute the new SQL stmt to do the fetch result task
+	// for the up-level show stmt.
+	// Here, the problem is the new SQL stmt will be influenced by SelectLimit value
+	// and return a limited result set back to up level show stmt. This, in fact, may
+	// cause a filter effect on result set that may exclude the qualified record outside of
+	// result set.
+	// Finally, when above result set, may not include qualified record, is returned to up
+	// level show stmt's selection, which really applies the filter operation on returned
+	// result set, it may return empty result to client.
+	oldSelectLimit := e.ctx.GetSessionVars().SelectLimit
+	e.ctx.GetSessionVars().SelectLimit = math.MaxUint64
+	defer func() {
+		// Restore session Var SelectLimit value.
+		e.ctx.GetSessionVars().SelectLimit = oldSelectLimit
+	}()
+
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
@@ -186,7 +204,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(ctx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings(false)
 	case ast.ShowErrors:
@@ -799,18 +817,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
-	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
-		return false
-	}
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
-		return false
-	}
-	return true
-}
-
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
@@ -839,10 +846,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if e.sysVarHiddenForSem(v.Name) {
+				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
-				value, err = sessionVars.GetGlobalSystemVar(v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -864,10 +871,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if e.sysVarHiddenForSem(v.Name) {
+		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
-		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1031,7 +1038,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
+			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
+			} else {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+			}
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
@@ -1111,17 +1123,21 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		if fk.RefSchema.L != "" {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+		} else {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
-		if ast.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		if model.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
 		}
-		if ast.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		if model.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 
@@ -1512,7 +1528,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))
+		FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1526,6 +1544,17 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	authplugin := mysql.AuthNativePassword
 	if len(rows) == 1 && rows[0].GetString(0) != "" {
 		authplugin = rows[0].GetString(0)
+	}
+
+	accountLockedRaw := rows[0].GetString(1)
+	accountLocked := "LOCK"
+	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
+		accountLocked = "UNLOCK"
+	}
+
+	userAttributes := rows[0].GetString(2)
+	if len(userAttributes) > 0 {
+		userAttributes = " ATTRIBUTE " + userAttributes
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1551,8 +1580,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1759,10 +1788,6 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 
 func (e *ShowExec) appendRow(row []interface{}) {
 	for i, col := range row {
-		if col == nil {
-			e.result.AppendNull(i)
-			continue
-		}
 		switch x := col.(type) {
 		case nil:
 			e.result.AppendNull(i)
@@ -1786,7 +1811,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendMyDecimal(i, x)
 		case types.Time:
 			e.result.AppendTime(i, x)
-		case json.BinaryJSON:
+		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
@@ -1990,7 +2015,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stateJSON := json.BinaryJSON{}
+	stateJSON := types.BinaryJSON{}
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
@@ -1998,10 +2023,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
-		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
-		}
+		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
+		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err
 		}
@@ -2010,7 +2033,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tokenJSON := json.BinaryJSON{}
+	tokenJSON := types.BinaryJSON{}
 	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
 		return err
 	}

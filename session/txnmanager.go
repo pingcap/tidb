@@ -70,6 +70,13 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	return nil
 }
 
+func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	if m.ctxProvider == nil {
+		return
+	}
+	m.ctxProvider.SetTxnInfoSchema(is)
+}
+
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
@@ -190,6 +197,14 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 		return errors.New("context provider not set")
 	}
 	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
+// OnLocalTemporaryTableCreated is the hook that should be called when a temporary table created.
+// The provider will update its state then
+func (m *txnManager) OnLocalTemporaryTableCreated() {
+	if m.ctxProvider != nil {
+		m.ctxProvider.OnLocalTemporaryTableCreated()
+	}
 }
 
 func (m *txnManager) AdviseWarmup() error {

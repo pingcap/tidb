@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -658,7 +657,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{}, col.GetCollate())
 	case mysql.TypeJSON:
-		d.SetMysqlJSON(json.CreateBinary(nil))
+		d.SetMysqlJSON(types.CreateBinaryJSON(nil))
 	}
 	return d
 }

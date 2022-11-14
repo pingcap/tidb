@@ -216,7 +216,7 @@ type AbstractBackend interface {
 	// according to the required algorithm.
 	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
 
-	// TotalMemoryConsume counts total memory usage. This is only used for local backend
+	// TotalMemoryConsume counts total memory usage. This is only used for local backend.
 	TotalMemoryConsume() int64
 }
 
@@ -513,6 +513,6 @@ type EngineWriter interface {
 	Close(ctx context.Context) (ChunkFlushStatus, error)
 }
 
-func (engine *OpenedEngine) GetEngineUuid() uuid.UUID {
+func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }

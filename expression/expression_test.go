@@ -277,3 +277,15 @@ func TestEvalExpr(t *testing.T) {
 		}
 	}
 }
+
+func TestExpressionMemeoryUsage(t *testing.T) {
+	c1 := &Column{OrigName: "Origin"}
+	c2 := Column{OrigName: "OriginName"}
+	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+	c1 = nil
+	require.Equal(t, c1.MemoryUsage(), int64(0))
+
+	c3 := Constant{Value: types.NewIntDatum(1)}
+	c4 := Constant{Value: types.NewStringDatum("11")}
+	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
+}

@@ -58,7 +58,7 @@ var JobNeedGCForTest = jobNeedGC
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return getRangeEndKey(NewJobContext(), store, priority, t, startHandle, endHandle)
+	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {

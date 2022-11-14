@@ -101,10 +101,10 @@ type HistColl struct {
 	Indices    map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxID map[int64]int64
-	Count       int64
-	ModifyCount int64 // Total modify count in a table.
+	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
+	ColID2IdxIDs map[int64][]int64
+	Count        int64
+	ModifyCount  int64 // Total modify count in a table.
 
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
@@ -463,6 +463,21 @@ func (n *neededStatsMap) Length() int {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
+// IsInitialized returns true if any column/index stats of the table is initialized.
+func (t *Table) IsInitialized() bool {
+	for _, col := range t.Columns {
+		if col != nil && col.IsStatsInitialized() {
+			return true
+		}
+	}
+	for _, idx := range t.Indices {
+		if idx != nil && idx.IsStatsInitialized() {
+			return true
+		}
+	}
+	return false
+}
+
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetColRowCount()
@@ -531,10 +546,12 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	var result float64
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
@@ -549,7 +566,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -560,6 +577,9 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
@@ -583,6 +603,9 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		for _, col := range idx.Info.Columns {
 			colNames = append(colNames, col.Name.O)
 		}
+	}
+	if idx != nil {
+		recordUsedItemStatsStatus(sctx, idx.StatsLoadedStatus, coll.PhysicalID, idxID, true)
 	}
 	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
@@ -823,7 +846,7 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	return newColl
 }
 
-// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
@@ -846,7 +869,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	}
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
-	colID2IdxID := make(map[int64]int64)
+	colID2IdxIDs := make(map[int64][]int64)
 	for _, idxHist := range coll.Indices {
 		ids := make([]int64, 0, len(idxHist.Info.Columns))
 		for _, idxCol := range idxHist.Info.Columns {
@@ -860,9 +883,12 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		if len(ids) == 0 {
 			continue
 		}
-		colID2IdxID[ids[0]] = idxHist.ID
+		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
+	}
+	for _, idxIDs := range colID2IdxIDs {
+		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
 		PhysicalID:     coll.PhysicalID,
@@ -872,7 +898,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		ModifyCount:    coll.ModifyCount,
 		Columns:        newColHistMap,
 		Indices:        newIdxHistMap,
-		ColID2IdxID:    colID2IdxID,
+		ColID2IdxIDs:   colID2IdxIDs,
 		Idx2ColumnIDs:  idx2Columns,
 	}
 	return newColl
@@ -1061,8 +1087,9 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				colID = colIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idx, ok := coll.ColID2IdxID[colID]; ok {
-				count, err = coll.GetRowCountByIndexRanges(sctx, idx, []*ranger.Range{&rang})
+			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
+				idxID := idxIDs[0]
+				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{&rang})
 			} else {
 				count, err = coll.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{&rang})
 			}
@@ -1158,7 +1185,6 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 // GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
 func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
-	var err error
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
@@ -1166,25 +1192,22 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 			nullCount := tableRowCount / pseudoEqualRate
 			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
-			} else if err == nil {
+			} else {
 				lessCount := tableRowCount / pseudoLessRate
 				rowCount += lessCount - nullCount
 			}
 		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
-			if err1 != nil {
-				return 0, errors.Trace(err1)
+			compare, err := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
 			if compare == 0 {
 				rowCount += tableRowCount / pseudoEqualRate
 			} else {
 				rowCount += tableRowCount / pseudoBetweenRate
 			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
 		}
 	}
 	if rowCount > tableRowCount {
@@ -1377,4 +1400,19 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	}
 	// This table has no statistics yet. We can directly return true.
 	return true
+}
+
+// recordUsedItemStatsStatus only records un-FullLoad item load status during user query
+func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
+	tableID, id int64, isIndex bool) {
+	if loadStatus.IsFullLoad() {
+		return
+	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
+	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
+	if stmtCtx.StatsLoadStatus == nil {
+		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
+	}
+	stmtCtx.StatsLoadStatus[item] = loadStatus.StatusToString()
 }

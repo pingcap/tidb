@@ -283,12 +283,14 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	first := <-ch
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
 	second := <-ch
 	require.Equal(t, second.Type, streamhelper.EventDel)
 	require.Equal(t, second.Name, taskName)
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
 	forth := <-ch
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)

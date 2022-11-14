@@ -141,6 +141,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	tmpdir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
+	helper := stream.NewMetadataHelper()
 
 	stores := []fakeResolvedInfo{
 		{
@@ -159,7 +160,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 
 	err = fakeMetaFiles(ctx, tmpdir, stores)
 	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
+	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
 	require.Nil(t, err)
 	require.Equal(t, uint64(101), globalResolvedTS)
 }
@@ -169,6 +170,7 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	tmpdir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
+	helper := stream.NewMetadataHelper()
 
 	stores := []fakeResolvedInfo{
 		{
@@ -191,7 +193,7 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 
 	err = fakeMetaFiles(ctx, tmpdir, stores)
 	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
+	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
 	require.Nil(t, err)
 	require.Equal(t, uint64(99), globalResolvedTS)
 }

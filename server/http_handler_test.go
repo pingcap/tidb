@@ -512,6 +512,8 @@ func (ts *basicHTTPHandlerTestSuite) prepareData(t *testing.T) {
 	err = txn1.Commit()
 	require.NoError(t, err)
 	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
+	dbt.MustExec("alter table tidb.test drop index idx1;")
+	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.MustExec("alter table tidb.test add unique index idx2 (a, b);")
 
 	dbt.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
@@ -946,6 +948,15 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "t1", dbtbl.TableInfo.Name.L)
 	require.Equal(t, "test", dbtbl.DBInfo.Name.L)
 	require.Equal(t, ti, dbtbl.TableInfo)
+
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "t1", ti.Name.L)
+	require.Equal(t, ti, ti)
 }
 
 func TestAllHistory(t *testing.T) {
@@ -976,7 +987,14 @@ func TestAllHistory(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, data, jobs)
+	require.Equal(t, len(data), len(jobs))
+	for i := range data {
+		// For the jobs that have arguments(job.Args) for GC delete range,
+		// the RawArgs should be the same after filtering the spaces.
+		data[i].RawArgs = filterSpaces(data[i].RawArgs)
+		jobs[i].RawArgs = filterSpaces(jobs[i].RawArgs)
+		require.Equal(t, data[i], jobs[i], i)
+	}
 
 	// Cover the start_job_id parameter.
 	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
@@ -996,6 +1014,22 @@ func TestAllHistory(t *testing.T) {
 		lastID = job.ID
 	}
 	require.NoError(t, resp.Body.Close())
+}
+
+func filterSpaces(bs []byte) []byte {
+	if len(bs) == 0 {
+		return nil
+	}
+	tmp := bs[:0]
+	for _, b := range bs {
+		// 0xa is the line feed character.
+		// 0xd is the carriage return character.
+		// 0x20 is the space character.
+		if b != 0xa && b != 0xd && b != 0x20 {
+			tmp = append(tmp, b)
+		}
+	}
+	return tmp
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
