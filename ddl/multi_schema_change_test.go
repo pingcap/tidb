@@ -1164,6 +1164,7 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 	tk.MustExec("alter table t drop column b, drop column c")
 	tk.MustExec("alter table t add column b int, add column c int")
 	tk.MustExec("alter table t add index k(b), add column e int")
+	tk.MustExec("alter table t alter index k invisible, drop column e")
 	dom.DDL().SetHook(originHook)
 }
 
