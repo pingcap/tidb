@@ -64,6 +64,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
 	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")

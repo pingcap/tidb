@@ -2190,11 +2190,21 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	var reader storage.ReadSeekCloser
-	var err error
-	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+	var (
+		reader       storage.ReadSeekCloser
+		compressType storage.CompressType
+		err          error
+	)
+	switch {
+	case chunk.FileMeta.Type == mydump.SourceTypeParquet:
 		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
-	} else {
+	case chunk.FileMeta.Compression != mydump.CompressionNone:
+		compressType, err = mydump.ToStorageCompressType(chunk.FileMeta.Compression)
+		if err != nil {
+			break
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, chunk.FileMeta.Path)
+	default:
 		reader, err = store.Open(ctx, chunk.FileMeta.Path)
 	}
 	if err != nil {
@@ -2225,8 +2235,15 @@ func newChunkRestore(
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
-	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-		return nil, errors.Trace(err)
+	if chunk.FileMeta.Compression == mydump.CompressionNone {
+		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
+			return nil, errors.Trace(err)
+		}
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	}
 	if len(chunk.ColumnPermutation) > 0 {
 		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
