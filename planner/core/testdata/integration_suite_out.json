@@ -4379,27 +4379,27 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;",
         "Plan": [
-          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, Column#10)]",
-          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#10",
-          "│ └─Sort 12487.50 root  test.t2.a",
-          "│   └─MergeJoin 12487.50 root  inner join, left key:test.t1.b, right key:test.t2.b",
-          "│     ├─Sort(Build) 9990.00 root  test.t2.b",
-          "│     │ └─TableReader 9990.00 root  data:Selection",
-          "│     │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "│     │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│     └─Sort(Probe) 9990.00 root  test.t1.b",
-          "│       └─TableReader 9990.00 root  data:Selection",
-          "│         └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│           └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "MergeJoin 9990.00 root  inner join, left key:test.t.a, right key:Column#10",
+          "├─Sort(Build) 7992.00 root  Column#10",
+          "│ └─StreamAgg 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#10",
+          "│   └─Sort 12487.50 root  test.t2.a",
+          "│     └─MergeJoin 12487.50 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│       ├─Sort(Build) 9990.00 root  test.t2.b",
+          "│       │ └─TableReader 9990.00 root  data:Selection",
+          "│       │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│       │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│       └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│         └─TableReader 9990.00 root  data:Selection",
+          "│           └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│             └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Unknown query block name sel1 in view hint"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;",
@@ -5664,7 +5664,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -5685,7 +5685,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
