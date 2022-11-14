@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validator
+package variable
 
 import (
 	"testing"
@@ -23,26 +23,26 @@ import (
 func TestUpdateDictionaryFile(t *testing.T) {
 	tooLargeDict, err := CreateTmpDictWithSize("1.dict", 2*1024*1024)
 	require.NoError(t, err)
-	err = UpdateDictionaryFile(tooLargeDict)
+	err = UpdatePasswordDictionary(tooLargeDict)
 	require.ErrorContains(t, err, "Too Large Dictionary. The maximum permitted file size is 1MB")
 
 	dict, err := CreateTmpDictWithContent("2.dict", []byte("abc\n1234\n5678"))
 	require.NoError(t, err)
-	require.NoError(t, UpdateDictionaryFile(dict))
-	_, ok := dictionary.cache["1234"]
+	require.NoError(t, UpdatePasswordDictionary(dict))
+	_, ok := passwordDictionary.cache["1234"]
 	require.True(t, ok)
-	_, ok = dictionary.cache["5678"]
+	_, ok = passwordDictionary.cache["5678"]
 	require.True(t, ok)
-	_, ok = dictionary.cache["abc"]
+	_, ok = passwordDictionary.cache["abc"]
 	require.False(t, ok)
 }
 
 func TestValidateDictionaryPassword(t *testing.T) {
 	dict, err := CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
 	require.NoError(t, err)
-	require.NoError(t, UpdateDictionaryFile(dict))
-	require.True(t, validateDictionaryPassword("abcdefg"))
-	require.True(t, validateDictionaryPassword("abcd123efg"))
-	require.False(t, validateDictionaryPassword("abcd1234efg"))
-	require.False(t, validateDictionaryPassword("abcd12345efg"))
+	require.NoError(t, UpdatePasswordDictionary(dict))
+	require.True(t, ValidateDictionaryPassword("abcdefg"))
+	require.True(t, ValidateDictionaryPassword("abcd123efg"))
+	require.False(t, ValidateDictionaryPassword("abcd1234efg"))
+	require.False(t, ValidateDictionaryPassword("abcd12345efg"))
 }

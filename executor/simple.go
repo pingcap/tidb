@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/tls"
-	validatePwd "github.com/pingcap/tidb/util/validate-password"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -899,7 +898,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 		if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-			if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+			if err := variable.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 				return err
 			}
 		}
@@ -1113,7 +1112,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
-				if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+				if err := variable.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
 				}
 			}
@@ -1634,7 +1633,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	if e.enableValidatePassword() {
-		if err := validatePwd.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
+		if err := variable.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
 			return err
 		}
 	}

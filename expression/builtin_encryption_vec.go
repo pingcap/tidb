@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -869,6 +870,36 @@ func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
 }
 
 func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	// TODO
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, true)
+	i64s := result.Int64s()
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	enableValidation := false
+	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+		return err
+	} else {
+		enableValidation = variable.TiDBOptOn(validation)
+	}
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if !enableValidation {
+			i64s[i] = 0
+		} else if score, isNull, err := b.validateStr(buf.GetString(i), &globalVars); err != nil {
+			return err
+		} else if !isNull {
+			i64s[i] = score
+		}
+	}
 	return nil
 }

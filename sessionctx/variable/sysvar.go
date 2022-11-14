@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	validatePwd "github.com/pingcap/tidb/util/validate-password"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -522,10 +521,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionaryFile, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		// Use 'SET @@global.validate_password.dictionary_file = ""' to clean the dictionary.
 		if len(val) == 0 {
-			validatePwd.Clean()
+			CleanPasswordDictionary()
 			return nil
 		}
-		return validatePwd.UpdateDictionaryFile(val)
+		return UpdatePasswordDictionary(val)
 	}},
 
 	/* TiDB specific variables */

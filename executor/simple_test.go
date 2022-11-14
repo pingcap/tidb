@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	validator "github.com/pingcap/tidb/util/validate-password"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -134,7 +134,7 @@ func TestValidatePassword(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	authPlugins := []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}
-	dictFile, err := validator.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
+	dictFile, err := variable.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
 	require.NoError(t, err)
 	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
@@ -147,8 +147,8 @@ func TestValidatePassword(t *testing.T) {
 		tk.MustExec("SET GLOBAL validate_password.policy = 'LOW'")
 		// check user name
 		tk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
-		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdroot1234'", "Password Contains (Reversed) User Name")
-		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdtoor1234'", "Password Contains (Reversed) User Name")
+		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdroot1234'", "Password Contains User Name")
+		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdtoor1234'", "Password Contains Reversed User Name")
 		tk.MustExec("SET PASSWORD FOR 'testuser' = 'testuser'") // password the same as the user name, but run by root
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY 'testuser'")
 		tk.MustExec("SET GLOBAL validate_password.check_user_name = 0")
@@ -158,9 +158,9 @@ func TestValidatePassword(t *testing.T) {
 
 		// LOW: Length
 		tk.MustQuery("SELECT @@global.validate_password.length").Check(testkit.Rows("8"))
-		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '1234567'", "Require Password Length")
+		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '1234567'", "Require Password Length: 8")
 		tk.MustExec("SET GLOBAL validate_password.length = 12")
-		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdefg123'", "Require Password Length")
+		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abcdefg123'", "Require Password Length: 12")
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abcdefg1234'")
 		tk.MustExec("SET GLOBAL validate_password.length = 8")
 

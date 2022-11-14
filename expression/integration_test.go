@@ -1143,6 +1143,8 @@ func TestEncryptionBuiltin(t *testing.T) {
 	tk.MustQuery("SELECT RANDOM_BYTES(1024);")
 	result = tk.MustQuery("SELECT RANDOM_BYTES(NULL);")
 	result.Check(testkit.Rows("<nil>"))
+
+	// TODO: for VALIDATE_PASSWORD_STRENGTH
 }
 
 func TestOpBuiltin(t *testing.T) {

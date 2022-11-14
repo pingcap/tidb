@@ -25,7 +25,6 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
-	validatePwd "github.com/pingcap/tidb/util/validate-password"
 	"hash"
 	"io"
 	"strings"
@@ -1019,10 +1018,7 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Conte
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(21)
 	sig := &builtinValidatePasswordStrengthSig{bf}
 	//sig.setPbCode(tipb.ScalarFuncSig_ValidatePasswordStrength)
 	return sig, nil
@@ -1042,34 +1038,38 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
 func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, true, err
+	} else if len([]rune(str)) < 4 {
+		return 0, false, nil
+	}
 	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
 		return 0, true, err
 	} else if !variable.TiDBOptOn(validation) {
 		return 0, false, nil
 	}
+	return b.validateStr(str, &globalVars)
+}
 
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if err != nil {
+func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+	if warn, err := variable.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
 		return 0, true, err
-	} else if isNull {
-		return 0, true, nil
-	} else if len(str) < 4 {
+	} else if len(warn) > 0 {
 		return 0, false, nil
 	}
-
-	if ok, err := validatePwd.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+	if warn, err := variable.ValidatePasswordLowPolicy(str, globalVars); err != nil {
 		return 0, true, err
-	} else if !ok {
-		return 0, false, nil
-	}
-
-	if ok, err := validatePwd.ValidateLow(str, &globalVars); err != nil {
-		return 0, false, err
-	} else if !ok {
+	} else if len(warn) > 0 {
 		return 25, false, nil
 	}
-
-	// TODO
-
+	if warn, err := variable.ValidatePasswordMediumPolicy(str, globalVars); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 50, false, nil
+	}
+	if ok := variable.ValidateDictionaryPassword(str); !ok {
+		return 75, false, nil
+	}
 	return 100, false, nil
 }

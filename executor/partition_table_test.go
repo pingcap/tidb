@@ -3268,7 +3268,7 @@ func TestIssue26251(t *testing.T) {
 		t.Fail()
 	}
 
-	// Clean up
+	// CleanPasswordDictionary up
 	<-ch
 	tk2.MustExec("rollback")
 }

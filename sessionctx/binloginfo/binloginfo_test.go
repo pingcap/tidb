@@ -479,7 +479,7 @@ func TestZIgnoreError(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t values (1)")
 
-	// Clean up.
+	// CleanPasswordDictionary up.
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = false
 	s.pump.mu.Unlock()

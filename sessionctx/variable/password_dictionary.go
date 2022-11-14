@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validator
+package variable
 
 import (
 	"bufio"
 	"bytes"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
-type dictionaryImpl struct {
+type PasswordDictionaryImpl struct {
 	cache map[string]struct{}
 	m     sync.RWMutex
 }
@@ -38,19 +38,19 @@ type dictionaryImpl struct {
 const maxPwdLength int = 100
 const minPwdLength int = 4
 
-var dictionary = dictionaryImpl{cache: make(map[string]struct{})}
+var passwordDictionary = PasswordDictionaryImpl{cache: make(map[string]struct{})}
 
-// Clean removes all the words in the dictionary.
-func Clean() {
-	dictionary.m.Lock()
-	defer dictionary.m.Unlock()
-	dictionary.cache = make(map[string]struct{})
+// CleanPasswordDictionary removes all the words in the dictionary.
+func CleanPasswordDictionary() {
+	passwordDictionary.m.Lock()
+	defer passwordDictionary.m.Unlock()
+	passwordDictionary.cache = make(map[string]struct{})
 }
 
-// UpdateDictionaryFile update the dictionary for validating password.
-func UpdateDictionaryFile(filePath string) error {
-	dictionary.m.Lock()
-	defer dictionary.m.Unlock()
+// UpdatePasswordDictionary update the dictionary for validating password.
+func UpdatePasswordDictionary(filePath string) error {
+	passwordDictionary.m.Lock()
+	defer passwordDictionary.m.Unlock()
 	newDictionary := make(map[string]struct{})
 	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
@@ -71,22 +71,22 @@ func UpdateDictionaryFile(filePath string) error {
 	if err := s.Err(); err != nil {
 		return err
 	}
-	dictionary.cache = newDictionary
+	passwordDictionary.cache = newDictionary
 	return file.Close()
 }
 
-// validateDictionaryPassword checks if the password contains words in the dictionary.
-func validateDictionaryPassword(pwd string) bool {
-	dictionary.m.RLock()
-	defer dictionary.m.RUnlock()
-	if len(dictionary.cache) == 0 {
+// ValidateDictionaryPassword checks if the password contains words in the dictionary.
+func ValidateDictionaryPassword(pwd string) bool {
+	passwordDictionary.m.RLock()
+	defer passwordDictionary.m.RUnlock()
+	if len(passwordDictionary.cache) == 0 {
 		return true
 	}
 	pwdLength := len(pwd)
 	for subStrLen := mathutil.Min(maxPwdLength, pwdLength); subStrLen >= minPwdLength; subStrLen-- {
 		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
 			subStr := pwd[subStrPos : subStrPos+subStrLen]
-			if _, ok := dictionary.cache[subStr]; ok {
+			if _, ok := passwordDictionary.cache[subStr]; ok {
 				return false
 			}
 		}
@@ -130,13 +130,13 @@ func CreateTmpDictWithContent(filename string, content []byte) (string, error) {
 	return filename, file.Close()
 }
 
-func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (bool, error) {
+func ValidateUserNameInPassword(pwd string, sessionVars *SessionVars) (string, error) {
 	currentUser := sessionVars.User
 	globalVars := sessionVars.GlobalVarsAccessor
 	pwdBytes := hack.Slice(pwd)
-	if checkUserName, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordCheckUserName); err != nil {
-		return false, err
-	} else if currentUser != nil && variable.TiDBOptOn(checkUserName) {
+	if checkUserName, err := globalVars.GetGlobalSysVar(ValidatePasswordCheckUserName); err != nil {
+		return "", err
+	} else if currentUser != nil && TiDBOptOn(checkUserName) {
 		for _, username := range []string{currentUser.AuthUsername, currentUser.Username} {
 			usernameBytes := hack.Slice(username)
 			userNameLen := len(usernameBytes)
@@ -144,58 +144,34 @@ func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (
 				continue
 			}
 			if bytes.Contains(pwdBytes, usernameBytes) {
-				return false, nil
+				return "Password Contains User Name", nil
 			}
 			usernameReversedBytes := make([]byte, userNameLen)
 			for i := range usernameBytes {
 				usernameReversedBytes[i] = usernameBytes[userNameLen-1-i]
 			}
 			if bytes.Contains(pwdBytes, usernameReversedBytes) {
-				return false, nil
+				return "Password Contains Reversed User Name", nil
 			}
 		}
 	}
-	return true, nil
+	return "", nil
 }
 
-func ValidateLow(pwd string, globalVars *variable.GlobalVarAccessor) (bool, error) {
-	if validateLengthStr, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
-		return false, err
+func ValidatePasswordLowPolicy(pwd string, globalVars *GlobalVarAccessor) (string, error) {
+	if validateLengthStr, err := (*globalVars).GetGlobalSysVar(ValidatePasswordLength); err != nil {
+		return "", err
 	} else if validateLength, err := strconv.ParseInt(validateLengthStr, 10, 64); err != nil {
-		return false, err
+		return "", err
 	} else if (int64)(len([]rune(pwd))) < validateLength {
-		return false, nil
+		return fmt.Sprintf("Require Password Length: %d", validateLength), nil
 	}
-	return true, nil
+	return "", nil
 }
 
-func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
-	globalVars := sessionVars.GlobalVarsAccessor
-
-	runes := []rune(pwd)
-	validatePolicy, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordPolicy)
-	if err != nil {
-		return err
-	}
-	if ok, err := ValidateUserNameInPassword(pwd, sessionVars); err != nil {
-		return err
-	} else if !ok {
-		return ErrNotValidPassword.GenWithStack("Password Contains (Reversed) User Name")
-	}
-	if ok, err := ValidateLow(pwd, &globalVars); err != nil {
-		return err
-	} else if !ok {
-		return ErrNotValidPassword.GenWithStack("Require Password Length")
-	}
-
-	// LOW
-	if validatePolicy == "LOW" {
-		return nil
-	}
-
-	// MEDIUM
+func ValidatePasswordMediumPolicy(pwd string, globalVars *GlobalVarAccessor) (string, error) {
 	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
-	for _, r := range runes {
+	for _, r := range []rune(pwd) {
 		if unicode.IsUpper(r) {
 			upperCaseCount++
 		} else if unicode.IsLower(r) {
@@ -206,35 +182,66 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 			specialCharCount++
 		}
 	}
-	if mixedCaseCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
-		return err
+	if mixedCaseCountStr, err := (*globalVars).GetGlobalSysVar(ValidatePasswordMixedCaseCount); err != nil {
+		return "", err
 	} else if mixedCaseCount, err := strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
-		return err
+		return "", err
 	} else if lowerCaseCount < mixedCaseCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Lowercase Count: %d", mixedCaseCount)
+		return fmt.Sprintf("Require Password Lowercase Count: %d", mixedCaseCount), nil
 	} else if upperCaseCount < mixedCaseCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Uppercase Count: %d", mixedCaseCount)
+		return fmt.Sprintf("Require Password Uppercase Count: %d", mixedCaseCount), nil
 	}
-	if requireNumberCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
-		return err
+	if requireNumberCountStr, err := (*globalVars).GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
+		return "", err
 	} else if requireNumberCount, err := strconv.ParseInt(requireNumberCountStr, 10, 64); err != nil {
-		return err
+		return "", err
 	} else if numberCount < requireNumberCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Digit Count: %d", requireNumberCount)
+		return fmt.Sprintf("Require Password Digit Count: %d", requireNumberCount), nil
 	}
-	if requireSpecialCharCountStr, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
-		return err
+	if requireSpecialCharCountStr, err := (*globalVars).GetGlobalSysVar(ValidatePasswordSpecialCharCount); err != nil {
+		return "", err
 	} else if requireSpecialCharCount, err := strconv.ParseInt(requireSpecialCharCountStr, 10, 64); err != nil {
-		return err
+		return "", err
 	} else if specialCharCount < requireSpecialCharCount {
-		return ErrNotValidPassword.GenWithStack("Require Password Non-alphanumeric Count: %d", requireSpecialCharCount)
+		return fmt.Sprintf("Require Password Non-alphanumeric Count: %d", requireSpecialCharCount), nil
+	}
+	return "", nil
+}
+
+func ValidatePassword(sessionVars *SessionVars, pwd string) error {
+	globalVars := sessionVars.GlobalVarsAccessor
+
+	validatePolicy, err := globalVars.GetGlobalSysVar(ValidatePasswordPolicy)
+	if err != nil {
+		return err
+	}
+	if warn, err := ValidateUserNameInPassword(pwd, sessionVars); err != nil {
+		return err
+	} else if len(warn) > 0 {
+		return ErrNotValidPassword.GenWithStack(warn)
+	}
+	if warn, err := ValidatePasswordLowPolicy(pwd, &globalVars); err != nil {
+		return err
+	} else if len(warn) > 0 {
+		return ErrNotValidPassword.GenWithStack(warn)
+	}
+	// LOW
+	if validatePolicy == "LOW" {
+		return nil
+	}
+
+	// MEDIUM
+	if warn, err := ValidatePasswordMediumPolicy(pwd, &globalVars); err != nil {
+		return err
+	} else if len(warn) > 0 {
+		return ErrNotValidPassword.GenWithStack(warn)
 	}
 	if validatePolicy == "MEDIUM" {
 		return nil
 	}
 
 	// STRONG
-	if !validateDictionaryPassword(pwd) {
+	if !ValidateDictionaryPassword(pwd) {
 		return ErrNotValidPassword.GenWithStack("Password contains word in the dictionary")
 	}
 	return nil
