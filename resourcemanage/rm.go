@@ -60,7 +60,7 @@ func (r *ResourceManage) Stop() {
 
 // Register is to register pool into resource manage
 func (r *ResourceManage) Register(pool GorotinuePool, name string, _ TaskPriority, component Component) error {
-	p := PoolContainer{pool: pool, component: component}
+	p := PoolContainer{Pool: pool, component: component}
 	return r.registerPool(name, &p)
 
 }
@@ -78,12 +78,16 @@ type GorotinuePool interface {
 	Release()
 
 	Tune(size int)
+	LastTunerTs() time.Time
+	MaxInFlight() int64
+	MinRT() uint64
+	MaxPASS() uint64
 	Cap() int
 }
 
 // PoolContainer is a pool container
 type PoolContainer struct {
-	pool      GorotinuePool
+	Pool      GorotinuePool
 	component Component
 }
 

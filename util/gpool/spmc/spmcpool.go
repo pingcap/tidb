@@ -54,6 +54,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	state         atomic.Int32
 	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
+	lastTuneTs    atomic.Pointer[time.Time]
 
 	waitingTask atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
@@ -149,6 +150,10 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 		}
 		p.cond.Broadcast()
 	}
+}
+
+func (p *Pool[T, U, C, CT, TF]) LastTunerTs() time.Time {
+	return *p.lastTuneTs.Load()
 }
 
 // Running returns the number of workers currently running.

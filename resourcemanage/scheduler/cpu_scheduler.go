@@ -24,15 +24,19 @@ import (
 const minCPUSchedulerInterval = 5 * time.Second
 
 type CPUScheduler struct {
-	next time.Time
 }
 
-func (c *CPUScheduler) Tune(component resourcemanage.Component, pool resourcemanage.PoolContainer) {
-	if component != resourcemanage.DDL || time.Since(c.next) < minCPUSchedulerInterval {
-		return
+func (c *CPUScheduler) Tune(component resourcemanage.Component, p resourcemanage.GorotinuePool) SchedulerCommand {
+	// TODO: time.Since(c.next) < minCPUSchedulerInterval
+	if component != resourcemanage.DDL || time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
+		return Hold
 	}
 	usage := cpu.GetCPUUsage()
 	if usage > 0.8 {
-		return
+		return Downclock
 	}
+	if usage < 0.7 {
+		return Overclock
+	}
+	return Hold
 }

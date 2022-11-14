@@ -14,10 +14,21 @@
 
 package scheduler
 
+import "github.com/pingcap/tidb/resourcemanage"
+
 const (
 	DefaultHighCPULoad float64 = 0.6
 )
 
+type SchedulerCommand int
+
+const (
+	NoIdea SchedulerCommand = iota
+	Downclock
+	Hold
+	Overclock
+)
+
 type Scheduler interface {
-	Tune()
+	Tune(component resourcemanage.Component, p resourcemanage.GorotinuePool) SchedulerCommand
 }
