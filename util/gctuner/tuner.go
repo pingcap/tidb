@@ -18,14 +18,14 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/util"
+	"go.uber.org/atomic"
 )
 
 var (
-	maxGCPercent atomic.Uint32
-	minGCPercent atomic.Uint32
+	maxGCPercent = *atomic.NewUint32(defaultMaxGCPercent)
+	minGCPercent = *atomic.NewUint32(defaultMinGCPercent)
 
 	// EnableGOGCTuner is to control whether enable the GOGC tuner.
 	EnableGOGCTuner atomic.Bool
@@ -52,8 +52,6 @@ func init() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
 		defaultGCPercent = uint32(val)
 	}
-	SetMinGCPercent(defaultMinGCPercent)
-	SetMaxGCPercent(defaultMaxGCPercent)
 }
 
 // SetDefaultGOGC is to set the default GOGC value.
