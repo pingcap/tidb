@@ -830,6 +830,20 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 9999")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1024")) // max value is 1024
 
+	// test variable 'tidb_opt_prefix_index_single_scan'
+	// global scope
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_opt_prefix_index_single_scan = 0")
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_prefix_index_single_scan = 1")
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session tidb_opt_prefix_index_single_scan = 0")
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_prefix_index_single_scan = 1")
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1"))
+
 	// test tidb_opt_range_max_size
 	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("67108864"))
 	tk.MustExec("set global tidb_opt_range_max_size = -1")
@@ -2008,4 +2022,39 @@ func TestSetTiFlashFastScanVariable(t *testing.T) {
 
 	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
 	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+}
+
+func TestSetPlanCacheMemoryMonitor(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=1;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
+}
+
+func TestSetChunkReuseVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+
+	// error value
+	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
 }

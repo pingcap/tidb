@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -605,6 +606,7 @@ import (
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
+	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -750,6 +752,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	statsLocked                "STATS_LOCKED"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
@@ -901,7 +904,7 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
 	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
@@ -912,6 +915,8 @@ import (
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
+	LockStatsStmt              "Lock statistic statement"
+	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
@@ -1147,8 +1152,8 @@ import (
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
-	RequireList                            "require list"
-	RequireListElement                     "require list element"
+	RequireList                            "require list for tls options"
+	RequireListElement                     "require list element for tls option"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -2588,15 +2593,29 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
@@ -4760,21 +4779,25 @@ DropRoleStmt:
 	}
 
 DropStatsStmt:
-	"DROP" "STATS" TableName
+	"DROP" "STATS" TableNameList
 	{
-		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+		$$ = &ast.DropStatsStmt{Tables: $3.([]*ast.TableName)}
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("DROP STATS ... PARTITION ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:          $3.(*ast.TableName),
+			Tables:         []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
 		}
 	}
 |	"DROP" "STATS" TableName "GLOBAL"
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntax.FastGenByArgs("DROP STATS ... GLOBAL", "DROP STATS ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:         $3.(*ast.TableName),
+			Tables:        []*ast.TableName{$3.(*ast.TableName)},
 			IsGlobalStats: true,
 		}
 	}
@@ -6367,6 +6390,7 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
+|	"TOKEN_ISSUER"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6397,6 +6421,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"STATS_LOCKED"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
@@ -11073,6 +11098,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"STATS_LOCKED" 
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsLocked, Table: &ast.TableName{Name: model.NewCIStr("STATS_TABLE_LOCKED"), Schema: model.NewCIStr(mysql.SystemDB)}}
+	}
 |	"HISTOGRAMS_IN_FLIGHT"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
@@ -11353,8 +11382,8 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
 |	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
@@ -11365,6 +11394,8 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
+|	LockStatsStmt
+|	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
@@ -12610,7 +12641,7 @@ CreateUserStmt:
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
@@ -12638,7 +12669,7 @@ AlterUserStmt:
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
@@ -12759,31 +12790,31 @@ ConnectionOption:
 
 RequireClauseOpt:
 	{
-		$$ = []*ast.TLSOption{}
+		$$ = []*ast.AuthTokenOrTLSOption{}
 	}
 |	RequireClause
 
 RequireClause:
 	"REQUIRE" "NONE"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.TlsNone,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "SSL"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.Ssl,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "X509"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.X509,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" RequireList
 	{
@@ -12793,47 +12824,54 @@ RequireClause:
 RequireList:
 	RequireListElement
 	{
-		$$ = []*ast.TLSOption{$1.(*ast.TLSOption)}
+		$$ = []*ast.AuthTokenOrTLSOption{$1.(*ast.AuthTokenOrTLSOption)}
 	}
 |	RequireList "AND" RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $3.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $3.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 |	RequireList RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $2.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $2.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 
 RequireListElement:
 	"ISSUER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Issuer,
 			Value: $2,
 		}
 	}
 |	"SUBJECT" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Subject,
 			Value: $2,
 		}
 	}
 |	"CIPHER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Cipher,
 			Value: $2,
 		}
 	}
 |	"SAN" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.SAN,
+			Value: $2,
+		}
+	}
+|	"TOKEN_ISSUER" stringLit
+	{
+		$$ = &ast.AuthTokenOrTLSOption{
+			Type:  ast.TokenIssuer,
 			Value: $2,
 		}
 	}
@@ -13142,12 +13180,12 @@ GrantStmt:
 			return 1
 		}
 		$$ = &ast.GrantStmt{
-			Privs:      p,
-			ObjectType: $4.(ast.ObjectTypeType),
-			Level:      $5.(*ast.GrantLevel),
-			Users:      $7.([]*ast.UserSpec),
-			TLSOptions: $8.([]*ast.TLSOption),
-			WithGrant:  $9.(bool),
+			Privs:                 p,
+			ObjectType:            $4.(ast.ObjectTypeType),
+			Level:                 $5.(*ast.GrantLevel),
+			Users:                 $7.([]*ast.UserSpec),
+			AuthTokenOrTLSOptions: $8.([]*ast.AuthTokenOrTLSOption),
+			WithGrant:             $9.(bool),
 		}
 	}
 
@@ -13826,6 +13864,7 @@ NonTransactionalDMLStmt:
 ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
+|	InsertIntoStmt
 
 DryRunOptions:
 	{
@@ -13901,6 +13940,22 @@ LoadStatsStmt:
 	{
 		$$ = &ast.LoadStatsStmt{
 			Path: $3,
+		}
+	}
+
+LockStatsStmt:
+	"LOCK" "STATS" TableNameList
+	{
+		$$ = &ast.LockStatsStmt{
+			Tables: $3.([]*ast.TableName),
+		}
+	}
+
+UnlockStatsStmt:
+	"UNLOCK" "STATS" TableNameList
+	{
+		$$ = &ast.UnlockStatsStmt{
+			Tables: $3.([]*ast.TableName),
 		}
 	}
 

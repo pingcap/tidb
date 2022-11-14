@@ -910,6 +910,7 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	// hash and range and list partition
 	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
@@ -953,10 +954,9 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	// after analyzing, the planner will use the Index(a)
-	tk.MustIndexLookup("select * from thash where a<100")
-	tk.MustIndexLookup("select * from trange where a<100")
-	tk.MustIndexLookup("select * from tlist where a<1")
+	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
+	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
+	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
@@ -973,10 +973,9 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	// use Index(a) again
-	tk.MustIndexLookup("select * from thash where a<100")
-	tk.MustIndexLookup("select * from trange where a<100")
-	tk.MustIndexLookup("select * from tlist where a<1")
+	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
+	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
+	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
@@ -2116,6 +2115,7 @@ func TestParallelApply(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create database test_parallel_apply")
 	tk.MustExec("use test_parallel_apply")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -2150,9 +2150,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
 		`          └─IndexFullScan 100000000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
@@ -2164,9 +2164,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:HashAgg`, // TableReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
 		`          └─TableFullScan 100000000.00 cop[tikv] table:thash keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Sort().Check(
@@ -2193,9 +2193,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
 		`          └─IndexFullScan 100000000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
@@ -2207,9 +2207,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:HashAgg`, // TableReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
 		`          └─TableFullScan 100000000.00 cop[tikv] table:trange keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Sort().Check(
@@ -3435,6 +3435,7 @@ func TestPartitionTableExplain(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestPartitionTableExplain")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("use TestPartitionTableExplain")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec(`create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)`)
@@ -3571,22 +3572,20 @@ func TestPartitionTableExplain(t *testing.T) {
 		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
 		"Projection 1.00 root  testpartitiontableexplain.t.a, testpartitiontableexplain.t.b, testpartitiontableexplain.t2.a, testpartitiontableexplain.t2.b",
-		"└─IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"└─HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)]",
 		"  ├─TableReader(Build) 1.00 root  data:Selection",
 		"  │ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
 		"  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-		"  └─IndexReader(Probe) 1.00 root partition:all index:Selection",
-		"    └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
-		"      └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+		"  └─IndexReader(Probe) 3.00 root partition:all index:IndexFullScan",
+		"    └─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
 		"Projection 1.00 root  testpartitiontableexplain.t.a, testpartitiontableexplain.t.b, testpartitiontableexplain.t2.a, testpartitiontableexplain.t2.b",
-		"└─IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"└─HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)]",
 		"  ├─TableReader(Build) 1.00 root  data:Selection",
 		"  │ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
 		"  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-		"  └─IndexReader(Probe) 1.00 root partition:p1 index:Selection",
-		"    └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
-		"      └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+		"  └─IndexReader(Probe) 3.00 root partition:p1 index:IndexFullScan",
+		"    └─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
 		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
 		"├─TableReader(Build) 1.00 root  data:Selection",
