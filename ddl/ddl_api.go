@@ -3718,7 +3718,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
-// Return the definitions as it would look like after the REORGANIZE PARTITION is done
+// getReorganizedDefinitions return the definitions as they would look like after the REORGANIZE PARTITION is done.
 func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
 	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
 	if pi.Type == model.PartitionTypeList {
@@ -3776,12 +3776,7 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
 func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
-	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -3806,7 +3801,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	switch pi.Type {
 	// Only supporting RANGE/LIST
 	case model.PartitionTypeRange:
-		// TODO, check that the new partitions are in one range, not overlapping the kept ones
+		// TODO: Check that the new partitions are in one range, not overlapping the kept ones.
 	case model.PartitionTypeList:
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
@@ -3821,7 +3816,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 			// TODO: Better error message?
 			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 		}
-		// TODO, check that the new partitions are not overlapping the kept ones
+		// TODO: Check that the new partitions are not overlapping the kept ones.
 		// I.e. lastPartIdx partition needs either to be the last partition
 		//   OK to increase/decrease range, will error out if any row is out of the new range)
 		// or partition definition range, must be the same as the last partition it replaces

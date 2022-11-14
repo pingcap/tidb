@@ -1175,7 +1175,7 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
 	p, ok := t.partitions[pid]
 	if !ok {
-		// We might want an old or new partition
+		// We might want an old or new partition.
 		pi := t.meta.Partition
 		for _, defs := range [][]model.PartitionDefinition{
 			pi.AddingDefinitions,
@@ -1206,15 +1206,12 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	// This is used during Reorganize partitions; All data from DroppingDefinitions
 	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
 
-	// Do not change any Definitions of t, but create a new struct
+	// Do not change any Definitions of t, but create a new struct.
 	if t.GetPartitionedTable() == nil {
 		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
 	tblInfo := t.Meta().Clone()
 	partInfo := *tblInfo.Partition
-	// TODO: if range partitioning, add the definition before the first DroppingDefinitions
-	// then set its partitions[pid] = nil, to find rows that does not belong to the first
-	// AddingDefinitions
 	partInfo.Definitions = partInfo.AddingDefinitions
 	partInfo.DroppingDefinitions = nil
 	partInfo.AddingDefinitions = nil
