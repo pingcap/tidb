@@ -1142,7 +1142,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 		if fk.Version < model.FKVersion1 {
-			buf.WriteString(" /*T![FOREIGN KEY] INVALID */")
+			buf.WriteString(" /* FOREIGN KEY INVALID */")
 		}
 	}
 
@@ -2020,7 +2020,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
+		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
 			for _, col := range tbl.Columns {
