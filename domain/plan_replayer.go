@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -37,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -124,6 +124,23 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	}
 }
 
+type planReplayerHandle struct {
+	*planReplayerTaskCollectorHandle
+	*planReplayerTaskDumpHandle
+}
+
+func (h *planReplayerHandle) handlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+}
+
+type planReplayerTaskCollectorHandle struct {
+	taskMu struct {
+		sync.RWMutex
+		tasks map[PlanReplayerTaskKey]struct{}
+	}
+	ctx  context.Context
+	sctx sessionctx.Context
+}
+
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.(sqlexec.SQLExecutor)
@@ -173,20 +190,6 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
 	}
-}
-
-type planReplayerHandle struct {
-	*planReplayerTaskCollectorHandle
-	*planReplayerTaskDumpHandle
-}
-
-type planReplayerTaskCollectorHandle struct {
-	taskMu struct {
-		sync.RWMutex
-		tasks map[PlanReplayerTaskKey]struct{}
-	}
-	ctx  context.Context
-	sctx sessionctx.Context
 }
 
 // CollectPlanReplayerTask collects all unhandled plan replayer task
@@ -261,19 +264,37 @@ type planReplayerTaskDumpHandle struct {
 	taskCH chan *PlanReplayerDumpTask
 }
 
+// DrainTask drain a task
 func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 	select {
 	case task := <-h.taskCH:
 		return task
-	default:
 	}
-	return nil
 }
 
+// HandlePlanReplayerDumpTask handled the task
 func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+	taskKey := task.PlanReplayerTaskKey
+	unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, taskKey)
+	if err != nil {
+		logutil.BgLogger().Warn("check plan replayer capture task failed",
+			zap.String("sqlDigest", taskKey.SqlDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return
+	}
+	// the task is processed, thus we directly skip it.
+	if !unhandled {
+		return
+	}
+
 	file, fileName, err := GeneratePlanReplayerFile()
 	if err != nil {
-		// TODO
+		logutil.BgLogger().Warn("generate plan replayer capture task file failed",
+			zap.String("sqlDigest", taskKey.SqlDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return
 	}
 	task.Zf = file
 	task.FileName = fileName
@@ -291,22 +312,31 @@ func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplay
 		}
 		r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
 		if err != nil {
-			// TODO
+			logutil.BgLogger().Warn("generate plan replayer capture task json stats failed",
+				zap.String("sqlDigest", taskKey.SqlDigest),
+				zap.String("planDigest", taskKey.PlanDigest),
+				zap.Error(err))
 			return
 		}
 		jsStats[tblID] = r
 	}
 	err = DumpPlanReplayerInfo(h.ctx, h.sctx, task)
 	if err != nil {
-		// TODO
+		logutil.BgLogger().Warn("dump plan replayer capture task result failed",
+			zap.String("sqlDigest", taskKey.SqlDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return
 	}
 }
 
+// SendTask send dumpTask in background task handler
 func (h *planReplayerTaskDumpHandle) SendTask(task *PlanReplayerDumpTask) {
 	select {
 	case h.taskCH <- task:
 	default:
-		// TODO
+		// TODO: add metrics here
+		// directly discard the task if the task channel is full in order not to block the query process
 	}
 }
 
@@ -349,9 +379,11 @@ type PlanReplayerTaskKey struct {
 type PlanReplayerDumpTask struct {
 	PlanReplayerTaskKey
 
+	// tmp variables stored during the query
 	EncodePlan func(*stmtctx.StatementContext, bool) (string, string)
 	TblStats   map[int64]interface{}
 
+	// variables used to dump the plan
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
 	SessionVars     *variable.SessionVars

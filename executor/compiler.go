@@ -16,21 +16,21 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
@@ -157,7 +157,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	if variable.EnablePlanReplayerCapture.Load() {
+	enabledPlanReplayerCapture := variable.EnablePlanReplayerCapture.Load()
+	if enabledPlanReplayerCapture {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
 	}
 

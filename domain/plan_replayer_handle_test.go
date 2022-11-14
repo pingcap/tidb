@@ -15,7 +15,6 @@
 package domain_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
@@ -31,14 +30,14 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 	tk.MustExec("delete from mysql.plan_replayer_task")
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustExec("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('123','123');")
-	err := prHandle.CollectPlanReplayerTask(context.Background())
+	err := prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 1)
 
 	// assert no task
 	tk.MustExec("delete from mysql.plan_replayer_task")
 	tk.MustExec("delete from mysql.plan_replayer_status")
-	err = prHandle.CollectPlanReplayerTask(context.Background())
+	err = prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 0)
 
@@ -48,7 +47,7 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 	tk.MustExec("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('123','123');")
 	tk.MustExec("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('345','345');")
 	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, token, instance) values ('123','123','123','123')")
-	err = prHandle.CollectPlanReplayerTask(context.Background())
+	err = prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 1)
 
@@ -58,7 +57,11 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 	tk.MustExec("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('123','123');")
 	tk.MustExec("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('345','345');")
 	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, fail_reason, instance) values ('123','123','123','123')")
-	err = prHandle.CollectPlanReplayerTask(context.Background())
+	err = prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 2)
+}
+
+func TestPlanReplayerHandleDumpTask(t *testing.T) {
+
 }

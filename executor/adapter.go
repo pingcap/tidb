@@ -1629,6 +1629,7 @@ func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	return normalized, planDigest
 }
 
+// GetEncodedPlan returned same as getEncodedPlan
 func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	return getEncodedPlan(stmtCtx, genHint)
 }
