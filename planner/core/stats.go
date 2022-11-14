@@ -467,14 +467,19 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
+	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
+	// 2. Generate possible IndexMerge paths for `AND`.
 	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
+
+	// 3. If needed, append a warning if no IndexMerge is generated.
+
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -485,6 +490,9 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
+
+	// 4. If needPrune is true, prune non-IndexMerge paths.
+
 	// Do not need to consider the regular paths in find_best_task().
 	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
@@ -778,12 +786,16 @@ func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, par
 	return indexMergePath
 }
 
-func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnd int) *util.AccessPath {
+// generateIndexMergeAndPaths generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
+func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.AccessPath {
+	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
 	if !ds.indexMergeHintsHasSpecifiedIdx() {
 		return nil
 	}
+
+	// 1. Collect partial paths from normal paths.
 	var partialPaths []*util.AccessPath
-	for i := 0; i < normalPathCnd; i++ {
+	for i := 0; i < normalPathCnt; i++ {
 		originalPath := ds.possibleAccessPaths[i]
 		if ds.possibleAccessPaths[i].IsTablePath() {
 			if !ds.isSpecifiedInIndexMergeHints("primary") {
@@ -814,6 +826,8 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnd int) *util.Access
 	if len(partialPaths) < 2 {
 		return nil
 	}
+
+	// 2. Move some filters that can't be covered by the partial paths to the AccessPath.TableFilters.
 
 	// Iterate all access conditions and filter conditions in all partial paths,
 	// if it can't be in the partial paths, remove it from the partial path and place it in the finalFilters,
@@ -871,6 +885,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnd int) *util.Access
 		}
 	}
 
+	// 3. Estimate the row count after partial paths.
 	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialConds, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))

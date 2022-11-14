@@ -543,6 +543,8 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
 
+	// IsIntersectionType means whether it's intersection type or union type.
+	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IsIntersectionType bool
 
 	// PartialPlans flats the partialPlans to construct executor pb.
