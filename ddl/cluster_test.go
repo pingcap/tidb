@@ -49,7 +49,8 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// 3: (stats_extended)
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
-	require.Len(t, kvRanges, 6)
+	// 6: (stats_table_locked)
+	require.Len(t, kvRanges, 7)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -73,6 +74,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_fm_sketch")
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
+	tk.MustExec("truncate table mysql.stats_table_locked")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 2)
