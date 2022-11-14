@@ -69,6 +69,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		BasePool:    gpool.NewBasePool(),
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
+		statistic:   gpool.NewStatistic(),
 		lock:        gpool.NewSpinLock(),
 		name:        name,
 		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](size),
