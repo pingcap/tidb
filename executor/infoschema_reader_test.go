@@ -866,3 +866,13 @@ func TestNullColumns(t *testing.T) {
 	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
 		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
 }
+
+func TestIssue25472(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
+	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
+		Check(testkit.Rows("bit(1)", "year(4)"))
+
+}
