@@ -166,13 +166,13 @@ func calcGCPercent(inuse, threshold uint64) uint32 {
 	}
 	// inuse heap larger than threshold, use min percent
 	if threshold <= inuse {
-		return MinGCPercent
+		return minGCPercent.Load()
 	}
 	gcPercent := uint32(math.Floor(float64(threshold-inuse) / float64(inuse) * 100))
-	if gcPercent < MinGCPercent {
-		return MinGCPercent
-	} else if gcPercent > MaxGCPercent {
-		return MaxGCPercent
+	if gcPercent < minGCPercent.Load() {
+		return minGCPercent.Load()
+	} else if gcPercent > maxGCPercent.Load() {
+		return maxGCPercent.Load()
 	}
 	return gcPercent
 }
