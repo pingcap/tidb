@@ -1581,8 +1581,6 @@ func (do *Domain) StartPlanReplayerHandle() {
 				if err != nil {
 					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
 				}
-			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
-				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
 			}
 		}
 	}()

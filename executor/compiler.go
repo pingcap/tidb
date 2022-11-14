@@ -158,6 +158,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	enabledPlanReplayerCapture := variable.EnablePlanReplayerCapture.Load()
+	failpoint.Inject("enablePlanReplayerCapture", func(val failpoint.Value) {
+		if val.(bool) {
+			enabledPlanReplayerCapture = true
+		}
+	})
 	if enabledPlanReplayerCapture {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
 	}
@@ -168,7 +173,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
 	tasks := domain.GetDomain(sctx).GetPlanReplayerHandle().GetTasks()
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
 	for _, task := range tasks {
 		if task.SqlDigest == sqlDigest.String() && task.PlanDigest == planDigest.String() {
 			sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)

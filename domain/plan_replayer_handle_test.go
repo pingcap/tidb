@@ -15,8 +15,10 @@
 package domain_test
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -63,5 +65,42 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 }
 
 func TestPlanReplayerHandleDumpTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prHandle := dom.GetPlanReplayerHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("select * from t;")
+	_, d := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, pd := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	sqlDigest := d.String()
+	planDigest := pd.String()
 
+	// register task
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, planDigest))
+	err := prHandle.CollectPlanReplayerTask()
+	require.NoError(t, err)
+	require.Len(t, prHandle.GetTasks(), 1)
+
+	// enable capture
+	failpoint.Enable("github.com/pingcap/tidb/executor/enablePlanReplayerCapture", "return(true)")
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/executor/enablePlanReplayerCapture")
+	}()
+
+	// capture task and dump
+	tk.MustQuery("select * from t;")
+	task := prHandle.DrainTask()
+	require.NotNil(t, task)
+	success := prHandle.HandlePlanReplayerDumpTask(task)
+	require.True(t, success)
+	// assert memory task consumed
+	require.Len(t, prHandle.GetTasks(), 0)
+
+	// assert collect task again and no more memory task
+	err = prHandle.CollectPlanReplayerTask()
+	require.NoError(t, err)
+	require.Len(t, prHandle.GetTasks(), 0)
 }

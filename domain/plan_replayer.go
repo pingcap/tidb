@@ -129,7 +129,13 @@ type planReplayerHandle struct {
 	*planReplayerTaskDumpHandle
 }
 
-func (h *planReplayerHandle) handlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+// HandlePlanReplayerDumpTask handle dump task
+func (h *planReplayerHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) bool {
+	success := h.dumpPlanReplayerDumpTask(task)
+	if success {
+		h.removeTask(task.PlanReplayerTaskKey)
+	}
+	return success
 }
 
 type planReplayerTaskCollectorHandle struct {
@@ -173,8 +179,8 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-		"insert into mysql.plan_replayer_status (origin_sql, fail_reason, instance) values ('%s','%s','%s')",
-		record.OriginSQL, record.FailedReason, instance))
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values ('%s','%s','%s','%s','%s')",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
@@ -184,8 +190,8 @@ func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Co
 func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
-		"insert into mysql.plan_replayer_status (origin_sql, token, instance) values ('%s','%s','%s')",
-		record.OriginSQL, record.Token, instance))
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values ('%s','%s','%s','%s','%s')",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
@@ -233,6 +239,12 @@ func (h *planReplayerTaskCollectorHandle) setupTasks(tasks []PlanReplayerTaskKey
 	h.taskMu.tasks = r
 }
 
+func (h *planReplayerTaskCollectorHandle) removeTask(taskKey PlanReplayerTaskKey) {
+	h.taskMu.Lock()
+	defer h.taskMu.Unlock()
+	delete(h.taskMu.tasks, taskKey)
+}
+
 func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context.Context) ([]PlanReplayerTaskKey, error) {
 	exec := h.sctx.(sqlexec.SQLExecutor)
 	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
@@ -273,7 +285,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 }
 
 // HandlePlanReplayerDumpTask handled the task
-func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayerDumpTask) (success bool) {
 	taskKey := task.PlanReplayerTaskKey
 	unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, taskKey)
 	if err != nil {
@@ -281,11 +293,11 @@ func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplay
 			zap.String("sqlDigest", taskKey.SqlDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
-		return
+		return false
 	}
 	// the task is processed, thus we directly skip it.
 	if !unhandled {
-		return
+		return true
 	}
 
 	file, fileName, err := GeneratePlanReplayerFile()
@@ -304,11 +316,11 @@ func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplay
 	for tblID, stat := range task.TblStats {
 		tbl, ok := is.TableByID(tblID)
 		if !ok {
-			return
+			return false
 		}
 		schema, ok := is.SchemaByTable(tbl.Meta())
 		if !ok {
-			return
+			return false
 		}
 		r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
 		if err != nil {
@@ -316,7 +328,7 @@ func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplay
 				zap.String("sqlDigest", taskKey.SqlDigest),
 				zap.String("planDigest", taskKey.PlanDigest),
 				zap.Error(err))
-			return
+			return false
 		}
 		jsStats[tblID] = r
 	}
@@ -326,8 +338,9 @@ func (h *planReplayerTaskDumpHandle) HandlePlanReplayerDumpTask(task *PlanReplay
 			zap.String("sqlDigest", taskKey.SqlDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
-		return
+		return false
 	}
+	return true
 }
 
 // SendTask send dumpTask in background task handler
