@@ -23,17 +23,20 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "helper_test",
+    timeout = "short",
     srcs = [
         "helper_test.go",
         "main_test.go",
     ],
     embed = [":helper"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//store/mockstore",
@@ -44,6 +47,7 @@ go_test(
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
     ],

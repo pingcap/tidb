@@ -37,8 +37,7 @@ import (
 const tableModifyLease = 600 * time.Millisecond
 
 func TestCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -114,11 +113,11 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestLockTableReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1,t2")
 	defer func() {
@@ -178,8 +177,7 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -232,7 +230,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			require.NoError(t, err)
 			txn, err := sess.Txn(true)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -260,7 +258,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			require.NoError(t, err)
 			txn, err := sess.Txn(true)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {
@@ -284,8 +282,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 }
 
 func TestUnsupportedAlterTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6")

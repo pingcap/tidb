@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRepeatableRead(t *testing.T) {
@@ -29,4 +28,18 @@ func TestRepeatableRead(t *testing.T) {
 		rr := needRepeatableRead(serverTp, consistency)
 		require.True(t, rr == expectRepeatableRead, comment)
 	}
+}
+
+func TestInfiniteChan(t *testing.T) {
+	in, out := infiniteChan[int]()
+	go func() {
+		for i := 0; i < 10000; i++ {
+			in <- i
+		}
+	}()
+	for i := 0; i < 10000; i++ {
+		j := <-out
+		require.Equal(t, i, j)
+	}
+	close(in)
 }

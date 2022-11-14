@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-
 	"github.com/pingcap/tidb/util/codec"
 )
 

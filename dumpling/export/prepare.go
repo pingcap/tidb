@@ -10,7 +10,6 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 

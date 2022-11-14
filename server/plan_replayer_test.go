@@ -32,8 +32,7 @@ import (
 )
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
@@ -137,5 +136,13 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle
 	var filename string
 	err = rows.Scan(&filename)
 	require.NoError(t, err)
+	rows.Close()
+	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename2 string
+	err = rows.Scan(&filename2)
+	require.NoError(t, err)
+	rows.Close()
+	require.Equal(t, filename, filename2)
 	return filename
 }

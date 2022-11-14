@@ -1,0 +1,22 @@
+[
+  {
+    "name": "TestBinaryPlanInExplainAndSlowLog",
+    "cases": [
+      "create table t(a int, b int, index ia(a))",
+      "create table t2(a int, b int)",
+      "insert into t value(1,1), (3,3)",
+      "explain analyze format = 'binary' insert into t2 value(2,2), (4,4)",
+      "explain analyze format = 'binary' replace into t2 value(2,2), (4,4)",
+      "explain analyze format = 'binary' select * from t",
+      "explain analyze format = 'binary' select sum(t.a) from t join t2",
+      "explain analyze format = 'binary' select a from t use index (ia) where a > 100",
+      "explain analyze format = 'binary' select a from t use index () where a > 100",
+      "explain analyze format = 'binary' with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
+      "explain analyze format = 'binary' WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte",
+      "explain analyze format = 'binary' update t2 set a = a + 1 where b > 10",
+      "explain analyze format = 'binary' insert into t2 value(2,2), (4,4)",
+      "explain analyze format = 'binary' insert into t2 select * from t",
+      "explain analyze format = 'binary' delete from t2"
+    ]
+  }
+]

@@ -39,6 +39,7 @@ go_library(
         "//util/collate",
         "//util/mathutil",
         "//util/mvmap",
+        "//util/size",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
     ],
@@ -46,6 +47,7 @@ go_library(
 
 go_test(
     name = "aggregation_test",
+    timeout = "short",
     srcs = [
         "agg_to_pb_test.go",
         "aggregation_test.go",

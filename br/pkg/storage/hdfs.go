@@ -19,6 +19,7 @@ type HDFSStorage struct {
 	remote string
 }
 
+// NewHDFSStorage creates a new HDFS storage.
 func NewHDFSStorage(remote string) *HDFSStorage {
 	return &HDFSStorage{
 		remote: remote,
@@ -26,11 +27,11 @@ func NewHDFSStorage(remote string) *HDFSStorage {
 }
 
 func getHdfsBin() (string, error) {
-	hadoop_home, ok := os.LookupEnv("HADOOP_HOME")
+	hadoopHome, ok := os.LookupEnv("HADOOP_HOME")
 	if !ok {
 		return "", errors.Annotatef(berrors.ErrEnvNotSpecified, "please specify environment variable HADOOP_HOME")
 	}
-	return filepath.Join(hadoop_home, "bin/hdfs"), nil
+	return filepath.Join(hadoopHome, "bin/hdfs"), nil
 }
 
 func getLinuxUser() (string, bool) {
@@ -54,9 +55,9 @@ func dfsCommand(args ...string) (*exec.Cmd, error) {
 }
 
 // WriteFile writes a complete file to storage, similar to os.WriteFile
-func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	file_path := fmt.Sprintf("%s/%s", s.remote, name)
-	cmd, err := dfsCommand("-put", "-", file_path)
+func (s *HDFSStorage) WriteFile(_ context.Context, name string, data []byte) error {
+	filePath := fmt.Sprintf("%s/%s", s.remote, name)
+	cmd, err := dfsCommand("-put", "-", filePath)
 	if err != nil {
 		return err
 	}
@@ -73,14 +74,14 @@ func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) e
 }
 
 // ReadFile reads a complete file from storage, similar to os.ReadFile
-func (s *HDFSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (*HDFSStorage) ReadFile(_ context.Context, _ string) ([]byte, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // FileExists return true if file exists
-func (s *HDFSStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	file_path := fmt.Sprintf("%s/%s", s.remote, name)
-	cmd, err := dfsCommand("-ls", file_path)
+func (s *HDFSStorage) FileExists(_ context.Context, name string) (bool, error) {
+	filePath := fmt.Sprintf("%s/%s", s.remote, name)
+	cmd, err := dfsCommand("-ls", filePath)
 	if err != nil {
 		return false, err
 	}
@@ -97,12 +98,12 @@ func (s *HDFSStorage) FileExists(ctx context.Context, name string) (bool, error)
 }
 
 // DeleteFile delete the file in storage
-func (s *HDFSStorage) DeleteFile(ctx context.Context, name string) error {
+func (*HDFSStorage) DeleteFile(_ context.Context, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // Open a Reader by file path. path is relative path to storage base path
-func (s *HDFSStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (*HDFSStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -112,7 +113,7 @@ func (s *HDFSStorage) Open(ctx context.Context, path string) (ExternalFileReader
 // The argument `path` is the file path that can be used in `Open`
 // function; the argument `size` is the size in byte of the file determined
 // by path.
-func (s *HDFSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error {
+func (*HDFSStorage) WalkDir(_ context.Context, _ *WalkOption, _ func(path string, size int64) error) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -122,11 +123,11 @@ func (s *HDFSStorage) URI() string {
 }
 
 // Create opens a file writer by path. path is relative path to storage base path
-func (s *HDFSStorage) Create(ctx context.Context, path string) (ExternalFileWriter, error) {
+func (*HDFSStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // Rename a file name from oldFileName to newFileName.
-func (s *HDFSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (*HDFSStorage) Rename(_ context.Context, _, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }

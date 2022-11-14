@@ -896,8 +896,9 @@ func getIndexVersion(value []byte) int {
 }
 
 // DecodeIndexKV uses to decode index key values.
-//   `colsLen` is expected to be index columns count.
-//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
+//
+//	`colsLen` is expected to be index columns count.
+//	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
@@ -1124,55 +1125,74 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
+// TempIndexPrefix used to generate temporary index ID from index ID.
+const TempIndexPrefix = 0x7fff000000000000
+
+// IndexIDMask used to get index id from index ID/temp index ID.
+const IndexIDMask = 0xffffffffffff
+
+// IndexKey2TempIndexKey generates a temporary index key.
+func IndexKey2TempIndexKey(indexID int64, key []byte) {
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)
+	binary.BigEndian.PutUint64(key[prefixLen:], eid)
+}
+
+// TempIndexKey2IndexKey generates an index key from temporary index key.
+func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
+	eid := codec.EncodeIntToCmpUint(originIdxID)
+	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
-//		+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
-//		|
-//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
-//		|  Length:   1     | len(options) | len(padding) |    8        |     1
-//		|
-//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
-//		|  IntHandle:     Only exists when table use int handles and index is unique.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		+-- Old Encoding (without restore data, integer handle, local)
-//		|
-//		|  Layout: [Handle] | [UntouchedFlag]
-//		|  Length:   8      |     1
-//		|
-//		|  Handle:        Only exists in unique index.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		|  Length of value <= 9, use to distinguish from the new encoding.
-// 		|
-//		+-- IndexValueForClusteredIndexVersion1
-//		|
-//		|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
-//		|  Length:   1     |        1        |      1         |  len(options) |         1
-//		|
-//		|  TailLen:       len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  Layout of Options:
-//		|
-//		|     Segment:             Common Handle                 |     Global Index      |   New Collation
-// 		|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
-//		|
-//		|     Common Handle Segment: Exists when unique index used common handles.
-//		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
-//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
-//		|     The restored data contains both the values of a and b.
-//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
-//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
-//		|     and the restored data together to restore original data.
+//
+//	+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
+//	|
+//	|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//	|  Length:   1     | len(options) | len(padding) |    8        |     1
+//	|
+//	|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//	|  IntHandle:     Only exists when table use int handles and index is unique.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	+-- Old Encoding (without restore data, integer handle, local)
+//	|
+//	|  Layout: [Handle] | [UntouchedFlag]
+//	|  Length:   8      |     1
+//	|
+//	|  Handle:        Only exists in unique index.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//	|  Length of value <= 9, use to distinguish from the new encoding.
+//	|
+//	+-- IndexValueForClusteredIndexVersion1
+//	|
+//	|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
+//	|  Length:   1     |        1        |      1         |  len(options) |         1
+//	|
+//	|  TailLen:       len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  Layout of Options:
+//	|
+//	|     Segment:             Common Handle                 |     Global Index      |   New Collation
+//	|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
+//	|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
+//	|
+//	|     Common Handle Segment: Exists when unique index used common handles.
+//	|     Global Index Segment:  Exists when index is global.
+//	|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
+//	|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
+//	|     The restored data contains both the values of a and b.
+//	|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
+//	|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
+//	|     and the restored data together to restore original data.
 func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
@@ -1203,7 +1223,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	tailLen := 0
@@ -1217,7 +1237,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if IdxValNeedRestoredData || len(handleRestoredData) > 0 {
+	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
@@ -1261,7 +1281,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 }
 
 // genIndexValueVersion0 create index value for both local and global index.
-func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	newEncode := false
@@ -1274,7 +1294,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if IdxValNeedRestoredData {
+	if idxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID
@@ -1303,7 +1323,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
 			// then should also write the untouched index key/value to mem-buffer to make sure the data
 			// is consistent with the index in txn mem-buffer.
-			tailLen += 1
+			tailLen++
 			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
 		}
 		idxVal[0] = byte(tailLen)
@@ -1579,4 +1599,17 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		resultValues = append(resultValues, pidBytes)
 	}
 	return resultValues, nil
+}
+
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouched flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
 }

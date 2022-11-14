@@ -23,8 +23,10 @@ go_library(
 
 go_test(
     name = "ddl-checker_test",
+    timeout = "short",
     srcs = ["executable_checker_test.go"],
     embed = [":ddl-checker"],
+    flaky = True,
     deps = [
         "//testkit",
         "@com_github_stretchr_testify//require",

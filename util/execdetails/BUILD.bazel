@@ -15,11 +15,13 @@ go_library(
 
 go_test(
     name = "execdetails_test",
+    timeout = "short",
     srcs = [
         "execdetails_test.go",
         "main_test.go",
     ],
     embed = [":execdetails"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_tipb//go-tipb",

@@ -394,6 +394,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeBatchPointGet
 	case typeClusterMemTableReader:
 		return TypeClusterMemTableReader
+	case typeDataSourceID:
+		return TypeDataSource
 	case typeLoadDataID:
 		return TypeLoadData
 	case typeTableSampleID:

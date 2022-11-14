@@ -28,6 +28,7 @@ go_library(
 
 go_test(
     name = "driver_test",
+    timeout = "short",
     srcs = [
         "config_test.go",
         "main_test.go",
@@ -36,6 +37,7 @@ go_test(
         "txn_test.go",
     ],
     embed = [":driver"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",

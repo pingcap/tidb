@@ -60,7 +60,7 @@ type Manager interface {
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) bool
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) error
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
 	// Requires exact match on user name and host name.

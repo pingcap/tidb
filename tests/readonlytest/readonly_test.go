@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 var (
@@ -47,6 +48,7 @@ func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	var name, status string
 	rs, err := db.Query(fmt.Sprintf("show variables like '%s'", variable))
 	require.NoError(t, err)
+	require.NoError(t, rs.Err())
 	require.True(t, rs.Next())
 
 	require.NoError(t, rs.Scan(&name, &status))
@@ -64,13 +66,13 @@ func setVariableNoError(t *testing.T, db *sql.DB, variable string, status int) {
 	require.NoError(t, err)
 }
 
-func setVariable(t *testing.T, db *sql.DB, variable string, status int) error {
+func setVariable(_ *testing.T, db *sql.DB, variable string, status int) error {
 	_, err := db.Exec(fmt.Sprintf("set global %s=%d", variable, status))
 	return err
 }
 
-func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
-	s = new(ReadOnlySuite)
+func createReadOnlySuite(t *testing.T) *ReadOnlySuite {
+	s := new(ReadOnlySuite)
 	var err error
 	s.db, err = sql.Open("mysql", fmt.Sprintf("root:%s@(%s:%d)/test", *tidbRootPassword, "127.0.0.1", *tidbAPort))
 	require.NoError(t, err)
@@ -96,17 +98,17 @@ func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
 	require.NoError(t, err)
 	s.rdb, err = sql.Open("mysql", fmt.Sprintf("r1:password@(%s:%d)/test", "127.0.0.1", *tidbBPort))
 	require.NoError(t, err)
-	clean = func() {
+	t.Cleanup(func() {
 		require.NoError(t, s.db.Close())
 		require.NoError(t, s.rdb.Close())
 		require.NoError(t, s.udb.Close())
-	}
-	return
+		view.Stop()
+	})
+	return s
 }
 
 func TestRestriction(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s := createReadOnlySuite(t)
 
 	var err error
 	_, err = s.db.Exec("drop table if exists t")
@@ -156,6 +158,17 @@ func TestRestriction(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), PriviledgedErrMsg)
 
+	// can't do flashback cluster
+	_, err = s.udb.Exec("flashback cluster to timestamp ''")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can do some Admin stmts
+	_, err = s.udb.Exec("admin show ddl jobs")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("admin show slow recent 1")
+	require.NoError(t, err)
+
 	// turn off tidb_restricted_read_only does not affect tidb_super_read_only
 	setVariableNoError(t, s.db, TiDBRestrictedReadOnly, 0)
 
@@ -176,8 +189,7 @@ func TestRestriction(t *testing.T) {
 }
 
 func TestRestrictionWithConnectionPool(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s := createReadOnlySuite(t)
 	var err error
 	_, err = s.db.Exec("drop table if exists t")
 	require.NoError(t, err)
@@ -218,8 +230,7 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 }
 
 func TestReplicationWriter(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s := createReadOnlySuite(t)
 	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
 	require.NoError(t, err)
 	_, err = s.db.Exec("drop table if exists t")

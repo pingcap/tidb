@@ -20,12 +20,14 @@ go_library(
 
 go_test(
     name = "label_test",
+    timeout = "short",
     srcs = [
         "attributes_test.go",
         "main_test.go",
         "rule_test.go",
     ],
     embed = [":label"],
+    flaky = True,
     deps = [
         "//parser/ast",
         "//testkit/testsetup",

@@ -142,7 +142,7 @@ func (t CoreTime) Weekday() gotime.Weekday {
 }
 
 // YearWeek returns year and week.
-func (t CoreTime) YearWeek(mode int) (int, int) {
+func (t CoreTime) YearWeek(mode int) (year int, week int) {
 	behavior := weekMode(mode) | weekBehaviourYear
 	return calcWeek(t, behavior)
 }
@@ -184,42 +184,6 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
-// FindZoneTransition check for one Time Zone transition within +/- 4h
-// Currently the needed functions are not exported, if gotime.Location.lookup would be exported
-// then it would be easy to use that directly
-func FindZoneTransition(tIn gotime.Time) (gotime.Time, error) {
-	// Check most common case first, DST transition on full hour.
-	// round truncates away from zero!
-	t2 := tIn.Round(gotime.Hour).Add(-1 * gotime.Hour)
-	t1 := t2.Add(-1 * gotime.Second)
-	_, offset1 := t1.Zone()
-	_, offset2 := t2.Zone()
-	if offset1 != offset2 {
-		return t2, nil
-	}
-
-	// Check if any offset change?
-	t1 = tIn.Add(-4 * gotime.Hour)
-	t2 = tIn.Add(4 * gotime.Hour)
-	_, offset1 = t1.Zone()
-	_, offset2 = t2.Zone()
-	if offset1 == offset2 {
-		return tIn, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tIn))
-	}
-
-	// Check generic case, like for 'Australia/Lord_Howe'
-	for t2.After(t1.Add(gotime.Second)) {
-		t := t1.Add(t2.Sub(t1) / 2).Round(gotime.Second)
-		_, offset := t.Zone()
-		if offset == offset1 {
-			t1 = t
-		} else {
-			t2 = t
-		}
-	}
-	return t2, nil
-}
-
 // AdjustedGoTime converts Time to GoTime and adjust for invalid DST times
 // like during the DST change with increased offset,
 // normally moving to Daylight Saving Time.
@@ -230,11 +194,18 @@ func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 		return tm, nil
 	}
 
-	tAdj, err2 := FindZoneTransition(tm)
-	if err2 == nil {
-		return tAdj, nil
+	// The converted go time did not map back to the same time, probably it was between a
+	// daylight saving transition, adjust the time to the closest Zone bound.
+	start, end := tm.ZoneBounds()
+	// time zone transitions are normally 1 hour, allow up to 4 hours before returning error
+	if start.Sub(tm).Abs().Hours() > 4.0 && end.Sub(tm).Abs().Hours() > 4.0 {
+		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tm))
 	}
-	return tm, err
+	// use the closest transition time
+	if tm.Sub(start).Abs() <= tm.Sub(end).Abs() {
+		return start, nil
+	}
+	return end, nil
 }
 
 // IsLeapYear returns if it's leap year.
@@ -277,8 +248,10 @@ func getFixDays(year, month, day int, ot gotime.Time) int {
 
 // compareTime compare two Time.
 // return:
-//  0: if a == b
-//  1: if a > b
+//
+//	0: if a == b
+//	1: if a > b
+//
 // -1: if a < b
 func compareTime(a, b CoreTime) int {
 	ta := datetimeToUint64(a)

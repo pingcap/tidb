@@ -25,15 +25,14 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -353,6 +352,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 
 	go func() {
 		//nolint:staticcheck
+		//lint:ignore SA2000
 		taskWg.Add(1)
 		taskCh <- [2]int64{0, math.MaxInt64}
 		taskWg.Wait()

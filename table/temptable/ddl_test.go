@@ -30,23 +30,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL, func()) {
+func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ddl := GetTemporaryTableDDL(sctx).(*temporaryTableDDL)
-	clean := func() {
+	t.Cleanup(func() {
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return sctx, ddl, clean
+	return sctx, ddl
 }
 
 func TestAddLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 
@@ -64,7 +63,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	require.NotNil(t, sessVars.LocalTemporaryTables)
 	require.NotNil(t, sessVars.TemporaryTableData)
 	require.Equal(t, int64(1), tbl1.ID)
-	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 
@@ -72,7 +71,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	err = ddl.CreateLocalTemporaryTable(db1, tbl2)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), tbl2.ID)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t2"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t2"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl2)
 
@@ -89,27 +88,26 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	tbl1x := newMockTable("t1")
 	err = ddl.CreateLocalTemporaryTable(db1, tbl1x)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 
 	// insert should be success for same table name in different db
 	err = ddl.CreateLocalTemporaryTable(db2, tbl1x)
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db2"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db2"), model.NewCIStr("t1"))
 	require.Equal(t, int64(4), got.Meta().ID)
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1x)
 
 	// tbl1 still exist
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 }
 
 func TestRemoveLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 	db1 := newMockSchema("db1")
@@ -136,7 +134,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed remove should have no effects
-	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(tbl1.ID)
+	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByID(tbl1.ID)
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
@@ -146,7 +144,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	// remove success
 	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.Nil(t, got)
 	require.False(t, exists)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
@@ -155,8 +153,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 }
 
 func TestTruncateLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 	db1 := newMockSchema("db1")
@@ -183,7 +180,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed should have no effects
-	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
@@ -202,7 +199,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	// truncate success
 	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.NotEqual(t, got.Meta(), tbl1)
 	require.Equal(t, int64(3), got.Meta().ID)

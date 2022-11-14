@@ -13,13 +13,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 const lengthLimit = 1048576
@@ -243,6 +242,7 @@ func WriteInsert(
 			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 				failpoint.Return(0, errors.New("connection is closed"))
 			})
+			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
@@ -628,8 +628,9 @@ func (f FileFormat) String() string {
 }
 
 // Extension returns the extension for specific format.
-//  text -> "sql"
-//  csv  -> "csv"
+//
+//	text -> "sql"
+//	csv  -> "csv"
 func (f FileFormat) Extension() string {
 	switch f {
 	case FileFormatSQLText:

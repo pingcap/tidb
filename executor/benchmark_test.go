@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -102,6 +100,11 @@ func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
 
 func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
+}
+
+// MemoryUsage of mockDataPhysicalPlan is only for testing
+func (mp *mockDataPhysicalPlan) MemoryUsage() (sum int64) {
+	return
 }
 
 func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
@@ -292,7 +295,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -344,7 +347,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -567,8 +570,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tails:        []plannercore.PhysicalPlan{tail},
-			DataSources:  []plannercore.PhysicalPlan{src},
+			Tails:        []core.PhysicalPlan{tail},
+			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
@@ -577,7 +580,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -762,7 +765,6 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 			}
 		}
 	}
-
 }
 
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
@@ -913,14 +915,17 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		probeKeys = append(probeKeys, cols1[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		probeSideTupleFetcher: probeSideTupleFetcher{
+			probeSideExec: outerExec,
+		},
+		probeWorkers:      make([]probeWorker, testCase.concurrency),
 		concurrency:       uint(testCase.concurrency),
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
 		buildKeys:         joinKeys,
 		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
-		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
@@ -928,10 +933,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
-	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, childrenUsedSchema)
+		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -940,8 +944,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
 	t2 := disk.NewTracker(-1, -1)
-	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
-	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
+	e.ctx.GetSessionVars().MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.ctx.GetSessionVars().DiskTracker = t2
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
 	return e
 }
 
@@ -1317,7 +1323,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1338,7 +1344,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
@@ -1391,7 +1397,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1422,7 +1428,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	joiners := make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false)
 	}
 	e.joiners = joiners
 	return e, nil
@@ -1541,6 +1547,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		retTypes(leftExec),
 		retTypes(rightExec),
 		tc.childrenUsedSchema,
+		false,
 	)
 
 	mergeJoinExec.innerTable = &mergeJoinTable{
@@ -2120,5 +2127,4 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
-
 }

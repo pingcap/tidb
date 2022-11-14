@@ -248,7 +248,7 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 			opInfo.schemaAndDecoder = newSchemaAndDecoder(sctx, tblAtStart.Meta())
 			fieldTypes := make([]*types.FieldType, 0, len(tblAtStart.Meta().Columns))
 			for _, col := range tblAtStart.Meta().Columns {
-				fieldTypes = append(fieldTypes, &col.FieldType)
+				fieldTypes = append(fieldTypes, &(col.FieldType))
 			}
 			opInfo.chk = chunk.NewChunkWithCapacity(fieldTypes, 4)
 			addNewIndexOp := &amendOperationAddIndex{
@@ -393,7 +393,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 			key := deletedMutations.GetKeys()[i]
 			if _, ok := a.insertedNewIndexKeys[string(key)]; !ok {
 				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.IsPessimisticLock(i),
-					deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i))
+					deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i), deletedMutations.NeedConstraintCheckInPrewrite(i))
 			}
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
@@ -403,7 +403,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 				destKeyOp = kvrpcpb.Op_Put
 			}
 			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.IsPessimisticLock(i),
-				insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i))
+				insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i), insertedMutations.NeedConstraintCheckInPrewrite(i))
 		}
 	} else {
 		resAddMutations.MergeMutations(deletedMutations)

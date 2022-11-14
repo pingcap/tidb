@@ -16,6 +16,9 @@ package executor_test
 
 import (
 	"fmt"
+	"io/ioutil"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -80,7 +83,7 @@ func TestAnalyzeFastSample(t *testing.T) {
 	}
 
 	handleCols := core.BuildHandleColsForAnalyze(tk.Session(), tblInfo, true, nil)
-	var colsInfo []*model.ColumnInfo // nolint: prealloc
+	var colsInfo []*model.ColumnInfo //nolint: prealloc
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.GetFlag()) {
@@ -222,6 +225,7 @@ func TestFastAnalyze(t *testing.T) {
 		"IndexReader 2.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
+	//nolint:revive,all_revive
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 
 	// global-stats depends on stats-ver2, but stats-ver2 is not compatible with fast-analyze, so forbid using global-stats with fast-analyze now.
@@ -314,5 +318,102 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.True(t, idx.TopN.Equal(topn))
+	}
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
+	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
+}
+
+func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+	testcases := []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	// assert empty table
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_partition_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_analyze_partition_concurrency").Check(testkit.Rows(concurrency))
+
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'")
+	}
+
+	for i := 1; i <= 500; i++ {
+		for j := 1; j <= 20; j++ {
+			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
+		}
+	}
+	var expected [][]interface{}
+	for i := 1; i <= 20; i++ {
+		expected = append(expected, []interface{}{
+			strconv.FormatInt(int64(i), 10), "500",
+		})
+	}
+	testcases = []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}
 }

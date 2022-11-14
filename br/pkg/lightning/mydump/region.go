@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -37,32 +36,39 @@ const (
 	largeCSVLowerThresholdRation = 10
 )
 
+// TableRegion contains information for a table region during import.
 type TableRegion struct {
 	EngineID int32
 
-	DB       string
-	Table    string
-	FileMeta SourceFileMeta
+	DB         string
+	Table      string
+	FileMeta   SourceFileMeta
+	ExtendData ExtendColumnData
 
 	Chunk Chunk
 }
 
+// RowIDMin returns the minimum row ID of this table region.
 func (reg *TableRegion) RowIDMin() int64 {
 	return reg.Chunk.PrevRowIDMax + 1
 }
 
+// Rows returns the row counts of this table region.
 func (reg *TableRegion) Rows() int64 {
 	return reg.Chunk.RowIDMax - reg.Chunk.PrevRowIDMax
 }
 
+// Offset gets the offset in the file of this table region.
 func (reg *TableRegion) Offset() int64 {
 	return reg.Chunk.Offset
 }
 
+// Size gets the size of this table region.
 func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
 }
 
+// AllocateEngineIDs allocates the table engine IDs.
 func AllocateEngineIDs(
 	filesRegions []*TableRegion,
 	dataFileSizes []float64,
@@ -134,6 +140,7 @@ func AllocateEngineIDs(
 	}
 }
 
+// MakeTableRegions create a new table region.
 func MakeTableRegions(
 	ctx context.Context,
 	meta *MDTableMeta,
@@ -162,19 +169,19 @@ func MakeTableRegions(
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for info := range fileChan {
-				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
+				regions, sizes, err := MakeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
 				select {
 				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
 				case <-ctx.Done():
-					break
+					return
 				}
 				if err != nil {
 					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}
-			wg.Done()
 		}()
 	}
 
@@ -249,7 +256,8 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-func makeSourceFileRegion(
+// MakeSourceFileRegion create a new source file region.
+func MakeSourceFileRegion(
 	ctx context.Context,
 	meta *MDTableMeta,
 	fi FileInfo,
@@ -272,18 +280,14 @@ func makeSourceFileRegion(
 	if !isCsvFile {
 		divisor += 2
 	}
-	sizePerRow, err := GetSampledAvgRowSize(&fi, cfg, ioWorkers, store)
-	if err == nil && sizePerRow != 0 {
-		log.FromContext(ctx).Warn("fail to sample file", zap.String("path", fi.FileMeta.Path), zap.Error(err))
-		divisor = sizePerRow
-	}
-	log.FromContext(ctx).Debug("avg row size", zap.String("path", fi.FileMeta.Path), zap.Int64("size per row", sizePerRow))
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
 	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 	// avoid split a lot of small chunks.
-	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
+	// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
+	if isCsvFile && cfg.Mydumper.StrictFormat && fi.FileMeta.Compression == CompressionNone &&
+		dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
@@ -299,10 +303,6 @@ func makeSourceFileRegion(
 			RowIDMax:     fi.FileMeta.FileSize / divisor,
 		},
 	}
-	failpoint.Inject("MockInaccurateRowID", func() {
-		// only allocates 5 rows but contains 10 rows
-		tableRegion.Chunk.RowIDMax = 5
-	})
 
 	if tableRegion.Size() > tableRegionSizeWarningThreshold {
 		log.FromContext(ctx).Warn(
@@ -311,55 +311,6 @@ func makeSourceFileRegion(
 			zap.Int64("size", dataFileSize))
 	}
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
-}
-
-func GetSampledAvgRowSize(
-	fileInfo *FileInfo,
-	cfg *config.Config,
-	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
-) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	reader, err := store.Open(ctx, fileInfo.FileMeta.Path)
-	if err != nil {
-		return 0, err
-	}
-	var parser Parser
-	switch fileInfo.FileMeta.Type {
-	case SourceTypeCSV:
-		hasHeader := cfg.Mydumper.CSV.Header
-		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
-		if err != nil {
-			return 0, err
-		}
-		parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers, hasHeader, charsetConvertor)
-		if err != nil {
-			return 0, err
-		}
-	case SourceTypeSQL:
-		parser = NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers)
-	default:
-		return 0, errors.Errorf("source file %s is none of csv, sql, or parquet file", fileInfo.FileMeta.Path)
-	}
-	totalBytes := 0
-	totalRows := 0
-	defaultSampleRows := 10 // todo: may be configurable
-	for i := 0; i < defaultSampleRows; i++ {
-		err = parser.ReadRow()
-		if err != nil && errors.Cause(err) == io.EOF {
-			break
-		} else if err != nil {
-			return 0, err
-		}
-		totalBytes += parser.LastRow().Length
-		totalRows++
-	}
-	if totalRows > 0 {
-		return int64(totalBytes) / int64(totalRows), nil
-	} else {
-		return 0, nil
-	}
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.
@@ -441,9 +392,6 @@ func SplitLargeFile(
 	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
-		if curRowsCnt == 0 && endOffset != startOffset {
-			curRowsCnt = 1
-		}
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.FileMeta.FileSize {
 			r, err := store.Open(ctx, dataFile.FileMeta.Path)

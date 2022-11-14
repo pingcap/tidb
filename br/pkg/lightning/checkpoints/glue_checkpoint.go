@@ -192,6 +192,7 @@ func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint,
 			return errors.Trace(err)
 		}
 		r := rs[0]
+		//nolint: errcheck
 		defer r.Close()
 		req := r.NewChunk(nil)
 		err = r.Next(ctx, req)
@@ -247,7 +248,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 		for {
 			err = r.Next(ctx, req)
 			if err != nil {
-				r.Close()
+				_ = r.Close()
 				return err
 			}
 			if req.NumRows() == 0 {
@@ -262,7 +263,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 				}
 			}
 		}
-		r.Close()
+		_ = r.Close()
 
 		// 2. Populate the chunks.
 		sql = fmt.Sprintf(ReadChunkTemplate, g.schema, CheckpointTableNameChunk)
@@ -277,7 +278,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 		for {
 			err = r.Next(ctx, req)
 			if err != nil {
-				r.Close()
+				_ = r.Close()
 				return err
 			}
 			if req.NumRows() == 0 {
@@ -306,13 +307,13 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 				value.FileMeta.Path = value.Key.Path
 				value.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
 				if err := json.Unmarshal(colPerm, &value.ColumnPermutation); err != nil {
-					r.Close()
+					_ = r.Close()
 					return errors.Trace(err)
 				}
 				cp.Engines[engineID].Chunks = append(cp.Engines[engineID].Chunks, value)
 			}
 		}
-		r.Close()
+		_ = r.Close()
 
 		// 3. Fill in the remaining table info
 		sql = fmt.Sprintf(ReadTableRemainTemplate, g.schema, CheckpointTableNameTable)
@@ -322,6 +323,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 			return errors.Trace(err)
 		}
 		r = rs[0]
+		//nolint: errcheck
 		defer r.Close()
 		req = r.NewChunk(nil)
 		err = r.Next(ctx, req)
@@ -713,7 +715,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 		for {
 			err = r.Next(ctx, req)
 			if err != nil {
-				r.Close()
+				_ = r.Close()
 				return err
 			}
 			if req.NumRows() == 0 {
@@ -728,7 +730,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 				targetTables = append(targetTables, dtc)
 			}
 		}
-		r.Close()
+		_ = r.Close()
 
 		if _, e := s.Execute(c, deleteChunkQuery); e != nil {
 			return errors.Trace(e)
@@ -791,7 +793,7 @@ func drainFirstRecordSet(ctx context.Context, rss []sqlexec.RecordSet) ([]chunk.
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
-			rs.Close()
+			_ = rs.Close()
 			return rows, err
 		}
 		iter := chunk.NewIterator4Chunk(req)

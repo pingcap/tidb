@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -50,8 +51,10 @@ type TestDDLCallback struct {
 	onJobRunBefore         func(*model.Job)
 	OnJobRunBeforeExported func(*model.Job)
 	onJobUpdated           func(*model.Job)
-	OnJobUpdatedExported   func(*model.Job)
+	OnJobUpdatedExported   atomic.Pointer[func(*model.Job)]
 	onWatched              func(ctx context.Context)
+	OnGetJobBeforeExported func(string)
+	OnGetJobAfterExported  func(string, *model.Job)
 }
 
 // OnChanged mock the same behavior with the main DDL hook.
@@ -96,8 +99,8 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
-	if tc.OnJobUpdatedExported != nil {
-		tc.OnJobUpdatedExported(job)
+	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
+		(*onJobUpdatedExportedFunc)(job)
 		return
 	}
 	if tc.onJobUpdated != nil {
@@ -116,6 +119,29 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	}
 
 	tc.BaseCallback.OnWatched(ctx)
+}
+
+// OnGetJobBefore implements Callback.OnGetJobBefore interface.
+func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
+	if tc.OnGetJobBeforeExported != nil {
+		tc.OnGetJobBeforeExported(jobType)
+		return
+	}
+	tc.BaseCallback.OnGetJobBefore(jobType)
+}
+
+// OnGetJobAfter implements Callback.OnGetJobAfter interface.
+func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
+	if tc.OnGetJobAfterExported != nil {
+		tc.OnGetJobAfterExported(jobType, job)
+		return
+	}
+	tc.BaseCallback.OnGetJobAfter(jobType, job)
+}
+
+// Clone copies the callback and take its reference
+func (tc *TestDDLCallback) Clone() *TestDDLCallback {
+	return &*tc
 }
 
 func TestCallback(t *testing.T) {

@@ -22,8 +22,7 @@ import (
 )
 
 func TestWindowFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
 	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
@@ -34,8 +33,7 @@ func TestWindowFunctions(t *testing.T) {
 }
 
 func TestWindowParallelFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
 	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
@@ -46,16 +44,14 @@ func TestWindowParallelFunctions(t *testing.T) {
 }
 
 func TestPipelinedWindowFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
 	doTestWindowFunctions(tk)
 }
 
 func TestPipelinedWindowParallelFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
 	doTestWindowFunctions(tk)
@@ -228,8 +224,7 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 
 func TestWindowFunctionsDataReference(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/11614
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -252,8 +247,7 @@ func TestWindowFunctionsDataReference(t *testing.T) {
 }
 
 func TestSlidingWindowFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
@@ -273,8 +267,7 @@ func TestSlidingWindowFunctions(t *testing.T) {
 }
 
 func TestPipelinedSlidingWindowFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	idTypes := []string{"FLOAT", "DOUBLE"}
@@ -457,8 +450,7 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 }
 
 func TestIssue24264(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_2")
@@ -487,8 +479,7 @@ func TestIssue24264(t *testing.T) {
 }
 
 func TestIssue29947(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t_tir89b, t_vejdy`)

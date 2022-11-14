@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 -- Tests of using stored generated column as index and partition column.
 -- Most of the cases are ported from other tests to make sure generated columns behaves the same.
 
@@ -106,6 +107,8 @@ PARTITION p3 VALUES LESS THAN (4),
 PARTITION p4 VALUES LESS THAN (5),
 PARTITION p5 VALUES LESS THAN (6),
 PARTITION max VALUES LESS THAN MAXVALUE);
+
+analyze table sgc3;
 
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;

@@ -25,8 +25,7 @@ import (
 )
 
 func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
-	store, dom, clean := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-	defer clean()
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")

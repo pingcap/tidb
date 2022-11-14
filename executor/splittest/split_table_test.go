@@ -15,26 +15,32 @@
 package splittest
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSplitTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
@@ -106,8 +112,7 @@ func TestSplitTableRegion(t *testing.T) {
 }
 
 func TestSplitRegionEdgeCase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -121,8 +126,7 @@ func TestSplitRegionEdgeCase(t *testing.T) {
 }
 
 func TestClusterIndexSplitTableIntegration(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
@@ -176,8 +180,7 @@ func TestClusterIndexSplitTableIntegration(t *testing.T) {
 }
 
 func TestClusterIndexShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set global tidb_scatter_region = 1")
@@ -205,8 +208,7 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 }
 
 func TestShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -266,7 +268,7 @@ func TestShowTableRegion(t *testing.T) {
 	// 4 regions to store record data.
 	// 1 region to store index data.
 	require.Len(t, rows, 5)
-	require.Len(t, rows[0], 11)
+	require.Len(t, rows[0], 13)
 	tbl := external.GetTableByName(t, tk, "test", "t_regions")
 	// Check the region start key.
 	require.Equal(t, fmt.Sprintf("t_%d_r", tbl.Meta().ID), rows[0][1])
@@ -274,6 +276,11 @@ func TestShowTableRegion(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID), rows[3][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r", tbl.Meta().ID), rows[4][2])
+	// Check scheduling constraint and scheduling state default value
+	for i := range rows {
+		require.Equal(t, "", rows[i][11])
+		require.Equal(t, "", rows[i][12])
+	}
 
 	// Test show table index regions.
 	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
@@ -281,11 +288,17 @@ func TestShowTableRegion(t *testing.T) {
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	require.Len(t, rows, 4)
+	require.Len(t, rows[0], 13)
 	// Check the region start key.
 	require.Regexp(t, fmt.Sprintf("t_%d.*", tbl.Meta().ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID), rows[1][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID), rows[2][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID), rows[3][1])
+	// Check scheduling constraint and scheduling state default value
+	for i := range rows {
+		require.Equal(t, "", rows[i][11])
+		require.Equal(t, "", rows[i][12])
+	}
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
@@ -593,4 +606,147 @@ func TestShowTableRegion(t *testing.T) {
 	// Test show table partition region on non-partition table.
 	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
 	require.True(t, terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned))
+
+	// Test scheduling info for un-partitioned table with placement policy
+	tk.MustExec("drop table if exists t1_scheduling")
+	tk.MustExec("drop placement policy if exists pa1")
+	tk.MustExec("create placement policy p1 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\"" +
+		"SCHEDULE=\"EVEN\"")
+	tk.MustExec("create table t1_scheduling (id int) placement policy p1")
+	re = tk.MustQuery("show table t1_scheduling regions")
+	rows = re.Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 13)
+	tbl = external.GetTableByName(t, tk, "test", "t1_scheduling")
+	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
+	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[0][11])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[0][12])
+
+	// Test scheduling info for partitioned table with placement policy
+	tk.MustExec("drop table if exists t2_scheduling")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p2 " +
+		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
+		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
+		"FOLLOWERS=3")
+	tk.MustExec("create table t2_scheduling (id INT) placement policy p1 partition by range (id) (" +
+		"partition p0 values less than (100) placement policy p2," +
+		"partition p1 values less than (1000)," +
+		"partition p2 values less than (10000)" +
+		")")
+	re = tk.MustQuery("show table t2_scheduling regions")
+	rows = re.Rows()
+	require.Len(t, rows, 3)
+	require.Len(t, rows[0], 13)
+	tbl = external.GetTableByName(t, tk, "test", "t2_scheduling")
+	require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[0][11])
+	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[1][11])
+	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[2][11])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[0][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[1][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[2][12])
+
+	// Test scheduling info for partitioned table after split to regions
+	tk.MustExec("drop table if exists t3_scheduling")
+	tk.MustExec("create table t3_scheduling (id INT) placement policy p1 partition by range (id) (" +
+		"partition p0 values less than (100) placement policy p2," +
+		"partition p1 values less than (1000)," +
+		"partition p2 values less than (10000)" +
+		")")
+	tk.MustQuery("split partition table t3_scheduling between (0) and (10000) regions 4")
+	re = tk.MustQuery("show table t3_scheduling regions")
+	rows = re.Rows()
+	require.Len(t, rows, 12)
+	require.Len(t, rows[0], 13)
+	for i := range rows {
+		if i < 4 {
+			require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[i][11])
+		} else {
+			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
+		}
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
+	}
+
+	// Test scheduling info for un-partitioned table after split index to regions
+	tk.MustExec("drop table if exists t4_scheduling")
+	tk.MustExec("create table t4_scheduling (id INT, val INT, index idx1(val)) placement policy p1")
+	tk.MustQuery("split table t4_scheduling index idx1 between (0) and (12345) regions 3")
+	re = tk.MustQuery("show table t4_scheduling regions")
+	rows = re.Rows()
+	require.Len(t, rows, 4)
+	require.Len(t, rows[0], 13)
+	for i := range rows {
+		require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
+	}
+
+	// Test scheduling info for partitioned table after split index to regions
+	tk.MustExec("drop table if exists t5_scheduling")
+	tk.MustExec("create table t5_scheduling (id INT, val INT, index idx1(val)) placement policy p1 partition by range (id) (" +
+		"partition p0 values less than (100) placement policy p2," +
+		"partition p1 values less than (1000)," +
+		"partition p2 values less than (10000)" +
+		")")
+	tk.MustQuery("split table t5_scheduling index idx1 between (0) and (12345) regions 3")
+	re = tk.MustQuery("show table t5_scheduling regions")
+	rows = re.Rows()
+	require.Len(t, rows, 12)
+	require.Len(t, rows[0], 13)
+	for i := range rows {
+		if i < 4 {
+			require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[i][11])
+		} else {
+			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
+		}
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
+	}
+	re = tk.MustQuery("show table t5_scheduling index idx1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 9)
+	require.Len(t, rows[0], 13)
+	for i := range rows {
+		if i < 3 {
+			require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[i][11])
+		} else {
+			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
+		}
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
+	}
+}
+
+func BenchmarkLocateRegion(t *testing.B) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t (a varchar(100), b int, index idx1(b,a))`)
+	tk.MustExec("set @@tidb_wait_split_region_finish = 1")
+	tk.MustQuery("split table t between (0) and (1000000000) regions 1000").Check(testkit.Rows("1000 1"))
+	tk.MustQuery("split table t between (1000000000) and (2000000000) regions 1000").Check(testkit.Rows("999 1"))
+	tk.MustQuery("split table t between (2000000000) and (3000000000) regions 1000").Check(testkit.Rows("999 1"))
+
+	bo := backoff.NewBackoffer(context.Background(), 10)
+	tmp := store.(helper.Storage).GetRegionCache()
+	cache := copr.RegionCache{RegionCache: tmp}
+	ranges := copr.NewKeyRanges([]kv.KeyRange{
+		{
+			StartKey: []byte("t"),
+			EndKey:   []byte("u"),
+		},
+	})
+
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		_, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(BenchmarkLocateRegion)
 }
