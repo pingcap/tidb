@@ -33,6 +33,10 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 func CloneCols(cols []*expression.Column) []*expression.Column {
 	cloned := make([]*expression.Column, 0, len(cols))
 	for _, c := range cols {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
 		cloned = append(cloned, c.Clone().(*expression.Column))
 	}
 	return cloned
