@@ -978,7 +978,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			}
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1346,7 +1346,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1867,14 +1867,14 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
+func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
-	pkIdx := FindPrimaryIndex(t.Meta())
+	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
-		pkCol := t.Meta().Columns[pkIdxCol.Offset]
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
 		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
@@ -1956,6 +1956,35 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
+}
+
+// SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfo.
+func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+	for i, c := range columns {
+		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
+		// They real values will be computed later.
+		if c.IsGenerated() && !c.GeneratedStored {
+			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
+		}
+		if c.GetOriginDefaultValue() == nil {
+			continue
+		}
+
+		sessVars := ctx.GetSessionVars()
+		originStrict := sessVars.StrictSQLMode
+		sessVars.StrictSQLMode = false
+		d, err := table.GetColOriginDefaultValue(ctx, c)
+		sessVars.StrictSQLMode = originStrict
+		if err != nil {
+			return err
+		}
+
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
