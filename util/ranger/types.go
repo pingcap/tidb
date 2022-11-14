@@ -46,14 +46,6 @@ func (rs Ranges) Range() Ranges {
 	return rs
 }
 
-func (rs Ranges) Clone() Ranges {
-	cloned := make([]*Range, 0, len(rs))
-	for _, r := range rs {
-		cloned = append(cloned, r.Clone())
-	}
-	return cloned
-}
-
 // Rebuild rebuilds this range.
 func (Ranges) Rebuild() error {
 	return nil

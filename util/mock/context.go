@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -430,6 +431,11 @@ func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessio
 // DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
 func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
+}
+
+// GetExtensions returns the `*extension.SessionExtensions` object
+func (*Context) GetExtensions() *extension.SessionExtensions {
+	return nil
 }
 
 // Close implements the sessionctx.Context interface.
