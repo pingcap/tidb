@@ -109,3 +109,65 @@ func TestBasic(t *testing.T) {
 		t.Run(fmt.Sprintf("#%d", i+1), func(t *testing.T) { run(t, c) })
 	}
 }
+
+func TestSubRange(t *testing.T) {
+	type Case struct {
+		Range         []spans.Span
+		InputSequence []spans.Valued
+		Result        []spans.Valued
+	}
+
+	run := func(t *testing.T, c Case) {
+		full := spans.NewFullWith(c.Range, 0)
+		fmt.Println(t.Name())
+		for _, i := range c.InputSequence {
+			full.Merge(i)
+			var result []spans.Valued
+			full.Traverse(func(v spans.Valued) bool {
+				result = append(result, v)
+				return true
+			})
+			fmt.Printf("%s -> %s\n", i, result)
+		}
+
+		var result []spans.Valued
+		full.Traverse(func(v spans.Valued) bool {
+			result = append(result, v)
+			return true
+		})
+
+		require.True(t, spans.ValuedSetEquals(result, c.Result), "%s\nvs\n%s", result, c.Result)
+	}
+
+	cases := []Case{
+		{
+			Range: []spans.Span{s("0001", "0004"), s("0008", "")},
+			InputSequence: []spans.Valued{
+				kv(s("0001", "0007"), 42),
+				kv(s("0000", "0009"), 41),
+				kv(s("0002", "0005"), 43),
+			},
+			Result: []spans.Valued{
+				kv(s("0001", "0002"), 42),
+				kv(s("0002", "0004"), 43),
+				kv(s("0008", "0009"), 41),
+				kv(s("0009", ""), 0),
+			},
+		},
+		{
+			Range: []spans.Span{
+				s("0001", "0004"),
+				s("0008", "")},
+			InputSequence: []spans.Valued{kv(s("", ""), 42)},
+			Result: []spans.Valued{
+				kv(s("0001", "0004"), 42),
+				kv(s("0008", ""), 42),
+			},
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i+1), func(t *testing.T) { run(t, c) })
+	}
+
+}

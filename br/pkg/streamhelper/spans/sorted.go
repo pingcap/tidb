@@ -93,7 +93,7 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 				initialized = true
 				return
 			}
-			if merged == collected.Value {
+			if merged == collected.Value && utils.CompareBytesExt(collected.Key.EndKey, true, rng.Key.StartKey, false) == 0 {
 				collected.Key.EndKey = rng.Key.EndKey
 			} else {
 				flushCollected()

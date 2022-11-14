@@ -120,9 +120,16 @@ func ValuedSetEquals(xs, ys []Valued) bool {
 			}
 			if c < 0 {
 				xi++
+				// If not adjacent key, return false directly.
+				if xi < len(xs) && utils.CompareBytesExt(x.Key.EndKey, true, xs[xi].Key.StartKey, false) != 0 {
+					return false
+				}
 			}
 			if c > 0 {
 				yi++
+				if yi < len(ys) && utils.CompareBytesExt(y.Key.EndKey, true, ys[yi].Key.StartKey, false) != 0 {
+					return false
+				}
 			}
 		}
 	}
