@@ -46,14 +46,14 @@ type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
 	contextFunc TF
 	wg          *sync.WaitGroup
-	task        chan T
+	task        chan Task[T]
 	resultCh    chan U
 	taskID      uint64
 	status      atomic.Int32 // task manager is able to make this task stop, wait or running
 }
 
 // NewTaskBox is to create a task box.
-func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan T, resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
+func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
 	return TaskBox[T, U, C, CT, TF]{
 		constArgs:   constArgs,
 		contextFunc: contextFunc,
@@ -70,7 +70,7 @@ func (t *TaskBox[T, U, C, CT, TF]) ConstArgs() C {
 }
 
 // GeTaskCh is to get the task channel.
-func (t *TaskBox[T, U, C, CT, TF]) GeTaskCh() chan T {
+func (t *TaskBox[T, U, C, CT, TF]) GeTaskCh() chan Task[T] {
 	return t.task
 }
 
@@ -141,4 +141,9 @@ func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
 	default:
 	}
 	return false
+}
+
+type Task[T any] struct {
+	Task T
+	Done DoneFunc
 }

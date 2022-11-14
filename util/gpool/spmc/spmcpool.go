@@ -288,8 +288,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			}
 			for _, task := range tasks {
 				wg.Add(1)
+				doneFunc, err := p.statistic.Static()
+				if err != nil {
+					log.Fatal("fail to static", zap.Error(err))
+				}
 				task := pooltask.Task[T]{
 					Task: task,
+					Done: doneFunc,
 				}
 				inputCh <- task
 			}
@@ -337,8 +342,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				return
 			}
 			wg.Add(1)
+			doneFunc, err := p.statistic.Static()
+			if err != nil {
+				log.Fatal("fail to static", zap.Error(err))
+			}
 			t := pooltask.Task[T]{
 				Task: task,
+				Done: doneFunc,
 			}
 			inputCh <- t
 		}

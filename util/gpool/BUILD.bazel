@@ -6,10 +6,15 @@ go_library(
         "command.go",
         "gpool.go",
         "spinlock.go",
+        "static.go",
         "task.go",
         "task_manage.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool",
     visibility = ["//visibility:public"],
-    deps = ["@org_golang_x_sys//cpu"],
+    deps = [
+        "//util/mathutil",
+        "//util/window",
+        "@org_golang_x_sys//cpu",
+    ],
 )
