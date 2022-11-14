@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/slice"
 	"go.uber.org/zap"
@@ -70,6 +71,22 @@ const (
 	// CompressionSnappy is the compression type that uses Snappy algorithm.
 	CompressionSnappy
 )
+
+// ToStorageCompressType converts Compression to storage.CompressType.
+func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+	switch compression {
+	case CompressionGZ:
+		return storage.Gzip, nil
+	case CompressionSnappy:
+		return storage.Snappy, nil
+	case CompressionZStd:
+		return storage.Zstd, nil
+	case CompressionNone:
+		return storage.NoCompression, nil
+	default:
+		return storage.NoCompression, errors.Errorf("compression %d doesn't have related storage compressType", compression)
+	}
+}
 
 func parseSourceType(t string) (SourceType, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
@@ -137,6 +154,8 @@ var expandVariablePattern = regexp.MustCompile(`\$(?:\$|[\pL\p{Nd}_]+|\{[\pL\p{N
 var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
 	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))?$`, Type: "ignore"},
+	// ignore backup files
+	{Pattern: `(?i).*\.(sql|csv|parquet)(\.(\w+))?\.(bak|BAK)$`, Type: "ignore"},
 	// db schema create file pattern, matches files like '{schema}-schema-create.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
 	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql[.{compress}]'
@@ -182,6 +201,11 @@ func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, 
 		res = append(res, rule)
 	}
 	return chainRouters(res), nil
+}
+
+// NewDefaultFileRouter creates a new file router with the default file route rules.
+func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
+	return NewFileRouter(defaultFileRouteRules, logger)
 }
 
 // RegexRouter is a `FileRouter` implement that apply specific regex pattern to filepath.
