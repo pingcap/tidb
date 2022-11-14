@@ -170,34 +170,34 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:singular(a) range:[1,1], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.a, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:singular(a) range:[4,4], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.a, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:singular(a) range:[8,8], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.a, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:singular(a) range:[1.00000000000000000000,1.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.a, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:singular(a) range:[4.00000000000000000000,4.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.a, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:singular(a) range:[8.00000000000000000000,8.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.a, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -260,34 +260,34 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[1 1,1 1], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 1), eq(test.tdouble.c, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[4 4,4 4], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 4), eq(test.tdouble.c, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[8 8,8 8], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 8), eq(test.tdouble.c, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[1.00000000000000000000 1.00000000000000000000,1.00000000000000000000 1.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 1), eq(test.tdecimal.c, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000 4.00000000000000000000,4.00000000000000000000 4.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 4), eq(test.tdecimal.c, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[8.00000000000000000000 8.00000000000000000000,8.00000000000000000000 8.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 8), eq(test.tdecimal.c, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -335,34 +335,34 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[1,1], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[4,4], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[8,8], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdouble.b, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[1.00000000000000000000,1.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000,4.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 1.00 root  ",
-        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[8.00000000000000000000,8.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdecimal.b, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",

@@ -654,6 +654,73 @@
     ]
   },
   {
+    "name": "TestViewHint",
+    "cases": [
+      // Hint for view v
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;",
+
+      // Hint for view v1
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;",
+
+      // Hint for view v2
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v1@sel_1 .@sel_1), merge_join(t@qb_v2_1) */ * from v2;"
+    ]
+  },
+  {
+    "name": "TestViewHintScope",
+    "cases": [
+      // Same qb name in one query
+      "explain format = 'brief' select /*+ qb_name(qb_v, v@sel_1 .@sel_2), qb_name(qb_v, v@sel_1 .@sel_1), merge_join(t1@qb_v) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_2), qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;",
+
+      // Set the unappeared view name
+      // TODO: add the warning for the unused the view hints
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
+
+      // Exist the view alias
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;",
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;",
+
+      // Tht view hint isn't set in the first query block.
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;",
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;",
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;",
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;",
+
+      // TODO: add the warning when the view hints don't set in the first query block
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;",
+
+      // Define more tables in one view hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(@qb_v_2 t1, t3) */ * from v2;",
+
+      // Ignore the @sel_1 query block
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v .@sel_2), merge_join(t1@qb_v_2) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_1, v@sel_1), merge_join(t@qb_v_1) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_1, v1 .v@sel_2), merge_join(t@qb_v_1) */ * from v1;",
+
+      // Use the query block before define it
+      "explain format = 'brief' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from v;",
+      "explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel1) */ * from v;"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHintAndIsolationRead",
     "cases": [
       "desc format = 'brief' select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",

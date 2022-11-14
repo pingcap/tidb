@@ -79,6 +79,7 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
