@@ -916,18 +916,20 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	}
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		probeSideTupleFetcher: probeSideTupleFetcher{
+		hashJoinCtx: &hashJoinCtx{
+			joinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
+			isOuterJoin:     false,
+			useOuterToBuild: testCase.useOuterToBuild,
+		},
+		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
 		},
 		probeWorkers:      make([]probeWorker, testCase.concurrency),
 		concurrency:       uint(testCase.concurrency),
-		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
-		isOuterJoin:       false,
 		buildKeys:         joinKeys,
 		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
 		buildSideEstCount: float64(testCase.rows),
-		useOuterToBuild:   testCase.useOuterToBuild,
 	}
 
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
