@@ -708,6 +708,9 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeCleanUpIndexWorker:
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			worker, runner = idxWorker, idxWorker.backfillWorker
+		case typeReorgPartitionWorker:
+			partWorker := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			worker, runner = partWorker, partWorker.backfillWorker
 		default:
 			return errors.New("unknown backfill type")
 		}
