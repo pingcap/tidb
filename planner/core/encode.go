@@ -293,6 +293,9 @@ loop1:
 		)
 	}
 	normalized = d.buf.String()
+	if len(normalized) == 0 {
+		return "", parser.NewDigest(nil)
+	}
 	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)
