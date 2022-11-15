@@ -824,10 +824,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 // on the "USING" clause.
 //
 // According to the standard SQL, columns are ordered in the following way:
-//  1. coalesced common columns of "leftPlan" and "rightPlan", in the order they
-//     appears in "leftPlan".
-//  2. the rest columns in "leftPlan", in the order they appears in "leftPlan".
-//  3. the rest columns in "rightPlan", in the order they appears in "rightPlan".
+// 1. coalesced common columns of "leftPlan" and "rightPlan", in the order they
+ //    appears in "leftPlan".
+ // 2. the rest columns in "leftPlan", in the order they appears in "leftPlan".
+ // 3. the rest columns in "rightPlan", in the order they appears in "rightPlan".
 func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	filter := make(map[string]bool, len(join.Using))
 	for _, col := range join.Using {
