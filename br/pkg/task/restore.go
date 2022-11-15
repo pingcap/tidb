@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -474,6 +475,13 @@ func CheckNewCollationEnable(
 			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
 			backupNewCollationEnable, newCollationEnable)
 	}
+
+	enabled := false
+	if newCollationEnable == "True" {
+		enabled = true
+	}
+	collate.SetNewCollationEnabledForTest(enabled)
+	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
 }
 

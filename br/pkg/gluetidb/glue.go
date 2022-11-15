@@ -368,7 +368,7 @@ func (s *mockSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
-	return "true", nil
+	return "True", nil
 }
 
 // MockGlue only used for test

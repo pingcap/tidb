@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -243,5 +244,58 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 	return &backuppb.BackupMeta{
 		Files:   mockFiles,
 		Schemas: mockSchemas,
+	}
+}
+
+func TestCheckNewCollationEnable(t *testing.T) {
+	caseList := []struct {
+		backupMeta        *backuppb.BackupMeta
+		CheckRequirements bool
+		isErr             bool
+	}{
+		{
+			backupMeta:        &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			CheckRequirements: true,
+			isErr:             false,
+		},
+		{
+			backupMeta:        &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			CheckRequirements: true,
+			isErr:             true,
+		},
+		{
+			backupMeta:        &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			CheckRequirements: false,
+			isErr:             true,
+		},
+		{
+			backupMeta:        &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			CheckRequirements: false,
+			isErr:             false,
+		},
+		{
+			backupMeta:        &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			CheckRequirements: true,
+			isErr:             true,
+		},
+	}
+
+	g := &gluetidb.MockGlue{}
+	se, err := g.CreateSession(nil)
+	require.NoError(t, err)
+
+	enabled, err := se.GetGlobalVariable("new_collation_enabled")
+	require.NoError(t, err)
+	require.Equal(t, enabled, "True")
+
+	for i, ca := range caseList {
+		err = CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
+
+		t.Logf("[%d] Got Error: %v\n", i, err)
+		if ca.isErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
 	}
 }
