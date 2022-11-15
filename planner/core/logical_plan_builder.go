@@ -4776,6 +4776,7 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 	return func() { delete(b.buildingViewStack, viewFullName) }, nil
 }
 
+// BuildDataSourceFromView is used to build LogicalPlan from view.
 // qbNameMap4View and viewHints are used for the view's hint.
 // qbNameMap4View maps the query block name to the view table lists.
 // viewHints group the view hints based on the view's query block name.
