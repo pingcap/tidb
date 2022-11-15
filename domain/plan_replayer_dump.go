@@ -252,7 +252,7 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
-				SQLDigest:  task.SqlDigest,
+				SQLDigest:  task.SQLDigest,
 				PlanDigest: task.PlanDigest,
 				OriginSQL:  execStmt.Text(),
 				Token:      task.FileName,
