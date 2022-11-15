@@ -3286,7 +3286,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
 func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
