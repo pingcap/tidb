@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	pwdValidate "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1053,17 +1054,17 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 }
 
 func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
-	if warn, err := variable.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+	if warn, err := pwdValidate.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 0, false, nil
 	}
-	if warn, err := variable.ValidatePasswordLowPolicy(str, globalVars); err != nil {
+	if warn, err := pwdValidate.ValidatePasswordLowPolicy(str, globalVars); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 25, false, nil
 	}
-	if warn, err := variable.ValidatePasswordMediumPolicy(str, globalVars); err != nil {
+	if warn, err := pwdValidate.ValidatePasswordMediumPolicy(str, globalVars); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 50, false, nil

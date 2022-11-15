@@ -880,7 +880,8 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, resu
 		return err
 	}
 
-	result.ResizeInt64(n, true)
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
 	enableValidation := false
@@ -899,6 +900,8 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, resu
 			return err
 		} else if !isNull {
 			i64s[i] = score
+		} else {
+			result.SetNull(i, true)
 		}
 	}
 	return nil
