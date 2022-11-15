@@ -2115,6 +2115,7 @@ func TestParallelApply(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create database test_parallel_apply")
 	tk.MustExec("use test_parallel_apply")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -2149,9 +2150,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
 		`          └─IndexFullScan 100000000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
@@ -2163,9 +2164,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:HashAgg`, // TableReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
 		`          └─TableFullScan 100000000.00 cop[tikv] table:thash keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Sort().Check(
@@ -2192,9 +2193,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:HashAgg`, // IndexReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
 		`          └─IndexFullScan 100000000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
@@ -2206,9 +2207,9 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#9`,
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#8)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:HashAgg`, // TableReader is a inner child of Apply
+		`      └─HashAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#8`,
 		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
 		`          └─TableFullScan 100000000.00 cop[tikv] table:trange keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Sort().Check(

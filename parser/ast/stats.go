@@ -189,10 +189,11 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // DropStatsStmt is used to drop table statistics.
+// if the PartitionNames is not empty, or IsGlobalStats is true, it will contain exactly one table
 type DropStatsStmt struct {
 	stmtNode
 
-	Table          *TableName
+	Tables         []*TableName
 	PartitionNames []model.CIStr
 	IsGlobalStats  bool
 }
@@ -200,8 +201,14 @@ type DropStatsStmt struct {
 // Restore implements Node interface.
 func (n *DropStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP STATS ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while add table")
+
+	for index, table := range n.Tables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore DropStatsStmt.Tables[%d]", index)
+		}
 	}
 
 	if n.IsGlobalStats {
@@ -228,11 +235,13 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropStatsStmt)
-	node, ok := n.Table.Accept(v)
-	if !ok {
-		return n, false
+	for i, val := range n.Tables {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
 	}
-	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 
