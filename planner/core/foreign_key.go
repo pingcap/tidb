@@ -28,7 +28,7 @@ import (
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
-	baseSchemaProducer
+	basePhysicalPlan
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
 	Tbl        table.Table
@@ -44,7 +44,7 @@ type FKCheck struct {
 
 // FKCascade indicates the foreign key constraint cascade behaviour.
 type FKCascade struct {
-	baseSchemaProducer
+	basePhysicalPlan
 	Tp         FKCascadeType
 	ReferredFK *model.ReferredFKInfo
 	ChildTable table.Table
@@ -66,6 +66,26 @@ const (
 	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
 )
 
+// AccessObject implements dataAccesser interface.
+func (fc *FKCheck) AccessObject() AccessObject {
+	if fc.Idx == nil {
+		return OtherAccessObject(fmt.Sprintf("table:%s", fc.Tbl.Meta().Name))
+	} else {
+		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.Tbl.Meta().Name, fc.Idx.Meta().Name))
+	}
+}
+
+// OperatorInfo implements dataAccesser interface.
+func (fc *FKCheck) OperatorInfo(normalized bool) string {
+	if fc.FK != nil {
+		return fmt.Sprintf("foreign_key:%s, check_exist", fc.FK.Name)
+	}
+	if fc.ReferredFK != nil {
+		return fmt.Sprintf("foreign_key:%s, check_not_exist", fc.ReferredFK.ChildFKName)
+	}
+	return ""
+}
+
 // MemoryUsage return the memory usage of FKCheck
 func (f *FKCheck) MemoryUsage() (sum int64) {
 	if f == nil {
@@ -77,6 +97,26 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 		sum += cis.MemoryUsage()
 	}
 	return
+}
+
+// AccessObject implements dataAccesser interface.
+func (fc *FKCascade) AccessObject() AccessObject {
+	if fc.FKIdx == nil {
+		return OtherAccessObject(fmt.Sprintf("table:%s", fc.ChildTable.Meta().Name))
+	} else {
+		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.ChildTable.Meta().Name, fc.FKIdx.Name))
+	}
+}
+
+// OperatorInfo implements dataAccesser interface.
+func (fc *FKCascade) OperatorInfo(normalized bool) string {
+	switch fc.Tp {
+	case FKCascadeOnDelete:
+		return fmt.Sprintf("foreign_key:%s, on_delete:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnDelete).String())
+	case FKCascadeOnUpdate:
+		return fmt.Sprintf("foreign_key:%s, on_update:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnUpdate).String())
+	}
+	return ""
 }
 
 // MemoryUsage return the memory usage of FKCascade
@@ -414,44 +454,4 @@ func buildFKCascade(ctx sessionctx.Context, tp FKCascadeType, referredFK *model.
 	}
 	fkCascade.FKIdx = indexForFK
 	return fkCascade, nil
-}
-
-// AccessObject implements dataAccesser interface.
-func (fc *FKCheck) AccessObject() AccessObject {
-	if fc.Idx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", fc.Tbl.Meta().Name))
-	} else {
-		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.Tbl.Meta().Name, fc.Idx.Meta().Name))
-	}
-}
-
-// OperatorInfo implements dataAccesser interface.
-func (fc *FKCheck) OperatorInfo(normalized bool) string {
-	if fc.FK != nil {
-		return fmt.Sprintf("foreign_key:%s, check_exist", fc.FK.Name)
-	}
-	if fc.ReferredFK != nil {
-		return fmt.Sprintf("foreign_key:%s, check_not_exist", fc.ReferredFK.ChildFKName)
-	}
-	return ""
-}
-
-// AccessObject implements dataAccesser interface.
-func (fc *FKCascade) AccessObject() AccessObject {
-	if fc.FKIdx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", fc.ChildTable.Meta().Name))
-	} else {
-		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.ChildTable.Meta().Name, fc.FKIdx.Name))
-	}
-}
-
-// OperatorInfo implements dataAccesser interface.
-func (fc *FKCascade) OperatorInfo(normalized bool) string {
-	switch fc.Tp {
-	case FKCascadeOnDelete:
-		return fmt.Sprintf("foreign_key:%s, on_delete:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnDelete).String())
-	case FKCascadeOnUpdate:
-		return fmt.Sprintf("foreign_key:%s, on_update:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnUpdate).String())
-	}
-	return ""
 }
