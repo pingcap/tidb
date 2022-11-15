@@ -831,7 +831,7 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 			case ast.Unlock:
 				pLinfo.lockAccount = "N"
 			case ast.PasswordHistory:
-				day := int64(option.Count)
+				day := option.Count
 				if (day) > 65535 {
 					day = 65535
 				}
@@ -843,7 +843,7 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 				pLinfo.passwordHistoryFlag = true
 
 			case ast.PasswordReuseInterval:
-				day := int64(option.Count)
+				day := option.Count
 				if (day) > 65535 {
 					day = 65535
 				}
@@ -854,10 +854,10 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 				pLinfo.passwordReuseInterval = notSpecified
 				pLinfo.passwordReuseIntervalFlag = true
 			}
-
 		}
 	}
 }
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -1141,18 +1141,18 @@ func addHistoricalData(ctx context.Context, sctx sessionctx.Context, name string
 	return nil
 }
 
-func passwordVerification(ctx context.Context, sctx sessionctx.Context, name string, host string, passwordReuse *passwordReuseInfo, pwd string) (bool, error, int64) {
+func passwordVerification(ctx context.Context, sctx sessionctx.Context, name string, host string, passwordReuse *passwordReuseInfo, pwd string) (bool, int64, error) {
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
-		return true, nil, 0
+		return true, 0, nil
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host))
 	if err != nil {
-		return false, err, 0
+		return false, 0, err
 	}
 	if len(rows) != 1 {
-		return false, errors.New("User and Host Classification is not unique,Please confirm the mysql.password_history table structure"), 0
+		return false, 0, errors.New("User and Host Classification is not unique,Please confirm the mysql.password_history table structure")
 	}
 	passwordNum := rows[0].GetInt64(0)
 	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
@@ -1163,25 +1163,25 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 		if passwordNum <= passwordReuse.passwordHistory {
 			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
 			if err != nil {
-				return false, err, 0
+				return false, 0, err
 			}
 			if rows[0].GetInt64(0) == 0 {
-				return true, nil, canDeleteNum
+				return true, canDeleteNum, nil
 			}
-			return false, nil, 0
-		} else {
-			// more password limit check
-			checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
-			checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
-			checkRows = checkRows + ` ) as t where t.Password = %? `
-			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
-			if err != nil {
-				return false, err, 0
-			}
-			if rows[0].GetInt64(0) != 0 {
-				return false, nil, 0
-			}
+			return false, 0, nil
 		}
+		// more password limit check
+		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+		checkRows = checkRows + ` ) as t where t.Password = %? `
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+		if err != nil {
+			return false, 0, err
+		}
+		if rows[0].GetInt64(0) != 0 {
+			return false, 0, nil
+		}
+
 	}
 
 	if passwordReuse.passwordReuseInterval > 0 {
@@ -1189,24 +1189,24 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 		if passwordReuse.passwordReuseInterval > math.MaxInt32 {
 			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
 			if err != nil {
-				return false, err, 0
+				return false, 0, err
 			}
 			if rows[0].GetInt64(0) == 0 {
-				return true, nil, 0
+				return true, 0, nil
 			}
-			return false, nil, 0
+			return false, 0, nil
 		}
 
 		beforeDate := getSystemTime(ctx, sctx, passwordReuse)
 		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd, beforeDate)
 		if err != nil {
-			return false, err, 0
+			return false, 0, err
 		}
 		if rows[0].GetInt64(0) == 0 {
-			return true, nil, canDeleteNum
+			return true, canDeleteNum, nil
 		}
 	}
-	return false, nil, canDeleteNum
+	return false, canDeleteNum, nil
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
@@ -1351,7 +1351,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 				// check whether password can be used
-				res, err, maxDelNum := passwordVerification(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdReuseInfo, pwd)
+				res, maxDelNum, err := passwordVerification(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdReuseInfo, pwd)
 				if err != nil {
 					return err
 				}
