@@ -2041,8 +2041,8 @@ func upgradeToVer101(s Session, ver int64) {
 	doReentrantDDL(s, CreatePlanReplayerStatusTable)
 }
 
-func upgradeToVer104(s Session, ver int64) {
-	if ver >= version104 {
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
 		return
 	}
 	doReentrantDDL(s, CreatePlanReplayerTaskTable)
@@ -2094,8 +2094,8 @@ func upgradeToVer100(s Session, ver int64) {
 	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
-func upgradeToVer102(s Session, ver int64) {
-	if ver >= version102 {
+func upgradeToVer104(s Session, ver int64) {
+	if ver >= version104 {
 		return
 	}
 	doReentrantDDL(s, CreatePasswordHistory)
