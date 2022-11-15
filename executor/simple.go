@@ -1149,6 +1149,7 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host))
 	if err != nil {
+
 		return false, 0, err
 	}
 	if len(rows) != 1 {
@@ -1181,7 +1182,6 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 		if rows[0].GetInt64(0) != 0 {
 			return false, 0, nil
 		}
-
 	}
 
 	if passwordReuse.passwordReuseInterval > 0 {
