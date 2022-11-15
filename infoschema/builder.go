@@ -199,6 +199,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
 		return b.applyDropSchema(diff.SchemaID), nil
+	case model.ActionRecoverSchema:
+		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
@@ -220,6 +222,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionReorganizePartition:
 		// TODO: How to test?
 		return b.applyReorganizePartition(m, diff)
+	case model.ActionFlashbackCluster:
+		return []int64{-1}, nil
 	default:
 		return b.applyDefaultAction(m, diff)
 	}
@@ -644,6 +648,23 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	return tableIDs
 }
 
+func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if di, ok := b.is.SchemaByID(diff.SchemaID); ok {
+		return nil, ErrDatabaseExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", di.ID),
+		)
+	}
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.is.schemaMap[di.Name.L] = &schemaTables{
+		dbInfo: di,
+		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
+	}
+	return b.applyCreateTables(m, diff)
+}
+
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	oldSortedTables := b.is.sortedTablesBuckets[bucketIdx]
 	newSortedTables := make(sortedTables, len(oldSortedTables))
@@ -700,7 +721,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer)
+			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer, idCacheOpt)
 			allocs = append(allocs, newAlloc)
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)

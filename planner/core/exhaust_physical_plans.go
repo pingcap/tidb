@@ -1148,7 +1148,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		cop.commonHandleCols = ds.commonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
-	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -1940,11 +1940,18 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
 	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+		if (p.preferJoinType & preferShuffleJoin) > 0 {
+			if shuffleJoins := p.tryToGetMppHashJoin(prop, false); len(shuffleJoins) > 0 {
+				return shuffleJoins, true, nil
+			}
+		}
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			if bcastJoins := p.tryToGetMppHashJoin(prop, true); len(bcastJoins) > 0 {
+				return bcastJoins, true, nil
+			}
+		}
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
-			if (p.preferJoinType & preferBCJoin) > 0 {
-				return mppJoins, true, nil
-			}
 			joins = append(joins, mppJoins...)
 		} else {
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
@@ -2802,6 +2809,24 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.MppRunMode = MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
+	}
+
+	// handle MPP Agg hints
+	var preferMode AggMppRunMode
+	var prefer bool
+	if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+		preferMode, prefer = Mpp1Phase, true
+	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+		preferMode, prefer = Mpp2Phase, true
+	}
+	if prefer {
+		var preferPlans []PhysicalPlan
+		for _, agg := range hashAggs {
+			if hg, ok := agg.(*PhysicalHashAgg); ok && hg.MppRunMode == preferMode {
+				preferPlans = append(preferPlans, hg)
+			}
+		}
+		hashAggs = preferPlans
 	}
 	return
 }

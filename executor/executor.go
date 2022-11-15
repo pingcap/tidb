@@ -132,6 +132,7 @@ type baseExecutor struct {
 	children      []Executor
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.BasicRuntimeStats
+	AllocPool     chunk.Allocator
 }
 
 const (
@@ -166,9 +167,6 @@ func init() {
 	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
-
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
@@ -234,6 +232,12 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
+func tryNewCacheChunk(e Executor) *chunk.Chunk {
+	base := e.base()
+	s := base.ctx.GetSessionVars()
+	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize, base.AllocPool)
+}
+
 // newList creates a new List to buffer current executor's result.
 func newList(e Executor) *chunk.List {
 	base := e.base()
@@ -264,6 +268,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
@@ -560,7 +565,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
+	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -593,6 +598,18 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendString(11, subJob.State.String())
 		}
 	}
+}
+
+func showAddIdxReorgTp(job *model.Job) string {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+		if job.ReorgMeta != nil {
+			tp := job.ReorgMeta.ReorgTp.String()
+			if len(tp) > 0 {
+				return " /* " + tp + " */"
+			}
+		}
+	}
+	return ""
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -1382,7 +1399,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	return nil
@@ -1439,8 +1456,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		chk := newFirstChunk(exec)
-
+		chk := tryNewCacheChunk(exec)
 		err = Next(ctx, exec, chk)
 		if err != nil {
 			return nil, err
@@ -1515,7 +1531,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 func (e *SelectionExec) open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
@@ -1630,9 +1646,9 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		type tableIter interface {
-			IterRecords(sessionctx.Context, []*table.Column, table.RecordIterFunc) error
+			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1695,7 +1711,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrSubqueryMoreThan1Row
 	}
 
-	childChunk := newFirstChunk(e.children[0])
+	childChunk := tryNewCacheChunk(e.children[0])
 	err = Next(ctx, e.children[0], childChunk)
 	if err != nil {
 		return err
@@ -1937,31 +1953,38 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+	vars.MemTracker.UnbindActions()
+	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
+	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.ResetMaxConsumed()
+	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.StmtCtx.TableStats = make(map[int64]interface{})
+
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		vars.MemTracker.SetBytesLimit(-1)
 	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
-		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
+		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+		switch variable.OOMAction.Load() {
+		case variable.OOMActionCancel:
+			action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		case variable.OOMActionLog:
+			fallthrough
+		default:
+			action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
+			action.SetLogHook(logOnQueryExceedMemQuota)
+			vars.MemTracker.SetActionOnExceed(action)
+		}
 	}
-
+	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
-	}
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
-	default:
-		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
+	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+		sc.DiskTracker.AttachTo(vars.DiskTracker)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2024,6 +2047,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
+		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -2123,6 +2147,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
+	vars.ExchangeChunkStatus()
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
@@ -2161,6 +2186,10 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
 	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	if len(virtualColumnIndex) == 0 {
+		return nil
+	}
+
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {

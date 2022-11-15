@@ -2930,7 +2930,7 @@ func TestAutoIncrementForce(t *testing.T) {
 	require.Equal(t, uint64(1), getNextGlobalID())
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")
-	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 'PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 
 	// Rebase auto_increment.
@@ -3144,7 +3144,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 						fields[i] = strings.Replace(val, "'", "", -1)
 					}
 					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't_idx'", strings.Join(fields, "-")))
+						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 				}
 			}
 			restoreConfig()
