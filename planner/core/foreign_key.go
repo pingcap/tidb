@@ -416,6 +416,7 @@ func buildFKCascade(ctx sessionctx.Context, tp FKCascadeType, referredFK *model.
 	return fkCascade, nil
 }
 
+// AccessObject implements dataAccesser interface.
 func (fc *FKCheck) AccessObject() AccessObject {
 	if fc.Idx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", fc.Tbl.Meta().Name))
@@ -424,6 +425,7 @@ func (fc *FKCheck) AccessObject() AccessObject {
 	}
 }
 
+// OperatorInfo implements dataAccesser interface.
 func (fc *FKCheck) OperatorInfo(normalized bool) string {
 	if fc.FK != nil {
 		return fmt.Sprintf("foreign_key:%s, check_exist", fc.FK.Name)
@@ -434,6 +436,7 @@ func (fc *FKCheck) OperatorInfo(normalized bool) string {
 	return ""
 }
 
+// AccessObject implements dataAccesser interface.
 func (fc *FKCascade) AccessObject() AccessObject {
 	if fc.FKIdx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", fc.ChildTable.Meta().Name))
@@ -442,6 +445,7 @@ func (fc *FKCascade) AccessObject() AccessObject {
 	}
 }
 
+// OperatorInfo implements dataAccesser interface.
 func (fc *FKCascade) OperatorInfo(normalized bool) string {
 	switch fc.Tp {
 	case FKCascadeOnDelete:

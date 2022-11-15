@@ -280,6 +280,7 @@ loop1:
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		switch op.Origin.(type) {
 		case *FKCheck, *FKCascade:
+			// Generate plan digest doesn't need to contain the foreign key check/cascade plan, so just break the loop.
 			break loop1
 		}
 		p := op.Origin.(PhysicalPlan)

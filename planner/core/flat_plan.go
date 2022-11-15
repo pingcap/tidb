@@ -352,20 +352,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		for _, fkCheck := range plan.FKChecks {
-			childCtx.isRoot = true
-			childCtx.label = Empty
-			childCtx.isLastChild = true
-			target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
-			childIdxs = append(childIdxs, childIdx)
-		}
-		for _, fkCascade := range plan.FKCascades {
-			childCtx.isRoot = true
-			childCtx.label = Empty
-			childCtx.isLastChild = true
-			target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
-			childIdxs = append(childIdxs, childIdx)
-		}
+		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
 	case *Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
@@ -375,22 +362,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childIdxs = append(childIdxs, childIdx)
 		}
 		for _, fkChecks := range plan.FKChecks {
-			for _, fkCheck := range fkChecks {
-				childCtx.isRoot = true
-				childCtx.label = Empty
-				childCtx.isLastChild = true
-				target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
-				childIdxs = append(childIdxs, childIdx)
-			}
+			target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecks, nil)
 		}
 		for _, fkCascades := range plan.FKCascades {
-			for _, fkCascade := range fkCascades {
-				childCtx.isRoot = true
-				childCtx.label = Empty
-				childCtx.isLastChild = true
-				target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
-				childIdxs = append(childIdxs, childIdx)
-			}
+			target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, nil, fkCascades)
 		}
 	case *Delete:
 		if plan.SelectPlan != nil {
@@ -401,22 +376,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childIdxs = append(childIdxs, childIdx)
 		}
 		for _, fkChecks := range plan.FKChecks {
-			for _, fkCheck := range fkChecks {
-				childCtx.isRoot = true
-				childCtx.label = Empty
-				childCtx.isLastChild = true
-				target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
-				childIdxs = append(childIdxs, childIdx)
-			}
+			target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecks, nil)
 		}
 		for _, fkCascades := range plan.FKCascades {
-			for _, fkCascade := range fkCascades {
-				childCtx.isRoot = true
-				childCtx.label = Empty
-				childCtx.isLastChild = true
-				target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
-				childIdxs = append(childIdxs, childIdx)
-			}
+			target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, nil, fkCascades)
 		}
 	case *Execute:
 		f.InExecute = true
@@ -449,6 +412,25 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		flat.ChildrenEndIdx = len(target) - 1
 	}
 	return target, idx
+}
+
+func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecks []*FKCheck, fkCascades []*FKCascade) (FlatPlanTree, []int) {
+	var childIdx int
+	for _, fkCheck := range fkChecks {
+		childCtx.isRoot = true
+		childCtx.label = Empty
+		childCtx.isLastChild = true
+		target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
+	}
+	for _, fkCascade := range fkCascades {
+		childCtx.isRoot = true
+		childCtx.label = Empty
+		childCtx.isLastChild = true
+		target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
+	}
+	return target, childIdxs
 }
 
 func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
