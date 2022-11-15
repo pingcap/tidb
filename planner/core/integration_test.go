@@ -5425,9 +5425,8 @@ func (s *testIntegrationSuite) TestExplainAnalyzeDMLCommit(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite) TestAutoIncrementCheckWithCheckConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t (
 		id INTEGER NOT NULL AUTO_INCREMENT,
@@ -5435,4 +5434,3 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		KEY idx_autoinc_id (id)
 	)`)
 }
->>>>>>> 94aa804096 (auto_inc,constraint: Ignore check constraint for auto-increment check (#38966))
