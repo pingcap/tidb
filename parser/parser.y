@@ -11094,7 +11094,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
-|	"STATS_LOCKED" 
+|	"STATS_LOCKED"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsLocked, Table: &ast.TableName{Name: model.NewCIStr("STATS_TABLE_LOCKED"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
@@ -14290,7 +14290,8 @@ RowStmt:
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *			| 'file_name'
- *		| LOAD 'file_name']
+ *		| LOAD 'file_name'
+ *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
 	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
@@ -14395,6 +14396,21 @@ PlanReplayerStmt:
 			Where:   nil,
 			OrderBy: nil,
 			Limit:   nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Capture:    true,
+			SQLDigest:  $4,
+			PlanDigest: $5,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
 		}
 
 		$$ = x
