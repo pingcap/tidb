@@ -4881,10 +4881,13 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))")
 	tk.MustExec(`insert into t2 select * from t`)
 	// Not allowed to change the start range!
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (16), partition p2b values less than (36))`,
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (20), partition p2b values less than (36))`,
 		mysql.ErrRangeNotIncreasing)
 	// Not allowed to change the end range!
 	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, mysql.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (34))`, mysql.ErrRangeNotIncreasing)
+	// Also not allowed to change from MAXVALUE to something else IF there are values in the removed range!
+	tk.MustContainErrMsg(`alter table t2 reorganize partition pMax into (partition p2b values less than (50))`, "[table:1526]Table has no partition for value 56")
 	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
 		"t2 CREATE TABLE `t2` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4898,6 +4901,21 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
 		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	// But allowed to change from MAXVALUE if no existing values is outside the new range!
+	tk.MustExec(`alter table t2 reorganize partition pMax into (partition p4 values less than (90))`)
+	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
+		"t2 CREATE TABLE `t2` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `p4` VALUES LESS THAN (90))"))
 }
 
 func TestReorganizeListPartition(t *testing.T) {

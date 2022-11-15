@@ -1310,9 +1310,9 @@ func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInf
 
 func checkReorgPartitionNames(p *model.PartitionInfo, droppedNames []model.CIStr, pi *model.PartitionInfo) error {
 	partNames := make(map[string]struct{})
-	oldPars := p.Definitions
-	for _, oldPar := range oldPars {
-		partNames[oldPar.Name.L] = struct{}{}
+	oldDefs := p.Definitions
+	for _, oldDef := range oldDefs {
+		partNames[oldDef.Name.L] = struct{}{}
 	}
 	for _, delName := range droppedNames {
 		if _, ok := partNames[delName.L]; !ok {
@@ -1320,12 +1320,12 @@ func checkReorgPartitionNames(p *model.PartitionInfo, droppedNames []model.CIStr
 		}
 		delete(partNames, delName.L)
 	}
-	newPars := pi.Definitions
-	for _, newPar := range newPars {
-		if _, ok := partNames[newPar.Name.L]; ok {
-			return dbterror.ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
+	newDefs := pi.Definitions
+	for _, newDef := range newDefs {
+		if _, ok := partNames[newDef.Name.L]; ok {
+			return dbterror.ErrSameNamePartition.GenWithStackByArgs(newDef.Name)
 		}
-		partNames[newPar.Name.L] = struct{}{}
+		partNames[newDef.Name.L] = struct{}{}
 	}
 	return nil
 }
@@ -2243,8 +2243,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.SchemaState {
 	case model.StateNone:
 		changesMade := false
+
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
+		// In case there was a race for queueing different schema changes on the same
+		// table and the checks was not done on the current schema version.
+		// The partInfo may have been checked against an older schema version for example.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) +
 			len(partInfo.Definitions) -
 			len(partNames)))
@@ -2257,6 +2261,15 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
+		}
+
+		// Re-check that the dropped/added partitions are compatible with current definition
+		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
+		if err != nil {
+			return ver, err
+		}
+		if err = checkReorgPartitionDefs(w.sess.Context, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+			return ver, err
 		}
 
 		// move the adding definition into tableInfo.
@@ -2291,7 +2304,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// are OK
 		}
 
-		// We rom now on we cannot just cancel the DDL, we must Rollback!
+		// From now on we cannot just cancel the DDL, we must rollback!
+
 		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled

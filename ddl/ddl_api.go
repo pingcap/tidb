@@ -3840,6 +3840,13 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
 		}
 	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
+			// Not continues range
+			return 0, 0, nil, errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
+	}
+
 	return firstPartIdx, lastPartIdx, idMap, nil
 }
 
@@ -3869,26 +3876,13 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// Various checks
 	switch pi.Type {
 	// Only supporting RANGE/LIST
-	case model.PartitionTypeRange:
-		// TODO: Check that the new partitions are in one range, not overlapping the kept ones.
-	case model.PartitionTypeList:
+	case model.PartitionTypeRange, model.PartitionTypeList:
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
 	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if pi.Type == model.PartitionTypeRange {
-		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
-			// Not continues range
-			// TODO: Better error message?
-			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
-		}
-		// TODO: Check that the new partitions are not overlapping the kept ones.
-		// I.e. lastPartIdx partition needs either to be the last partition
-		//   OK to increase/decrease range, will error out if any row is out of the new range)
-		// or partition definition range, must be the same as the last partition it replaces
 	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
