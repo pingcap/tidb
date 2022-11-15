@@ -1329,6 +1329,7 @@ func TestViewHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1, v2")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
@@ -1363,6 +1364,7 @@ func TestViewHintScope(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1, v2, v3")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
@@ -1399,6 +1401,7 @@ func TestViewHintWithBinding(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
@@ -1430,6 +1433,7 @@ func TestAllViewHintType(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash, tikv'")
 	tk.MustExec("drop view if exists v, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12")
@@ -2716,6 +2720,7 @@ func TestSelectLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(1),(2)")
@@ -2740,9 +2745,9 @@ func TestSelectLimit(t *testing.T) {
 	result = tk.MustQuery("select (select * from t limit 1) s") // limit write in subquery, has no effect.
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where t.a in (select * from t) limit 3") // select_limit will not effect subquery
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 	result = tk.MustQuery("select * from (select * from t) s limit 3") // select_limit will not effect subquery
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 
 	// test for union
 	result = tk.MustQuery("select * from t union all select * from t limit 2") // limit outside subquery
@@ -2770,14 +2775,14 @@ func TestSelectLimit(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@session.sql_select_limit=default")
 	result = tk.MustQuery("select * from s")
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 
 	// test for DML
 	tk.MustExec("set @@session.sql_select_limit=1")
 	tk.MustExec("create table b (a int)")
 	tk.MustExec("insert into b select * from t") // all values are inserted
 	result = tk.MustQuery("select * from b limit 3")
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 	tk.MustExec("update b set a = 2 where a = 1") // all values are updated
 	result = tk.MustQuery("select * from b limit 3")
 	result.Check(testkit.Rows("2", "2", "2"))
