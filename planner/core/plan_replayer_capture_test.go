@@ -35,7 +35,7 @@ func TestPlanReplayerCaptureRecordJsonStats(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
-	tk.MustExec("SET global tidb_enable_plan_replayer_capture = ON;")
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	testcases := []struct {

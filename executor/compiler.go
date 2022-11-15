@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
@@ -157,13 +156,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	enabledPlanReplayerCapture := variable.EnablePlanReplayerCapture.Load()
-	failpoint.Inject("enablePlanReplayerCapture", func(val failpoint.Value) {
-		if val.(bool) {
-			enabledPlanReplayerCapture = true
-		}
-	})
-	if enabledPlanReplayerCapture {
+	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
 	}
 

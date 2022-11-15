@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -84,11 +83,7 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 1)
 
-	// enable capture
-	failpoint.Enable("github.com/pingcap/tidb/executor/enablePlanReplayerCapture", "return(true)")
-	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/executor/enablePlanReplayerCapture")
-	}()
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
 
 	// capture task and dump
 	tk.MustQuery("select * from t;")
