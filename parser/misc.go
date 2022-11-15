@@ -290,6 +290,7 @@ var tokenMap = map[string]int{
 	"DESC":                     desc,
 	"DESCRIBE":                 describe,
 	"DIRECTORY":                directory,
+	"DIGEST":                   digest,
 	"DISABLE":                  disable,
 	"DISABLED":                 disabled,
 	"DISCARD":                  discard,

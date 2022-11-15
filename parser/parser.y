@@ -373,6 +373,7 @@ import (
 	deallocate            "DEALLOCATE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
 	disabled              "DISABLED"
@@ -6391,6 +6392,7 @@ UnReservedKeyword:
 |	"NONCLUSTERED"
 |	"PRESERVE"
 |	"TOKEN_ISSUER"
+|	"DIGEST"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11098,7 +11100,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
-|	"STATS_LOCKED" 
+|	"STATS_LOCKED"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsLocked, Table: &ast.TableName{Name: model.NewCIStr("STATS_TABLE_LOCKED"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
@@ -13087,6 +13089,15 @@ CreateBindingStmt:
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+	{
+		x := &ast.CreateBindingStmt{
+			GlobalScope: $2.(bool),
+			PlanDigest:  $9,
 		}
 
 		$$ = x
