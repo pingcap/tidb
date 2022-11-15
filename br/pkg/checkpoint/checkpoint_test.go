@@ -99,8 +99,11 @@ func TestCheckpointRunner(t *testing.T) {
 
 	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
 	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
+	// now the checksum is flushed, because the total time cost is larger than `MaxChecksumTotalCost`
 	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
 	time.Sleep(6 * time.Second)
+	// the checksum has not been flushed even though after 6 seconds,
+	// because the total time cost is less than `MaxChecksumTotalCost`
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
 
 	for _, d := range data2 {

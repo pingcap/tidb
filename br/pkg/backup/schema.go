@@ -144,7 +144,9 @@ func (ss *Schemas) BackupSchemas(
 							// if checkpoint runner is running and the checksum is not from checkpoint
 							// then flush the checksum by the checkpoint runner
 							startFlush := time.Now()
-							checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds())
+							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds()); err != nil {
+								return errors.Trace(err)
+							}
 							flushCost = time.Since(startFlush)
 						}
 						logger.Info("Calculate table checksum completed",

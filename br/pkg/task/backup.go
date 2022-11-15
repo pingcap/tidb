@@ -157,9 +157,18 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// if use checkpoint and gcTTL is the default value
+	// update gcttl to 1 hours
+	if cfg.UseCheckpoint && gcTTL == utils.DefaultBRGCSafePointTTL {
+		gcTTL = 3600
 	}
 	cfg.GCTTL = gcTTL
 
@@ -181,11 +190,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -8,9 +8,9 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
-        "//br/pkg/redact",
         "//br/pkg/rtree",
         "//br/pkg/storage",
+        "//br/pkg/utils",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
