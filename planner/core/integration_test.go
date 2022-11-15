@@ -4992,3 +4992,14 @@ func (s *testIntegrationSuite) TestExplainAnalyzeDMLCommit(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
+
+func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		id INTEGER NOT NULL AUTO_INCREMENT,
+		CHECK (id IN (0, 1)),
+		KEY idx_autoinc_id (id)
+	)`)
+}
