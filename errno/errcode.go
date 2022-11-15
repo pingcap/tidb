@@ -823,6 +823,7 @@ const (
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
 	ErrMaxExecTimeExceeded                                   = 1907
+	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
@@ -847,7 +848,7 @@ const (
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
-	ErrInvalidJSONPathWildcard                               = 3149
+	ErrInvalidJSONPathMultipleSelection                      = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
 	ErrJSONDocumentTooDeep                                   = 3157
