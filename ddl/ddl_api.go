@@ -2484,7 +2484,13 @@ func (d *ddl) createTableWithInfoPost(
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
 		newEnd := tbInfo.AutoIncID - 1
-		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.RowIDAllocType); err != nil {
+		var allocType autoid.AllocatorType
+		if tbInfo.SepAutoInc() {
+			allocType = autoid.AutoIncrementType
+		} else {
+			allocType = autoid.RowIDAllocType
+		}
+		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
