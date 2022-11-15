@@ -162,6 +162,7 @@ import (
 	HintIndexList           "table name with index list in optimizer hint"
 	IndexNameList           "index list in optimizer hint"
 	IndexNameListOpt        "optional index list in optimizer hint"
+	ViewNameList            "view name list in optimizer hint"
 	SubqueryStrategies      "subquery strategies"
 	SubqueryStrategiesOpt   "optional subquery strategies"
 	HintTrueOrFalse         "true or false in optimizer hint"
@@ -169,6 +170,7 @@ import (
 
 %type	<table>
 	HintTable "Table in optimizer hint"
+	ViewName  "View name in optimizer hint"
 
 %type	<modelIdents>
 	PartitionList    "partition name list in optimizer hint"
@@ -283,6 +285,14 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
+		}
+	}
+|	"QB_NAME" '(' Identifier ',' ViewNameList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			Tables:   $5.Tables,
 		}
 	}
 |	"MEMORY_QUOTA" '(' QueryBlockOpt hintIntLit UnitOfBytes ')'
@@ -444,6 +454,35 @@ HintTable:
 			TableName:     model.NewCIStr($3),
 			QBName:        model.NewCIStr($4),
 			PartitionList: $5,
+		}
+	}
+
+ViewNameList:
+	ViewNameList '.' ViewName
+	{
+		h := $1
+		h.Tables = append(h.Tables, $3)
+		$$ = h
+	}
+|	ViewName
+	{
+		$$ = &ast.TableOptimizerHint{
+			Tables: []ast.HintTable{$1},
+		}
+	}
+
+ViewName:
+	Identifier QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			TableName: model.NewCIStr($1),
+			QBName:    model.NewCIStr($2),
+		}
+	}
+|	QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			QBName: model.NewCIStr($1),
 		}
 	}
 

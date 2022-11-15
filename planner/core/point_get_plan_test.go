@@ -175,6 +175,7 @@ func TestGetExtraColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`CREATE TABLE t (
 	  a int(11) DEFAULT NULL,
 	  b int(11) DEFAULT NULL,
@@ -188,7 +189,7 @@ func TestGetExtraColumn(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows(`Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustExec(`commit`)
 	tk.MustQuery(`explain format='brief' select count(_tidb_rowid) from t where a=1`).Check(testkit.Rows(
-		`StreamAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
+		`HashAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
 		`└─Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustQuery(`explain format='brief' select *, date_format(b, "") from t where a =1 for update`).Check(testkit.Rows(
 		`Projection 1.00 root  test.t.a, test.t.b, date_format(cast(test.t.b, datetime BINARY), )->Column#4`,
@@ -959,7 +960,7 @@ func TestIssue26638(t *testing.T) {
 	tk.MustQuery("execute stmt1 using @c;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt2 using @c, @d;").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t2(a float, b float, c float, primary key(a, b, c));")
+	tk.MustExec("create table t2(a float, b float, c float, primary key(a, b, c) nonclustered);")
 	tk.MustExec("insert into t2 values(-1, 0, 1), (-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2);")
 	tk.MustQuery("explain format='brief' select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37));").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustQuery("select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (-1, 0, 1));").Check(testkit.Rows("-1 0 1"))
@@ -976,7 +977,7 @@ func TestIssue23511(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`) NONCLUSTERED);")
 	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
 	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
 	tk.MustExec("insert into t2 values(b'00000111001');")

@@ -22,11 +22,14 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -310,7 +313,18 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
-	return insertRows(ctx, e)
+	err := insertRows(ctx, e)
+	if err != nil {
+		terr, ok := errors.Cause(err).(*terror.Error)
+		if ok && len(e.OnDuplicate) == 0 &&
+			e.ctx.GetSessionVars().StmtCtx.ErrAutoincReadFailedAsWarning &&
+			terr.Code() == errno.ErrAutoincReadFailed {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.

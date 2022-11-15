@@ -96,6 +96,12 @@ type RetryInfo struct {
 	LastRcReadTS           uint64
 }
 
+// ReuseChunkPool save Alloc object
+type ReuseChunkPool struct {
+	mu    sync.Mutex
+	Alloc chunk.Allocator
+}
+
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
@@ -1164,11 +1170,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
@@ -1246,6 +1249,9 @@ type SessionVars struct {
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	PreparedPlanCacheSize uint64
 
+	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+
 	// EnableGeneralPlanCache indicates whether to enable general plan cache.
 	EnableGeneralPlanCache bool
 
@@ -1290,6 +1296,64 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool ReuseChunkPool
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
+	EnableReuseCheck bool
+
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
+	preUseChunkAlloc bool
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
+	if pool == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
+	}
+	chk := pool.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+// ExchangeChunkStatus give the status to preUseChunkAlloc
+func (s *SessionVars) ExchangeChunkStatus() {
+	s.preUseChunkAlloc = s.GetUseChunkAlloc()
+}
+
+// GetUseChunkAlloc return useChunkAlloc status
+func (s *SessionVars) GetUseChunkAlloc() bool {
+	return s.StmtCtx.GetUseChunkAllocStatus()
+}
+
+// SetAlloc Attempt to set the buffer pool address
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if !s.EnableReuseCheck {
+		return
+	}
+	s.ChunkPool.Alloc = alloc
+}
+
+// ClearAlloc indicates stop reuse chunk
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
+	if !b {
+		s.ChunkPool.Alloc = nil
+		return
+	}
+
+	// If an error is reported, re-apply for alloc
+	// Prevent the goroutine left before, affecting the execution of the next sql
+	// issuse 38918
+	s.ChunkPool.mu.Lock()
+	s.ChunkPool.Alloc = nil
+	s.ChunkPool.mu.Unlock()
+	*alloc = chunk.NewAllocator()
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1312,9 +1376,12 @@ func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
+	sc := &s.cachedStmtCtx[0]
+	if sc == s.StmtCtx {
+		sc = &s.cachedStmtCtx[1]
+	}
+	*sc = stmtctx.StatementContext{}
+	return sc
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1584,6 +1651,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
+		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
+		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

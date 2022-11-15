@@ -858,6 +858,7 @@ func TestTiFlashFallback(t *testing.T) {
 	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
@@ -1363,6 +1364,56 @@ func TestHandleAuthPlugin(t *testing.T) {
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
+}
+
+func TestChangeUserAuth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user user1")
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   defaultCapability,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "root",
+	}
+	ctx := context.Background()
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.setCtx(tc)
+
+	data := []byte{}
+	data = append(data, "user1"...)
+	data = append(data, 0)
+	data = append(data, 1)
+	data = append(data, 0)
+	data = append(data, "test"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	data = append(data, "unknown"...)
+	data = append(data, 0)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch", fmt.Sprintf("return(\"%s\")", t.Name())))
+	err = cc.handleChangeUser(ctx, data)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch"))
+	require.EqualError(t, err, t.Name())
 }
 
 func TestAuthPlugin2(t *testing.T) {

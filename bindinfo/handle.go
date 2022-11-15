@@ -121,7 +121,8 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.bindInfo.parser = parser.New()
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		return h.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
+		_, err := h.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
+		return err
 	}
 	h.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -368,7 +369,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 }
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
-func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (err error) {
+func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (deletedRows uint64, err error) {
 	db = strings.ToLower(db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
@@ -380,9 +381,8 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
-		return err
+		return 0, err
 	}
-	var deleteRows int
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
@@ -391,7 +391,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		}
 
 		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil || deleteRows == 0 {
+		if err != nil || deletedRows == 0 {
 			return
 		}
 
@@ -404,7 +404,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 	if err = h.lockBindInfoTable(); err != nil {
-		return err
+		return 0, err
 	}
 
 	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
@@ -416,9 +416,11 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
 			deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
 	}
+	if err != nil {
+		return 0, err
+	}
 
-	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
-	return err
+	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
 
 // SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
@@ -1185,7 +1187,8 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
 	// we will hope for that we can capture this evolve task again.
 	if err != nil {
-		return h.DropBindRecord(originalSQL, db, &binding)
+		_, err = h.DropBindRecord(originalSQL, db, &binding)
+		return err
 	}
 	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
 	// Currently we simply mark the verify plan as `using` if it could run successfully within maxTime.
@@ -1195,7 +1198,8 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	sctx.GetSessionVars().UsePlanBaselines = false
 	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
 	if err != nil {
-		return h.DropBindRecord(originalSQL, db, &binding)
+		_, err = h.DropBindRecord(originalSQL, db, &binding)
+		return err
 	}
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
