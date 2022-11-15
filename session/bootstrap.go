@@ -676,6 +676,8 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
+	// version104 add `sql_digest` and `plan_digest` to `bind_info`
+	version104 = 104
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -788,6 +790,7 @@ var (
 		upgradeToVer101,
 		upgradeToVer102,
 		upgradeToVer103,
+		upgradeToVer104,
 	}
 )
 
@@ -2041,6 +2044,14 @@ func upgradeToVer103(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsTableLocked)
+}
+
+func upgradeToVer104(s Session, ver int64) {
+	if ver > version104 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
 
 func upgradeToVer99Before(s Session, ver int64) bool {
