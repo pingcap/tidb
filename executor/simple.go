@@ -1776,14 +1776,24 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	var statsIDs []int64
+	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		statsIDs = []int64{s.Table.TableInfo.ID}
+		statsIDs = []int64{s.Tables[0].TableInfo.ID}
 	} else {
-		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
-			return err
-		}
 		if len(s.PartitionNames) == 0 {
-			statsIDs = append(statsIDs, s.Table.TableInfo.ID)
+			for _, table := range s.Tables {
+				partitionStatIds, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				if err != nil {
+					return err
+				}
+				statsIDs = append(statsIDs, partitionStatIds...)
+				statsIDs = append(statsIDs, table.TableInfo.ID)
+			}
+		} else {
+			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
+			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Tables[0].TableInfo, s.PartitionNames); err != nil {
+				return err
+			}
 		}
 	}
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {

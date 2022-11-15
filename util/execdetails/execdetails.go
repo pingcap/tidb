@@ -32,17 +32,17 @@ import (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	CalleeAddress    string
-	CopTime          time.Duration
-	BackoffTime      time.Duration
-	LockKeysDuration time.Duration
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
-	RequestCount     int
 	CommitDetail     *util.CommitDetails
 	LockKeysDetail   *util.LockKeysDetails
 	ScanDetail       *util.ScanDetail
+	CalleeAddress    string
 	TimeDetail       util.TimeDetail
+	CopTime          time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	RequestCount     int
 }
 
 type stmtExecDetailKeyType struct{}
@@ -318,9 +318,9 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 }
 
 type basicCopRuntimeStats struct {
-	BasicRuntimeStats
-	threads   int32
 	storeType string
+	BasicRuntimeStats
+	threads int32
 }
 
 // String implements the RuntimeStats interface.
@@ -359,8 +359,6 @@ func (*basicCopRuntimeStats) Tp() int {
 
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
-	sync.Mutex
-
 	// stats stores the runtime statistics of coprocessor tasks.
 	// The key of the map is the tikv-server address. Because a tikv-server can
 	// have many region leaders, several coprocessor tasks can be sent to the
@@ -370,6 +368,7 @@ type CopRuntimeStats struct {
 	scanDetail *util.ScanDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
+	sync.Mutex
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -635,9 +634,9 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu        sync.Mutex
 	rootStats map[int]*RootRuntimeStats
 	copStats  map[int]*CopRuntimeStats
+	mu        sync.Mutex
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -786,10 +785,10 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 
 // RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
 type RuntimeStatsWithConcurrencyInfo struct {
-	// protect concurrency
-	sync.Mutex
 	// executor concurrency information
 	concurrency []*ConcurrencyInfo
+	// protect concurrency
+	sync.Mutex
 }
 
 // Tp implements the RuntimeStats interface.
@@ -840,8 +839,8 @@ func (*RuntimeStatsWithConcurrencyInfo) Merge(RuntimeStats) {}
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
 	Commit   *util.CommitDetails
-	TxnCnt   int
 	LockKeys *util.LockKeysDetails
+	TxnCnt   int
 }
 
 // Tp implements the RuntimeStats interface.

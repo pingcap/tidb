@@ -915,14 +915,17 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		probeKeys = append(probeKeys, cols1[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		probeSideTupleFetcher: probeSideTupleFetcher{
+			probeSideExec: outerExec,
+		},
+		probeWorkers:      make([]probeWorker, testCase.concurrency),
 		concurrency:       uint(testCase.concurrency),
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
 		buildKeys:         joinKeys,
 		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
-		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
@@ -930,9 +933,8 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
-	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
 			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)
@@ -942,8 +944,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
 	t2 := disk.NewTracker(-1, -1)
-	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
-	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
+	e.ctx.GetSessionVars().MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.ctx.GetSessionVars().DiskTracker = t2
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
 	return e
 }
 
