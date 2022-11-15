@@ -1640,7 +1640,7 @@ func upgradeToVer67(s Session, ver int64) {
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
 	for original, bind := range bindMap {
-		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s, '', '')",
 			expression.Quote(original),
 			expression.Quote(bind.bindSQL),
 			expression.Quote(bind.status),
