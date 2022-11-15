@@ -146,7 +146,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
 	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 
 	if err != nil {
@@ -261,7 +261,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -271,6 +271,8 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 			record.Bindings[i].Charset,
 			record.Bindings[i].Collation,
 			record.Bindings[i].Source,
+			record.Bindings[i].SQLDigest,
+			record.Bindings[i].PlanDigest,
 		)
 		if err != nil {
 			return err
@@ -350,7 +352,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -360,6 +362,8 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 			record.Bindings[i].Charset,
 			record.Bindings[i].Collation,
 			record.Bindings[i].Source,
+			record.Bindings[i].SQLDigest,
+			record.Bindings[i].PlanDigest,
 		)
 		if err != nil {
 			return err
@@ -680,6 +684,8 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		Charset:    row.GetString(6),
 		Collation:  row.GetString(7),
 		Source:     row.GetString(8),
+		SQLDigest:  row.GetString(9),
+		PlanDigest: row.GetString(10),
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
@@ -894,12 +900,14 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		_, digestWithOutDB := parser.NormalizeDigest(bindableStmt.Query)
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Enabled,
 			Charset:   charset,
 			Collation: collation,
 			Source:    Capture,
+			SQLDigest: digestWithOutDB.String(),
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
