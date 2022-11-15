@@ -3938,10 +3938,8 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
 	clonedMeta := tblInfo.Clone()
-	clonedPartInfo := *tblInfo.Partition
-	clonedPartInfo.AddingDefinitions = partInfo.Definitions
-	clonedMeta.Partition = &clonedPartInfo
-	clonedMeta.Partition.Definitions = getReorganizedDefinitions(&clonedPartInfo, firstPartIdx, lastPartIdx, idMap)
+	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)
 	}

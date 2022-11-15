@@ -745,6 +745,10 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
+
 	return &nt
 }
 
