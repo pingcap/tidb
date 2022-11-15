@@ -86,6 +86,11 @@ func (fc *FKCheck) OperatorInfo(normalized bool) string {
 	return ""
 }
 
+// ExplainInfo implement Plan interface.
+func (fc *FKCheck) ExplainInfo() string {
+	return fc.AccessObject().String() + ", " + fc.OperatorInfo(false)
+}
+
 // MemoryUsage return the memory usage of FKCheck
 func (f *FKCheck) MemoryUsage() (sum int64) {
 	if f == nil {
@@ -117,6 +122,11 @@ func (fc *FKCascade) OperatorInfo(normalized bool) string {
 		return fmt.Sprintf("foreign_key:%s, on_update:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnUpdate).String())
 	}
 	return ""
+}
+
+// ExplainInfo implement Plan interface.
+func (fc *FKCascade) ExplainInfo() string {
+	return fc.AccessObject().String() + ", " + fc.OperatorInfo(false)
 }
 
 // MemoryUsage return the memory usage of FKCascade
