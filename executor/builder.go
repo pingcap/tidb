@@ -1418,8 +1418,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			isOuterJoin:     v.JoinType.IsOuterJoin(),
 			useOuterToBuild: v.UseOuterToBuild,
 			joinType:        v.JoinType,
+			concurrency:     v.Concurrency,
 		},
-		concurrency: v.Concurrency,
 	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
@@ -1473,6 +1473,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.probeWorkers = make([]probeWorker, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
+		e.probeWorkers[i].workerID = i
+		e.probeWorkers[i].sessCtx = e.ctx
 		e.probeWorkers[i].joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
 	}
