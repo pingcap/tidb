@@ -551,7 +551,7 @@ type TableInfo struct {
 
 // SepAutoInc decides whether rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc()  bool {
-	return tblInfo.Version >= TableInfoVersion5 && tblInfo.AutoIdCache == 1
+	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
 }
 
 // TableCacheStatusType is the type of the table cache status
