@@ -276,12 +276,9 @@ type planReplayerTaskDumpHandle struct {
 	taskCH chan *PlanReplayerDumpTask
 }
 
-// DrainTask drain a task
+// DrainTask drain a task for unit test
 func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
-	select {
-	case task := <-h.taskCH:
-		return task
-	}
+	return <-h.taskCH
 }
 
 // HandlePlanReplayerDumpTask handled the task
