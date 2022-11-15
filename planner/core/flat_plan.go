@@ -352,6 +352,20 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
+		for _, fkCheck := range plan.FKChecks {
+			childCtx.isRoot = true
+			childCtx.label = Empty
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
+		for _, fkCascade := range plan.FKCascades {
+			childCtx.isRoot = true
+			childCtx.label = Empty
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
 	case *Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
@@ -360,6 +374,24 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
+		for _, fkChecks := range plan.FKChecks {
+			for _, fkCheck := range fkChecks {
+				childCtx.isRoot = true
+				childCtx.label = Empty
+				childCtx.isLastChild = true
+				target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+		}
+		for _, fkCascades := range plan.FKCascades {
+			for _, fkCascade := range fkCascades {
+				childCtx.isRoot = true
+				childCtx.label = Empty
+				childCtx.isLastChild = true
+				target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+		}
 	case *Delete:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
@@ -367,6 +399,24 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
+		}
+		for _, fkChecks := range plan.FKChecks {
+			for _, fkCheck := range fkChecks {
+				childCtx.isRoot = true
+				childCtx.label = Empty
+				childCtx.isLastChild = true
+				target, childIdx = f.flattenRecursively(fkCheck, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+		}
+		for _, fkCascades := range plan.FKCascades {
+			for _, fkCascade := range fkCascades {
+				childCtx.isRoot = true
+				childCtx.label = Empty
+				childCtx.isLastChild = true
+				target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
 		}
 	case *Execute:
 		f.InExecute = true

@@ -275,8 +275,13 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
 	depthOffset := len(flat.Main) - len(selectPlan)
+loop1:
 	for _, op := range selectPlan {
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
+		switch op.Origin.(type) {
+		case *FKCheck, *FKCascade:
+			break loop1
+		}
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
 			int(op.Depth-uint32(depthOffset)),

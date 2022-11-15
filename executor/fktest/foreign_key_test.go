@@ -2072,3 +2072,150 @@ func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
 }
+
+func TestDMLExplainFKInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);")
+	tk.MustExec("create table t3 (id int, unique index idx(id));")
+	tk.MustExec("create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id));")
+	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
+	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
+		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, " +
+		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
+		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+
+	cases := []struct {
+		sql  string
+		plan string
+	}{
+		// Test foreign key use primary key.
+		{
+			sql: "explain insert into t2 values (1)",
+			plan: "Insert_1 N/A root  N/A]\n" +
+				"[└─Foreign_Key_Check_3 N/A root table:t1 foreign_key:fk, check_exist",
+		},
+		{
+			sql: "explain update t2 set id=id+1 where id = 1",
+			plan: "Update_3 N/A root  N/A]\n" +
+				"[└─Point_Get_1 1.00 root table:t2 handle:1]\n" +
+				"[└─Foreign_Key_Check_4 N/A root table:t1 foreign_key:fk, check_exist",
+		},
+		{
+			sql: "explain delete from t1 where id > 1",
+			plan: "Delete_4 N/A root  N/A]\n" +
+				"[└─TableReader_7 3333.33 root  data:TableRangeScan_6]\n" +
+				"[  └─TableRangeScan_6 3333.33 cop[tikv] table:t1 range:(1,+inf], keep order:false, stats:pseudo]\n" +
+				"[└─Foreign_Key_Cascade_8 N/A root table:t2 foreign_key:fk, on_delete:CASCADE",
+		},
+		{
+			sql: "explain update t1 set id=id+1 where id = 1",
+			plan: "Update_3 N/A root  N/A]\n" +
+				"[└─Point_Get_1 1.00 root table:t1 handle:1]\n" +
+				"[└─Foreign_Key_Cascade_4 N/A root table:t2 foreign_key:fk, on_update:CASCADE",
+		},
+		{
+			sql:  "explain insert into t1 values (1)",
+			plan: "Insert_1 N/A root  N/A",
+		},
+		{
+			sql: "explain insert into t1 values (1) on duplicate key update id = 100",
+			plan: "Insert_1 N/A root  N/A]" +
+				"\n[└─Foreign_Key_Cascade_3 N/A root table:t2 foreign_key:fk, on_update:CASCADE",
+		},
+		// Test foreign key use index.
+		{
+			sql: "explain insert into t4 values (1)",
+			plan: "Insert_1 N/A root  N/A]\n" +
+				"[└─Foreign_Key_Check_3 N/A root table:t3, index:idx foreign_key:fk, check_exist",
+		},
+		{
+			sql: "explain update t4 set id=id+1 where id = 1",
+			plan: "Update_4 N/A root  N/A]\n" +
+				"[└─IndexReader_7 10.00 root  index:IndexRangeScan_6]\n" +
+				"[  └─IndexRangeScan_6 10.00 cop[tikv] table:t4, index:idx_id(id) range:[1,1], keep order:false, stats:pseudo]\n" +
+				"[└─Foreign_Key_Check_8 N/A root table:t3, index:idx foreign_key:fk, check_exist",
+		},
+		{
+			sql: "explain delete from t3 where id > 1",
+			plan: "Delete_4 N/A root  N/A]\n" +
+				"[└─IndexReader_7 3333.33 root  index:IndexRangeScan_6]\n" +
+				"[  └─IndexRangeScan_6 3333.33 cop[tikv] table:t3, index:idx(id) range:(1,+inf], keep order:false, stats:pseudo]\n" +
+				"[└─Foreign_Key_Check_8 N/A root table:t4, index:idx_id foreign_key:fk, check_not_exist",
+		},
+		{
+			sql: "explain update t3 set id=id+1 where id = 1",
+			plan: "Update_3 N/A root  N/A]\n" +
+				"[└─Point_Get_1 1.00 root table:t3, index:idx(id) ]\n" +
+				"[└─Foreign_Key_Check_4 N/A root table:t4, index:idx_id foreign_key:fk, check_not_exist",
+		},
+		{
+			sql:  "explain insert into t3 values (1)",
+			plan: "Insert_1 N/A root  N/A",
+		},
+		{
+			sql: "explain insert into t3 values (1) on duplicate key update id = 100",
+			plan: "Insert_1 N/A root  N/A]\n" +
+				"[└─Foreign_Key_Check_3 N/A root table:t4, index:idx_id foreign_key:fk, check_not_exist",
+		},
+		// Test multi-foreign keys in on table.
+		{
+			sql: "explain insert into t6 values (1,1,1)",
+			plan: "Insert_1 N/A root  N/A]\n" +
+				"[└─Foreign_Key_Check_3 N/A root table:t5 foreign_key:fk_1, check_exist]\n" +
+				"[└─Foreign_Key_Check_4 N/A root table:t5, index:idx2 foreign_key:fk_2, check_exist]\n" +
+				"[└─Foreign_Key_Check_5 N/A root table:t5, index:idx3 foreign_key:fk_3, check_exist",
+		},
+		{
+			sql: "explain update t6 set id=id+1, id3=id2+1 where id = 1",
+			plan: "Update_4 N/A root  N/A]\n" +
+				"[└─IndexLookUp_11 10.00 root  ]\n" +
+				"[  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:t6, index:idx_id(id) range:[1,1], keep order:false, stats:pseudo]\n" +
+				"[  └─TableRowIDScan_10(Probe) 10.00 cop[tikv] table:t6 keep order:false, stats:pseudo]\n" +
+				"[└─Foreign_Key_Check_12 N/A root table:t5 foreign_key:fk_1, check_exist]\n" +
+				"[└─Foreign_Key_Check_13 N/A root table:t5, index:idx3 foreign_key:fk_3, check_exist",
+		},
+		{
+			sql: "explain delete from t5 where id > 1",
+			plan: "Delete_4 N/A root  N/A]\n" +
+				"[└─TableReader_7 3333.33 root  data:TableRangeScan_6]\n" +
+				"[  └─TableRangeScan_6 3333.33 cop[tikv] table:t5 range:(1,+inf], keep order:false, stats:pseudo]\n" +
+				"[└─Foreign_Key_Check_9 N/A root table:t6, index:idx_id2 foreign_key:fk_2, check_not_exist]\n" +
+				"[└─Foreign_Key_Cascade_8 N/A root table:t6, index:idx_id foreign_key:fk_1, on_delete:CASCADE]\n" +
+				"[└─Foreign_Key_Cascade_10 N/A root table:t6, index:fk_3 foreign_key:fk_3, on_delete:CASCADE",
+		},
+		{
+			sql: "explain update t5 set id=id+1, id2=id2+1 where id = 1",
+			plan: "Update_4 N/A root  N/A]\n" +
+				"[└─Point_Get_1 1.00 root table:t5 handle:1]\n" +
+				"[└─Foreign_Key_Cascade_5 N/A root table:t6, index:idx_id foreign_key:fk_1, on_update:CASCADE]\n" +
+				"[└─Foreign_Key_Cascade_6 N/A root table:t6, index:idx_id2 foreign_key:fk_2, on_update:CASCADE",
+		},
+		{
+			sql: "explain update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 1",
+			plan: "Update_5 N/A root  N/A]\n" +
+				"[└─Point_Get_1 1.00 root table:t5 handle:1]\n" +
+				"[└─Foreign_Key_Check_8 N/A root table:t6, index:fk_3 foreign_key:fk_3, check_not_exist]\n" +
+				"[└─Foreign_Key_Cascade_6 N/A root table:t6, index:idx_id foreign_key:fk_1, on_update:CASCADE]\n" +
+				"[└─Foreign_Key_Cascade_7 N/A root table:t6, index:idx_id2 foreign_key:fk_2, on_update:CASCADE",
+		},
+		{
+			sql:  "explain insert into t5 values (1,1,1)",
+			plan: "Insert_1 N/A root  N/A",
+		},
+		{
+			sql: "explain insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
+			plan: "Insert_1 N/A root  N/A]\n" +
+				"[└─Foreign_Key_Check_4 N/A root table:t6, index:fk_3 foreign_key:fk_3, check_not_exist]\n" +
+				"[└─Foreign_Key_Cascade_3 N/A root table:t6, index:idx_id foreign_key:fk_1, on_update:CASCADE",
+		},
+	}
+	for _, ca := range cases {
+		tk.MustQuery(ca.sql).Check(testkit.Rows(ca.plan))
+	}
+}
