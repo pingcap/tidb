@@ -801,8 +801,20 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-func whetherSavePasswordHistory(PasswordHistory, PasswordReuseInterval int64) bool {
-	if PasswordHistory >= 0 || PasswordReuseInterval >= 0 || variable.PasswordHistory.Load() > 0 || variable.PasswordReuseInterval.Load() > 0 {
+func whetherSavePasswordHistory(passwdlockinfo *passwordLockInfo) bool {
+	var passwdSaveNum int64
+	if passwdlockinfo.passwordHistory == notSpecified {
+		passwdSaveNum = variable.PasswordHistory.Load()
+	} else {
+		passwdSaveNum = passwdlockinfo.passwordHistory
+	}
+	var passwdSaveTime int64
+	if passwdlockinfo.passwordReuseInterval == notSpecified {
+		passwdSaveTime = variable.PasswordReuseInterval.Load()
+	} else {
+		passwdSaveTime = passwdlockinfo.passwordReuseInterval
+	}
+	if passwdSaveTime > 0 || passwdSaveNum > 0 {
 		return true
 	}
 	return false
@@ -901,7 +913,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sql := new(strings.Builder)
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
-	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo.passwordHistory, passwdlockinfo.passwordReuseInterval)
+	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
 	if passwdlockinfo.passwordReuseInterval != notSpecified {
@@ -1073,33 +1085,51 @@ func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name str
 	return res, nil
 }
 
-func deleteAddHistoricalData(ctx context.Context, sctx sessionctx.Context, name string, host string, maxnum int64, passwordReuse *passwordReuseInfo, pwd string) error {
-	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
-		return nil
-	}
-
-	if passwordReuse.passwordReuseInterval > math.MaxInt32 {
-		//never times out
-		return nil
-	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+func getSystemTime(ctx context.Context, sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
 	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*60*60
 	if beforeTimeS < 0 {
 		beforeTimeS = 0
 	}
-	beforeDate := time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
-	//Deletion must satisfy 1. Exceed the prohibition time 2. Exceed the maximum number of saved records
-	deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? AND Password_timestamp < %? order by Password_timestamp ASC LIMIT `
-	deleteTemplate = deleteTemplate + strconv.FormatInt(maxnum, 10)
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
-		name, strings.ToLower(host), beforeDate)
-	if err != nil {
-		return err
+	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
+}
+
+func deleteAddHistoricalData(ctx context.Context, sctx sessionctx.Context, name string, host string, maxDelRows int64, passwordReuse *passwordReuseInfo, pwd string) error {
+	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
+		return nil
 	}
-	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	if (passwordReuse.passwordReuseInterval > math.MaxInt32) || maxDelRows == 0 {
+		//never times out or no row need delete
+		_, _, err := exec.ExecRestrictedSQL(ctx, nil, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(host), name, pwd)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if passwordReuse.passwordReuseInterval == 0 {
+		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %?  order by Password_timestamp ASC LIMIT `
+		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
+		_, _, err := exec.ExecRestrictedSQL(ctx, nil, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
+			name, strings.ToLower(host))
+		if err != nil {
+			return err
+		}
+	} else {
+		beforeDate := getSystemTime(ctx, sctx, passwordReuse)
+		//Deletion must satisfy 1. Exceed the prohibition time 2. Exceed the maximum number of saved records
+		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? AND Password_timestamp < %? order by Password_timestamp ASC LIMIT `
+		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
+		_, _, err := exec.ExecRestrictedSQL(ctx, nil, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
+			name, strings.ToLower(host), beforeDate)
+		if err != nil {
+			return err
+		}
+	}
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(host), name, pwd)
 	if err != nil {
 		return err
 	}
@@ -1116,52 +1146,60 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 	if err != nil {
 		return false, err, 0
 	}
-	if int64(len(rows)) <= passwordReuse.passwordHistory {
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password != %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
-		if err != nil {
-			return false, err, 0
-		}
-		if len(rows) == 0 {
-			return true, nil, 0
-		}
-		return false, nil, 0
+	if len(rows) != 1 {
+		return false, errors.New("User and Host Classification is not unique,Please confirm the mysql.password_history table structure"), 0
 	}
-	canDeleteNum := int64(len(rows)) - passwordReuse.passwordHistory
-	if passwordReuse.passwordReuseInterval > math.MaxInt32 {
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password != %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
-		if err != nil {
-			return false, err, 0
-		}
-		if len(rows) == 0 {
-			return true, nil, 0
-		}
-		return false, nil, 0
-	}
-	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
-	nowTimeS := nowTime.Unix()
-	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*60*60
-	if beforeTimeS < 0 {
-		beforeTimeS = 0
+	passwordNum := rows[0].GetInt64(0)
+	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
+	if canDeleteNum < 0 {
 		canDeleteNum = 0
 	}
-	beforeDate := time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
-	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password != %? AND Password_timestamp >= "%?";`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd, beforeDate)
-	if err != nil {
-		return false, err, 0
+	if passwordReuse.passwordHistory > 0 {
+		if passwordNum <= passwordReuse.passwordHistory {
+			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+			if err != nil {
+				return false, err, 0
+			}
+			if rows[0].GetInt64(0) == 0 {
+				return true, nil, canDeleteNum
+			}
+			return false, nil, 0
+		} else {
+			// more password limit check
+			checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+			checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+			checkRows = checkRows + ` ) as t where t.Password = %? `
+			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+			if err != nil {
+				return false, err, 0
+			}
+			if rows[0].GetInt64(0) != 0 {
+				return false, nil, 0
+			}
+		}
 	}
-	if len(rows) == 0 {
-		// Not enough passwords in the time range
-		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
-		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
-		checkRows = checkRows + ` ) as as t where t.Password != %? `
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+
+	if passwordReuse.passwordReuseInterval > 0 {
+		//There are too many retention days, and it is impossible to time out in one's lifetime
+		if passwordReuse.passwordReuseInterval > math.MaxInt32 {
+			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+			if err != nil {
+				return false, err, 0
+			}
+			if rows[0].GetInt64(0) == 0 {
+				return true, nil, 0
+			}
+			return false, nil, 0
+		}
+
+		beforeDate := getSystemTime(ctx, sctx, passwordReuse)
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd, beforeDate)
 		if err != nil {
 			return false, err, 0
 		}
-		if len(rows) == 0 {
+		if rows[0].GetInt64(0) == 0 {
 			return true, nil, canDeleteNum
 		}
-
 	}
 	return false, nil, canDeleteNum
 }
@@ -1342,17 +1380,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"account_locked=%?", passwdlockinfo.lockAccount})
 		}
 		if passwdlockinfo.passwordHistoryFlag {
+
 			if passwdlockinfo.passwordHistory == notSpecified {
-				fields = append(fields, alterField{"Password_reuse_history=%?", "NULL"})
+				fields = append(fields, alterField{"Password_reuse_history = NULL ", ""})
 			} else {
-				fields = append(fields, alterField{"Password_reuse_history=%?", strconv.FormatInt(passwdlockinfo.passwordHistory, 10)})
+				fields = append(fields, alterField{"Password_reuse_history = %?", strconv.FormatInt(passwdlockinfo.passwordHistory, 10)})
 			}
 		}
 		if passwdlockinfo.passwordReuseIntervalFlag {
 			if passwdlockinfo.passwordReuseInterval == notSpecified {
-				fields = append(fields, alterField{"Password_reuse_time=%?", "NULL"})
+				fields = append(fields, alterField{"Password_reuse_time = NULL ", ""})
 			} else {
-				fields = append(fields, alterField{"Password_reuse_time=%?", strconv.FormatInt(passwdlockinfo.passwordReuseInterval, 10)})
+				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(passwdlockinfo.passwordReuseInterval, 10)})
 			}
 		}
 
