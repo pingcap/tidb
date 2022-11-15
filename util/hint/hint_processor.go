@@ -560,11 +560,9 @@ func (p *BlockHintProcessor) isHint4View(hint *ast.TableOptimizerHint) bool {
 	allViewHints := true
 	for _, table := range hint.Tables {
 		qbName := table.QBName.L
-		if qbName != "" {
-			if _, ok := p.QbNameMap4View[qbName]; !ok {
-				allViewHints = false
-				break
-			}
+		if _, ok := p.QbNameMap4View[qbName]; !ok {
+			allViewHints = false
+			break
 		}
 	}
 	return allViewHints
