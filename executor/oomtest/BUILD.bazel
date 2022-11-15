@@ -5,9 +5,11 @@ go_test(
     timeout = "short",
     srcs = ["oom_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit",
         "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

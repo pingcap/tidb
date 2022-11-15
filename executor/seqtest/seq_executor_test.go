@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -496,11 +495,10 @@ func TestShow(t *testing.T) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+	tk.MustExecToErr(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	require.Error(t, err)
 
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
@@ -543,7 +541,7 @@ func TestShow(t *testing.T) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y) nonclustered);`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
@@ -940,7 +938,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5800)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1050,9 +1048,7 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test case for batch delete.
 	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("delete from batch_insert;", errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
 	// Enable batch delete and set batch size to 50.
@@ -1458,8 +1454,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 	tk.RefreshSession()
 	tk.MustExec("use test")
 	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
-	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
 	tk.RefreshSession()
