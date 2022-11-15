@@ -1391,9 +1391,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
 	} else if v.IsGlobal {
-		val, err = sessionVars.GetGlobalSystemVar(name)
+		val, err = sessionVars.GetGlobalSystemVar(er.ctx, name)
 	} else {
-		val, err = sessionVars.GetSessionOrGlobalSystemVar(name)
+		val, err = sessionVars.GetSessionOrGlobalSystemVar(er.ctx, name)
 	}
 	if err != nil {
 		er.err = err

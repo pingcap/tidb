@@ -1186,9 +1186,12 @@ func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 		return nil, errors.New("internal error: dbID should not be 0")
 	}
 
-	// We don't need the cache here because we allocate all IDs at once.
-	// The argument for CustomAutoIncCacheOption is the cache step. step 1 means no cache.
-	noCache := autoid.CustomAutoIncCacheOption(1)
+	// We don't need autoid cache here because we allocate all IDs at once.
+	// The argument for CustomAutoIncCacheOption is the cache step. Step 1 means no cache,
+	// but step 1 will enable an experimental feature, so we use step 2 here.
+	//
+	// See https://github.com/pingcap/tidb/issues/38442 for more details.
+	noCache := autoid.CustomAutoIncCacheOption(2)
 	tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := common.TableHasAutoRowID(tblInfo)
