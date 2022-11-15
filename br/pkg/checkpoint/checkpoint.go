@@ -41,6 +41,17 @@ type CheckpointMessage struct {
 	Group *rtree.Range
 }
 
+// A Checkpoint Range File is like this:
+//
+//    ChecksumData
+// +----------------+           RangeGroupData                      RangeGroups
+// | RangeGroupData-+---> +--------------------------+ encrypted  +-------------+
+// | RangeGroupData |     | RangeGroupsEncriptedData-+----------> |   GroupKey  |
+// | RangeGroupData |     | Checksum                 |            |    Range    |
+// |      ...       |     | CipherIv                 |            |     ...     |
+// | RangeGroupData |     | Size                     |            |    Range    |
+// +----------------+     +--------------------------+            +-------------+
+
 type RangeGroups struct {
 	GroupKey string         `json:"group-key"`
 	Groups   []*rtree.Range `json:"groups"`
@@ -57,6 +68,16 @@ type RangeGroupData struct {
 type CheckpointData struct {
 	RangeGroupMetas []*RangeGroupData `json:"range-group-metas"`
 }
+
+// A Checkpoint Checksum File is like this:
+//
+//   ChecksumInfo         ChecksumItem
+// +--------------+     +--------------+
+// | ChecksumItem-+---> |   TableID    |
+// | ChecksumItem |     |   Crc64xor   |
+// |     ...      |     |   TotalKvs   |
+// | ChecksumItem |     |  TotalBytes  |
+// +--------------+     +--------------+
 
 type ChecksumItem struct {
 	TableID    int64  `json:"table-id"`
@@ -128,10 +149,12 @@ func (cr *ChecksumRunner) FlushChecksum(
 	}
 	cr.Unlock()
 
+	// now lock is free
 	if toBeFlushedChecksumInfo == nil {
 		return nil
 	}
 
+	// create a goroutine to flush checksumInfo to external storage
 	cr.wg.Add(1)
 	cr.workerPool.Apply(func() {
 		defer cr.wg.Done()
@@ -171,6 +194,7 @@ type CheckpointRunner struct {
 	wg sync.WaitGroup
 }
 
+// only for test
 func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration) *CheckpointRunner {
 	runner := &CheckpointRunner{
 		meta: make(map[string]*RangeGroups),
@@ -235,7 +259,7 @@ func (r *CheckpointRunner) Append(
 	}
 }
 
-// Cannot be parallel with `Append` function
+// Note: Cannot be parallel with `Append` function
 func (r *CheckpointRunner) WaitForFinish() {
 	// can not append anymore
 	close(r.appendCh)
@@ -245,6 +269,7 @@ func (r *CheckpointRunner) WaitForFinish() {
 	r.checksumRunner.wg.Wait()
 }
 
+// Send the meta to the flush goroutine, and reset the CheckpointRunner's meta
 func (r *CheckpointRunner) flushMeta(ctx context.Context, errCh chan error) error {
 	meta := r.meta
 	r.meta = make(map[string]*RangeGroups)
@@ -258,6 +283,7 @@ func (r *CheckpointRunner) flushMeta(ctx context.Context, errCh chan error) erro
 	return nil
 }
 
+// start a goroutine to flush the meta, which is sent from `checkpoint looper`, to the external storage
 func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.WaitGroup) chan error {
 	errCh := make(chan error)
 	wg.Add(1)
@@ -334,6 +360,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 	go checkpointLoop(ctx)
 }
 
+// flush the meta to the external storage
 func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGroups) error {
 	if len(meta) == 0 {
 		return nil
@@ -392,6 +419,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 	return nil
 }
 
+// walk the whole checkpoint range files and retrive the metadatat of backed up ranges
 func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) error {
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
@@ -442,6 +470,7 @@ type CheckpointMetadata struct {
 	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
 }
 
+// load checkpoint metadata from the external storage
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
 	data, err := s.ReadFile(ctx, CheckpointMetaPath)
 	if err != nil {
@@ -456,6 +485,7 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 	return m, errors.Trace(err)
 }
 
+// walk the whole checkpoint checksum files and retrive checksum information of tables calculated
 func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map[int64]*ChecksumItem, error) {
 	checkpointChecksum := make(map[int64]*ChecksumItem)
 
@@ -477,6 +507,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 	return checkpointChecksum, errors.Trace(err)
 }
 
+// save the checkpoint metadata into the external storage
 func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata) error {
 	data, err := json.Marshal(meta)
 	if err != nil {

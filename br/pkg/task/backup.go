@@ -80,7 +80,7 @@ type BackupConfig struct {
 	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
 	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool          `json:"use-checkpoint"`
+	UseCheckpoint    bool          `json:"use-checkpoint" toml:"use-checkpoint"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -132,7 +132,6 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseBackupMetaV2)
 
 	flags.Bool(flagUseCheckpoint, false, "use checkpoint")
-	_ = flags.MarkHidden(flagUseCheckpoint)
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.

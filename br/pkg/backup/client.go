@@ -756,7 +756,6 @@ func (bc *Client) BackupRanges(
 	for id, r := range ranges {
 		id := id
 		req := request
-		r := r
 		req.StartKey, req.EndKey = r.StartKey, r.EndKey
 		pr, err := bc.GetProgressRange(r)
 		if err != nil {
@@ -764,7 +763,7 @@ func (bc *Client) BackupRanges(
 		}
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err = bc.BackupRange(elctx, req, pr, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, pr, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
