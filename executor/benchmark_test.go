@@ -920,12 +920,12 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 			joinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 			isOuterJoin:     false,
 			useOuterToBuild: testCase.useOuterToBuild,
+			concurrency:     uint(testCase.concurrency),
 		},
 		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
 		},
 		probeWorkers:      make([]probeWorker, testCase.concurrency),
-		concurrency:       uint(testCase.concurrency),
 		buildKeys:         joinKeys,
 		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
