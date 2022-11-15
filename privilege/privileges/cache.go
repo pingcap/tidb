@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -495,7 +496,9 @@ func compareHost(x, y string) int {
 
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	slices.SortFunc(p.User, compareUserRecord)
+	sort.Slice(p.User, func(i, j int) bool {
+		return compareBaseRecord(&p.User[i].baseRecord, &p.User[j].baseRecord)
+	})
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -518,10 +521,6 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return nil
 }
 
-func compareDBRecord(x, y dbRecord) bool {
-	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
-}
-
 func (p *MySQLPrivilege) buildDBMap() {
 	dbMap := make(map[string][]dbRecord, len(p.DB))
 	for _, record := range p.DB {
@@ -530,7 +529,9 @@ func (p *MySQLPrivilege) buildDBMap() {
 
 	// Sort the records to make the matching rule work.
 	for _, records := range dbMap {
-		slices.SortFunc(records, compareDBRecord)
+		sort.Slice(records, func(i, j int) bool {
+			return compareBaseRecord(&records[i].baseRecord, &records[j].baseRecord)
+		})
 	}
 	p.DBMap = dbMap
 }
