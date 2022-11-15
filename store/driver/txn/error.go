@@ -46,7 +46,7 @@ func genKeyExistsError(name string, value string, err error) error {
 }
 
 func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
+	name := tblInfo.Name.String() + ".PRIMARY"
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
 		return genKeyExistsError(name, key.String(), err)
@@ -115,7 +115,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 	if idxInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
 	}
-	name := idxInfo.Name.String()
+	name := tblInfo.Name.String() + "." + idxInfo.Name.String()
 
 	if len(value) == 0 {
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))

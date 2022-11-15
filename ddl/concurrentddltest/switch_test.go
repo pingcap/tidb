@@ -87,6 +87,8 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		ch <- struct{}{}
 	}()
 
+	// sleep 2s to make sure the ddl jobs is into table.
+	time.Sleep(2 * time.Second)
 	ticker := time.NewTicker(time.Second)
 	count := 0
 	done := false
@@ -110,6 +112,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 				count++
 				if b {
 					tk := testkit.NewTestKit(t, store)
+					tk.Session().GetSessionVars().MemQuotaQuery = -1
 					tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
 					tk.MustQuery("select count(*) from mysql.tidb_ddl_reorg").Check(testkit.Rows("0"))
 				}
@@ -121,6 +124,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 	require.Greater(t, count, 0)
 
 	tk = testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().MemQuotaQuery = -1
 	tk.MustExec("use test")
 	for i, tbl := range tables {
 		tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't%d'", i)).Check(testkit.Rows(fmt.Sprintf("%d", tbl.columnIdx)))

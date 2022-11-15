@@ -38,6 +38,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
 	tk.MustExec("SET session tidb_enable_index_merge = ON;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	testcases := []struct {
 		sql          string
 		physicalList []string
@@ -90,7 +91,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		sql := testcase.sql
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -144,7 +145,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -207,7 +208,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	sql := "select * from t"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true

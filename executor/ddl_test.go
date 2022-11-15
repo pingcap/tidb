@@ -80,7 +80,7 @@ func TestInTxnExecDDLFail(t *testing.T) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
@@ -1110,6 +1110,25 @@ func TestAutoRandomTableOption(t *testing.T) {
 	err = tk.ExecToErr("alter table alter_auto_random_normal auto_random_base = 100")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), autoid.AutoRandomRebaseNotApplicable)
+}
+
+func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);")
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 0;")
+	tk.MustGetErrCode("insert into t values (100, 2);", errno.ErrInvalidAutoRandom)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 1;")
+	tk.MustExec("insert into t values (100, 2);")
+	tk.MustQuery("select b from t order by b;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("alter table t modify column a bigint auto_random(6);")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint, b bigint auto_random(4, 32), primary key (b, a) clustered)")
+	tk.MustExec("insert into t (a) values (1);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1"))
 }
 
 // Test filter different kind of allocators.
