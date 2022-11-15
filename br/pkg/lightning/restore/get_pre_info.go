@@ -448,9 +448,17 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 		reader storage.ReadSeekCloser
 		err    error
 	)
-	if dataFileMeta.Type == mydump.SourceTypeParquet {
+	switch {
+	case dataFileMeta.Type == mydump.SourceTypeParquet:
 		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, dataFileMeta.Path, dataFileMeta.FileSize)
-	} else {
+	case dataFileMeta.Compression != mydump.CompressionNone:
+		var compressType storage.CompressType
+		compressType, err = mydump.ToStorageCompressType(dataFileMeta.Compression)
+		if err != nil {
+			break
+		}
+		reader, err = storage.WithCompression(p.srcStorage, compressType).Open(ctx, dataFileMeta.Path)
+	default:
 		reader, err = p.srcStorage.Open(ctx, dataFileMeta.Path)
 	}
 	if err != nil {
@@ -590,11 +598,21 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	var reader storage.ReadSeekCloser
-	var err error
-	if sampleFile.Type == mydump.SourceTypeParquet {
+	var (
+		reader storage.ReadSeekCloser
+		err    error
+	)
+	switch {
+	case sampleFile.Type == mydump.SourceTypeParquet:
 		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, sampleFile.Path, sampleFile.FileSize)
-	} else {
+	case sampleFile.Compression != mydump.CompressionNone:
+		var compressType storage.CompressType
+		compressType, err = mydump.ToStorageCompressType(sampleFile.Compression)
+		if err != nil {
+			break
+		}
+		reader, err = storage.WithCompression(p.srcStorage, compressType).Open(ctx, sampleFile.Path)
+	default:
 		reader, err = p.srcStorage.Open(ctx, sampleFile.Path)
 	}
 	if err != nil {
