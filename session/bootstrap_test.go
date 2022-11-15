@@ -516,7 +516,7 @@ func TestUpdateBindInfo(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 	for _, bindCase := range bindCases {
-		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual', '', '')",
 			bindCase.originText,
 			bindCase.bindText,
 			bindCase.db,
