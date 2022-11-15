@@ -67,28 +67,28 @@ const (
 )
 
 // AccessObject implements dataAccesser interface.
-func (fc *FKCheck) AccessObject() AccessObject {
-	if fc.Idx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", fc.Tbl.Meta().Name))
-	} else {
-		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.Tbl.Meta().Name, fc.Idx.Meta().Name))
+func (f *FKCheck) AccessObject() AccessObject {
+	if f.Idx == nil {
+		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
+	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
+
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (fc *FKCheck) OperatorInfo(normalized bool) string {
-	if fc.FK != nil {
-		return fmt.Sprintf("foreign_key:%s, check_exist", fc.FK.Name)
+func (f *FKCheck) OperatorInfo(normalized bool) string {
+	if f.FK != nil {
+		return fmt.Sprintf("foreign_key:%s, check_exist", f.FK.Name)
 	}
-	if fc.ReferredFK != nil {
-		return fmt.Sprintf("foreign_key:%s, check_not_exist", fc.ReferredFK.ChildFKName)
+	if f.ReferredFK != nil {
+		return fmt.Sprintf("foreign_key:%s, check_not_exist", f.ReferredFK.ChildFKName)
 	}
 	return ""
 }
 
 // ExplainInfo implement Plan interface.
-func (fc *FKCheck) ExplainInfo() string {
-	return fc.AccessObject().String() + ", " + fc.OperatorInfo(false)
+func (f *FKCheck) ExplainInfo() string {
+	return f.AccessObject().String() + ", " + f.OperatorInfo(false)
 }
 
 // MemoryUsage return the memory usage of FKCheck
@@ -105,28 +105,27 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 }
 
 // AccessObject implements dataAccesser interface.
-func (fc *FKCascade) AccessObject() AccessObject {
-	if fc.FKIdx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", fc.ChildTable.Meta().Name))
-	} else {
-		return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", fc.ChildTable.Meta().Name, fc.FKIdx.Name))
+func (f *FKCascade) AccessObject() AccessObject {
+	if f.FKIdx == nil {
+		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
 	}
+	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.ChildTable.Meta().Name, f.FKIdx.Name))
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (fc *FKCascade) OperatorInfo(normalized bool) string {
-	switch fc.Tp {
+func (f *FKCascade) OperatorInfo(normalized bool) string {
+	switch f.Tp {
 	case FKCascadeOnDelete:
-		return fmt.Sprintf("foreign_key:%s, on_delete:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnDelete).String())
+		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, model.ReferOptionType(f.FK.OnDelete).String())
 	case FKCascadeOnUpdate:
-		return fmt.Sprintf("foreign_key:%s, on_update:%s", fc.FK.Name, model.ReferOptionType(fc.FK.OnUpdate).String())
+		return fmt.Sprintf("foreign_key:%s, on_update:%s", f.FK.Name, model.ReferOptionType(f.FK.OnUpdate).String())
 	}
 	return ""
 }
 
 // ExplainInfo implement Plan interface.
-func (fc *FKCascade) ExplainInfo() string {
-	return fc.AccessObject().String() + ", " + fc.OperatorInfo(false)
+func (f *FKCascade) ExplainInfo() string {
+	return f.AccessObject().String() + ", " + f.OperatorInfo(false)
 }
 
 // MemoryUsage return the memory usage of FKCascade
