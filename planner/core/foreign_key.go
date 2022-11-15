@@ -72,7 +72,6 @@ func (f *FKCheck) AccessObject() AccessObject {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
 	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
-
 }
 
 // OperatorInfo implements dataAccesser interface.
