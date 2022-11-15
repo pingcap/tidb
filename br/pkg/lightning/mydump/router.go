@@ -134,7 +134,7 @@ func parseCompressionType(t string) (Compression, error) {
 		return CompressionGZ, nil
 	case "lz4":
 		return CompressionLZ4, nil
-	case "zstd":
+	case "zstd", "zst":
 		return CompressionZStd, nil
 	case "xz":
 		return CompressionXZ, nil
