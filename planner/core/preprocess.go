@@ -1875,7 +1875,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 				}
 				if found {
-					return nil, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
 		}
