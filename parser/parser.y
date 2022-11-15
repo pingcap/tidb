@@ -4779,21 +4779,25 @@ DropRoleStmt:
 	}
 
 DropStatsStmt:
-	"DROP" "STATS" TableName
+	"DROP" "STATS" TableNameList
 	{
-		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+		$$ = &ast.DropStatsStmt{Tables: $3.([]*ast.TableName)}
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("DROP STATS ... PARTITION ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:          $3.(*ast.TableName),
+			Tables:         []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
 		}
 	}
 |	"DROP" "STATS" TableName "GLOBAL"
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntax.FastGenByArgs("DROP STATS ... GLOBAL", "DROP STATS ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:         $3.(*ast.TableName),
+			Tables:        []*ast.TableName{$3.(*ast.TableName)},
 			IsGlobalStats: true,
 		}
 	}
