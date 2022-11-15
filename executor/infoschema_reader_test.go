@@ -165,6 +165,11 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bit DEFAULT (rand()))")
 	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
+	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
+		Check(testkit.Rows("bit(1)", "year(4)"))
 }
 
 func TestEngines(t *testing.T) {
@@ -865,13 +870,4 @@ func TestNullColumns(t *testing.T) {
 	tk.MustExec("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;")
 	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
 		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
-}
-
-func TestIssue25472(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
-	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
-		Check(testkit.Rows("bit(1)", "year(4)"))
 }
