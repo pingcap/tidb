@@ -98,7 +98,7 @@ const (
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_reuse_history  smallint unsigned DEFAULT NULL,
-        Password_reuse_time     smallint unsigned DEFAULT NULL,
+		Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		PRIMARY KEY (Host, User));`

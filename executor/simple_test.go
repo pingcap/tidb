@@ -194,7 +194,6 @@ func TestUserReuseInfo(t *testing.T) {
 	rootTK.MustExec(`drop USER testReuse`)
 	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 65536 PASSWORD REUSE INTERVAL 65536 DAY`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 65535`))
-
 }
 
 func TestUserReuseFunction(t *testing.T) {
@@ -294,7 +293,6 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustExec(`set global password_reuse_interval = 4294967295;`)
 	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-
 }
 
 func TestUserReuseMultiuser(t *testing.T) {
