@@ -1259,6 +1259,20 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
+	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		oldEnable, _, err := m.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if oldEnable != enable {
+			err = meta.NewMeta(txn).SetMetadataLock(enable)
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
 	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
 	return nil
 }

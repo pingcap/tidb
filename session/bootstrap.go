@@ -459,6 +459,11 @@ const (
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
+	err := InitMDLVariableForBootstrap(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("init metadata lock error",
+			zap.Error(err))
+	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -866,12 +871,19 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
-	needEnableMdl := upgradeToVer99Before(s, ver)
+	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("[Upgrade] init metadata lock failed", zap.Error(err))
+	}
+
+	if isNull {
+		upgradeToVer99Before(s)
+	}
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
-	if needEnableMdl {
-		upgradeToVer99After(s, ver)
+	if isNull {
+		upgradeToVer99After(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -2020,6 +2032,26 @@ func upgradeToVer98(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
 }
 
+func upgradeToVer99Before(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+}
+
+func upgradeToVer99After(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+	mustExecute(s, sql)
+
+}
+
+func upgradeToVer100(s Session, ver int64) {
+	if ver >= version100 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
 func upgradeToVer101(s Session, ver int64) {
 	if ver >= version101 {
 		return
@@ -2039,45 +2071,6 @@ func upgradeToVer103(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsTableLocked)
-}
-
-func upgradeToVer99Before(s Session, ver int64) bool {
-	if ver >= version99 {
-		return false
-	}
-	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
-	// If not, insert "tidb_enable_metadata_lock | 0" since concurrent DDL may not be enabled.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return false
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
-	return true
-}
-
-func upgradeToVer99After(s Session, ver int64) {
-	if ver >= version99 {
-		return
-	}
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
-	mustExecute(s, sql)
-}
-
-func upgradeToVer100(s Session, ver int64) {
-	if ver >= version100 {
-		return
-	}
-	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func writeOOMAction(s Session) {

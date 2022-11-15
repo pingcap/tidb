@@ -2846,6 +2846,63 @@ func InitMDLTable(store kv.Storage) error {
 	})
 }
 
+// InitMDLVariableForBootstrap initializes the metadata lock variable.
+func InitMDLVariableForBootstrap(store kv.Storage) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(true)
+	})
+	if err != nil {
+		return err
+	}
+	variable.EnableMDL.Store(true)
+	return nil
+}
+
+// InitMDLVariableForUpgrade initializes the metadata lock variable.
+func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull || !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return isNull, err
+}
+
+func InitMDLVariable(store kv.Storage) error {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull {
+		return errors.New("metadata lock is null")
+	}
+	if !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return err
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2872,6 +2929,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
+	} else {
+		err = InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
