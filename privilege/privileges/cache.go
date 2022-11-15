@@ -441,10 +441,6 @@ func compareBaseRecord(x, y *baseRecord) bool {
 	return x.User < y.User
 }
 
-func compareUserRecord(x, y UserRecord) bool {
-	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
-}
-
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
 // TODO: Check how MySQL do it exactly, instead of guess its rules.
 func compareHost(x, y string) int {
