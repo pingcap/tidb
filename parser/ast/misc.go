@@ -113,7 +113,7 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	if n.ByAuthString {
 		ctx.WriteKeyWord(" BY ")
 		ctx.WriteString(n.AuthString)
-	} else if n.ByHashString && n.HashString != "" {
+	} else if n.ByHashString {
 		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
 	}
