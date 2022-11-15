@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	pwdValidate "github.com/pingcap/tidb/util/password-validation"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -134,7 +134,7 @@ func TestValidatePassword(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	authPlugins := []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}
-	dictFile, err := pwdValidate.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
+	dictFile, err := pwdValidator.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
 	require.NoError(t, err)
 	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")

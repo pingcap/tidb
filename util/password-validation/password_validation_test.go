@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package password_validation
+package validator
 
 import (
 	"testing"

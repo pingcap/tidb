@@ -543,7 +543,10 @@ type PasswordDictionaryImpl struct {
 	m     sync.RWMutex
 }
 
+// MaxPwdValidationLength is the max length of word in dictionary.
 const MaxPwdValidationLength int = 100
+
+// MinPwdValidationLength is the min length of word in dictionary.
 const MinPwdValidationLength int = 4
 
 // PasswordDictionary is the dictionary for validating password.

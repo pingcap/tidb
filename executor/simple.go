@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	pwdValidate "github.com/pingcap/tidb/util/password-validation"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -900,7 +900,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 		if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-			if err := pwdValidate.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+			if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 				return err
 			}
 		}
@@ -1114,7 +1114,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
-				if err := pwdValidate.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
 				}
 			}
@@ -1635,7 +1635,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	if e.enableValidatePassword() {
-		if err := pwdValidate.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
+		if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
 			return err
 		}
 	}
