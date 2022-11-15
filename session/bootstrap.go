@@ -458,7 +458,7 @@ const (
 		PRIMARY KEY (table_id));`
 
 	// CreatePasswordHistory is a table save history passwd
-	CreatePasswordHistory = `CREATE TABLE mysql.password_history (
+	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
          Host char(255)  NOT NULL DEFAULT '',
          User char(32)  NOT NULL DEFAULT '',
          Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
