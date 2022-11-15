@@ -797,28 +797,16 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	var partialPaths []*util.AccessPath
 	for i := 0; i < normalPathCnt; i++ {
 		originalPath := ds.possibleAccessPaths[i]
+		// No need to consider table path as a partial path.
 		if ds.possibleAccessPaths[i].IsTablePath() {
-			if !ds.isSpecifiedInIndexMergeHints("primary") {
-				continue
-			}
-			var unsignedIntHandle bool
-			if originalPath.IsIntHandlePath && ds.tableInfo.PKIsHandle {
-				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				}
-			}
-			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(originalPath.Ranges, unsignedIntHandle) {
-				continue
-			}
-		} else {
-			if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
-				continue
-			}
-			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(originalPath.Ranges, false) {
-				continue
-			}
+			continue
+		}
+		if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
+			continue
+		}
+		// If the path contains a full range, ignore it.
+		if ranger.HasFullRange(originalPath.Ranges, false) {
+			continue
 		}
 		newPath := originalPath.Clone()
 		partialPaths = append(partialPaths, newPath)
@@ -856,22 +844,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 			}
 		}
 		// handle TableFilters
-		if !path.IsTablePath() {
-			// For table filter in an index path, just move it into finalFilters.
-			finalFilters = append(finalFilters, path.TableFilters...)
-		} else {
-			for i, cond := range path.TableFilters {
-				// For table filter in a table path, record it if it can be pushed down to TiKV, otherwise, move it into finalFilters.
-				if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
-					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
-					finalFilters = append(finalFilters, cond)
-				} else {
-					partialConds = append(partialConds, cond)
-					hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
-					hashCodeSet[hashCode] = struct{}{}
-				}
-			}
-		}
+		finalFilters = append(finalFilters, path.TableFilters...)
 	}
 
 	// deduplicate the finalFilters
