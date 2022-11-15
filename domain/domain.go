@@ -1186,7 +1186,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 	}
 	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
-	// because ID is unchangable, so this is a simple and stable algorithm to select
+	// because ID is unchangeable, so this is a simple and stable algorithm to select
 	// some instances across all tidb servers.
 	if enabledCount < len(svrIdsInThisZone) {
 		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
