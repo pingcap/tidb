@@ -226,6 +226,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowStatsLocked:
+		return e.fetchShowStatsLocked()
 	case ast.ShowHistogramsInFlight:
 		e.fetchShowHistogramsInFlight()
 		return nil
@@ -1140,7 +1142,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 		if fk.Version < model.FKVersion1 {
-			buf.WriteString(" /*T![FOREIGN KEY] INVALID */")
+			buf.WriteString(" /* FOREIGN KEY INVALID */")
 		}
 	}
 
@@ -1219,7 +1221,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1350,52 +1352,6 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
-}
-
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
-	if partitionInfo == nil {
-		return
-	}
-	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
-	// include the /*!50100 or /*!50500 comments for TiDB.
-	// This also solves the issue with comments within comments that would happen for
-	// PLACEMENT POLICY options.
-	if partitionInfo.Type == model.PartitionTypeHash {
-		defaultPartitionDefinitions := true
-		for i, def := range partitionInfo.Definitions {
-			if def.Name.O != fmt.Sprintf("p%d", i) {
-				defaultPartitionDefinitions = false
-				break
-			}
-			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
-				defaultPartitionDefinitions = false
-				break
-			}
-		}
-
-		if defaultPartitionDefinitions {
-			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
-			return
-		}
-	}
-	// this if statement takes care of lists/range columns case
-	if len(partitionInfo.Columns) > 0 {
-		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
-		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
-		for i, col := range partitionInfo.Columns {
-			buf.WriteString(stringutil.Escape(col.O, sqlMode))
-			if i < len(partitionInfo.Columns)-1 {
-				buf.WriteString(",")
-			}
-		}
-		buf.WriteString(")\n(")
-	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
-	}
-
-	ddl.AppendPartitionDefs(partitionInfo, buf, sqlMode)
-	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
@@ -2064,7 +2020,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
+		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
 			for _, col := range tbl.Columns {

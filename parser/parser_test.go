@@ -1135,6 +1135,9 @@ func TestDBAStmt(t *testing.T) {
 		// for show stats_meta.
 		{"show stats_meta", true, "SHOW STATS_META"},
 		{"show stats_meta where table_name = 't'", true, "SHOW STATS_META WHERE `table_name`=_UTF8MB4't'"},
+		// for show stats_locked.
+		{"show stats_locked", true, "SHOW STATS_LOCKED"},
+		{"show stats_locked where table_name = 't'", true, "SHOW STATS_LOCKED WHERE `table_name`=_UTF8MB4't'"},
 		// for show stats_histograms
 		{"show stats_histograms", true, "SHOW STATS_HISTOGRAMS"},
 		{"show stats_histograms where col_name = 'a'", true, "SHOW STATS_HISTOGRAMS WHERE `col_name`=_UTF8MB4'a'"},
@@ -1174,6 +1177,12 @@ func TestDBAStmt(t *testing.T) {
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
+		// for lock stats
+		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
+		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		// for unlock stats
+		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
+		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
@@ -2651,9 +2660,10 @@ func TestDDL(t *testing.T) {
 		{"drop view if exists xxx", true, "DROP VIEW IF EXISTS `xxx`"},
 		{"drop view if exists xxx, yyy", true, "DROP VIEW IF EXISTS `xxx`, `yyy`"},
 		{"drop stats t", true, "DROP STATS `t`"},
+		{"drop stats t1, t2, t3", true, "DROP STATS `t1`, `t2`, `t3`"},
+		{"drop stats t global", true, "DROP STATS `t` GLOBAL"},
 		{"drop stats t partition p0", true, "DROP STATS `t` PARTITION `p0`"},
 		{"drop stats t partition p0, p1, p2", true, "DROP STATS `t` PARTITION `p0`,`p1`,`p2`"},
-		{"drop stats t global", true, "DROP STATS `t` GLOBAL"},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -6920,6 +6930,7 @@ func TestCharsetIntroducer(t *testing.T) {
 
 func TestNonTransactionalDML(t *testing.T) {
 	cases := []testCase{
+		// deletes
 		{"batch on c limit 10 delete from t where c = 10", true,
 			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
 		{"batch on c limit 10 dry run delete from t where c = 10", true,
@@ -6945,6 +6956,32 @@ func TestNonTransactionalDML(t *testing.T) {
 			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
 		{"batch limit 10 dry run query update t set c = 10", true,
 			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		// inserts
+		{"batch on c limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		// inserts on duplicate key update
+		{"batch on c limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
 	}
 
 	RunTest(t, cases, false)
