@@ -550,7 +550,7 @@ type TableInfo struct {
 }
 
 // SepAutoInc decides whether rowid and auto_increment id use separate allocator.
-func (tblInfo *TableInfo) SepAutoInc()  bool {
+func (t *TableInfo) SepAutoInc()  bool {
 	return tblInfo.Version >= TableInfoVersion5 && tblInfo.AutoIdCache == 1
 }
 

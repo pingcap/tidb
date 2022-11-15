@@ -1693,7 +1693,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 			}
 		}
 		if colName == "" {
-			colName = constr.Keys[0].Column.Name.L
+			colName = constr.Keys[0].Column.Name.O
 		}
 		constrName := colName
 		i := 2

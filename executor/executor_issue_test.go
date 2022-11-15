@@ -133,6 +133,7 @@ func TestIssue24210(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 
 	// for ProjectionExec
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`))
@@ -579,6 +580,7 @@ func TestIssue30382(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int) , key(c_str(2)) , key(c_decimal) ) partition by list (c_int) ( partition p0 values IN (1, 5, 9, 13, 17, 21, 25, 29, 33, 37), partition p1 values IN (2, 6, 10, 14, 18, 22, 26, 30, 34, 38), partition p2 values IN (3, 7, 11, 15, 19, 23, 27, 31, 35, 39), partition p3 values IN (4, 8, 12, 16, 20, 24, 28, 32, 36, 40)) ;")
@@ -596,7 +598,7 @@ func TestIssue30382(t *testing.T) {
 		"SelectLock 6400.00 root  for update 0",
 		"└─HashJoin 6400.00 root  CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(test.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))",
 		"  ├─Selection(Build) 0.80 root  ne(Column#10, 0)",
-		"  │ └─StreamAgg 1.00 root  funcs:max(Column#17)->Column#7, funcs:count(distinct Column#18)->Column#8, funcs:sum(Column#19)->Column#9, funcs:count(1)->Column#10",
+		"  │ └─HashAgg 1.00 root  funcs:max(Column#17)->Column#7, funcs:count(distinct Column#18)->Column#8, funcs:sum(Column#19)->Column#9, funcs:count(1)->Column#10",
 		"  │   └─Projection 3323.33 root  test.t2.c_str, test.t2.c_str, cast(isnull(test.t2.c_str), decimal(20,0) BINARY)->Column#19",
 		"  │     └─TableReader 3323.33 root partition:all data:Selection",
 		"  │       └─Selection 3323.33 cop[tikv]  lt(test.t2.c_decimal, 5)",
