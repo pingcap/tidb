@@ -126,7 +126,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   <tr>
     <td>Data migration</td>
     <td>Continuous data verification during data migration.</td>
-    <td>DM supports online data verification during  migration from MySQL compatible database to TiDB.</td>
+    <td>DM supports online data verification during migration from MySQL compatible database to TiDB.</td>
   </tr>
 </tbody>
 </table>
