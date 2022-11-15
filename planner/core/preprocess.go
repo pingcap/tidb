@@ -306,10 +306,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
-		EraseLastSemicolon(node.OriginNode)
-		if node.HintedNode != nil {
-			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.SQLDigest == "" {
+			EraseLastSemicolon(node.OriginNode)
+			if node.HintedNode != nil {
+				EraseLastSemicolon(node.HintedNode)
+				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+			}
 		}
 		return in, true
 	case *ast.RecoverTableStmt:

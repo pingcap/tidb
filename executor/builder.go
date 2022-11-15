@@ -4748,6 +4748,8 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
+		sqlDigest:    v.SQLDigest,
+		source:       v.Source,
 	}
 	return e
 }

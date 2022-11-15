@@ -969,7 +969,37 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 	return p, nil
 }
 
+// getDropBindPlanFromDigest get drop binding plan from sql digest
+func (b *PlanBuilder) getDropBindPlanFromDigest(v *ast.DropBindingStmt) (Plan, error) {
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtBySqlDigest(v.SQLDigest)
+	if bindableStmt == nil {
+		return nil, errors.New("sql digest '" + v.SQLDigest + "' invalid")
+	}
+
+	parser4binding := parser.New() // todo: set parser's sql mode and so
+	stmtOigin, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		logutil.BgLogger().Debug("[sql-bind] parse origin SQL failed in create binding by plan digest",
+			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+	}
+	dbName := utilparser.GetDefaultDB(stmtOigin, bindableStmt.Schema)
+	v.OriginNode = stmtOigin
+
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindDrop,
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, dbName, v.OriginNode.Text())),
+		IsGlobal:     v.GlobalScope,
+		Db:           utilparser.GetDefaultDB(v.OriginNode, dbName),
+	}
+	// todo(binding) get sSElement from stmt summary
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
+	if v.SQLDigest != "" {
+		return b.getDropBindPlanFromDigest(v)
+	}
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
@@ -983,7 +1013,41 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	return p, nil
 }
 
+func (b *PlanBuilder) getSetBindingStatusPlanFromDigest(v *ast.SetBindingStmt) (Plan, error) {
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtBySqlDigest(v.SQLDigest)
+	if bindableStmt == nil {
+		return nil, errors.New("sql digest '" + v.SQLDigest + "' invalid")
+	}
+
+	parser4binding := parser.New() // todo: set parser's sql mode and so
+	stmtOigin, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		logutil.BgLogger().Debug("[sql-bind] parse origin SQL failed in create binding by plan digest",
+			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+	}
+	dbName := utilparser.GetDefaultDB(stmtOigin, bindableStmt.Schema)
+	v.OriginNode = stmtOigin
+
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSetBindingStatus,
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, dbName, v.OriginNode.Text())),
+		Db:           utilparser.GetDefaultDB(v.OriginNode, dbName),
+	}
+	switch v.BindingStatusType {
+	case ast.BindingStatusTypeEnabled:
+		p.NewStatus = bindinfo.Enabled
+	case ast.BindingStatusTypeDisabled:
+		p.NewStatus = bindinfo.Disabled
+	}
+	// todo(binding) get sSElement from stmt summary
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
+	if v.SQLDigest != "" {
+		return b.getSetBindingStatusPlanFromDigest(v)
+	}
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSetBindingStatus,
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
@@ -1021,8 +1085,8 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
-func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, error) {
-	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByDigest(v.PlanDigest)
+func (b *PlanBuilder) getCreateBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, error) {
+	bindableStmt, sqlDigest := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
 	if bindableStmt == nil {
 		return nil, errors.New("plan digest '" + v.PlanDigest + "' invalid")
 	}
@@ -1041,6 +1105,7 @@ func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, err
 	stmtHint, err := parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	v.OriginNode = stmtOigin
 	v.HintedNode = stmtHint
+	//_, sqlDigest := parser.NormalizeDigest(v.OriginNode.Text())
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, dbName, v.OriginNode.Text())),
@@ -1050,6 +1115,8 @@ func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, err
 		Db:           utilparser.GetDefaultDB(v.OriginNode, dbName),
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
+		SQLDigest:    sqlDigest,
+		Source:       bindinfo.HISTORY,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -1058,30 +1125,32 @@ func (b *PlanBuilder) getBindPlanFromDigest(v *ast.CreateBindingStmt) (Plan, err
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	if v.FromDigest {
 		// todo(binding): follow code here, get things from StmtSummaryByDigestMap
-		return b.getBindPlanFromDigest(v)
-	} else {
-		charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-		// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
-		// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
-		// the HintedNode.Restore will be `select * from test . t`.
-		// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
-		// So we need check here.
-		if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
-			return nil, err
-		}
-		p := &SQLBindPlan{
-			SQLBindOp:    OpSQLBindCreate,
-			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-			BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
-			IsGlobal:     v.GlobalScope,
-			BindStmt:     v.HintedNode,
-			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-			Charset:      charSet,
-			Collation:    collation,
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
-		return p, nil
+		return b.getCreateBindPlanFromDigest(v)
 	}
+	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+	//_, sqlDigest := parser.NormalizeDigest(v.OriginNode.Text())
+	_, sqlDigest := parser.NormalizeDigest(v.OriginNode.Text())
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     v.HintedNode,
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		Charset:      charSet,
+		Collation:    collation,
+		SQLDigest:    sqlDigest.String(),
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
 }
 
 // detectAggInExprNode detects an aggregate function in its exprs.
@@ -4981,8 +5050,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindings:
-		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source", "Sql_digest"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindingCacheStatus:
 		names = []string{"bindings_in_cache", "bindings_in_table", "memory_usage", "memory_quota"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}

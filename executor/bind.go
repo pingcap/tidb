@@ -38,6 +38,8 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	sqlDigest    string
+	source       string
 }
 
 // Next implements the Executor Next interface.
@@ -111,6 +113,10 @@ func (e *SQLBindExec) createSQLBind() error {
 		Collation: e.collation,
 		Status:    bindinfo.Enabled,
 		Source:    bindinfo.Manual,
+		SQLDigest: e.sqlDigest,
+	}
+	if e.source == bindinfo.HISTORY {
+		bindInfo.Source = bindinfo.HISTORY
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

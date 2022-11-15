@@ -13130,6 +13130,15 @@ DropBindingStmt:
 
 		$$ = x
 	}
+|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.DropBindingStmt{
+			GlobalScope: $2.(bool),
+			SQLDigest:   $7,
+		}
+
+		$$ = x
+	}
 
 SetBindingStmt:
 	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
@@ -13162,6 +13171,14 @@ SetBindingStmt:
 			HintedNode:        hintedStmt,
 		}
 
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			SQLDigest:         $7,
+		}
 		$$ = x
 	}
 

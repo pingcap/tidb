@@ -498,9 +498,9 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
-// GetBindableStmtByDigest get bindable stmt by planDigest
+// GetBindableStmtByPlanDigest get bindable stmt by planDigest
 // todo: accelerate
-func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByDigest(planDigest string) *BindableStmt {
+func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByPlanDigest(planDigest string) (*BindableStmt, string) {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -509,6 +509,43 @@ func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByDigest(planDigest string) 
 		ssbd.Lock()
 		defer ssbd.Unlock()
 		if ssbd.initialized && ssbd.planDigest == planDigest && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" ||
+			ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") && ssbd.history.Len() > 0 {
+			ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+			ssElement.Lock()
+			defer ssElement.Unlock()
+
+			// Empty auth users means that it is an internal queries.
+			if len(ssElement.authUsers) > 0 {
+				stmt := &BindableStmt{
+					Schema:    ssbd.schemaName,
+					Query:     ssElement.sampleSQL,
+					PlanHint:  ssElement.planHint,
+					Charset:   ssElement.charset,
+					Collation: ssElement.collation,
+					Users:     ssElement.authUsers,
+				}
+				// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+				// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
+				if ssElement.prepared {
+					stmt.Query = ssbd.normalizedSQL
+				}
+				return stmt, ssbd.digest
+			}
+		}
+	}
+	return nil, ""
+}
+
+// GetBindableStmtBySqlDigest get bindable stmt by sqlDigest
+func (ssMap *stmtSummaryByDigestMap) GetBindableStmtBySqlDigest(sqlDigest string) *BindableStmt {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		ssbd.Lock()
+		defer ssbd.Unlock()
+		if ssbd.initialized && ssbd.digest == sqlDigest && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" ||
 			ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") && ssbd.history.Len() > 0 {
 			ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 			ssElement.Lock()
