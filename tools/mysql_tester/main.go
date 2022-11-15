@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/bazelbuild/rules_go/go/tools/bazel"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"

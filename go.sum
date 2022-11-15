@@ -127,6 +127,8 @@ github.com/aws/aws-sdk-go v1.30.19/go.mod h1:5zCpMtNQVjRREroY7sYe8lOMRSxkhG6MZve
 github.com/aws/aws-sdk-go v1.44.48 h1:jLDC9RsNoYMLFlKpB8LdqUnoDdC2yvkS4QbuyPQJ8+M=
 github.com/aws/aws-sdk-go v1.44.48/go.mod h1:y4AeaBuwd2Lk+GepC1E9v0qOiTws0MIWAX4oIKwKHZo=
 github.com/aymerick/raymond v2.0.3-0.20180322193309-b565731e1464+incompatible/go.mod h1:osfaiScAUVup+UC9Nfq76eWqDhXlp+4UYaA8uhTBO6g=
+github.com/bazelbuild/rules_go v0.35.0 h1:ViPR65vOrg74JKntAUFY6qZkheBKGB6to7wFd8gCRU4=
+github.com/bazelbuild/rules_go v0.35.0/go.mod h1:ahciH68Viyxtm/gvCQplaAiu8buhf/b+gWswcPjFixI=
 github.com/benbjohnson/clock v1.0.3/go.mod h1:bGMdMPoPVvcYyt1gHDf4J2KE153Yf9BuiUKYMaxlTDM=
 github.com/benbjohnson/clock v1.1.0/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZxNJlLklBHA=
 github.com/benbjohnson/clock v1.3.0 h1:ip6w0uFQkncKQ979AypyG0ER7mqUSBdKLOgAle/AT8A=

@@ -247,6 +247,13 @@ def go_deps():
         sum = "h1:Q2feRPMlcfVcqz3pF87PJzkm5lZrL+x6BDtzhODzNJM=",
         version = "v11.2.8+incompatible",
     )
+    go_repository(
+        name = "com_github_bazelbuild_rules_go",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/bazelbuild/rules_go",
+        sum = "h1:ViPR65vOrg74JKntAUFY6qZkheBKGB6to7wFd8gCRU4=",
+        version = "v0.35.0",
+    )
 
     go_repository(
         name = "com_github_benbjohnson_clock",

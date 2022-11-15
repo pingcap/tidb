@@ -20,6 +20,7 @@ go_library(
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_sirupsen_logrus//:logrus",
+        "@io_bazel_rules_go//go/tools/bazel:go_default_library",
     ],
 )
 
