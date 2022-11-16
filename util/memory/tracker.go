@@ -71,9 +71,6 @@ var (
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
-	// following fields are used with atomic operations, so make them 64-byte aligned.
-	bytesConsumed       int64            // Consumed bytes.
-	bytesReleased       int64            // Released bytes.
 	bytesLimit           atomic.Value
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
@@ -87,7 +84,10 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 		sync.Mutex
 	}
-	label               int              // Label of this "Tracker".
+	label int // Label of this "Tracker".
+	// following fields are used with atomic operations, so make them 64-byte aligned.
+	bytesConsumed       int64            // Consumed bytes.
+	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
 	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
 	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
