@@ -15,6 +15,7 @@
 package autoid_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -696,31 +698,40 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int key auto_increment)")
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000001 AUTO_INCREMENT"))
+	tk.MustExec("drop table if exists t_473;")
+	tk.MustExec("create table t_473 (id int key auto_increment)")
+	tk.MustExec("insert into t_473 values ()")
+	tk.MustQuery("select * from t_473").Check(testkit.Rows("1"))
+	rs, err := tk.Exec("show table t_473 next_row_id")
+	require.NoError(t, err)
+	rows, err1 := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+	require.NoError(t, err1)
+	// "test t_473 id 1013608 AUTO_INCREMENT"
+	val, err2 := strconv.ParseUint(rows[0][3], 10, 64)
+	require.NoError(t, err2)
 
-	tk.MustExec("alter table t auto_id_cache = 100")
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000001 AUTO_INCREMENT"))
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001"))
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000101 AUTO_INCREMENT"))
+	tk.MustExec("alter table t_473 auto_id_cache = 100")
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val)))
+	tk.MustExec("insert into t_473 values ()")
+	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val)))
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+100)))
 
 	// Note that auto_id_cache=1 use a different implementation.
-	tk.MustExec("alter table t auto_id_cache = 1")
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000101 AUTO_INCREMENT"))
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101"))
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000102 AUTO_INCREMENT"))
+	tk.MustExec("alter table t_473 auto_id_cache = 1")
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+100)))
+	tk.MustExec("insert into t_473 values ()")
+	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val), fmt.Sprintf("%d", val+100)))
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+101)))
 
 	// alter table from auto_id_cache=1 to default will discard the IDs cached by the autoid service.
 	// This is because they are two component and TiDB can't tell the autoid service to "save position and exit".
-	tk.MustExec("alter table t auto_id_cache = 20000")
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2004101 AUTO_INCREMENT"))
+	tk.MustExec("alter table t_473 auto_id_cache = 20000")
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+4100)))
 
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101", "2004101"))
-	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2024101 AUTO_INCREMENT"))
+	tk.MustExec("insert into t_473 values ()")
+	tk.MustQuery("select * from t_473").Check(testkit.Rows("1",
+		fmt.Sprintf("%d", val),
+		fmt.Sprintf("%d", val+100),
+		fmt.Sprintf("%d", val+4100)))
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+24100)))
 }
