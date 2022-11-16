@@ -15,9 +15,8 @@
 package executor
 
 import (
+	"bytes"
 	"context"
-	"sync/atomic"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -31,8 +30,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
+	"strconv"
+	"sync/atomic"
+	"time"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
@@ -60,7 +65,10 @@ type FKCheckExec struct {
 
 // FKCheckRuntimeStats contains the FKCheckExec runtime stats.
 type FKCheckRuntimeStats struct {
-	Keys int
+	Total time.Duration
+	Check time.Duration
+	Lock  time.Duration
+	Keys  int
 }
 
 // FKCascadeExec uses to execute foreign key cascade behaviour.
@@ -78,12 +86,20 @@ type FKCascadeExec struct {
 	fkValues [][]types.Datum
 	// new-value-key => UpdatedValuesCouple
 	fkUpdatedValuesMap map[string]*UpdatedValuesCouple
+
+	stats *FKCascadeRuntimeStats
 }
 
 // UpdatedValuesCouple contains the updated new row the old rows, exporting for test.
 type UpdatedValuesCouple struct {
 	NewValues     []types.Datum
 	OldValuesList [][]types.Datum
+}
+
+// FKCascadeRuntimeStats contains the FKCascadeExec runtime stats.
+type FKCascadeRuntimeStats struct {
+	Total time.Duration
+	Keys  int
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
@@ -171,6 +187,22 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 }
 
 func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
+	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCheckRuntimeStats{}
+		fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.FKCheck.ID(), fkc.stats)
+	}
+	start := time.Now()
+	if fkc.stats != nil {
+		defer func() {
+			fkc.stats.Keys = len(fkc.toBeCheckedKeys) + len(fkc.toBeCheckedPrefixKeys)
+			if fkc.stats.Total == 0 {
+				fkc.stats.Total = time.Since(start)
+			}
+			if fkc.stats.Check == 0 {
+				fkc.stats.Check = fkc.stats.Total
+			}
+		}()
+	}
 	txn, err := fkc.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -182,6 +214,10 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	err = fkc.checkIndexKeys(ctx, txn)
 	if err != nil {
 		return err
+	}
+	if fkc.stats != nil {
+		fkc.stats.Check = time.Since(start)
+		fkc.stats.Total = fkc.stats.Check
 	}
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
@@ -198,6 +234,10 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
+	if fkc.stats != nil {
+		fkc.stats.Total = time.Since(start)
+		fkc.stats.Lock = fkc.stats.Total - fkc.stats.Check
+	}
 	return err
 }
 
@@ -582,7 +622,7 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
-	return &FKCascadeExec{
+	e := &FKCascadeExec{
 		b:                  b,
 		fkValueHelper:      helper,
 		tp:                 fkCascade.Tp,
@@ -592,7 +632,12 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		fkCols:             fkCascade.FKCols,
 		fkIdx:              fkCascade.FKIdx,
 		fkUpdatedValuesMap: make(map[string]*UpdatedValuesCouple),
-	}, nil
+	}
+	if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		e.stats = &FKCascadeRuntimeStats{}
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkCascade.ID(), e.stats)
+	}
+	return e, nil
 }
 
 func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -637,6 +682,7 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	if err != nil || p == nil {
 		return nil, err
 	}
+	logutil.BgLogger().Info("id compare", zap.Int("cascade_plan_id", p.ID()))
 	e := fkc.b.build(p)
 	return e, fkc.b.err
 }
@@ -668,6 +714,9 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 		case model.ReferOptionCascade:
 			couple := fkc.fetchUpdatedValuesCouple()
 			if couple != nil && len(couple.NewValues) != 0 {
+				if fkc.stats != nil {
+					fkc.stats.Keys += len(couple.OldValuesList)
+				}
 				stmtNode = GenCascadeUpdateAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, couple)
 			}
 		case model.ReferOptionSetNull:
@@ -698,6 +747,9 @@ func (fkc *FKCascadeExec) fetchOnDeleteOrUpdateFKValues() [][]types.Datum {
 	} else {
 		fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
 		fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
+	}
+	if fkc.stats != nil {
+		fkc.stats.Keys += len(fkValues)
 	}
 	return fkValues
 }
@@ -810,4 +862,84 @@ func genWhereConditionAstForMultiColumn(cols []*model.ColumnInfo, fkValues [][]t
 		Expr: &ast.RowExpr{Values: colValues},
 		List: valueList,
 	}
+}
+
+func (s *FKCheckRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("total:")
+	buf.WriteString(execdetails.FormatDuration(s.Total))
+	buf.WriteString(", check:")
+	buf.WriteString(execdetails.FormatDuration(s.Check))
+	if s.Lock > 0 {
+		buf.WriteString(", lock:")
+		buf.WriteString(execdetails.FormatDuration(s.Lock))
+	}
+	if s.Keys > 0 {
+		buf.WriteString(", foreign_keys:")
+		buf.WriteString(strconv.Itoa(s.Keys))
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &FKCheckRuntimeStats{
+		Total: s.Total,
+		Check: s.Check,
+		Lock:  s.Lock,
+		Keys:  s.Keys,
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*FKCheckRuntimeStats)
+	if !ok {
+		return
+	}
+	s.Total += tmp.Total
+	s.Check += tmp.Check
+	s.Lock += tmp.Lock
+	s.Keys += tmp.Keys
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Tp() int {
+	return execdetails.TpFKCheckRuntimeStats
+}
+
+func (s *FKCascadeRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("total:")
+	buf.WriteString(execdetails.FormatDuration(s.Total))
+	if s.Keys > 0 {
+		buf.WriteString(", foreign_keys:")
+		buf.WriteString(strconv.Itoa(s.Keys))
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &FKCheckRuntimeStats{
+		Total: s.Total,
+		Keys:  s.Keys,
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*FKCheckRuntimeStats)
+	if !ok {
+		return
+	}
+	s.Total += tmp.Total
+	s.Keys += tmp.Keys
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Tp() int {
+	return execdetails.TpFKCascadeRuntimeStats
 }

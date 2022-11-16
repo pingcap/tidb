@@ -1997,18 +1997,19 @@ func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
 	tk.MustExec("insert into t1 values (1), (2)")
 	tk.MustExec("insert into t2 values (1)")
 	res := tk.MustQuery("explain analyze insert ignore into t3 values (1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 1, 1), (5, 2, 1), (6, 2, 1)")
-	getExplainResultFn := func(res *testkit.Result) string {
-		resBuff := bytes.NewBufferString("")
-		for _, row := range res.Rows() {
-			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
-		}
-		return resBuff.String()
-	}
-	explain := getExplainResultFn(res)
+	explain := getExplainResult(res)
 	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.* fk_num: 3.*", explain, "")
 	res = tk.MustQuery("explain analyze insert ignore into t3 values (7, null, null), (8, null, null)")
-	explain = getExplainResultFn(res)
+	explain = getExplainResult(res)
 	require.NotContains(t, explain, "fk_check", explain, "")
+}
+
+func getExplainResult(res *testkit.Result) string {
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+	}
+	return resBuff.String()
 }
 
 func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
@@ -2217,5 +2218,66 @@ func TestDMLExplainFKInfo(t *testing.T) {
 	}
 	for _, ca := range cases {
 		tk.MustQuery(ca.sql).Check(testkit.Rows(ca.plan))
+	}
+}
+
+func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);")
+	tk.MustExec("create table t3 (id int, unique index idx(id));")
+	tk.MustExec("create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id));")
+	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
+	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
+		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE SET NULL, " +
+		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
+		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+
+	cases := []struct {
+		prepare []string
+		sql     string
+		plan    string
+	}{
+		// Test foreign key use primary key.
+		{
+			prepare: []string{
+				"insert into t1 values (1),(2),(3),(4),(5)",
+			},
+			sql:  "explain analyze insert into t2 values (1),(2),(3);",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist.*",
+		},
+		{
+			sql:  "explain analyze update t2 set id=id+2 where id >1",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist.*",
+		},
+		{
+			sql:  "explain analyze delete from t1 where id>1",
+			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:4 foreign_key:fk, on_delete:CASCADE.*",
+		},
+		{
+			sql:  "explain analyze update t1 set id=id+1 where id = 1",
+			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
+		},
+		{
+			sql:  "explain analyze insert into t1 values (1) on duplicate key update id = 100",
+			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE.*",
+		},
+		//{
+		//	// todo: fix me. find a better place to reset plan ID.
+		//	sql:  "explain analyze insert into t1 values (2) on duplicate key update id = 100",
+		//	plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
+		//},
+	}
+	for _, ca := range cases {
+		for _, sql := range ca.prepare {
+			tk.MustExec(sql)
+		}
+		res := tk.MustQuery(ca.sql)
+		explain := getExplainResult(res)
+		require.Regexp(t, ca.plan, explain)
 	}
 }

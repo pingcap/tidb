@@ -17,6 +17,7 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"strconv"
 	"strings"
@@ -480,6 +481,10 @@ const (
 	TpBasicCopRunTimeStats
 	// TpUpdateRuntimeStats is the tp for UpdateRuntimeStats
 	TpUpdateRuntimeStats
+	// TpFKCheckRuntimeStats is the tp for FKCheckRuntimeStats
+	TpFKCheckRuntimeStats
+	// TpFKCascadeRuntimeStats is the tp for FKCascadeRuntimeStats
+	TpFKCascadeRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -661,6 +666,9 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 
 // RegisterStats register execStat for a executor.
 func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
+	if planID == 3 {
+		logutil.BgLogger().Info("--------register stats--------", zap.Any("info", fmt.Sprintf("%#v", info)), zap.Stack("stack"))
+	}
 	e.mu.Lock()
 	stats, ok := e.rootStats[planID]
 	if !ok {

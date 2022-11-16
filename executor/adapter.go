@@ -630,6 +630,12 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
+	if fkc.stats != nil {
+		start := time.Now()
+		defer func() {
+			fkc.stats.Total += time.Since(start)
+		}()
+	}
 	for {
 		e, err := fkc.buildExecutor(ctx)
 		if err != nil || e == nil {
