@@ -2225,9 +2225,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		return ver, nil
 	}
 
-	// notice: addingDefinitions is empty when job is in state model.StateNone
-	// TODO: add droppingDefinitions and use it later...
-	//tblInfo, partNamesCIStr, partInfo, droppingDefinitions, addingDefinitions, err := checkReorgPartition(t, job)
 	tblInfo, partNamesCIStr, partInfo, _, addingDefinitions, err := checkReorgPartition(t, job)
 	if err != nil {
 		return ver, err
@@ -2242,13 +2239,13 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 	originalState := job.SchemaState
 	switch job.SchemaState {
 	case model.StateNone:
-		changesMade := false
-
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
 		// In case there was a race for queueing different schema changes on the same
 		// table and the checks was not done on the current schema version.
 		// The partInfo may have been checked against an older schema version for example.
+		// If the check is done here, it does not need to be repeated, since no other
+		// DDL on the same table can be run concurrently.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) +
 			len(partInfo.Definitions) -
 			len(partNames)))
@@ -2288,10 +2285,13 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// modify placement settings
 		for _, def := range tblInfo.Partition.AddingDefinitions {
 			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				// job.State = model.JobStateCancelled may be set depending on error in function above.
 				return ver, errors.Trace(err)
 			}
 		}
 
+		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
+		changesMade := false
 		if tblInfo.TiFlashReplica != nil {
 			// Must set placement rule, and make sure it succeeds.
 			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
@@ -2300,22 +2300,25 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 			changesMade = true
-			// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas
-			// are OK
+			// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas are OK
 		}
-
-		// From now on we cannot just cancel the DDL, we must rollback!
 
 		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			if !changesMade {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 
 		if len(bundles) > 0 {
 			if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+				if !changesMade {
+					job.State = model.JobStateCancelled
+					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+				}
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			changesMade = true
 		}
@@ -2334,21 +2337,21 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 		// TODO: test...
-		// Assume we cannot have more than MaxUint64 rows, set the progress
-		// to 1/10 of that.
+		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// This state is to confirm all servers can not see the new partitions when reorg is running,
-		// so that all deletes will be done in both old and new partitions when in either DeleteOnly or WriteOnly state.
+		// so that all deletes will be done in both old and new partitions when in either DeleteOnly
+		// or WriteOnly state.
 		// Also using the state for checking that the optional TiFlash replica is available, making it
 		// in a state without (much) data and easy to retry without side effects.
 
 		// Reason for having it here, is to make it easy for retry, and better to make sure it is in-sync
 		// as early as possible, to avoid a long wait after the data copying.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-			// For available state, the new added partition should wait it's replica to
-			// be finished. Otherwise the query to this partition will be blocked.
+			// For available state, the new added partition should wait its replica to
+			// be finished, otherwise the query to this partition will be blocked.
 			count := tblInfo.TiFlashReplica.Count
 			needRetry, err := checkPartitionReplica(count, count, addingDefinitions, d)
 			if err != nil {
@@ -2375,10 +2378,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteOnly:
-		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
-		// so that no new data will be updated in both old and new partitions when reorganizing.
+		// Insert this state to confirm all servers can see the new partitions when reorg is running,
+		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -2412,6 +2416,9 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.DroppingDefinitions = nil
 
 		// TODO: Make sure the dropLabelRules are done both if successful (droppingDefinitions) or if rollback (addingDefinitions)
+		// TODO: Make sure stats is handled (eventually dropped for old partitions, and added for new?)
+		// Hmm, maybe we should actually update the stats here as well?
+		// Can we collect the stats while doing the reorg?
 
 		// Register the droppingDefinitions ids for rangeDelete
 		// and the addingDefinitions for handling in the updateSchemaVersion

@@ -54,7 +54,21 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+		// TODO: Report a bug for Truncate partition, that it does not update global stats
 	case model.ActionDropTablePartition:
+		pruneMode := h.CurrentPruneMode()
+		if pruneMode == variable.Dynamic && t.PartInfo != nil {
+			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+				return err
+			}
+		}
+	case model.ActionReorganizePartition:
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Dynamic && t.PartInfo != nil {
 			if err := h.updateGlobalStats(t.TableInfo); err != nil {
