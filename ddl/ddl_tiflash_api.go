@@ -453,7 +453,8 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				tb, _, _ := is.FindTableByPartitionID(phyTable.ID)
 				if tb == nil {
 					logutil.BgLogger().Info("[ddl] waitForAddPartition")
-					time.Sleep(time.Duration(val.(int)) * time.Second)
+					sleepSecond := val.(int)
+					time.Sleep(time.Duration(sleepSecond) * time.Second)
 				}
 			}
 		}
