@@ -339,7 +339,7 @@ func (bc *Client) GetProgressRange(r rtree.Range) (*rtree.ProgressRange, error) 
 func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	err := checkpoint.WalkCheckpointFile(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
+	pastDureTime, err := checkpoint.WalkCheckpointFile(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
 		rangeTree, exists := rangeDataMap[groupKey]
 		if !exists {
 			rangeTree = rtree.NewRangeTree()
@@ -348,6 +348,9 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
 		progressCallBack(RegionUnit)
 	})
+
+	// we should adjust start-time of the summary to `pastDureTime` earlier
+	summary.AdjustStartTimeToEarlierTime(pastDureTime)
 
 	return rangeDataMap, errors.Trace(err)
 }

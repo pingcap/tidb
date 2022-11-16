@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
@@ -45,8 +46,8 @@ type CheckpointMessage struct {
 //
 //    ChecksumData
 // +----------------+           RangeGroupData                      RangeGroups
-// | RangeGroupData-+---> +--------------------------+ encrypted  +-------------+
-// | RangeGroupData |     | RangeGroupsEncriptedData-+----------> |   GroupKey  |
+// |    DureTime    |     +--------------------------+ encrypted  +-------------+
+// | RangeGroupData-+---> | RangeGroupsEncriptedData-+----------> |   GroupKey  |
 // | RangeGroupData |     | Checksum                 |            |    Range    |
 // |      ...       |     | CipherIv                 |            |     ...     |
 // | RangeGroupData |     | Size                     |            |    Range    |
@@ -66,6 +67,7 @@ type RangeGroupData struct {
 }
 
 type CheckpointData struct {
+	DureTime        time.Duration     `json:"dure-time"`
 	RangeGroupMetas []*RangeGroupData `json:"range-group-metas"`
 }
 
@@ -367,6 +369,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 	}
 
 	checkpointData := &CheckpointData{
+		DureTime:        summary.NowDureTime(),
 		RangeGroupMetas: make([]*RangeGroupData, 0, len(meta)),
 	}
 
@@ -420,7 +423,10 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 }
 
 // walk the whole checkpoint range files and retrive the metadatat of backed up ranges
-func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) error {
+// and return the total time cost in the past executions
+func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
+	// records the total time cost in the past executions
+	var pastDureTime time.Duration = 0
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
@@ -433,6 +439,9 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 				return errors.Trace(err)
 			}
 
+			if checkpointData.DureTime > pastDureTime {
+				pastDureTime = checkpointData.DureTime
+			}
 			for _, meta := range checkpointData.RangeGroupMetas {
 				decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
 				if err != nil {
@@ -458,7 +467,7 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 		return nil
 	})
 
-	return errors.Trace(err)
+	return pastDureTime, errors.Trace(err)
 }
 
 type CheckpointMetadata struct {

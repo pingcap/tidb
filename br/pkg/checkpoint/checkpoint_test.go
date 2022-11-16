@@ -129,9 +129,7 @@ func TestCheckpointRunner(t *testing.T) {
 		require.Equal(t, d.Name2, resp.Files[1].Name)
 	}
 
-	err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
-	require.NoError(t, err)
-	err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
+	_, err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
 	require.NoError(t, err)
 
 	checkpointMeta := &checkpoint.CheckpointMetadata{
