@@ -2882,6 +2882,7 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	return isNull, err
 }
 
+// InitMDLVariable initializes the metadata lock variable.
 func InitMDLVariable(store kv.Storage) error {
 	isNull := false
 	enable := false
