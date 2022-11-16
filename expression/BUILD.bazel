@@ -52,6 +52,7 @@ go_library(
         "explain.go",
         "expr_to_pb.go",
         "expression.go",
+        "extension.go",
         "function_traits.go",
         "helper.go",
         "partition_pruner.go",
@@ -66,6 +67,7 @@ go_library(
     deps = [
         "//config",
         "//errno",
+        "//extension",
         "//kv",
         "//parser",
         "//parser/ast",
@@ -97,6 +99,7 @@ go_library(
         "//util/parser",
         "//util/plancodec",
         "//util/printer",
+        "//util/sem",
         "//util/set",
         "//util/size",
         "//util/sqlexec",
@@ -110,6 +113,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//slices",
         "@org_golang_x_tools//container/intsets",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -179,6 +183,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":expression"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",

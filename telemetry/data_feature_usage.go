@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
 )
@@ -38,23 +39,25 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex          *ClusterIndexUsage               `json:"clusterIndex"`
-	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
-	TemporaryTable        bool                             `json:"temporaryTable"`
-	CTE                   *m.CTEUsageCounter               `json:"cte"`
-	AccountLock           *m.AccountLockCounter            `json:"accountLock"`
-	CachedTable           bool                             `json:"cachedTable"`
-	AutoCapture           bool                             `json:"autoCapture"`
-	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
-	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
-	GlobalKill            bool                             `json:"globalKill"`
-	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
-	ExchangePartition     *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
-	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
-	LogBackup             bool                             `json:"logBackup"`
-	EnablePaging          bool                             `json:"enablePaging"`
-	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
-	DDLUsageCounter       *m.DDLUsageCounter               `json:"DDLUsageCounter"`
+	ClusterIndex              *ClusterIndexUsage               `json:"clusterIndex"`
+	NewClusterIndex           *NewClusterIndexUsage            `json:"newClusterIndex"`
+	TemporaryTable            bool                             `json:"temporaryTable"`
+	CTE                       *m.CTEUsageCounter               `json:"cte"`
+	AccountLock               *m.AccountLockCounter            `json:"accountLock"`
+	CachedTable               bool                             `json:"cachedTable"`
+	AutoCapture               bool                             `json:"autoCapture"`
+	PlacementPolicyUsage      *placementPolicyUsage            `json:"placementPolicy"`
+	NonTransactionalUsage     *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
+	GlobalKill                bool                             `json:"globalKill"`
+	MultiSchemaChange         *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition         *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
+	TablePartition            *m.TablePartitionUsageCounter    `json:"tablePartition"`
+	LogBackup                 bool                             `json:"logBackup"`
+	EnablePaging              bool                             `json:"enablePaging"`
+	EnableCostModelVer2       bool                             `json:"enableCostModelVer2"`
+	DDLUsageCounter           *m.DDLUsageCounter               `json:"DDLUsageCounter"`
+	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
+	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
 }
 
 type placementPolicyUsage struct {
@@ -103,6 +106,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
 
+	usage.EnableGlobalMemoryControl = getGlobalMemoryControl()
+
 	return &usage, nil
 }
 
@@ -126,6 +131,9 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			}
 			if tbInfo.Meta().PlacementPolicyRef != nil {
 				usage.PlacementPolicyUsage.NumTableWithPolicies++
+			}
+			if tbInfo.Meta().AutoIdCache == 1 {
+				usage.AutoIDNoCache = true
 			}
 			partitions := tbInfo.Meta().GetPartitionInfo()
 			if partitions == nil {
@@ -240,29 +248,29 @@ var initialDDLUsageCounter m.DDLUsageCounter
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC); err == nil {
 		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableMutationChecker); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableMutationChecker); err == nil {
 		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
 	rcWriteCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
 		rcWriteCheckTSUsed = val == variable.On
 	}
 	currSavepointCount := m.GetSavepointStmtCounter()
@@ -346,7 +354,7 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBCapturePlanBaseline); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBCapturePlanBaseline); err == nil {
 		return val == variable.On
 	}
 	return false
@@ -380,6 +388,7 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
+
 func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 	curr := m.GetDDLUsageCounter()
 	diff := curr.Sub(initialDDLUsageCounter)
@@ -388,4 +397,8 @@ func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 		diff.MetadataLockUsed = isEnable == "ON"
 	}
 	return &diff
+}
+
+func getGlobalMemoryControl() bool {
+	return memory.ServerMemoryLimit.Load() > 0
 }

@@ -85,10 +85,61 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+
+	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
+	checkFlagIndexInJobArgs = 1
+)
+
+const (
+	// The recoverCheckFlag is used to judge the gc work status when RecoverTable/RecoverSchema.
+	recoverCheckFlagNone int64 = iota
+	recoverCheckFlagEnableGC
+	recoverCheckFlagDisableGC
 )
 
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
+
+// AllocTableIDIf specifies whether to retain the old table ID.
+// If this returns "false", then we would assume the table ID has been
+// allocated before calling `CreateTableWithInfo` family.
+type AllocTableIDIf func(*model.TableInfo) bool
+
+// CreateTableWithInfoConfig is the configuration of `CreateTableWithInfo`.
+type CreateTableWithInfoConfig struct {
+	OnExist            OnExist
+	ShouldAllocTableID AllocTableIDIf
+}
+
+// CreateTableWithInfoConfigurier is the "diff" which can be applied to the
+// CreateTableWithInfoConfig, currently implementations are "OnExist" and "AllocTableIDIf".
+type CreateTableWithInfoConfigurier interface {
+	// Apply the change over the config.
+	Apply(*CreateTableWithInfoConfig)
+}
+
+// GetCreateTableWithInfoConfig applies the series of configurier from default config
+// and returns the final config.
+func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
+	config := CreateTableWithInfoConfig{}
+	for _, c := range cs {
+		c.Apply(&config)
+	}
+	if config.ShouldAllocTableID == nil {
+		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
+	}
+	return config
+}
+
+// Apply implements Configurier.
+func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
+	c.OnExist = o
+}
+
+// Apply implements Configurier.
+func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
+	c.ShouldAllocTableID = a
+}
 
 const (
 	// OnExistError throws an error on name collision.
@@ -119,6 +170,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -155,13 +207,13 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// CreatePlacementPolicyWithInfo creates a placement policy
 	//
@@ -1164,13 +1216,31 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 
 // SwitchMDL enables MDL or disable DDL.
 func (d *ddl) SwitchMDL(enable bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+
+	// Disable MDL for test.
+	if enable && !variable.DefTiDBEnableConcurrentDDL {
+		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+		sess, err := d.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
+			return nil
+		}
+		defer d.sessPool.put(sess)
+		se := newSession(sess)
+		_, err = se.execute(ctx, sql, "disableMDL")
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
+		}
+		return nil
+	}
+
 	isEnableBefore := variable.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
 
 	// Check if there is any DDL running.
 	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
@@ -1219,6 +1289,15 @@ type RecoverInfo struct {
 	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*model.DBInfo
+	RecoverTabsInfo []*RecoverInfo
+	DropJobID       int64
+	SnapshotTS      uint64
+	OldSchemaName   model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

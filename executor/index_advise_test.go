@@ -29,12 +29,9 @@ func TestIndexAdvise(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	_, err := tk.Exec("index advise infile '/tmp/nonexistence.sql'")
-	require.EqualError(t, err, "Index Advise: don't support load file without local field")
-	_, err = tk.Exec("index advise local infile ''")
-	require.EqualError(t, err, "Index Advise: infile path is empty")
-	_, err = tk.Exec("index advise local infile '/tmp/nonexistence.sql' lines terminated by ''")
-	require.EqualError(t, err, "Index Advise: don't support advise index for SQL terminated by nil")
+	tk.MustGetErrMsg("index advise infile '/tmp/nonexistence.sql'", "Index Advise: don't support load file without local field")
+	tk.MustGetErrMsg("index advise local infile ''", "Index Advise: infile path is empty")
+	tk.MustGetErrMsg("index advise local infile '/tmp/nonexistence.sql' lines terminated by ''", "Index Advise: don't support advise index for SQL terminated by nil")
 
 	path := "/tmp/index_advise.sql"
 	fp, err := os.Create(path)
