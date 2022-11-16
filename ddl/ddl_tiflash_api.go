@@ -28,19 +28,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -48,12 +42,13 @@ import (
 
 // TiFlashReplicaStatus records status for each TiFlash replica.
 type TiFlashReplicaStatus struct {
-	ID             int64
-	Count          uint64
-	LocationLabels []string
-	Available      bool
-	HighPriority   bool
-	IsPartition    bool
+	ID                    int64
+	Count                 uint64
+	LocationLabels        []string
+	Available             bool
+	LogicalTableAvailable bool
+	HighPriority          bool
+	IsPartition           bool
 }
 
 // TiFlashTick is type for backoff threshold.
@@ -274,16 +269,16 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 		for _, p := range pi.Definitions {
 			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
 			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID,
-				tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), false, true})
+				tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), tblInfo.TiFlashReplica.Available, false, true})
 		}
 		// partitions that in adding mid-state
 		for _, p := range pi.AddingDefinitions {
 			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition adding %v\n", tblInfo.ID, p.ID))
-			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), true, true})
+			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), tblInfo.TiFlashReplica.Available, true, true})
 		}
 	} else {
 		logutil.BgLogger().Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
-		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, false, false})
+		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, tblInfo.TiFlashReplica.Available, false, false})
 	}
 }
 
@@ -346,12 +341,45 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
+=======
+func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+	pollMaxCount := RefreshProgressMaxTableCount
+	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
+		pollMaxCount = uint64(val.(int))
+	})
+	for element := pollTiFlashContext.UpdatingProgressTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
+		availableTableID := element.Value.(AvailableTableID)
+		var table table.Table
+		if availableTableID.IsPartition {
+			table, _, _ = schemas.FindTableByPartitionID(availableTableID.ID)
+			if table == nil {
+				logutil.BgLogger().Info("get table by partition failed, may be dropped or truncated",
+					zap.Int64("partitionID", availableTableID.ID),
+				)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
+				element = element.Next()
+				continue
+			}
+		} else {
+			var ok bool
+			table, ok = schemas.TableByID(availableTableID.ID)
+			if !ok {
+				logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
+					zap.Int64("tableID", availableTableID.ID),
+				)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
+				element = element.Next()
+				continue
+			}
+		}
+>>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
 	if updateTiFlash {
@@ -388,6 +416,29 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
+<<<<<<< HEAD
+=======
+	failpoint.Inject("waitForAddPartition", func(val failpoint.Value) {
+		for _, phyTable := range tableList {
+			is := d.infoCache.GetLatest()
+			_, ok := is.TableByID(phyTable.ID)
+			if !ok {
+				tb, _, _ := is.FindTableByPartitionID(phyTable.ID)
+				if tb == nil {
+					logutil.BgLogger().Info("[ddl] waitForAddPartition")
+					sleepSecond := val.(int)
+					time.Sleep(time.Duration(sleepSecond) * time.Second)
+				}
+			}
+		}
+	})
+
+	needPushPending := false
+	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
+		needPushPending = true
+	}
+
+>>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
@@ -396,8 +447,12 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			available = val.(bool)
 		})
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
+<<<<<<< HEAD
 		if !available {
 			allReplicaReady = false
+=======
+		if !available && !tb.LogicalTableAvailable {
+>>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 			enabled, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
 			if inqueue && !enabled {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
@@ -463,6 +518,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	return allReplicaReady, nil
 }
 
+<<<<<<< HEAD
 func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]TiFlashReplicaStatus) error {
 	store := tikvHelper.Store.(kv.Storage)
 
@@ -567,6 +623,8 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 	return nil
 }
 
+=======
+>>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 func (d *ddl) PollTiFlashRoutine() {
 	pollTiflashContext, err := NewTiFlashManagementContext()
 	if err != nil {
