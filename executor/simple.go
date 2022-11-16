@@ -96,6 +96,8 @@ type passwordLockInfo struct {
 	passwordHistoryFlag       bool
 	passwordReuseInterval     int64
 	passwordReuseIntervalFlag bool
+	failedLoginAttempts       int64
+	passwordLockTime          int64
 }
 
 type passwordReuseInfo struct {
@@ -855,6 +857,15 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 			case ast.PasswordReuseDefault:
 				pLinfo.passwordReuseInterval = notSpecified
 				pLinfo.passwordReuseIntervalFlag = true
+
+			case ast.FailedLoginAttempts:
+				pLinfo.failedLoginAttempts = option.Count
+
+			case ast.PasswordLockTime:
+				pLinfo.passwordLockTime = option.Count
+
+			case ast.PasswordLockTimeDefault:
+				pLinfo.passwordLockTime = -1
 			}
 		}
 	}
@@ -896,6 +907,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	var userAttributes any = nil
+	if passwdlockinfo.failedLoginAttempts > 0 {
+		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%s\",\"password_lock_time_days\": \"%s\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
+	}
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
@@ -1413,7 +1427,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(passwdlockinfo.passwordReuseInterval, 10)})
 			}
 		}
-
+		if passwdlockinfo.failedLoginAttempts != 0 {
+			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%s\",\"password_lock_time_days\": \"%s\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+		}
 		if s.CommentOrAttributeOption != nil {
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {

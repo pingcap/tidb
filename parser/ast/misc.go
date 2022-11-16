@@ -1500,6 +1500,9 @@ const (
 
 	Lock
 	Unlock
+	FailedLoginAttempts
+	PasswordLockTime
+	PasswordLockTimeDefault
 
 	UserCommentType
 	UserAttributeType
