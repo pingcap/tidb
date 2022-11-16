@@ -545,7 +545,6 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 
 			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
-			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
 			tk.MustGetDBError("insert into t1 (id, a, b) values (11, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
@@ -569,7 +568,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 
-	// Case-10: test foreign key check when insert on duplicate parent table.
+	// Case-10: Test insert into parent table failed cause by foreign key check, see https://github.com/pingcap/tidb/issues/39200.
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (id int key);")
 	tk.MustExec("create table t2 (id int, foreign key fk(id) references t1(id));")
