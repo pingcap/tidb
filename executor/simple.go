@@ -847,6 +847,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	if s.IsCreateRole {
 		lockAccount = "Y"
+		passwordExpire = "Y"
 	}
 
 	var userAttributes any = nil
@@ -1142,8 +1143,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				alterField{"authentication_string=%?", pwd},
 				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
 			)
-			if passwordExpire == "" && (spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
-				passwordExpire = "N"
+			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
+				fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
+				if passwordExpire == "" {
+					passwordExpire = "N"
+				}
 			}
 		}
 
@@ -1195,7 +1199,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			sql := new(strings.Builder)
 			sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 			for i, f := range fields {
-				sqlexec.MustFormatSQL(sql, f.expr, f.value)
+				if f.value != nil {
+					sqlexec.MustFormatSQL(sql, f.expr, f.value)
+				} else {
+					sqlexec.MustFormatSQL(sql, f.expr)
+				}
 				if i < len(fields)-1 {
 					sqlexec.MustFormatSQL(sql, ",")
 				}
