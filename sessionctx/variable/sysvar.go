@@ -1039,38 +1039,24 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
-		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-			EnablePlanReplayerCapture.Store(TiDBOptOn(val))
-			return nil
-		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return strconv.FormatBool(EnablePlanReplayerCapture.Load()), nil
-		}},
-	{Scope: ScopeGlobal, Name: TiDBPasswordReuseHistory, Value: strconv.Itoa(DefTiDBPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
-		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatInt(PasswordHistory.Load(), 10), nil
-		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			num, err := strconv.ParseInt(val, 10, 64)
-			if err == nil {
-				PasswordHistory.Store(num)
-			}
-			return err
-		},
-	},
-	{Scope: ScopeGlobal, Name: TiDBPasswordReuseTime, Value: strconv.Itoa(DefTiDBPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
-		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
-		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			num, err := strconv.ParseInt(val, 10, 64)
-			if err == nil {
-				PasswordReuseInterval.Store(num)
-			}
-			return err
-		},
-	},
-
+	{Scope: ScopeGlobal, Name: TiDBPasswordReuseHistory, Value: strconv.Itoa(DefTiDBPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordHistory.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		num, err := strconv.ParseInt(val, 10, 64)
+		if err == nil {
+			PasswordHistory.Store(num)
+		}
+		return err
+	}},
+	{Scope: ScopeGlobal, Name: TiDBPasswordReuseTime, Value: strconv.Itoa(DefTiDBPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		num, err := strconv.ParseInt(val, 10, 64)
+		if err == nil {
+			PasswordReuseInterval.Store(num)
+		}
+		return err
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
