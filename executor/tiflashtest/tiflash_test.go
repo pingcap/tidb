@@ -1089,6 +1089,7 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set tidb_partition_prune_mode=dynamic")
 	tk.MustExec("set tidb_enforce_mpp=1")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	rows := tk.MustQuery("explain select count(*) from t").Rows()
 	resBuff := bytes.NewBufferString("")

@@ -374,7 +374,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.PRIMARY'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 
@@ -389,7 +389,7 @@ func TestAddPrimaryKeyRollback2(t *testing.T) {
 func TestAddUniqueIndexRollback(t *testing.T) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.c3_index'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 
@@ -816,7 +816,7 @@ func TestDropIndexes(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	// drop multiple indexes
-	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2));"
 	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
 	idxNames := []string{"i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
@@ -826,7 +826,7 @@ func TestDropIndexes(t *testing.T) {
 	idxNames = []string{"primary", "i1"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
 
-	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid) nonclustered, unique key i1(c1), key i2(c2));"
 	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
 	idxNames = []string{"primary", "i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
@@ -1066,4 +1066,21 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 	indexInfo.State = model.StateNone
 	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
 	require.ErrorIs(t, err, errors.Cause(err2))
+}
+
+func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	ddl.ResultCounterForTest = &atomic.Int32{}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	for i := 1; i <= 12; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("insert into t values (0, 1);") // Insert a duplicate key.
+	tk.MustQuery("split table t by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12);").Check(testkit.Rows("13 1"))
+	tk.MustGetErrCode("alter table t add unique index idx (b);", errno.ErrDupEntry)
+	require.Less(t, int(ddl.ResultCounterForTest.Load()), 6)
+	ddl.ResultCounterForTest = nil
 }

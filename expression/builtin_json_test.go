@@ -423,9 +423,9 @@ func TestJSONContains(t *testing.T) {
 		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
 		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathWildcard},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathWildcard},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Tests path expression does not identify a section of the target document
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
@@ -758,7 +758,7 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, types.ErrInvalidJSONPath},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Following tests come from MySQL doc.
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
@@ -910,7 +910,7 @@ func TestJSONArrayInsert(t *testing.T) {
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, types.ErrInvalidJSONPath},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathMultipleSelection},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
 		// Following tests come from MySQL doc.
@@ -982,6 +982,49 @@ func TestJSONValid(t *testing.T) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Expected"][0], d)
+	}
+}
+
+func TestJSONStorageFree(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONStorageFree]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 0, true},
+		{[]interface{}{`true`}, 0, true},
+		{[]interface{}{`1`}, 0, true},
+		{[]interface{}{`"1"`}, 0, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 0, true},
+		{[]interface{}{`{"a":1}`}, 0, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 0, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.success {
+			require.NoError(t, err)
+
+			if tt.expected == nil {
+				require.True(t, d.IsNull())
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+			}
+		} else {
+			require.Error(t, err)
+		}
 	}
 }
 
