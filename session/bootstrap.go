@@ -447,6 +447,7 @@ const (
 		plan_digest VARCHAR(128) NOT NULL,
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		PRIMARY KEY (sql_digest,plan_digest));`
+
 	// CreateStatsTableLocked stores the locked tables
 	CreateStatsTableLocked = `CREATE TABLE IF NOT EXISTS mysql.stats_table_locked(
 		table_id bigint(64) NOT NULL,
