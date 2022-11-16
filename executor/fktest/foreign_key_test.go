@@ -545,7 +545,8 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 
 			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
-			tk.MustGetDBError("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
+			tk.MustGetDBError("insert into t1 (id, a, b) values (11, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
@@ -575,7 +576,6 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t1 values (1) on duplicate key update id=2")
 }
 
