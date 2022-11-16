@@ -591,10 +591,6 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 	if !ok {
 		return nil
 	}
-	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
-	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
-	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
 		err := fkCheck.doCheck(ctx)
@@ -630,6 +626,10 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
 	if fkc.stats != nil {
 		start := time.Now()
 		defer func() {

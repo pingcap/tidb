@@ -2266,11 +2266,82 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			sql:  "explain analyze insert into t1 values (1) on duplicate key update id = 100",
 			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE.*",
 		},
-		//{
-		//	// todo: fix me. find a better place to reset plan ID.
-		//	sql:  "explain analyze insert into t1 values (2) on duplicate key update id = 100",
-		//	plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
-		//},
+		{
+			sql:  "explain analyze insert into t1 values (2) on duplicate key update id = 100",
+			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
+		},
+		// Test foreign key use index.
+		{
+			prepare: []string{
+				"insert into t3 values (1),(2),(3),(4),(5)",
+			},
+			sql:  "explain analyze insert into t4 values (1),(2),(3);",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist.*",
+		},
+		{
+			sql:  "explain analyze update t4 set id=id+2 where id >1",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist.*",
+		},
+		{
+			sql:  "explain analyze delete from t3 where id in (2,3)",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist",
+		},
+		{
+			prepare: []string{
+				"insert into t3 values (2)",
+			},
+			sql:  "explain analyze update t3 set id=id+1 where id = 2",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist.*",
+		},
+
+		{
+			sql:  "explain analyze insert into t3 values (2) on duplicate key update id = 100",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist.*",
+		},
+		{
+			sql:  "explain analyze insert into t3 values (3) on duplicate key update id = 100",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist.*",
+		},
+		// Test multi-foreign keys in on table.
+		{
+			prepare: []string{
+				"insert into t5 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
+			},
+			sql: "explain analyze insert into t6 values (1,1,1)",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist.*" +
+				".*Foreign_Key_Check.* 0.00 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist.*" +
+				".*Foreign_Key_Check.* 0.00 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist.*",
+		},
+		{
+			sql: "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist.*" +
+				"Foreign_Key_Check.* 0.00 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist.*",
+		},
+		{
+			sql: "explain analyze delete from t5 where id in (4,5)",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:idx_id2 total:.*, check:.*, foreign_keys:2 foreign_key:fk_2, check_not_exist.*" +
+				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:2 foreign_key:fk_1, on_delete:SET NULL.*" +
+				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:fk_3 total:.*, foreign_keys:2 foreign_key:fk_3, on_delete:CASCADE.*",
+		},
+		{
+			sql: "explain analyze update t5 set id=id+1, id2=id2+1 where id = 3",
+			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*" +
+				"Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE.*",
+		},
+		{
+			prepare: []string{
+				"insert into t5 values (10,10,10)",
+			},
+			sql: "explain analyze update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 10",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*" +
+				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*" +
+				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE.*",
+		},
+		{
+			sql: "explain analyze insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
+			plan:".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*"+
+				"Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*",
+		},
 	}
 	for _, ca := range cases {
 		for _, sql := range ca.prepare {

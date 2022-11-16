@@ -31,10 +31,8 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"go.uber.org/zap"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -153,7 +151,10 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
-	return fkc.addRowNeedToCheck(sc, row)
+	if fkc.FK != nil {
+		return fkc.addRowNeedToCheck(sc, row)
+	}
+	return nil
 }
 
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
@@ -190,6 +191,9 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
 		fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.FKCheck.ID(), fkc.stats)
+	}
+	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
+		return nil
 	}
 	start := time.Now()
 	if fkc.stats != nil {
@@ -682,7 +686,6 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	if err != nil || p == nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("id compare", zap.Int("cascade_plan_id", p.ID()))
 	e := fkc.b.build(p)
 	return e, fkc.b.err
 }
@@ -868,8 +871,10 @@ func (s *FKCheckRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("total:")
 	buf.WriteString(execdetails.FormatDuration(s.Total))
-	buf.WriteString(", check:")
-	buf.WriteString(execdetails.FormatDuration(s.Check))
+	if s.Check > 0 {
+		buf.WriteString(", check:")
+		buf.WriteString(execdetails.FormatDuration(s.Check))
+	}
 	if s.Lock > 0 {
 		buf.WriteString(", lock:")
 		buf.WriteString(execdetails.FormatDuration(s.Lock))
