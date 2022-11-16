@@ -4774,7 +4774,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
 		sqlDigest:    v.SQLDigest,
-		planDigest:   v.PlanDigest,
 	}
 	return e
 }

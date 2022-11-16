@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -952,6 +953,10 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `mysql` . `capture_plan_baselines_blacklist`", rows[0][0])
 }
 
+func getOriginSQLFromHintedSQL(s string) string {
+	return strings.Split(s, "/*")[0] + strings.Split(strings.Split(s, "/*")[1], "*/")[1]
+}
+
 func TestCaptureHints(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1011,5 +1016,7 @@ func TestCaptureHints(t *testing.T) {
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res), 1)                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+		_, digestWithoutDB := parser.NormalizeDigest(capCase.query)         // test sqlDigest if exists after add columns to mysql.bind_info
+		require.Equal(t, res[0][9], digestWithoutDB.String())
 	}
 }
