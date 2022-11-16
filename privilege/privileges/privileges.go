@@ -387,14 +387,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	}
 
-	disconnectionOnPasswordExpired := true
-	if str, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword); err != nil {
+	disconnectOnPwdExpiredStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword)
+	if err != nil {
 		return sandBoxMode, err
-	} else {
-		disconnectionOnPasswordExpired = variable.TiDBOptOn(str)
 	}
+	disconnectOnPwdExpired := variable.TiDBOptOn(disconnectOnPwdExpiredStr)
 	if record.PasswordExpired {
-		if disconnectionOnPasswordExpired {
+		if disconnectOnPwdExpired {
 			return sandBoxMode, ErrMustChangePasswordLogin.GenWithStackByArgs()
 		}
 		sandBoxMode = true
@@ -412,7 +411,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 		}
 		if lifeTime > 0 && record.PasswordLastChanged.Add(time.Duration(lifeTime)*24*time.Hour).After(time.Now()) {
-			if disconnectionOnPasswordExpired {
+			if disconnectOnPwdExpired {
 				return sandBoxMode, ErrMustChangePasswordLogin.GenWithStackByArgs()
 			}
 			sandBoxMode = true
