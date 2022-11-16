@@ -808,12 +808,14 @@ func whetherSavePasswordHistory(passwdlockinfo *passwordLockInfo) bool {
 	} else {
 		passwdSaveNum = passwdlockinfo.passwordHistory
 	}
+
 	var passwdSaveTime int64
 	if passwdlockinfo.passwordReuseInterval == notSpecified {
 		passwdSaveTime = variable.PasswordReuseInterval.Load()
 	} else {
 		passwdSaveTime = passwdlockinfo.passwordReuseInterval
 	}
+
 	if passwdSaveTime > 0 || passwdSaveNum > 0 {
 		return true
 	}
@@ -913,20 +915,20 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sql := new(strings.Builder)
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
+	// Get changed user password reuse info
 	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
+	// add insert Password_reuse_time column
 	if passwdlockinfo.passwordReuseInterval != notSpecified {
 		sqlTemplate = sqlTemplate + ",Password_reuse_time"
-		//valueTemplate = valueTemplate + ", %?"
 	}
+	// add insert Password_reuse_history column
 	if passwdlockinfo.passwordHistory != notSpecified {
 		sqlTemplate = sqlTemplate + ",Password_reuse_history"
-		//valueTemplate = valueTemplate + ", %?"
 	}
 
 	sqlTemplate = sqlTemplate + ") VALUES "
-	//valueTemplate = valueTemplate + ")"
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
 		sqlexec.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
@@ -987,9 +989,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer)
+		// add Password_reuse_time value
 		if passwdlockinfo.passwordReuseInterval != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
 		}
+		// add Password_reuse_history value
 		if passwdlockinfo.passwordHistory != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordHistory)
 		}
@@ -1026,6 +1030,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		return err
 	}
+
 	if savePasswdHistory && !passwordInit {
 		_, err = sqlExecutor.ExecuteInternal(internalCtx, sqlPasswordHistory.String())
 		if err != nil {
@@ -1063,6 +1068,7 @@ func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name str
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	// Query the specified user password reuse rules
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return nil, err
@@ -1070,6 +1076,7 @@ func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name str
 	if len(rows) != 1 {
 		return nil, errors.New("Unable to confirm password reuse configuration information")
 	}
+	//If the user specifies to use user configuration, otherwise use session
 	for _, row := range rows {
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
@@ -1085,7 +1092,8 @@ func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name str
 	return res, nil
 }
 
-func getSystemTime(ctx context.Context, sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
+// get the boundary of password valid time
+func getValidTime(ctx context.Context, sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
 	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*60*60
@@ -1095,6 +1103,10 @@ func getSystemTime(ctx context.Context, sctx sessionctx.Context, passwordReuse *
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
+// deleteHistoricalData delete useless password history
+// The deleted password must meet the following conditions at the same time
+// 1. Exceeded the maximum number of saves
+// 2. The password has exceeded the prohibition time
 func deleteHistoricalData(ctx context.Context, sctx sessionctx.Context, name string, host string, maxDelRows int64, passwordReuse *passwordReuseInfo) error {
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return nil
@@ -1106,6 +1118,7 @@ func deleteHistoricalData(ctx context.Context, sctx sessionctx.Context, name str
 		//never times out or no row need delete
 		return nil
 	}
+	// no prohibition time
 	if passwordReuse.passwordReuseInterval == 0 {
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %?  order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
@@ -1115,7 +1128,7 @@ func deleteHistoricalData(ctx context.Context, sctx sessionctx.Context, name str
 			return err
 		}
 	} else {
-		beforeDate := getSystemTime(ctx, sctx, passwordReuse)
+		beforeDate := getValidTime(ctx, sctx, passwordReuse)
 		//Deletion must satisfy 1. Exceed the prohibition time 2. Exceed the maximum number of saved records
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? AND Password_timestamp < %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
@@ -1142,6 +1155,7 @@ func addHistoricalData(ctx context.Context, sctx sessionctx.Context, name string
 }
 
 func passwordVerification(ctx context.Context, sctx sessionctx.Context, name string, host string, passwordReuse *passwordReuseInfo, pwd string) (bool, int64, error) {
+	// no limit
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, 0, nil
 	}
@@ -1155,11 +1169,14 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 		return false, 0, errors.New("User and Host Classification is not unique,Please confirm the mysql.password_history table structure")
 	}
 	passwordNum := rows[0].GetInt64(0)
+	// the maximum number of records that can be deleted
 	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
 	if canDeleteNum < 0 {
 		canDeleteNum = 0
 	}
+
 	if passwordReuse.passwordHistory > 0 {
+		// The maximum number of saves has not been exceeded
 		if passwordNum <= passwordReuse.passwordHistory {
 			rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
 			if err != nil {
@@ -1170,7 +1187,7 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 			}
 			return false, 0, nil
 		}
-		// more password limit check
+		// Exceeded the maximum number of saved items, only check the ones within the limit
 		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
 		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
 		checkRows = checkRows + ` ) as t where t.Password = %? `
@@ -1196,7 +1213,7 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 			return false, 0, nil
 		}
 
-		beforeDate := getSystemTime(ctx, sctx, passwordReuse)
+		beforeDate := getValidTime(ctx, sctx, passwordReuse)
 		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd, beforeDate)
 		if err != nil {
 			return false, 0, err
@@ -1837,6 +1854,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	// prevent parallel operation
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
