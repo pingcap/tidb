@@ -1064,7 +1064,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
-func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name string, host string) (*passwordReuseInfo, error) {
+func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name string, host string, passwdlockinfo *passwordLockInfo) (*passwordReuseInfo, error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
@@ -1089,6 +1089,13 @@ func getUserPasswordLimit(ctx context.Context, sctx sessionctx.Context, name str
 			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
 		}
 	}
+	if passwdlockinfo.passwordHistoryFlag {
+		res.passwordHistory = passwdlockinfo.passwordHistory
+	}
+
+	if passwdlockinfo.passwordReuseIntervalFlag {
+		res.passwordReuseInterval = passwdlockinfo.passwordReuseInterval
+	}
 	return res, nil
 }
 
@@ -1108,10 +1115,6 @@ func getValidTime(ctx context.Context, sctx sessionctx.Context, passwordReuse *p
 // 1. Exceeded the maximum number of saves
 // 2. The password has exceeded the prohibition time
 func deleteHistoricalData(ctx context.Context, sctx sessionctx.Context, name string, host string, maxDelRows int64, passwordReuse *passwordReuseInfo) error {
-	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
-		return nil
-	}
-
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if (passwordReuse.passwordReuseInterval > math.MaxInt32) || maxDelRows == 0 {
@@ -1155,10 +1158,6 @@ func addHistoricalData(ctx context.Context, sctx sessionctx.Context, name string
 }
 
 func passwordVerification(ctx context.Context, sctx sessionctx.Context, name string, host string, passwordReuse *passwordReuseInfo, pwd string) (bool, int64, error) {
-	// no limit
-	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
-		return true, 0, nil
-	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host))
@@ -1173,6 +1172,10 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
 	if canDeleteNum < 0 {
 		canDeleteNum = 0
+	}
+	// no limit
+	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
+		return true, canDeleteNum, nil
 	}
 
 	if passwordReuse.passwordHistory > 0 {
@@ -1362,7 +1365,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// for Support Password Reuse Policy
 			if len(pwd) != 0 {
 				// read password reuse info from mysql.user and global variables
-				passwdReuseInfo, err := getUserPasswordLimit(ctx, e.ctx, spec.User.Username, spec.User.Hostname)
+				passwdReuseInfo, err := getUserPasswordLimit(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdlockinfo)
 				if err != nil {
 					return err
 				}
