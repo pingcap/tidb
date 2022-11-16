@@ -1227,7 +1227,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_ExtractDatetime:
+		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
 			return true
 		}
 	case ast.Replace:
