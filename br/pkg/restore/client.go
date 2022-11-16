@@ -2687,7 +2687,7 @@ func CheckNewCollationEnable(
 	if newCollationEnable == "True" {
 		enabled = true
 	}
-	// modify collate.newCollationEnabled according to the configuration of the cluster
+	// modify collate.newCollationEnabled according to the config of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
