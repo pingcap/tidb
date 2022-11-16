@@ -339,18 +339,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.schema.Len() == 0 {
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
-		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
-			// use the first line.
-			handleCol = originSchemaColumns[0]
-			handleColInfo = originColumns[0]
+		// case 1: tiflash
+		if ds.tableInfo.TiFlashReplica != nil {
+			handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
 		} else {
-			if ds.handleCols != nil {
-				handleCol = ds.handleCols.GetCol(0)
-				handleColInfo = handleCol.ToInfo()
-			} else {
-				handleCol = ds.newExtraHandleSchemaCol()
-				handleColInfo = model.NewExtraHandleColInfo()
-			}
+			// case 2: tikv
+			handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
@@ -657,4 +651,59 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fm
 		return ""
 	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+// pick a not null and shortest column from table
+func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+	for _, columnInfo := range dataSource.tableInfo.Columns {
+		// todo remove varchar
+		if columnInfo.Hidden {
+			continue
+		}
+		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
+			if resultColumnInfo == nil || columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
+				resultColumnInfo = columnInfo
+				resultColumn = &expression.Column{
+					UniqueID: dataSource.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       resultColumnInfo.ID,
+					RetType:  resultColumnInfo.FieldType.Clone(),
+					OrigName: resultColumnInfo.Name.String(),
+					IsHidden: resultColumnInfo.Hidden,
+				}
+			}
+		}
+	}
+	if resultColumnInfo == nil {
+		// todo
+		if dataSource.handleCols != nil {
+			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else {
+			resultColumn = dataSource.newExtraHandleSchemaCol()
+			resultColumnInfo = model.NewExtraHandleColInfo()
+		}
+	}
+	return resultColumn, resultColumnInfo
+}
+
+func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
+	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
+		// use the first line.
+		resultColumnInfo = originSchemaColumns[0]
+		resultColumn = originColumns[0]
+	} else {
+		if dataSource.handleCols != nil {
+			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else {
+			resultColumn = dataSource.newExtraHandleSchemaCol()
+			resultColumnInfo = model.NewExtraHandleColInfo()
+		}
+	}
+	return resultColumn, resultColumnInfo
 }

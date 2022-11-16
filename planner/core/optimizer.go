@@ -94,6 +94,7 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&countStarRewriter{},
 }
 
 type logicalOptimizeOp struct {

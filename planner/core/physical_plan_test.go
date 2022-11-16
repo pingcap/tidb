@@ -2114,6 +2114,15 @@ func TestIssue30965(t *testing.T) {
 			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
 }
 
+func TestCountStar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int(11) not null, b bool not null)")
+	tk.MustExec("insert into t values(1, true)")
+	tk.MustQuery("select count(*) from t where a=1")
+}
+
 func TestSkewDistinctAgg(t *testing.T) {
 	var (
 		input  []string
