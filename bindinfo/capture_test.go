@@ -953,10 +953,6 @@ func TestCaptureFilter(t *testing.T) {
 	require.Equal(t, "select * from `mysql` . `capture_plan_baselines_blacklist`", rows[0][0])
 }
 
-func getOriginSQLFromHintedSQL(s string) string {
-	return strings.Split(s, "/*")[0] + strings.Split(strings.Split(s, "/*")[1], "*/")[1]
-}
-
 func TestCaptureHints(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
