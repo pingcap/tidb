@@ -191,12 +191,13 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive      bool
-	UseRecursive         bool
-	UseMultiSchemaChange bool
-	UesExchangePartition bool
-	PartitionTelemetry   *PartitionTelemetryInfo
-	AccountLockTelemetry *AccountLockTelemetryInfo
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UesExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -1626,6 +1627,11 @@ func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	normalized, planDigest = plannercore.NormalizeFlatPlan(flat)
 	stmtCtx.SetPlanDigest(normalized, planDigest)
 	return normalized, planDigest
+}
+
+// GetEncodedPlan returned same as getEncodedPlan
+func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
+	return getEncodedPlan(stmtCtx, genHint)
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.

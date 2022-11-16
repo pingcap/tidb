@@ -293,7 +293,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			if RunInGoTest {
 				// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 				d.mu.RLock()
-				d.mu.hook.OnSchemaStateChanged()
+				d.mu.hook.OnSchemaStateChanged(schemaVer)
 				d.mu.RUnlock()
 			}
 

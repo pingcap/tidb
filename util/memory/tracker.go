@@ -41,9 +41,6 @@ var (
 	TriggerMemoryLimitGC = atomicutil.NewBool(false)
 	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
 	MemoryLimitGCTotal   = atomicutil.NewInt64(0)
-
-	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
-	GlobalMemoryUsageTracker *Tracker
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -576,20 +573,6 @@ func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	return nil
 }
 
-// SearchTrackerWithLock searches the specific tracker under this tracker with lock.
-func (t *Tracker) SearchTrackerWithLock(label int) *Tracker {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.label == label {
-		return t
-	}
-	children := t.mu.children[label]
-	if len(children) > 0 {
-		return children[0]
-	}
-	return nil
-}
-
 // SearchTrackerConsumedMoreThanNBytes searches the specific tracker that consumes more than NBytes.
 func (t *Tracker) SearchTrackerConsumedMoreThanNBytes(limit int64) (res []*Tracker) {
 	t.mu.Lock()
@@ -760,11 +743,6 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.Lock()
 	defer t.parMu.Unlock()
 	t.parMu.parent = parent
-}
-
-// GetParentForTest return the parent of the Tracker. Only used by test.
-func (t *Tracker) GetParentForTest() *Tracker {
-	return t.getParent()
 }
 
 // CountAllChildrenMemUse return memory used tree for the tracker

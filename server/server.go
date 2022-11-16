@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -665,32 +664,6 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		DB:                cc.dbname,
 	}
 	return connInfo
-}
-
-func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
-	if cc.extensions == nil {
-		return
-	}
-
-	var connInfo *variable.ConnectionInfo
-	var activeRoles []*auth.RoleIdentity
-	if ctx := cc.getCtx(); ctx != nil {
-		sessVars := ctx.GetSessionVars()
-		connInfo = sessVars.ConnectionInfo
-		activeRoles = sessVars.ActiveRoles
-	}
-
-	if connInfo == nil {
-		connInfo = cc.connectInfo()
-	}
-
-	info := &extension.ConnEventInfo{
-		ConnectionInfo: connInfo,
-		ActiveRoles:    activeRoles,
-		Error:          err,
-	}
-
-	cc.extensions.OnConnectionEvent(tp, info)
 }
 
 func (s *Server) checkConnectionCount() error {

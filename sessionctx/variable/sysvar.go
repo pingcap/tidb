@@ -746,7 +746,8 @@ var defaultSysVars = []*SysVar{
 			if floatValue < 0 && floatValue > 0.9 {
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
 			}
-			if globalMemoryLimitTuner < floatValue+0.05 {
+			// globalMemoryLimitTuner must not be 0. it will be 0 when tidb_server_memory_limit_gc_trigger is not set during startup.
+			if globalMemoryLimitTuner != 0 && globalMemoryLimitTuner < floatValue+0.05 {
 				return "", errors.New("tidb_gogc_tuner_threshold should be less than tidb_server_memory_limit_gc_trigger - 0.05")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
@@ -787,16 +788,6 @@ var defaultSysVars = []*SysVar{
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-
-			if bt == 0 {
-				if config.GetGlobalConfig().Performance.ServerMemoryQuota < 1 {
-					memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
-				} else {
-					memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-				}
-			} else {
-				memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
-			}
 			return nil
 		},
 	},
@@ -837,7 +828,8 @@ var defaultSysVars = []*SysVar{
 			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
-			if floatValue < gogcTunerThreshold+0.05 {
+			// gogcTunerThreshold must not be 0. it will be 0 when tidb_gogc_tuner_threshold is not set during startup.
+			if gogcTunerThreshold != 0 && floatValue < gogcTunerThreshold+0.05 {
 				return "", errors.New("tidb_server_memory_limit_gc_trigger should be greater than tidb_gogc_tuner_threshold + 0.05")
 			}
 
@@ -1049,6 +1041,15 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnablePlanReplayerCapture = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return strconv.FormatBool(vars.EnablePlanReplayerCapture), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgRowFormat(TidbOptInt64(val, DefTiDBRowFormatV2))
 		return nil
@@ -1939,7 +1940,7 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
 			if !s.ConstraintCheckInPlacePessimistic {
