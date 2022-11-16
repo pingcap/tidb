@@ -55,6 +55,8 @@ const (
 	NormalVersionChecker VersionCheckerType = iota
 	// version checker for PiTR
 	StreamVersionChecker
+	// version checker for Checkpoint
+	CheckpointVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -158,6 +160,8 @@ func NewMgr(
 			checker = version.CheckVersionForBR
 		case StreamVersionChecker:
 			checker = version.CheckVersionForBRPiTR
+		case CheckpointVersionChecker:
+			checker = version.CheckVersionForCheckpoint
 		default:
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}

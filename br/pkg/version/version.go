@@ -121,6 +121,15 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 	}
 }
 
+// CheckVersionForCheckpoint checks whether version of the cluster is at least v6.5.0
+func CheckVersionForCheckpoint(s *metapb.Store, tikvVersion *semver.Version) error {
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
+			s.Address, tikvVersion)
+	}
+	return nil
+}
+
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {

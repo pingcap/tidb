@@ -328,7 +328,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Domain loads all table info into memory. By skipping Domain, we save
 	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
 	needDomain := !skipStats
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	versionCheckerNum := conn.NormalVersionChecker
+	if cfg.UseCheckpoint {
+		versionCheckerNum = conn.CheckpointVersionChecker
+	}
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, versionCheckerNum)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -374,8 +378,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !client.CheckCheckpoint(cfgHash) {
-		return errors.Errorf("failed to use checkpoint, the hashs of the configs are not the same")
+	err = client.CheckCheckpoint(cfgHash)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	err = client.SetLockFile(ctx)
 	if err != nil {

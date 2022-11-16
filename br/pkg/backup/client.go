@@ -251,13 +251,17 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 }
 
 // CheckCheckpoint check whether the configs are the same
-func (bc *Client) CheckCheckpoint(hash []byte) bool {
-	// first execution or not use checkpoint mode yet
-	if bc.checkpointMeta == nil {
-		return true
+func (bc *Client) CheckCheckpoint(hash []byte) error {
+	if bc.checkpointMeta != nil && !bytes.Equal(bc.checkpointMeta.ConfigHash, hash) {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "failed to backup to %v,"+
+			"becuase the checkpoint mode is used, "+
+			"but the hashs of the configs are not the same. Please check the config",
+		)
 	}
 
-	return bytes.Equal(bc.checkpointMeta.ConfigHash, hash)
+	// first execution or not using checkpoint mode yet
+	// or using the same config can pass the check
+	return nil
 }
 
 func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
@@ -404,7 +408,7 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
 				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
-					"there are some backup files in the path already, "+
+					"there are some backup files in the path already, but hasn't checkpoint metadata, "+
 					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
 			}
 			return nil
