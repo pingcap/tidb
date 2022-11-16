@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -111,6 +112,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
+	resourceGroupManager  ResourceGroupManager
 }
 
 // ServerInfo is server static information.
@@ -192,6 +194,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
+	is.resourceGroupManager = initResourceGroupManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -235,6 +238,13 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 		return &mockPlacementManager{}
 	}
 	return &PDPlacementManager{etcdCli: etcdCli}
+}
+
+func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
+	if etcdCli == nil {
+		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
+	}
+	return &ExternalResourceGroupManager{etcdCli: etcdCli}
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
@@ -561,6 +571,43 @@ func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, m
 	}
 
 	return
+}
+
+// GetResourceGroup is used to get one specific resource group from PD.
+func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+}
+
+// CreateResourceGroup is used to create one specific resource group to PD.
+func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.CreateResourceGroup(ctx, group)
+}
+
+// ModifyResourceGroup is used to modify one specific resource group to PD.
+func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+}
+
+// DeleteResourceGroup is used to delete one specific resource group from PD.
+func DeleteResourceGroup(ctx context.Context, name string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.DeleteResourceGroup(ctx, name)
 }
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
