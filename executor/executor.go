@@ -1951,6 +1951,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.UseDynamicPruneMode = false
 	}
 
+	sc.StatsLoad.Timeout = 0
+	sc.StatsLoad.NeededItems = nil
+	sc.StatsLoad.ResultCh = nil
+
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
 	vars.MemTracker.UnbindActions()
