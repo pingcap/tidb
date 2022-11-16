@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -637,7 +637,7 @@ func TestUncompressLength(t *testing.T) {
 func TestValidatePasswordStrength(t *testing.T) {
 	ctx := createContext(t)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testuser"}
-	tempDict, err := pwdValidator.CreateTmpDictWithContent("tempDictionary.txt", []byte("1234\n"))
+	tempDict, err := util.CreateTmpDictWithContent("tempDictionary.txt", []byte("1234\n"))
 	require.NoError(t, err)
 	globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 	ctx.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor

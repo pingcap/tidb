@@ -16,15 +16,19 @@ package variable
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -736,4 +740,46 @@ func TestAssertionLevel(t *testing.T) {
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(AssertionOffStr))
 	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(AssertionFastStr))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
+}
+
+func TestUpdateDictionaryFile(t *testing.T) {
+	tooLargeDict, err := func(filename string, size int) (string, error) {
+		filename = filepath.Join(os.TempDir(), filename)
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+		if err != nil {
+			return "", err
+		}
+		if size > 0 {
+			n, err := file.Write(make([]byte, size))
+			if err != nil {
+				return "", err
+			} else if n != size {
+				return "", errors.New("")
+			}
+		}
+		return filename, file.Close()
+	}("1.dict", 2*1024*1024)
+	require.NoError(t, err)
+	err = UpdatePasswordDictionary(tooLargeDict)
+	require.ErrorContains(t, err, "Too Large Dictionary. The maximum permitted file size is 1MB")
+
+	dict, err := util.CreateTmpDictWithContent("2.dict", []byte("abc\n1234\n5678"))
+	require.NoError(t, err)
+	require.NoError(t, UpdatePasswordDictionary(dict))
+	_, ok := passwordDictionary.Cache["1234"]
+	require.True(t, ok)
+	_, ok = passwordDictionary.Cache["5678"]
+	require.True(t, ok)
+	_, ok = passwordDictionary.Cache["abc"]
+	require.False(t, ok)
+}
+
+func TestValidateDictionaryPassword(t *testing.T) {
+	dict, err := util.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
+	require.NoError(t, err)
+	require.NoError(t, UpdatePasswordDictionary(dict))
+	require.True(t, ValidateDictionaryPassword("abcdefg"))
+	require.True(t, ValidateDictionaryPassword("abcd123efg"))
+	require.False(t, ValidateDictionaryPassword("abcd1234efg"))
+	require.False(t, ValidateDictionaryPassword("abcd12345efg"))
 }

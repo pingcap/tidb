@@ -648,7 +648,7 @@ func (d SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spec
 		return dbterror.ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
 
-	// CleanPasswordDictionary the NoDefaultValueFlag value.
+	// Clean the NoDefaultValueFlag value.
 	oldCol.DelFlag(mysql.NoDefaultValueFlag)
 	if len(specNewColumn.Options) == 0 {
 		oldCol.DefaultIsExpr = false

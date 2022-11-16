@@ -221,7 +221,6 @@ go_test(
         "//util/hack",
         "//util/mathutil",
         "//util/mock",
-        "//util/password-validation",
         "//util/printer",
         "//util/sem",
         "//util/sqlexec",

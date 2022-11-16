@@ -43,9 +43,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -1147,7 +1147,7 @@ func TestEncryptionBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("<nil>"))
 
 	// for VALIDATE_PASSWORD_STRENGTH
-	tempDict, err := pwdValidator.CreateTmpDictWithContent("4.txt", []byte("password\n"))
+	tempDict, err := util.CreateTmpDictWithContent("4.txt", []byte("password\n"))
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary_file='%s'", tempDict))
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")

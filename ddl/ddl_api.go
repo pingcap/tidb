@@ -5071,7 +5071,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	}
 	col := table.ToColumn(oldCol.Clone())
 
-	// CleanPasswordDictionary the NoDefaultValueFlag value.
+	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
 	if len(specNewColumn.Options) == 0 {
 		col.DefaultIsExpr = false

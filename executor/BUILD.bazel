@@ -407,7 +407,6 @@ go_test(
         "//util/memory",
         "//util/mock",
         "//util/paging",
-        "//util/password-validation",
         "//util/pdapi",
         "//util/plancodec",
         "//util/ranger",

@@ -17,51 +17,12 @@ package validator
 import (
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"unicode"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 )
-
-// createTmpDictWithSize is only used for test.
-func createTmpDictWithSize(filename string, size int) (string, error) {
-	filename = filepath.Join(os.TempDir(), filename)
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	if err != nil {
-		return "", err
-	}
-	if size > 0 {
-		n, err := file.Write(make([]byte, size))
-		if err != nil {
-			return "", err
-		} else if n != size {
-			return "", errors.New("")
-		}
-	}
-	return filename, file.Close()
-}
-
-// CreateTmpDictWithContent is only used for test.
-func CreateTmpDictWithContent(filename string, content []byte) (string, error) {
-	filename = filepath.Join(os.TempDir(), filename)
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	if err != nil {
-		return "", err
-	}
-	if len(content) > 0 {
-		n, err := file.Write(content)
-		if err != nil {
-			return "", err
-		} else if n != len(content) {
-			return "", errors.New("")
-		}
-	}
-	return filename, file.Close()
-}
 
 // ValidateUserNameInPassword checks whether pwd exists in the dictionary.
 func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (string, error) {

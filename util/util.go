@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,24 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"go.uber.org/zap"
 )
+
+// CreateTmpDictWithContent is only used for test.
+func CreateTmpDictWithContent(filename string, content []byte) (string, error) {
+	filename = filepath.Join(os.TempDir(), filename)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	if len(content) > 0 {
+		n, err := file.Write(content)
+		if err != nil {
+			return "", err
+		} else if n != len(content) {
+			return "", errors.New("")
+		}
+	}
+	return filename, file.Close()
+}
 
 // SliceToMap converts slice to map
 // nolint:unused

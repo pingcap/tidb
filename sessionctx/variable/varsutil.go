@@ -537,32 +537,28 @@ func collectAllowFuncName4ExpressionIndex() string {
 	return strings.Join(str, ", ")
 }
 
-// PasswordDictionaryImpl is the dictionary for validating password.
-type PasswordDictionaryImpl struct {
+type passwordDictionaryImpl struct {
 	Cache map[string]struct{}
 	m     sync.RWMutex
 }
 
-// MaxPwdValidationLength is the max length of word in dictionary.
-const MaxPwdValidationLength int = 100
+const maxPwdValidationLength int = 100
 
-// MinPwdValidationLength is the min length of word in dictionary.
-const MinPwdValidationLength int = 4
+const minPwdValidationLength int = 4
 
-// PasswordDictionary is the dictionary for validating password.
-var PasswordDictionary = PasswordDictionaryImpl{Cache: make(map[string]struct{})}
+var passwordDictionary = passwordDictionaryImpl{Cache: make(map[string]struct{})}
 
 // CleanPasswordDictionary removes all the words in the dictionary.
 func CleanPasswordDictionary() {
-	PasswordDictionary.m.Lock()
-	defer PasswordDictionary.m.Unlock()
-	PasswordDictionary.Cache = make(map[string]struct{})
+	passwordDictionary.m.Lock()
+	defer passwordDictionary.m.Unlock()
+	passwordDictionary.Cache = make(map[string]struct{})
 }
 
 // UpdatePasswordDictionary update the dictionary for validating password.
 func UpdatePasswordDictionary(filePath string) error {
-	PasswordDictionary.m.Lock()
-	defer PasswordDictionary.m.Unlock()
+	passwordDictionary.m.Lock()
+	defer passwordDictionary.m.Unlock()
 	newDictionary := make(map[string]struct{})
 	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
@@ -576,29 +572,29 @@ func UpdatePasswordDictionary(filePath string) error {
 	s := bufio.NewScanner(file)
 	for s.Scan() {
 		line := strings.ToLower(string(hack.String(s.Bytes())))
-		if len(line) >= MinPwdValidationLength && len(line) <= MaxPwdValidationLength {
+		if len(line) >= minPwdValidationLength && len(line) <= maxPwdValidationLength {
 			newDictionary[line] = struct{}{}
 		}
 	}
 	if err := s.Err(); err != nil {
 		return err
 	}
-	PasswordDictionary.Cache = newDictionary
+	passwordDictionary.Cache = newDictionary
 	return file.Close()
 }
 
 // ValidateDictionaryPassword checks if the password contains words in the dictionary.
 func ValidateDictionaryPassword(pwd string) bool {
-	PasswordDictionary.m.RLock()
-	defer PasswordDictionary.m.RUnlock()
-	if len(PasswordDictionary.Cache) == 0 {
+	passwordDictionary.m.RLock()
+	defer passwordDictionary.m.RUnlock()
+	if len(passwordDictionary.Cache) == 0 {
 		return true
 	}
 	pwdLength := len(pwd)
-	for subStrLen := mathutil.Min(MaxPwdValidationLength, pwdLength); subStrLen >= MinPwdValidationLength; subStrLen-- {
+	for subStrLen := mathutil.Min(maxPwdValidationLength, pwdLength); subStrLen >= minPwdValidationLength; subStrLen-- {
 		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
 			subStr := pwd[subStrPos : subStrPos+subStrLen]
-			if _, ok := PasswordDictionary.Cache[subStr]; ok {
+			if _, ok := passwordDictionary.Cache[subStr]; ok {
 				return false
 			}
 		}

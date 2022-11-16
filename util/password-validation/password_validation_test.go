@@ -15,35 +15,97 @@
 package validator
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpdateDictionaryFile(t *testing.T) {
-	tooLargeDict, err := createTmpDictWithSize("1.dict", 2*1024*1024)
+func TestValidateUserNameInPassword(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.User = &auth.UserIdentity{Username: "user", AuthUsername: "authuser"}
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	testcases := []struct {
+		pwd  string
+		warn string
+	}{
+		{"", ""},
+		{"user", "Password Contains User Name"},
+		{"authuser", "Password Contains User Name"},
+		{"resu000", "Password Contains Reversed User Name"},
+		{"resuhtua", "Password Contains Reversed User Name"},
+		{"User", ""},
+		{"authUser", ""},
+		{"Resu", ""},
+		{"Resuhtua", ""},
+	}
+	// Enable check_user_name
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "ON")
 	require.NoError(t, err)
-	err = variable.UpdatePasswordDictionary(tooLargeDict)
-	require.ErrorContains(t, err, "Too Large Dictionary. The maximum permitted file size is 1MB")
+	for _, testcase := range testcases {
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
+		require.NoError(t, err)
+		require.Equal(t, testcase.warn, warn, testcase.pwd)
+	}
 
-	dict, err := CreateTmpDictWithContent("2.dict", []byte("abc\n1234\n5678"))
+	// Disable check_user_name
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "OFF")
 	require.NoError(t, err)
-	require.NoError(t, variable.UpdatePasswordDictionary(dict))
-	_, ok := variable.PasswordDictionary.Cache["1234"]
-	require.True(t, ok)
-	_, ok = variable.PasswordDictionary.Cache["5678"]
-	require.True(t, ok)
-	_, ok = variable.PasswordDictionary.Cache["abc"]
-	require.False(t, ok)
+	for _, testcase := range testcases {
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
+		require.NoError(t, err)
+		require.Equal(t, "", warn, testcase.pwd)
+	}
 }
 
-func TestValidateDictionaryPassword(t *testing.T) {
-	dict, err := CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
+func TestValidatePasswordLowPolicy(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordLength, "8")
 	require.NoError(t, err)
-	require.NoError(t, variable.UpdatePasswordDictionary(dict))
-	require.True(t, variable.ValidateDictionaryPassword("abcdefg"))
-	require.True(t, variable.ValidateDictionaryPassword("abcd123efg"))
-	require.False(t, variable.ValidateDictionaryPassword("abcd1234efg"))
-	require.False(t, variable.ValidateDictionaryPassword("abcd12345efg"))
+
+	warn, err := ValidatePasswordLowPolicy("1234", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Length: 8", warn)
+	warn, err = ValidatePasswordLowPolicy("12345678", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "", warn)
+
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordLength, "12")
+	require.NoError(t, err)
+	warn, err = ValidatePasswordLowPolicy("12345678", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Length: 12", warn)
+}
+
+func TestValidatePasswordMediumPolicy(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
+
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordMixedCaseCount, "1")
+	require.NoError(t, err)
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordSpecialCharCount, "2")
+	require.NoError(t, err)
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordNumberCount, "3")
+	require.NoError(t, err)
+
+	warn, err := ValidatePasswordMediumPolicy("!@A123", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Lowercase Count: 1", warn)
+	warn, err = ValidatePasswordMediumPolicy("!@a123", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Uppercase Count: 1", warn)
+	warn, err = ValidatePasswordMediumPolicy("!@Aa12", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Digit Count: 3", warn)
+	warn, err = ValidatePasswordMediumPolicy("!Aa123", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "Require Password Non-alphanumeric Count: 2", warn)
+	warn, err = ValidatePasswordMediumPolicy("!@Aa123", &sessionVars.GlobalVarsAccessor)
+	require.NoError(t, err)
+	require.Equal(t, "", warn)
 }
