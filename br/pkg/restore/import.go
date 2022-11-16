@@ -455,17 +455,12 @@ func (importer *FileImporter) ImportKVFiles(
 	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
 	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
-		var (
-			subfiles  []*backuppb.DataFileInfo
-			errFilter error
-		)
-		if !supportBatch || len(files) == 1 {
-			subfiles = files
-		} else {
-			subfiles, errFilter = FilterFilesByRegion(files, ranges, r)
-			if errFilter != nil {
-				return RPCResultFromError(errFilter)
-			}
+		subfiles, errFilter := FilterFilesByRegion(files, ranges, r)
+		if errFilter != nil {
+			return RPCResultFromError(errFilter)
+		}
+		if len(subfiles) == 0 {
+			return RPCResultOK()
 		}
 		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
 	})
