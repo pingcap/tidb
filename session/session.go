@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2506,7 +2507,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, nil
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
-		s.SetMemoryFootprintChangeHook()
+	s.SetMemoryFootprintChangeHook()
 	return &s.txn, err
 }
 
@@ -3604,6 +3605,11 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
 	hook := func(mem uint64) {
+		if s.TxnInfo().MemDBFootprint == nil {
+			tracker := memory.NewTracker(memory.LabelForMemDB, -1)
+			tracker.AttachTo(s.sessionVars.MemTracker)
+			s.TxnInfo().MemDBFootprint = tracker
+		}
 		s.TxnInfo().MemDBFootprint.ReplaceBytesUsed(int64(mem))
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)

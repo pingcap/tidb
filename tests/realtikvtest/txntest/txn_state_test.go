@@ -135,8 +135,7 @@ func TestEntriesCountAndSize(t *testing.T) {
 }
 
 func TestMemDBTracker(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	session := tk.Session()
 	tk.MustExec("use test")

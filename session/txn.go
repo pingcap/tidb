@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
@@ -159,8 +158,7 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 func (txn *LazyTxn) resetTxnInfo(
 	startTS uint64,
 	state txninfo.TxnRunningState,
-	entriesCount,
-	entriesSize uint64,
+	entriesCount uint64,
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
@@ -178,18 +176,8 @@ func (txn *LazyTxn) resetTxnInfo(
 	txninfo.TxnStatusEnteringCounter(state).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
-	tracker := txn.mu.TxnInfo.MemDBFootprint
+	txn.mu.TxnInfo.MemDBFootprint = nil // will be lazily initialized when using it
 
-	// TODO: set appropriate action and limit.
-	if tracker != nil {
-		tracker.Detach()
-		memory.InitTracker(tracker, memory.LabelForMemDB, int64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit), &memory.PanicOnExceed{})
-	} else {
-		txn.mu.TxnInfo.MemDBFootprint = memory.NewTracker(memory.LabelForMemDB, int64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit))
-		txn.mu.TxnInfo.MemDBFootprint.SetActionOnExceed(&memory.PanicOnExceed{})
-	}
-
-	txn.mu.TxnInfo.MemDBFootprint.Consume(int64(entriesSize))
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
 }
@@ -302,7 +290,6 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		t.StartTS(),
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
-		txn.Transaction.Mem(),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
 
