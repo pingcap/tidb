@@ -124,10 +124,6 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	// Some test cases come from mysql-server/mysql-test:
-	//  t/validate_password_component.test
-	//  t/validate_password_component_check_user.test
-
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
