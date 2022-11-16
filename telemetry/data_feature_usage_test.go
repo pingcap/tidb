@@ -422,7 +422,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.False(t, usage.EnableCostModelVer2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
