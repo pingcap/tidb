@@ -13,6 +13,7 @@ go_test(
         "//ddl/testutil",
         "//meta/autoid",
         "//parser/mysql",
+        "//session",
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testutil",
