@@ -46,18 +46,12 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
-	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
+	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20220614124712-cd832493ec73
-	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
-	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
-=======
-	github.com/pingcap/kvproto v0.0.0-20221103025916-e7e21f0e9cd9
-	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
+	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
->>>>>>> ba35a37b72 (util: use one logger (#39176))
+	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220222072611-9b6db18731e5
 	github.com/prometheus/client_golang v1.5.1
@@ -88,7 +82,7 @@ require (
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
 	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210831042530-f4d43177bf5e
+	golang.org/x/sys v0.0.0-20211013075003-97ac67df715c
 	golang.org/x/text v0.3.7
 	golang.org/x/tools v0.1.5
 	google.golang.org/api v0.54.0
