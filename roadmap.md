@@ -86,9 +86,13 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 </thead>
 <tbody>
   <tr>
-    <td>SQL tuning for HTAP workloads</td>
-    <td><ul><li>Provide SQL execution information from the perspective of applications.</li><li>Provide suggestions on optimizing SQL for TiFlash and TiKV in HTAP workloads.</li></ul></td>
-    <td><ul><li>Provide a dashboard that displays a SQL execution overview from the perspective of applications in HTAP workloads.</li><li>For one or several HTAP scenarios, provide suggestions on SQL optimization.</li></ul></td>
+    <td rowspan="2">SQL tuning for HTAP workloads</td>
+    <td>Provide SQL execution information from the perspective of applications.</td>
+    <td>Provide a dashboard that displays a SQL execution overview from the perspective of applications in HTAP workloads.</td>
+  </tr>
+  <tr>
+    <td>Provide suggestions on optimizing SQL for TiFlash and TiKV in HTAP workloads.</td>
+    <td>For one or several HTAP scenarios, provide suggestions on SQL optimization.</td>
   </tr>
 </tbody>
 </table>
