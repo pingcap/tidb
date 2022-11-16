@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+	"reflect"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -794,14 +795,17 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 }
 
 func (w *indexMergeProcessWorker) doIntersectionPerPartition(handles []kv.Handle, handleMap *kv.HandleMap) {
+	var newAllocMapEle int64
 	for _, h := range handles {
 		if cntPtr, ok := handleMap.Get(h); ok {
 			(*cntPtr.(*int))++
 		} else {
 			cnt := 1
 			handleMap.Set(h, &cnt)
+			newAllocMapEle++
 		}
 	}
+	w.indexMerge.memTracker.Consume(newAllocMapEle * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
 }
 
 func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
