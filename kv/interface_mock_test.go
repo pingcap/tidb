@@ -157,6 +157,10 @@ func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }
 
+func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
+
+}
+
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
 
 }

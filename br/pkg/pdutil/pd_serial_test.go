@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -204,6 +205,25 @@ func TestPDRequestRetry(t *testing.T) {
 	require.Error(t, reqErr)
 }
 
+func TestPDResetTSCompatibility(t *testing.T) {
+	ctx := context.Background()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+	pd := PdController{addrs: []string{ts.URL}, cli: http.DefaultClient}
+	reqErr := pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts2.Close()
+	pd = PdController{addrs: []string{ts2.URL}, cli: http.DefaultClient}
+	reqErr = pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+}
+
 func TestStoreInfo(t *testing.T) {
 	storeInfo := pdtypes.StoreInfo{
 		Status: &pdtypes.StoreStatus{
@@ -239,11 +259,21 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 
 	labelExpires := make(map[string]time.Time)
 
+	var (
+		mu      sync.Mutex
+		deleted bool
+	)
+
 	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if deleted {
+			return
+		}
 		if r.Method == http.MethodDelete {
 			ruleID := strings.TrimPrefix(r.URL.Path, "/"+regionLabelPrefix+"/")
-			print(ruleID)
 			delete(labelExpires, ruleID)
+			deleted = true
 			return
 		}
 		var labelRule LabelRule

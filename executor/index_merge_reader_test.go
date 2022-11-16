@@ -23,15 +23,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSingleTableRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -52,8 +50,7 @@ func TestSingleTableRead(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -69,8 +66,7 @@ func TestJoin(t *testing.T) {
 }
 
 func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -83,8 +79,7 @@ func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
 
 // issue 25045
 func TestIndexMergeReaderIssue25045(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -100,8 +95,7 @@ func TestIndexMergeReaderIssue25045(t *testing.T) {
 }
 
 func TestIssue16910(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("use test;")
@@ -120,8 +114,7 @@ func TestIssue16910(t *testing.T) {
 }
 
 func TestIndexMergeCausePanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
@@ -130,8 +123,7 @@ func TestIndexMergeCausePanic(t *testing.T) {
 }
 
 func TestPartitionTableRandomIndexMerge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge=1")
@@ -191,13 +183,10 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 }
 
 func TestIndexMergeWithPreparedStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
 	insertStr := "insert into t1 values(0, 0, 0)"
@@ -228,8 +217,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 }
 
 func TestIndexMergeInTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -375,8 +363,7 @@ func TestIndexMergeInTransaction(t *testing.T) {
 }
 
 func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -448,8 +435,7 @@ func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
 }
 
 func TestIndexMergeReaderMemTracker(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
@@ -460,17 +446,15 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
-	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	memTracker := tk.Session().GetSessionVars().MemTracker
 
 	tk.MustExec(insertStr)
-
-	oriMaxUsage := memTracker.MaxConsumed()
 
 	// We select all rows in t1, so the mem usage is more clear.
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 
-	newMaxUsage := memTracker.MaxConsumed()
-	require.Greater(t, newMaxUsage, oriMaxUsage)
+	memUsage := memTracker.MaxConsumed()
+	require.Greater(t, memUsage, int64(0))
 
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	require.Len(t, res.Rows(), 4)
@@ -485,8 +469,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 }
 
 func TestIndexMergeSplitTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("DROP TABLE IF EXISTS tab2;")
@@ -508,13 +491,12 @@ func TestIndexMergeSplitTable(t *testing.T) {
 
 func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime) NONCLUSTERED, key(c1), key(c2))
 			partition by range (to_days(c_datetime)) (
 				partition p0 values less than (to_days('2020-02-01')),
 				partition p1 values less than (to_days('2020-04-01')),

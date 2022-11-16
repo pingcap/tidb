@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/exp/slices"
 )
 
 func TestMain(m *testing.M) {
@@ -38,6 +38,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
 	testsetup.SetupForCommonTest()
 	goleak.VerifyTestMain(m, opts...)
@@ -124,10 +125,10 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 }
 
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
-	lessFunc := func(i, j int) bool { return bytes.Compare(data[i].Key, data[j].Key) < 0 }
-	if !sort.SliceIsSorted(data, lessFunc) {
+	lessFunc := func(i, j *kv.Entry) bool { return bytes.Compare(i.Key, j.Key) < 0 }
+	if !slices.IsSortedFunc(data, lessFunc) {
 		data = append([]*kv.Entry{}, data...)
-		sort.Slice(data, lessFunc)
+		slices.SortFunc(data, lessFunc)
 	}
 
 	r.data = data

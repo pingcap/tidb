@@ -265,8 +265,8 @@ func TestMatchTables(t *testing.T) {
 		require.NoError(t, err)
 		fci := filter.CaseInsensitive(fcs)
 		for i, tbl := range tc.tables {
-			require.Equalf(t, fcs.MatchTable(tbl.Schema, tbl.Name), tc.acceptedCS[i], "cs tbl %v", tbl)
-			require.Equalf(t, fci.MatchTable(tbl.Schema, tbl.Name), tc.acceptedCI[i], "ci tbl %v", tbl)
+			require.Equalf(t, tc.acceptedCS[i], fcs.MatchTable(tbl.Schema, tbl.Name), "cs tbl %v", tbl)
+			require.Equalf(t, tc.acceptedCI[i], fci.MatchTable(tbl.Schema, tbl.Name), "ci tbl %v", tbl)
 		}
 	}
 }
@@ -383,7 +383,7 @@ func TestParseFailures2(t *testing.T) {
 		},
 		{
 			arg: "db",
-			msg: `.*: missing table pattern`,
+			msg: `.*: wrong table pattern`,
 		},
 		{
 			arg: "db.",

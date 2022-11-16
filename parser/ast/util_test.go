@@ -147,6 +147,8 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 		}
 	case *Join:
 		node.ExplicitParens = false
+	case *ColumnDef:
+		node.Tp.CleanElemIsBinaryLit()
 	}
 	return in, false
 }

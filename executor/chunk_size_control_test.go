@@ -98,8 +98,7 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 
 func TestLimitAndTableScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
-	kit, clean := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
-	defer clean()
+	kit := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
@@ -130,8 +129,7 @@ func TestLimitAndTableScan(t *testing.T) {
 
 func TestLimitAndIndexScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
-	kit, clean := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
-	defer clean()
+	kit := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
@@ -200,7 +198,7 @@ type chunkSizeControlKit struct {
 }
 
 // nolint: unused, deadcode
-func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, func()) {
+func createChunkSizeControlKit(t *testing.T, sql string) *chunkSizeControlKit {
 	// BootstrapSession is not thread-safe, so we have to prepare all resources in SetUp.
 	kit := new(chunkSizeControlKit)
 	kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
@@ -226,8 +224,9 @@ func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, 
 	kit.tk = testkit.NewTestKit(t, kit.store)
 	kit.tk.MustExec("use test")
 	kit.tk.MustExec(sql)
-	return kit, func() {
+	t.Cleanup(func() {
 		kit.dom.Close()
 		require.NoError(t, kit.store.Close())
-	}
+	})
+	return kit
 }

@@ -1,0 +1,4 @@
+[tikv-importer]
+backend = 'local'
+incremental-import = true
+max-kv-pairs = 1

@@ -13,8 +13,10 @@ go_library(
 
 go_test(
     name = "promutil_test",
+    timeout = "short",
     srcs = ["registry_test.go"],
     embed = [":promutil"],
+    flaky = True,
     deps = [
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//require",

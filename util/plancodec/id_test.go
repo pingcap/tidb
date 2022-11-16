@@ -87,3 +87,9 @@ func TestPlanIDChanged(t *testing.T) {
 		require.Equal(t, testcase.Expected, testcase.Value)
 	}
 }
+
+func TestReverse(t *testing.T) {
+	for i := 1; i <= 55; i++ {
+		require.Equal(t, TypeStringToPhysicalID(PhysicalIDToTypeString(i)), i)
+	}
+}

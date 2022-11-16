@@ -2,13 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "pessimistictest_test",
+    timeout = "long",
     srcs = [
         "main_test.go",
         "pessimistic_test.go",
     ],
+    flaky = True,
     deps = [
         "//config",
         "//domain",
+        "//expression",
         "//kv",
         "//parser",
         "//parser/auth",
@@ -17,10 +20,12 @@ go_test(
         "//parser/terror",
         "//session",
         "//sessionctx/variable",
+        "//sessiontxn",
         "//store/driver/error",
         "//store/mockstore",
         "//tablecodec",
         "//testkit",
+        "//testkit/external",
         "//tests/realtikvtest",
         "//types",
         "//util/codec",

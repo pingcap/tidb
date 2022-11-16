@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "checksum_test",
+    timeout = "short",
     srcs = [
         "checksum_test.go",
         "main_test.go",
     ],
     embed = [":checksum"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/encrypt",

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
@@ -53,7 +54,9 @@ type FieldType struct {
 	// collate represent collate rules of the charset
 	collate string
 	// elems is the element list for enum and set type.
-	elems []string
+	elems            []string
+	elemsIsBinaryLit []bool
+	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
 // NewFieldType returns a FieldType,
@@ -65,68 +68,86 @@ func NewFieldType(tp byte) *FieldType {
 		decimal: UnspecifiedLength,
 	}
 }
+
+// IsDecimalValid checks whether the decimal is valid.
 func (ft *FieldType) IsDecimalValid() bool {
 	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {
 		return false
 	}
 	return true
 }
+
+// GetType returns the type of the FieldType.
 func (ft *FieldType) GetType() byte {
 	return ft.tp
 }
 
+// GetFlag returns the flag of the FieldType.
 func (ft *FieldType) GetFlag() uint {
 	return ft.flag
 }
 
+// GetFlen returns the length of the field.
 func (ft *FieldType) GetFlen() int {
 	return ft.flen
 }
 
+// GetDecimal returns the decimal of the FieldType.
 func (ft *FieldType) GetDecimal() int {
 	return ft.decimal
 }
 
+// GetCharset returns the field's charset
 func (ft *FieldType) GetCharset() string {
 	return ft.charset
 }
 
+// GetCollate returns the collation of the field.
 func (ft *FieldType) GetCollate() string {
 	return ft.collate
 }
 
+// GetElems returns the elements of the FieldType.
 func (ft *FieldType) GetElems() []string {
 	return ft.elems
 }
 
+// SetType sets the type of the FieldType.
 func (ft *FieldType) SetType(tp byte) {
 	ft.tp = tp
 }
 
+// SetFlag sets the flag of the FieldType.
 func (ft *FieldType) SetFlag(flag uint) {
 	ft.flag = flag
 }
 
+// AddFlag adds a flag to the FieldType.
 func (ft *FieldType) AddFlag(flag uint) {
 	ft.flag |= flag
 }
 
+// AndFlag and the flag of the FieldType.
 func (ft *FieldType) AndFlag(flag uint) {
 	ft.flag &= flag
 }
 
+// ToggleFlag toggle the flag of the FieldType.
 func (ft *FieldType) ToggleFlag(flag uint) {
 	ft.flag ^= flag
 }
 
+// DelFlag delete the flag of the FieldType.
 func (ft *FieldType) DelFlag(flag uint) {
 	ft.flag &= ^flag
 }
 
+// SetFlen sets the length of the field.
 func (ft *FieldType) SetFlen(flen int) {
 	ft.flen = flen
 }
 
+// SetFlenUnderLimit sets the length of the field to the value of the argument
 func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	if ft.tp == mysql.TypeNewDecimal {
 		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
@@ -135,10 +156,12 @@ func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	}
 }
 
+// SetDecimal sets the decimal of the FieldType.
 func (ft *FieldType) SetDecimal(decimal int) {
 	ft.decimal = decimal
 }
 
+// SetDecimalUnderLimit sets the decimal of the field to the value of the argument
 func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	if ft.tp == mysql.TypeNewDecimal {
 		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
@@ -147,6 +170,7 @@ func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	}
 }
 
+// UpdateFlenAndDecimalUnderLimit updates the length and decimal to the value of the argument
 func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
 	if ft.tp != mysql.TypeNewDecimal {
 		return
@@ -164,24 +188,56 @@ func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal
 	}
 }
 
+// SetCharset sets the charset of the FieldType.
 func (ft *FieldType) SetCharset(charset string) {
 	ft.charset = charset
 }
 
+// SetCollate sets the collation of the FieldType.
 func (ft *FieldType) SetCollate(collate string) {
 	ft.collate = collate
 }
 
+// SetElems sets the elements of the FieldType.
 func (ft *FieldType) SetElems(elems []string) {
 	ft.elems = elems
 }
 
+// SetElem sets the element of the FieldType.
 func (ft *FieldType) SetElem(idx int, element string) {
 	ft.elems[idx] = element
 }
 
+// SetElemWithIsBinaryLit sets the element of the FieldType.
+func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit bool) {
+	ft.elems[idx] = element
+	if isBinaryLit {
+		// Create the binary literal flags lazily.
+		if ft.elemsIsBinaryLit == nil {
+			ft.elemsIsBinaryLit = make([]bool, len(ft.elems))
+		}
+		ft.elemsIsBinaryLit[idx] = true
+	}
+}
+
+// GetElem returns the element of the FieldType.
 func (ft *FieldType) GetElem(idx int) string {
 	return ft.elems[idx]
+}
+
+// GetElemIsBinaryLit returns the binary literal flag of the element at index idx.
+func (ft *FieldType) GetElemIsBinaryLit(idx int) bool {
+	if len(ft.elemsIsBinaryLit) == 0 {
+		return false
+	}
+	return ft.elemsIsBinaryLit[idx]
+}
+
+// CleanElemIsBinaryLit cleans the binary literal flag of the element at index idx.
+func (ft *FieldType) CleanElemIsBinaryLit() {
+	if ft != nil && ft.elemsIsBinaryLit != nil {
+		ft.elemsIsBinaryLit = nil
+	}
 }
 
 // Clone returns a copy of itself.
@@ -206,6 +262,26 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.collate == other.collate &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	if !partialEqual || len(ft.elems) != len(other.elems) {
+		return false
+	}
+	for i := range ft.elems {
+		if ft.elems[i] != other.elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// PartialEqual checks whether two FieldType objects are equal.
+// If unsafe is true and the objects is string type, PartialEqual will ignore flen.
+// See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
+func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
+		return ft.Equal(other)
+	}
+
+	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
 	if !partialEqual || len(ft.elems) != len(other.elems) {
 		return false
 	}
@@ -306,6 +382,8 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeNull:
+		suffix = "(0)"
 	}
 	return ts + suffix
 }
@@ -314,7 +392,9 @@ func (ft *FieldType) CompactStr() string {
 // returns a string.
 func (ft *FieldType) InfoSchemaStr() string {
 	suffix := ""
-	if mysql.HasUnsignedFlag(ft.flag) {
+	if mysql.HasUnsignedFlag(ft.flag) &&
+		ft.tp != mysql.TypeBit &&
+		ft.tp != mysql.TypeYear {
 		suffix = " unsigned"
 	}
 	return ft.CompactStr() + suffix
@@ -506,15 +586,17 @@ func HasCharset(ft *FieldType) bool {
 
 // for json
 type jsonFieldType struct {
-	Tp      byte
-	Flag    uint
-	Flen    int
-	Decimal int
-	Charset string
-	Collate string
-	Elems   []string
+	Tp               byte
+	Flag             uint
+	Flen             int
+	Decimal          int
+	Charset          string
+	Collate          string
+	Elems            []string
+	ElemsIsBinaryLit []bool
 }
 
+// UnmarshalJSON implements the json.Unmarshaler interface.
 func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	var r jsonFieldType
 	err := json.Unmarshal(data, &r)
@@ -526,10 +608,12 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.charset = r.Charset
 		ft.collate = r.Collate
 		ft.elems = r.Elems
+		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 	}
 	return err
 }
 
+// MarshalJSON marshals the FieldType to JSON.
 func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	var r jsonFieldType
 	r.Tp = ft.tp
@@ -539,5 +623,22 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Charset = ft.charset
 	r.Collate = ft.collate
 	r.Elems = ft.elems
+	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	return json.Marshal(r)
+}
+
+const emptyFieldTypeSize = int64(unsafe.Sizeof(FieldType{}))
+
+// MemoryUsage return the memory usage of FieldType
+func (ft *FieldType) MemoryUsage() (sum int64) {
+	if ft == nil {
+		return
+	}
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate)) + int64(cap(ft.elems))*int64(unsafe.Sizeof(*new(string))) +
+		int64(cap(ft.elemsIsBinaryLit))*int64(unsafe.Sizeof(*new(bool)))
+
+	for _, s := range ft.elems {
+		sum += int64(len(s))
+	}
+	return
 }

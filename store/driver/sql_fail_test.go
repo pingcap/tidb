@@ -26,8 +26,7 @@ import (
 )
 
 func TestFailBusyServerCop(t *testing.T) {
-	store, _, clean := createTestStore(t)
-	defer clean()
+	store, _ := createTestStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)

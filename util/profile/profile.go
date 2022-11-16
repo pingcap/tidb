@@ -44,7 +44,7 @@ func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) 
 	return c.profileToDatums(p)
 }
 
-func (c *Collector) profileToFlamegraphNode(p *profile.Profile) (*flamegraphNode, error) {
+func (*Collector) profileToFlamegraphNode(p *profile.Profile) (*flamegraphNode, error) {
 	err := p.CheckValid()
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 }
 
 // ParseGoroutines returns the groutine list for given string representation
-func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
+func (*Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 	content, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err

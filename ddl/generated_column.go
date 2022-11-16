@@ -127,7 +127,7 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
-			colNames := findColumnNamesInExpr(option.Expr)
+			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
 				colsMap[depCol.Name.L] = struct{}{}
 			}
@@ -137,8 +137,8 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	return
 }
 
-// findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
-func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
+// FindColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
+func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
 	return c.cols

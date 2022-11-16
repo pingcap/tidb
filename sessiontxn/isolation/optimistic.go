@@ -21,33 +21,96 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
+var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
+
 // OptimisticTxnContextProvider provides txn context for optimistic transaction
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
+	optimizeWithMaxTS bool
 }
 
-// NewOptimisticTxnContextProvider returns a new OptimisticTxnContextProvider
-func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *OptimisticTxnContextProvider {
-	provider := &OptimisticTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-		},
+// ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
+func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, causalConsistencyOnly bool) {
+	*p = emptyOptimisticTxnContextProvider
+	p.sctx = sctx
+	p.causalConsistencyOnly = causalConsistencyOnly
+	p.onTxnActiveFunc = p.onTxnActive
+	p.getStmtReadTSFunc = p.getTxnStartTS
+	p.getStmtForUpdateTSFunc = p.getTxnStartTS
+}
+
+func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
+}
+
+// isOptimisticTxnRetryable (if returns true) means the transaction could retry.
+// We only consider retry in this optimistic mode.
+// If the session is already in transaction, enable retry or internal SQL could retry.
+// If not, the transaction could always retry, because it should be auto committed transaction.
+// Anyway the retry limit is 0, the transaction could not retry.
+func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.EnterNewTxnType) bool {
+	if tp == sessiontxn.EnterNewTxnDefault {
+		return false
 	}
 
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
-	return provider
+	// If retry limit is 0, the transaction could not retry.
+	if sessVars.RetryLimit == 0 {
+		return false
+	}
+
+	// When `@@tidb_snapshot` is set, it is a ready-only statement and will not cause the errors that should retry a transaction in optimistic mode.
+	if sessVars.SnapshotTS != 0 {
+		return false
+	}
+
+	// If the session is not InTxn, it is an auto-committed transaction.
+	// The auto-committed transaction could always retry.
+	if !sessVars.InTxn() {
+		return true
+	}
+
+	// The internal transaction could always retry.
+	if sessVars.InRestrictedSQL {
+		return true
+	}
+
+	// If the retry is enabled, the transaction could retry.
+	if !sessVars.DisableTxnAutoRetry {
+		return true
+	}
+
+	return false
+}
+
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	// If `math.MaxUint64` is used for point get optimization, it is not necessary to activate the txn.
+	// Just return `math.MaxUint64` to save the performance.
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtReadTS()
+}
+
+// GetStmtForUpdateTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtForUpdateTS()
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
-	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
 
@@ -71,10 +134,17 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
 		)
-		if err = p.prepareTxnWithTS(math.MaxUint64); err != nil {
-			return err
+
+		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
+			logutil.BgLogger().Error("failed init txnStartTS with MaxUint64",
+				zap.Error(err),
+				zap.Uint64("conn", sessVars.ConnectionID),
+				zap.String("text", sessVars.StmtCtx.OriginalSQL),
+			)
+			return nil
 		}
 
+		p.optimizeWithMaxTS = true
 		if sessVars.StmtCtx.Priority == mysql.NoPriority {
 			sessVars.StmtCtx.Priority = kv.PriorityHigh
 		}

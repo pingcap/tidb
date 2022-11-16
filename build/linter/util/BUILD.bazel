@@ -8,5 +8,6 @@ go_library(
     deps = [
         "@co_honnef_go_tools//analysis/report",
         "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
     ],
 )

@@ -111,37 +111,30 @@ func InitLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
-	_, _, err = initGRPCLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	initGRPCLogger(gl)
 	return nil
 }
 
-func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
-	// Copy Config struct by assignment.
-	config := cfg.Config
-	var l *zap.Logger
-	var err error
-	var prop *log.ZapProperties
+func initGRPCLogger(gl *zap.Logger) {
+	level := zapcore.ErrorLevel
+	verbosity := 0
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		config.Level = "debug"
-		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		gzap.ReplaceGrpcLoggerV2WithVerbosity(l, 999)
-	} else {
-		config.Level = "error"
-		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		gzap.ReplaceGrpcLoggerV2(l)
+		verbosity = 999
+		level = zapcore.DebugLevel
 	}
 
-	return l, prop, nil
+	newgl := gl.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		oldcore, ok := core.(*log.TextIOCore)
+		if !ok {
+			return oldcore
+		}
+		newcore := oldcore.Clone()
+		leveler := zap.NewAtomicLevel()
+		leveler.SetLevel(level)
+		newcore.LevelEnabler = leveler
+		return newcore
+	}))
+	gzap.ReplaceGrpcLoggerV2WithVerbosity(newgl, verbosity)
 }
 
 // ReplaceLogger replace global logger instance with given log config.
@@ -233,7 +226,7 @@ type traceLog struct {
 	ctx context.Context
 }
 
-func (t *traceLog) Enabled(_ zapcore.Level) bool {
+func (*traceLog) Enabled(_ zapcore.Level) bool {
 	return true
 }
 
@@ -242,7 +235,7 @@ func (t *traceLog) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (t *traceLog) Sync() error {
+func (*traceLog) Sync() error {
 	return nil
 }
 

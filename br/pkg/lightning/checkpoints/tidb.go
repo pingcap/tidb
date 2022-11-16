@@ -19,6 +19,7 @@ import (
 )
 
 type TidbDBInfo struct {
+	ID     int64
 	Name   string
 	Tables map[string]*TidbTableInfo
 }

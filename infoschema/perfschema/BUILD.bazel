@@ -28,17 +28,20 @@ go_library(
         "//util/profile",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "perfschema_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tables_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":perfschema"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/terror",
@@ -48,6 +51,7 @@ go_test(
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

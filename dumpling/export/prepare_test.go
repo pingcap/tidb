@@ -9,9 +9,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareDumpingDatabases(t *testing.T) {
@@ -322,7 +321,7 @@ func TestValidateResolveAutoConsistency(t *testing.T) {
 	for _, testCase := range testCases {
 		conf.Consistency = testCase.confConsistency
 		conf.Snapshot = testCase.confSnapshot
-		if testCase.err == true {
+		if testCase.err {
 			require.NoError(t, validateResolveAutoConsistency(d))
 		} else {
 			require.EqualError(t, validateResolveAutoConsistency(d), fmt.Sprintf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency))

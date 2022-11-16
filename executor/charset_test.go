@@ -23,8 +23,7 @@ import (
 )
 
 func TestCharsetFeature(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -70,8 +69,7 @@ func TestCharsetFeature(t *testing.T) {
 }
 
 func TestCharsetFeatureCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -97,16 +95,15 @@ func TestCharsetFeatureCollation(t *testing.T) {
 }
 
 func TestCharsetWithPrefixIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, primary key (a(2)))")
 	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
+	tk.MustQuery("select * from t;").Sort().Check(testkit.Rows("a 中文", "b 一二三", "一二三 一二三", "中文 中文"))
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, unique index idx_a(a(2)))")
 	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
+	tk.MustQuery("select * from t;").Sort().Check(testkit.Rows("a 中文", "b 一二三", "一二三 一二三", "中文 中文"))
 }

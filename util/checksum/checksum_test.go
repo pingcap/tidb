@@ -426,8 +426,8 @@ func newTestBuff(str string, n int) *bytes.Buffer {
 type mockWriter struct {
 	err    error
 	w      io.WriteCloser
-	offset int
 	f      func(b []byte, offset int) []byte
+	offset int
 }
 
 func newMockWriter(w io.WriteCloser, f func(b []byte, offset int) []byte) *mockWriter {

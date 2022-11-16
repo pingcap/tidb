@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -44,31 +42,74 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
+	if p.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
 	}
+
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
 
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
-	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	e.Init(p, startTS)
+	e.Init(p)
+
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, p.GetAvgRowSize()))
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	if p.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
+	}
+
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
+		}
+	})
+
+	snapshotTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}
+
 	return e
 }
 
@@ -83,7 +124,7 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	startTS          uint64
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -101,18 +142,16 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats      *runtimeStatsWithSnapshot
-	cacheTable kv.MemBuffer
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
-	e.startTS = startTs
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -141,59 +180,14 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	snapshotTS := e.startTS
-	if e.lock {
-		snapshotTS = txnCtx.GetForUpdateTS()
-	}
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		e.snapshot = e.txn.GetSnapshot()
-	} else {
-		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
-	}
-	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-	if e.cacheTable != nil {
-		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
-	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
-	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
-		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: e.readReplicaScope,
-			},
-		})
-	}
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("point get replica option fail")
-		}
-	})
 	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
@@ -251,34 +245,51 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
-			e.handleVal, err = e.get(ctx, e.idxKey)
-			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
-					return err
-				}
-			}
-
-			// try lock the index key if isolation level is not read consistency
-			// also lock key if read consistency read a value
-			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
+			lockNonExistIdxKey := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+			// Non-exist keys are also locked if the isolation level is not read consistency,
+			// lock it before read here, then it's able to read from pessimistic lock cache.
+			if lockNonExistIdxKey {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
 				}
-				// Change the unique index LOCK into PUT record.
-				if e.lock && len(e.handleVal) > 0 {
-					if !e.txn.Valid() {
-						return kv.ErrInvalidTxn
-					}
-					memBuffer := e.txn.GetMemBuffer()
-					err = memBuffer.Set(e.idxKey, e.handleVal)
-					if err != nil {
+				e.handleVal, err = e.get(ctx, e.idxKey)
+				if err != nil {
+					if !kv.ErrNotExist.Equal(err) {
 						return err
 					}
 				}
+			} else {
+				if e.lock {
+					e.handleVal, err = e.lockKeyIfExists(ctx, e.idxKey)
+					if err != nil {
+						return err
+					}
+				} else {
+					e.handleVal, err = e.get(ctx, e.idxKey)
+					if err != nil {
+						if !kv.ErrNotExist.Equal(err) {
+							return err
+						}
+					}
+				}
 			}
+
 			if len(e.handleVal) == 0 {
 				return nil
+			}
+
+			// Change the unique index LOCK into PUT record.
+			if e.lock {
+				if !e.txn.Valid() {
+					return kv.ErrInvalidTxn
+				}
+				memBuffer := e.txn.GetMemBuffer()
+				err = memBuffer.Set(e.idxKey, e.handleVal)
+				if err != nil {
+					return err
+				}
 			}
 
 			var iv kv.Handle
@@ -346,17 +357,20 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
 	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		// Only Lock the exist keys in RC isolation.
-		val, err = e.get(ctx, key)
-		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
+		// Only Lock the existing keys in RC isolation.
+		if e.lock {
+			val, err = e.lockKeyIfExists(ctx, key)
+			if err != nil {
 				return nil, err
 			}
-			return nil, nil
-		}
-		err = e.lockKeyIfNeeded(ctx, key)
-		if err != nil {
-			return nil, err
+		} else {
+			val, err = e.get(ctx, key)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
+					return nil, err
+				}
+				return nil, nil
+			}
 		}
 		return val, nil
 	}
@@ -376,25 +390,68 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	_, err := e.lockKeyBase(ctx, key, false)
+	return err
+}
+
+// lockKeyIfExists locks the key if needed, but won't lock the key if it doesn't exis.
+// Returns the value of the key if the key exist.
+func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]byte, error) {
+	return e.lockKeyBase(ctx, key, true)
+}
+
+func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
+	key []byte,
+	LockOnlyIfExists bool) ([]byte, error) {
 	if len(key) == 0 {
-		return nil
+		return nil, nil
 	}
+
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
-		lockCtx.InitReturnValues(1)
-		err := doLockKeys(ctx, e.ctx, lockCtx, key)
+		lockCtx, err := newLockCtx(e.ctx, e.lockWaitTime, 1)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		lockCtx.LockOnlyIfExists = LockOnlyIfExists
+		lockCtx.InitReturnValues(1)
+		err = doLockKeys(ctx, e.ctx, lockCtx, key)
+		if err != nil {
+			return nil, err
 		}
 		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
-			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(k), v)
+			seVars.TxnCtx.SetPessimisticLockCache(k, v)
 		})
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
+		if LockOnlyIfExists {
+			return e.getValueFromLockCtx(ctx, lockCtx, key)
+		}
 	}
-	return nil
+
+	return nil, nil
+}
+
+func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
+	lockCtx *kv.LockCtx,
+	key []byte) ([]byte, error) {
+	if val, ok := lockCtx.Values[string(key)]; ok {
+		if val.Exists {
+			return val.Value, nil
+		} else if val.AlreadyLocked {
+			val, err := e.get(ctx, key)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
+					return nil, err
+				}
+				return nil, nil
+			}
+			return val, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
@@ -446,15 +503,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	// Stale Read uses the calculated TSO for the read,
-	// so there is no need to check the TxnScope here.
-	if e.isStaleness {
+	if e.txnScope == "" || e.txnScope == kv.GlobalTxnScope {
 		return nil
 	}
-	txnScope := e.readReplicaScope
-	if txnScope == "" || txnScope == kv.GlobalTxnScope {
-		return nil
-	}
+
 	var tblID int64
 	var tblName string
 	var partName string
@@ -469,16 +521,16 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblInfo, _ := is.TableByID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 	}
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
+	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
 	if valid {
 		return nil
 	}
 	if len(partName) > 0 {
 		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, e.txnScope))
 	}
 	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, e.txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

@@ -31,11 +31,11 @@ import (
 )
 
 func TestSetVariables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test value limit of tidb_opt_tiflash_concurrency_factor
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 0")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'"))
 	tk.MustQuery(`select @@tidb_opt_tiflash_concurrency_factor`).Check(testkit.Rows("1"))
@@ -50,10 +50,10 @@ func TestSetVariables(t *testing.T) {
 }
 
 func TestRowSizeInMPP(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
 	tk.MustExec("insert into t values (space(10), space(20), space(256))")
@@ -86,12 +86,12 @@ func TestRowSizeInMPP(t *testing.T) {
 }
 
 func TestEnforceMPP(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
@@ -120,7 +120,7 @@ func TestEnforceMPP(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
 		warnings := make([]stmtctx.SQLWarn, 0, 4)
 		for _, warning := range originalWarnings {
@@ -152,12 +152,12 @@ func TestEnforceMPP(t *testing.T) {
 
 // general cases.
 func TestEnforceMPPWarning1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))")
 	tk.MustExec("create index idx on t(a)")
@@ -169,7 +169,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -223,12 +223,12 @@ func TestEnforceMPPWarning1(t *testing.T) {
 
 // partition table.
 func TestEnforceMPPWarning2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b char(20)) PARTITION BY HASH(a)")
 
@@ -253,7 +253,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -275,12 +275,12 @@ func TestEnforceMPPWarning2(t *testing.T) {
 
 // new collation.
 func TestEnforceMPPWarning3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b char(20))")
 
@@ -305,7 +305,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -336,12 +336,12 @@ func TestEnforceMPPWarning3(t *testing.T) {
 
 // Test enforce mpp warning for joins
 func TestEnforceMPPWarning4(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t(a int primary key)")
 	tk.MustExec("drop table if exists s")
@@ -368,7 +368,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -390,12 +390,12 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 // Test agg push down for MPP mode
 func TestMPP2PhaseAggPushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists c")
 	tk.MustExec("drop table if exists o")
 	tk.MustExec("create table c(c_id bigint)")
@@ -422,7 +422,111 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+// Test skewed group distinct aggregate rewrite for MPP mode
+func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+// Test 3 stage aggregation for single count distinct
+func TestMPPSingleDistinct3Stage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20) collate utf8mb4_general_ci)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

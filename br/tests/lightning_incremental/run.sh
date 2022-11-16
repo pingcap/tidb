@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2020 PingCAP, Inc.
 #
@@ -34,6 +34,8 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   check_contains "count(*): 3"
 done
 
+declare -A next_ids=()
+
 for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   if [ "$tbl" = "auto_random" ]; then
     run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM incr.$tbl"
@@ -43,6 +45,7 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   check_contains 'inc: 1'
   check_contains 'inc: 2'
   check_contains 'inc: 3'
+  next_ids["$tbl"]="$(run_sql "SHOW TABLE incr.$tbl NEXT_ROW_ID" | grep NEXT_GLOBAL_ROW_ID | awk '{print $2}')"
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do
@@ -67,9 +70,10 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   else
     run_sql "SELECT id as inc FROM incr.$tbl"
   fi
-  check_contains 'inc: 4'
-  check_contains 'inc: 5'
-  check_contains 'inc: 6'
+  next_id=${next_ids["$tbl"]}
+  check_contains "inc: $next_id"
+  check_contains "inc: $((next_id + 1))"
+  check_contains "inc: $((next_id + 2))"
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do

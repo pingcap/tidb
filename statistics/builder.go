@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -130,7 +131,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +141,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 
 // buildHist builds histogram from samples and other information.
 // It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
-func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64) (corrXYSum float64, err error) {
+func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -157,9 +158,24 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	var lastCount int64
 	corrXYSum = float64(0)
 	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		cmp, err := hg.GetUpper(bucketIdx).Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		upper := hg.GetUpper(bucketIdx)
+		if memTracker != nil {
+			// tmp memory usage
+			deltaSize := upper.MemUsage()
+			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+		}
+		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -221,11 +237,27 @@ func BuildHistAndTopN(
 	collector *SampleCollector,
 	tp *types.FieldType,
 	isColumn bool,
+	memTracker *memory.Tracker,
 ) (*Histogram, *TopN, error) {
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			if memTracker != nil {
+				// tmp memory usage
+				deltaSize := int64(cap(encoded))
+				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+			}
+			return encoded, err
 		}
 	} else {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
@@ -276,7 +308,7 @@ func BuildHistAndTopN(
 		}
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
-			curCnt += 1
+			curCnt++
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
@@ -363,7 +395,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets))
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -373,7 +405,8 @@ func BuildHistAndTopN(
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
-//   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+//
+//	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv {

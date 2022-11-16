@@ -42,8 +42,7 @@ func TestValidInspectionSummaryRules(t *testing.T) {
 }
 
 func TestInspectionSummary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 

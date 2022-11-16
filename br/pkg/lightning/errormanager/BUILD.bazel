@@ -22,8 +22,10 @@ go_library(
 
 go_test(
     name = "errormanager_test",
+    timeout = "short",
     srcs = ["errormanager_test.go"],
     embed = [":errormanager"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",

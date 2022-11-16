@@ -79,7 +79,7 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (g *gbkBinCollator) Pattern() WildcardPattern {
+func (*gbkBinCollator) Pattern() WildcardPattern {
 	return &gbkBinPattern{}
 }
 

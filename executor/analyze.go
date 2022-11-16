@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -58,11 +60,14 @@ var (
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
+
+	// MaxRegionSampleSize is the max sample size for one region when analyze v1 collects samples from table.
+	// It's public for test.
+	MaxRegionSampleSize = int64(1000)
 )
 
 const (
-	maxRegionSampleSize = 1000
-	maxSketchSize       = 10000
+	maxSketchSize = 10000
 )
 
 type taskType int
@@ -77,19 +82,89 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	var tasks []*analyzeTask
+	tids := make([]int64, 0)
+	skipedTables := make([]string, 0)
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for _, task := range e.tasks {
+		var tableID statistics.AnalyzeTableID
+		switch task.taskType {
+		case colTask:
+			tableID = task.colExec.tableID
+		case idxTask:
+			tableID = task.idxExec.tableID
+		case fastTask:
+			tableID = task.fastExec.tableID
+		case pkIncrementalTask:
+			tableID = task.colIncrementalExec.tableID
+		case idxIncrementalTask:
+			tableID = task.idxIncrementalExec.tableID
+		}
+		// skip locked tables
+		if !statsHandle.IsTableLocked(tableID.TableID) {
+			tasks = append(tasks, task)
+		}
+		// generate warning message
+		dup := false
+		for _, id := range tids {
+			if id == tableID.TableID {
+				dup = true
+				break
+			}
+		}
+		//avoid generate duplicate tables
+		if !dup {
+			if statsHandle.IsTableLocked(tableID.TableID) {
+				tbl, ok := is.TableByID(tableID.TableID)
+				if !ok {
+					return nil
+				}
+				skipedTables = append(skipedTables, tbl.Meta().Name.L)
+			}
+			tids = append(tids, tableID.TableID)
+		}
+	}
+
+	if len(skipedTables) > 0 {
+		tables := skipedTables[0]
+		for i, table := range skipedTables {
+			if i == 0 {
+				continue
+			}
+			tables += ", " + table
+		}
+		var msg string
+		if len(tids) > 1 {
+			if len(tids) > len(skipedTables) {
+				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
+			} else {
+				msg = "skip analyze locked tables: " + tables
+			}
+		} else {
+			msg = "skip analyze locked table: " + tables
+		}
+
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+	}
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
 	}
-	taskCh := make(chan *analyzeTask, len(e.tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
-	if len(e.tasks) < concurrency {
-		concurrency = len(e.tasks)
+	taskCh := make(chan *analyzeTask, len(tasks))
+	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	if len(tasks) < concurrency {
+		concurrency = len(tasks)
 	}
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
@@ -97,7 +172,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.ctx)
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
@@ -108,7 +183,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
 		}
@@ -130,7 +205,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	if e.ctx.GetSessionVars().InRestrictedSQL {
 		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 	}
@@ -175,16 +249,17 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		}
 		idx += 1
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
@@ -193,7 +268,7 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 		return nil
 	}
 
-	is := domain.GetDomain(e.ctx).InfoSchema()
+	is := domain.GetDomain(sctx).InfoSchema()
 	tbl, existed := is.TableByID(tableID)
 	if !existed {
 		return errors.Errorf("cannot get table by id %d", tableID)
@@ -212,6 +287,23 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
+	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
+	// If there is no extra session we can use, we will save analyze results in single-thread.
+	if partitionStatsConcurrency > 1 {
+		dom := domain.GetDomain(e.ctx)
+		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
+		if len(subSctxs) > 0 {
+			defer func() {
+				dom.ReleaseAnalyzeExec(subSctxs)
+			}()
+			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
+			return err
+		}
+	}
+
+	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 	var err error
@@ -230,39 +322,76 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
-		if results.TableID.IsPartitionTable() && needGlobalStats {
-			for _, result := range results.Ars {
-				if result.IsIndex == 0 {
-					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
-					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
-					histIDs := make([]int64, 0, len(result.Hist))
-					for _, hg := range result.Hist {
-						// It's normal virtual column, skip.
-						if hg == nil {
-							continue
-						}
-						histIDs = append(histIDs, hg.ID)
-					}
-					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
-				} else {
-					for _, hg := range result.Hist {
-						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
-					}
-				}
-			}
-		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 			// Dump stats to historical storage.
-			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
+		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
+			return errors.Trace(ErrQueryInterrupted)
+		}
+	}
+	return err
+}
+
+func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, statsConcurrency int, needGlobalStats bool,
+	subSctxs []sessionctx.Context,
+	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+	partitionStatsConcurrency := len(subSctxs)
+
+	var wg util.WaitGroupWrapper
+	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
+	errCh := make(chan error, partitionStatsConcurrency)
+	for i := 0; i < partitionStatsConcurrency; i++ {
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.ctx.GetSessionVars().Killed)
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		wg.Run(func() {
+			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
+		})
+	}
+	panicCnt := 0
+	var err error
+	for panicCnt < statsConcurrency {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			close(saveResultsCh)
+			return errors.Trace(ErrQueryInterrupted)
+		}
+		results, ok := <-resultsCh
+		if !ok {
+			break
+		}
+		if results.Err != nil {
+			err = results.Err
+			if isAnalyzeWorkerPanic(err) {
+				panicCnt++
+			} else {
+				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+			}
+			finishJobWithLog(e.ctx, results.Job, err)
+			continue
+		}
+		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		saveResultsCh <- results
+	}
+	close(saveResultsCh)
+	wg.Wait()
+	close(errCh)
+	if len(errCh) > 0 {
+		errMsg := make([]string, 0)
+		for err1 := range errCh {
+			errMsg = append(errMsg, err1.Error())
+		}
+		err = errors.New(strings.Join(errMsg, ","))
 	}
 	return err
 }
@@ -342,22 +471,23 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 }
 
 // StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func StartAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil || job.ID == nil {
 		return
 	}
 	job.StartTime = time.Now()
 	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
 	}
 }
 
 // UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -365,16 +495,51 @@ func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	if delta == 0 {
 		return
 	}
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
 	}
 }
 
+// FinishAnalyzeMergeJob finishes analyze merge job
+func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	job.EndTime = time.Now()
+	var sql string
+	var args []interface{}
+	if analyzeErr != nil {
+		failReason := analyzeErr.Error()
+		const textMaxLength = 65535
+		if len(failReason) > textMaxLength {
+			failReason = failReason[:textMaxLength]
+		}
+		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+	} else {
+		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+	}
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
+	if err != nil {
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
+	}
+}
+
 // FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
-func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -395,8 +560,9 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {
 		var state string
 		if analyzeErr != nil {
@@ -423,5 +589,30 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 			zap.Time("start time", job.StartTime),
 			zap.Time("end time", job.EndTime),
 			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+	}
+}
+
+func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
+	if results.TableID.IsPartitionTable() && needGlobalStats {
+		for _, result := range results.Ars {
+			if result.IsIndex == 0 {
+				// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+				globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+				histIDs := make([]int64, 0, len(result.Hist))
+				for _, hg := range result.Hist {
+					// It's normal virtual column, skip.
+					if hg == nil {
+						continue
+					}
+					histIDs = append(histIDs, hg.ID)
+				}
+				globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+			} else {
+				for _, hg := range result.Hist {
+					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+				}
+			}
+		}
 	}
 }

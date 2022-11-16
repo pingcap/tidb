@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//extension",
         "//kv",
         "//parser/ast",
         "//parser/model",
@@ -20,7 +21,6 @@ go_library(
         "//sessionctx/variable",
         "//util",
         "//util/disk",
-        "//util/kvcache",
         "//util/memory",
         "//util/sli",
         "//util/sqlexec",
@@ -37,12 +37,14 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = [
         "iter_test.go",
         "main_test.go",
         "mock_test.go",
     ],
     embed = [":mock"],
+    flaky = True,
     deps = [
         "//kv",
         "//testkit/testsetup",

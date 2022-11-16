@@ -24,11 +24,10 @@ import (
 )
 
 func TestMockConn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	server := CreateMockServer(t, store)
 	defer server.Close()
-	conn := CreateMockConn(t, store, server)
+	conn := CreateMockConn(t, server)
 	defer conn.Close()
 
 	require.NoError(t, conn.HandleQuery(context.Background(), "select 1"))

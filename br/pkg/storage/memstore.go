@@ -46,6 +46,7 @@ type MemStorage struct {
 	dataStore map[string]*memFile
 }
 
+// NewMemStorage creates a new in-memory storage.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		dataStore: make(map[string]*memFile),
@@ -210,7 +211,8 @@ func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-func (s *MemStorage) URI() string {
+// URI returns the URI of the storage.
+func (*MemStorage) URI() string {
 	return "memstore://"
 }
 

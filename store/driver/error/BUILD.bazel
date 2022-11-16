@@ -17,8 +17,10 @@ go_library(
 
 go_test(
     name = "error_test",
+    timeout = "short",
     srcs = ["error_test.go"],
     embed = [":error"],
+    flaky = True,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",

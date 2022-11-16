@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "arena_test",
+    timeout = "short",
     srcs = [
         "arena_test.go",
         "main_test.go",
     ],
     embed = [":arena"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//assert",

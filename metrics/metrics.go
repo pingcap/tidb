@@ -41,7 +41,7 @@ var (
 			Subsystem: "server",
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
-		}, []string{LblType})
+		}, []string{LblModule, LblType})
 )
 
 // metrics labels.
@@ -100,9 +100,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
 	prometheus.MustRegister(DistSQLCoprCacheCounter)
+	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
+	prometheus.MustRegister(DistSQLCoprRespBodySize)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
@@ -110,6 +114,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
+	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
@@ -130,10 +135,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PlanCacheMissCounter)
+	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
+	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
 	prometheus.MustRegister(SessionExecuteCompileDuration)
@@ -146,6 +154,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
+	prometheus.MustRegister(ExecPhaseDuration)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -184,11 +193,21 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
-	prometheus.MustRegister(NonTransactionalDeleteCount)
+	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(TxnStatusEnteringCounter)
+	prometheus.MustRegister(TxnDurationHistogram)
+	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(AdvancerOwner)
+	prometheus.MustRegister(AdvancerTickDuration)
+	prometheus.MustRegister(GetCheckpointBatchSize)
+	prometheus.MustRegister(RegionCheckpointRequest)
+	prometheus.MustRegister(RegionCheckpointFailure)
+	prometheus.MustRegister(AutoIDReqDuration)
+	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
@@ -212,7 +231,7 @@ func ToggleSimplifiedMode(simplified bool) {
 		ReadFromTableCacheCounter,
 		TiFlashQueryTotalCounter,
 		CampaignOwnerCounter,
-		NonTransactionalDeleteCount,
+		NonTransactionalDMLCount,
 		MemoryUsage,
 		TokenGauge,
 		tikvmetrics.TiKVRawkvSizeHistogram,
