@@ -681,8 +681,7 @@ func TestFormatVersion(t *testing.T) {
 		"5.7.25-TiDB-8.0.18",
 		"5.7.25-TiDB-8.0.18-beta.1",
 		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
-		// “5.7.2Delta;5-TiDB-” is not a legal default TiDB Version, but shouldn't panic.
-		"5.7.2Delta;5-TiDB-",
+		"5.7.25-TiDB-",
 		"5.7.25-TiDB-v4.0.0-TiDB-446"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
 	for i, v := range defaultVersions {
