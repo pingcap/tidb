@@ -100,6 +100,7 @@ func TestSetLevel(t *testing.T) {
 	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }
 
+<<<<<<< HEAD
 func TestGrpcLoggerCreation(t *testing.T) {
 	level := "info"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
@@ -115,6 +116,8 @@ func TestGrpcLoggerCreation(t *testing.T) {
 	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
 }
 
+=======
+>>>>>>> ba35a37b72 (util: use one logger (#39176))
 func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "Error"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
