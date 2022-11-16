@@ -30,7 +30,7 @@ COPY . /tidb
 ARG GOPROXY
 RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
 
-FROM rockylinux:9
+FROM rockylinux:9-minimal
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
 
