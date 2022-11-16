@@ -585,7 +585,8 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-func (pp *ParquetParser) SetColumnTypes(colTypes map[int]byte) {
+// SetColumnTypes set restored column types to parser
+func (*ParquetParser) SetColumnTypes(_ map[int]byte) {
 	// just do nothing
 }
 

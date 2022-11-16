@@ -544,7 +544,6 @@ func (parser *CSVParser) ReadRow() error {
 				parser.columnTypes[i] == mysql.TypeLongBlob) {
 				lobFileField := strings.Split(unescaped, ".")
 				lobFileHandler, err := os.Open(filepath.Join(parser.cfg.Db2LobDir, strings.Join(lobFileField[0:4], ".")))
-				defer lobFileHandler.Close()
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -557,8 +556,18 @@ func (parser *CSVParser) ReadRow() error {
 					return errors.Trace(err)
 				}
 				buffer := make([]byte, length)
-				lobFileHandler.Seek(startIndex, 0)
+				_, err = lobFileHandler.Seek(startIndex, 0)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				lobFileHandler.Read(buffer)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				lobFileHandler.Close()
+				if err != nil {
+					return errors.Trace(err)
+				}
 				row.Row[i].SetBytes(buffer)
 			} else {
 				row.Row[i].SetString(unescaped, "utf8mb4_bin")
@@ -602,6 +611,7 @@ func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
 	}
 }
 
+// SetColumnTypes set restored column types to parser
 func (parser *CSVParser) SetColumnTypes(colTypes map[int]byte) {
 	parser.columnTypes = colTypes
 }
