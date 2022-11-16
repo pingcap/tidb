@@ -133,12 +133,12 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 }
 
 func checkConstraintWithShardColumn(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName, shardColumnInfo *model.ColumnInfo) error {
-	switch s:= stmt.DMLStmt.(type) {
+	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
 		// FIXME: this check is not enough. the table name and schema name of the assignment can be null. But we cannot
 		// simply rely on the column name to judge it.
 		for _, assignment := range s.List {
-			if assignment.Column.Name.L == shardColumnInfo.Name.L &&
+			if shardColumnInfo != nil && assignment.Column.Name.L == shardColumnInfo.Name.L &&
 				assignment.Column.Table.L == tableName.Name.L &&
 				assignment.Column.Schema.L == tableName.Schema.L {
 				return errors.New("Non-transactional DML, shard columns cannot be updated")
@@ -515,7 +515,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 	if !ok {
 		return nil, "", nil, errors.New("Non-transactional DML, table source not found")
 	}
-	tableSources := make([]*ast.TableSource, 0, 0)
+	tableSources := make([]*ast.TableSource, 0)
 	tableSources, err := collectTableSourcesInJoin(join, tableSources)
 	if err != nil {
 		return nil, "", nil, err
@@ -583,6 +583,9 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 			}
 			selectedTableName = leftMostTableName
 			indexed, shardColumnInfo, err = selectShardColumnAutomatically(stmt, leftMostTable, leftMostTableName, leftMostTableSource.AsName)
+			if err != nil {
+				return nil, nil, err
+			}
 		} else if stmt.ShardColumn.Schema.L != "" && stmt.ShardColumn.Table.L != "" && stmt.ShardColumn.Name.L != "" {
 			dbName := stmt.ShardColumn.Schema
 			tableName := stmt.ShardColumn.Table

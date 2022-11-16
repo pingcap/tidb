@@ -373,12 +373,18 @@ func TestNonTransactionalUsage(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.InsertCount)
 
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("batch limit 1 delete from t")
+	tk.MustExec("batch limit 1 update t set a = 1")
+	tk.MustExec("batch limit 1 insert into t select * from t")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.InsertCount)
 }
 
 func TestGlobalKillUsageInfo(t *testing.T) {
@@ -422,7 +428,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.False(t, usage.EnableCostModelVer2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())

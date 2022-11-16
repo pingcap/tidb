@@ -340,6 +340,7 @@ type NonTransactionalStmtCounter struct {
 func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+		UpdateCount: n.UpdateCount - rhs.UpdateCount,
 		InsertCount: n.InsertCount - rhs.InsertCount,
 	}
 }
