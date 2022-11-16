@@ -151,10 +151,7 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
-	if fkc.FK != nil {
-		return fkc.addRowNeedToCheck(sc, row)
-	}
-	return nil
+	return fkc.addRowNeedToCheck(sc, row)
 }
 
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {

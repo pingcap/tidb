@@ -2296,7 +2296,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 
 		{
 			sql:  "explain analyze insert into t3 values (2) on duplicate key update id = 100",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist.*",
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist.*",
 		},
 		{
 			sql:  "explain analyze insert into t3 values (3) on duplicate key update id = 100",
@@ -2339,7 +2339,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		},
 		{
 			sql: "explain analyze insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
-			plan:".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*"+
+			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*" +
 				"Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*",
 		},
 	}
