@@ -1274,7 +1274,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table.Meta(), nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }

@@ -775,7 +775,17 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			_, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			_, hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			if !analyzed {
+				var errMsg string
+				if isIndex == 0 {
+					errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+				} else {
+					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+				}
+				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+				return
+			}
 			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string

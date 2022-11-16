@@ -261,6 +261,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
@@ -331,6 +332,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -343,6 +345,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 
 	// tk1 use to test partition table with index.
 	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set tidb_cost_model_version=2")
 	tk1.MustExec("drop database if exists test_partition_1;")
 	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk1.MustExec("create database test_partition_1")
@@ -355,6 +358,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set tidb_cost_model_version=2")
 	tk2.MustExec("drop database if exists test_partition_2;")
 	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk2.MustExec("create database test_partition_2")

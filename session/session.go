@@ -2711,9 +2711,11 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	pm := &privileges.UserPrivileges{
-		Handle: do.PrivilegeHandle(),
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		return nil, err
 	}
+	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(s, pm)
 
 	// Add stats collector, and it will be freed by background stats worker
@@ -2876,7 +2878,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7)
+	ses, err := createSessions(store, 8)
 	if err != nil {
 		return nil, err
 	}
@@ -2954,6 +2956,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	dom.SetupPlanReplayerHandle(ses[6])
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
+	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
