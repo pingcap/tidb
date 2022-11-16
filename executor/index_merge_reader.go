@@ -793,6 +793,17 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 	}
 }
 
+func (w *indexMergeProcessWorker) doIntersectionPerPartition(handles []kv.Handle, handleMap *kv.HandleMap) {
+	for _, h := range handles {
+		if cntPtr, ok := handleMap.Get(h); ok {
+			(*cntPtr.(*int))++
+		} else {
+			cnt := 1
+			handleMap.Set(h, &cnt)
+		}
+	}
+}
+
 func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	defer func() {
@@ -800,96 +811,50 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		close(resultCh)
 	}()
 
-	// key: handle, value: partIdx for this handle.
-	partHandleMap := kv.NewHandleMap()
-	// key: partialWorker, value: handles for this partialWorker.
-	workerHandleMap := make(map[int]*kv.HandleMap)
-	for i := 0; i < len(w.indexMerge.partialPlans); i++ {
-		workerHandleMap[i] = kv.NewHandleMap()
-	}
-	// Distinct handles for each partialWorker.
-	for task := range fetchCh {
+	if w.stats != nil {
 		start := time.Now()
-		handles := task.handles
-
-		if _, ok := workerHandleMap[task.workerID]; !ok {
-			err := errors.Errorf("unexpected workerID, got %d, total: %d", task.workerID, len(w.indexMerge.partialPlans))
-			syncErr(resultCh, err)
-			return
-		}
-		hMap := workerHandleMap[task.workerID]
-
-		for _, h := range handles {
-			if _, ok := hMap.Get(h); !ok {
-				hMap.Set(h, true)
-			}
-			if w.indexMerge.partitionTableMode {
-				if parTblIdx, ok := partHandleMap.Get(h); ok {
-					if parTblIdx.(int) != task.parTblIdx {
-						err := errors.Errorf("expected parTblIdx: %v, got: %d", parTblIdx, task.parTblIdx)
-						syncErr(resultCh, err)
-						return
-					}
-				} else {
-					partHandleMap.Set(h, task.parTblIdx)
-				}
-			}
-		}
-		if w.stats != nil {
+		defer func() {
 			w.stats.IndexMergeProcess += time.Since(start)
-		}
+		}()
 	}
 
-	start := time.Now()
-	defer func() {
-		if w.stats != nil {
-			w.stats.IndexMergeProcess += time.Since(start)
-		}
-	}()
-	// Intersect handles among all partialWorkers.
-	intersected := IntersectHandleMaps(workerHandleMap)
-	if len(intersected) == 0 {
-		// No data to send, just return, resultCh and workCh will be closed in defer func.
-		return
+	mapLen := 1
+	if w.indexMerge.partitionTableMode {
+		mapLen = len(w.indexMerge.prunedPartitions)
 	}
-	var tasks []*indexMergeTableTask
-	if !w.indexMerge.partitionTableMode {
+	handleMaps := make([]*kv.HandleMap, 0, mapLen)
+	for i := 0; i < mapLen; i++ {
+		handleMaps = append(handleMaps, kv.NewHandleMap())
+	}
+
+	for task := range fetchCh {
+		w.doIntersectionPerPartition(task.handles, handleMaps[task.parTblIdx])
+	}
+
+	intersected := make([][]kv.Handle, len(handleMaps))
+	for parTblIdx, m := range handleMaps {
+		m.Range(func (h kv.Handle, val interface{}) bool {
+			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
+				// Means all partial paths have this handle.
+				intersected[parTblIdx] = append(intersected[parTblIdx], h)
+			}
+			return true
+		})
+	}
+
+	tasks := make([]*indexMergeTableTask, 0, len(handleMaps))
+	for i := 0; i < len(handleMaps); i++ {
 		tasks = append(tasks, &indexMergeTableTask{
 			lookupTableTask: lookupTableTask{
-				handles: intersected,
+				handles: intersected[i],
 				doneCh:  make(chan error, 1),
 			},
 		})
-	} else {
-		// Need to distinguish which parition table this handle belongs to.
-		// key: partIdx, value: intersected handles of this partIdx.
-		intersectedPartHandleMap := make(map[int][]kv.Handle)
-		for _, h := range intersected {
-			parTblIdxI, ok := partHandleMap.Get(h)
-			if !ok {
-				err := errors.New("handle not found")
-				syncErr(resultCh, err)
-				return
-			}
-			parTblIdx := parTblIdxI.(int)
-
-			if _, ok := intersectedPartHandleMap[parTblIdx]; !ok {
-				intersectedPartHandleMap[parTblIdx] = make([]kv.Handle, 0, 8)
-			}
-			intersectedPartHandleMap[parTblIdx] = append(intersectedPartHandleMap[parTblIdx], h)
-		}
-
-		for parTblIdx, handles := range intersectedPartHandleMap {
-			tasks = append(tasks, &indexMergeTableTask{
-				lookupTableTask: lookupTableTask{
-					handles: handles,
-					doneCh:  make(chan error, 1),
-
-					partitionTable: w.indexMerge.prunedPartitions[parTblIdx],
-				},
-			})
+		if w.indexMerge.partitionTableMode {
+			tasks[i].partitionTable = w.indexMerge.prunedPartitions[i]
 		}
 	}
+
 	for _, task := range tasks {
 		select {
 		case <-ctx.Done():

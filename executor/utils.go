@@ -16,8 +16,6 @@ package executor
 
 import (
 	"strings"
-
-	"github.com/pingcap/tidb/kv"
 )
 
 // SetFromString constructs a slice of strings from a comma separated string.
@@ -93,48 +91,4 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 		b.retrieved = true
 	}
 	return nil
-}
-
-// IntersectHandleMaps get intersection of all handleMaps. Return nil if no intersection.
-func IntersectHandleMaps(handleMaps map[int]*kv.HandleMap) (res []kv.Handle) {
-	if len(handleMaps) == 0 {
-		return nil
-	}
-	resHandleMaps := make([]*kv.HandleMap, 0, len(handleMaps))
-	var gotEmptyHandleMap bool
-	for _, m := range handleMaps {
-		if m.Len() == 0 {
-			gotEmptyHandleMap = true
-		}
-		resHandleMaps = append(resHandleMaps, m)
-	}
-	if gotEmptyHandleMap {
-		return nil
-	}
-
-	intersected := resHandleMaps[0]
-	if len(resHandleMaps) > 1 {
-		for i := 1; i < len(resHandleMaps); i++ {
-			if intersected.Len() == 0 {
-				break
-			}
-			intersected = intersectTwoMaps(intersected, resHandleMaps[i])
-		}
-	}
-	intersected.Range(func(h kv.Handle, val interface{}) bool {
-		res = append(res, h)
-		return true
-	})
-	return
-}
-
-func intersectTwoMaps(m1, m2 *kv.HandleMap) *kv.HandleMap {
-	intersected := kv.NewHandleMap()
-	m1.Range(func(h kv.Handle, val interface{}) bool {
-		if _, ok := m2.Get(h); ok {
-			intersected.Set(h, true)
-		}
-		return true
-	})
-	return intersected
 }
