@@ -75,7 +75,11 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.PrivElem{},
 		&ast.VariableAssignment{Value: valueExpr},
 		&ast.KillStmt{},
-		&ast.DropStatsStmt{Table: &ast.TableName{}},
+		&ast.DropStatsStmt{
+			Tables: []*ast.TableName{
+				{},
+			},
+		},
 		&ast.ShutdownStmt{},
 	}
 
