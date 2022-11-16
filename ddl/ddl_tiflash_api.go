@@ -350,22 +350,6 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext, tableID int64) (int, error) {
-	// storeIDs -> regionID, PD will not create two peer on the same store
-	var flashPeerCount int
-	for _, store := range pollTiFlashContext.TiFlashStores {
-		regionReplica := make(map[int64]int)
-		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
-		if err != nil {
-			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
-				zap.Int64("tableID", tableID))
-			return 0, err
-		}
-		flashPeerCount += len(regionReplica)
-	}
-	return flashPeerCount, nil
-}
-
 func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
@@ -460,6 +444,20 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			LoadTiFlashReplicaInfo(tblInfo, &tableList)
 		}
 	}
+
+	failpoint.Inject("waitForAddPartition", func(val failpoint.Value) {
+		for _, phyTable := range tableList {
+			is := d.infoCache.GetLatest()
+			_, ok := is.TableByID(phyTable.ID)
+			if !ok {
+				tb, _, _ := is.FindTableByPartitionID(phyTable.ID)
+				if tb == nil {
+					logutil.BgLogger().Info("[ddl] waitForAddPartition")
+					time.Sleep(time.Duration(val.(int)) * time.Second)
+				}
+			}
+		}
+	})
 
 	needPushPending := false
 	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
