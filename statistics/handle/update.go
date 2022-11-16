@@ -976,7 +976,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-		return true, fmt.Sprintf("table unanalyzed")
+		return true, "table unanalyzed"
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
