@@ -141,16 +141,15 @@ func TestMemDBTracker(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("begin")
-	println(session.TxnInfo().MemDBFootprint.BytesConsumed())
 	for i := 0; i < (1 << 10); i++ {
 		tk.MustExec("insert t (id) values (1)")
 	}
-	require.Less(t, int64(1<<(10+4)), session.TxnInfo().MemDBFootprint.BytesConsumed())
-
+	require.Less(t, int64(1<<(10+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+	require.Greater(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
 	for i := 0; i < (1 << 14); i++ {
 		tk.MustExec("insert t (id) values (1)")
 	}
-	require.Less(t, int64(1<<(14+4)), session.TxnInfo().MemDBFootprint.BytesConsumed())
+	require.Less(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
 }
 
 func TestRunning(t *testing.T) {

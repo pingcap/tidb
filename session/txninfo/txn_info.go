@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -162,8 +161,6 @@ type TxnInfo struct {
 	}
 	// How many entries are in MemDB
 	EntriesCount uint64
-	// MemDB used memory
-	MemDBFootprint *memory.Tracker
 
 	// The following fields will be filled in `session` instead of `LazyTxn`
 
@@ -208,12 +205,6 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	},
 	MemBufferKeysStr: func(info *TxnInfo) types.Datum {
 		return types.NewDatum(info.EntriesCount)
-	},
-	MemBufferBytesStr: func(info *TxnInfo) types.Datum {
-		if info.MemDBFootprint == nil {
-			return types.NewDatum(0)
-		}
-		return types.NewDatum(info.MemDBFootprint.BytesConsumed())
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
 		return types.NewDatum(info.ConnectionID)

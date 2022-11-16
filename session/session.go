@@ -570,6 +570,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+// TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -3605,12 +3606,12 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
 	hook := func(mem uint64) {
-		if s.TxnInfo().MemDBFootprint == nil {
+		if s.sessionVars.MemDBFootprint == nil {
 			tracker := memory.NewTracker(memory.LabelForMemDB, -1)
 			tracker.AttachTo(s.sessionVars.MemTracker)
-			s.TxnInfo().MemDBFootprint = tracker
+			s.sessionVars.MemDBFootprint = tracker
 		}
-		s.TxnInfo().MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)
 }

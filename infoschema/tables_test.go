@@ -1400,7 +1400,6 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		MemDBFootprint:   memDBTracker,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",

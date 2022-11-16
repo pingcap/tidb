@@ -176,7 +176,6 @@ func (txn *LazyTxn) resetTxnInfo(
 	txninfo.TxnStatusEnteringCounter(state).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
-	txn.mu.TxnInfo.MemDBFootprint = nil // will be lazily initialized when using it
 
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
