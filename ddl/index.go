@@ -758,6 +758,7 @@ func tryFallbackToTxnMerge(job *model.Job, err error) {
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
+		job.RowCount = 0
 	}
 }
 
@@ -782,8 +783,10 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
-		logutil.BgLogger().Info("[ddl] index backfill state running", zap.Int64("job ID", job.ID),
-			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
+		logutil.BgLogger().Info("[ddl] index backfill state running",
+			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -1204,7 +1207,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		}
 		ei, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
-			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
+			return nil, errors.Trace(err)
 		}
 		lwCtx, err = ei.NewWriterCtx(id)
 		if err != nil {
