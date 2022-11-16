@@ -1139,14 +1139,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			fields = append(fields,
-				alterField{"authentication_string=%?", pwd},
-				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
-			)
+			fields = append(fields, alterField{"authentication_string=%?", pwd})
+			if spec.AuthOpt.AuthPlugin != "" {
+				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
+			}
 			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
 				fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 				if passwordExpire == "" {
 					passwordExpire = "N"
+				}
+				if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == spec.User.Username || spec.User.CurrentUser) {
+					e.ctx.DisableSandBoxMode()
 				}
 			}
 		}
@@ -1199,15 +1202,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			sql := new(strings.Builder)
 			sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 			for i, f := range fields {
-				if f.value != nil {
-					sqlexec.MustFormatSQL(sql, f.expr, f.value)
-				} else {
-					sqlexec.MustFormatSQL(sql, f.expr)
-				}
+				sqlexec.MustFormatSQL(sql, f.expr, f.value)
 				if i < len(fields)-1 {
 					sqlexec.MustFormatSQL(sql, ",")
 				}
 			}
+
 			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
@@ -1685,7 +1685,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
+		e.ctx.DisableSandBoxMode()
+	}
+	return err
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {

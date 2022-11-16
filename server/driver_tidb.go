@@ -18,6 +18,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"strings"
 	"sync/atomic"
 
@@ -230,8 +232,10 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 	if tc.SandBoxMode() {
 		switch stmt.(type) {
 		case *ast.SetPwdStmt, *ast.AlterUserStmt:
+			logutil.BgLogger().Error("Sandbox run stmt: ", zap.String("stmt", stmt.Text()))
 		default:
-			return nil, errMustChangePassword.GenWithStackByArgs()
+			logutil.BgLogger().Error("Sandbox can't run stmt: ", zap.String("stmt", stmt.Text()))
+			//return nil, errMustChangePassword.GenWithStackByArgs()
 		}
 	}
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {

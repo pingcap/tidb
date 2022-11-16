@@ -2615,8 +2615,10 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+	if sandboxMode, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
 		return err
+	} else if sandboxMode {
+		s.EnableSandBoxMode()
 	}
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
