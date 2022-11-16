@@ -422,7 +422,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 	return nil
 }
 
-// walk the whole checkpoint range files and retrive the metadatat of backed up ranges
+// walk the whole checkpoint range files and retrieve the metadatat of backed up ranges
 // and return the total time cost in the past executions
 func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
 	// records the total time cost in the past executions
@@ -494,7 +494,7 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 	return m, errors.Trace(err)
 }
 
-// walk the whole checkpoint checksum files and retrive checksum information of tables calculated
+// walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
 func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map[int64]*ChecksumItem, error) {
 	checkpointChecksum := make(map[int64]*ChecksumItem)
 
