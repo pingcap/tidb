@@ -648,9 +648,12 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	}
 
 	initializedColumns := false
-	var columnPermutation []int
-	var kvSize uint64 = 0
-	var rowSize uint64 = 0
+	var (
+		columnPermutation []int
+		kvSize            uint64 = 0
+		rowSize           uint64 = 0
+		extendVals        []types.Datum
+	)
 	rowCount := 0
 	dataKVs := p.encBuilder.MakeEmptyRows()
 	indexKVs := p.encBuilder.MakeEmptyRows()
@@ -665,17 +668,32 @@ outloop:
 		switch errors.Cause(err) {
 		case nil:
 			if !initializedColumns {
+				ignoreColsMap := igCols.ColumnsMap()
 				if len(columnPermutation) == 0 {
 					columnPermutation, err = createColumnPermutation(
 						columnNames,
-						igCols.ColumnsMap(),
+						ignoreColsMap,
 						tableInfo,
 						log.FromContext(ctx))
 					if err != nil {
 						return 0.0, false, errors.Trace(err)
 					}
 				}
+				if len(sampleFile.ExtendData.Columns) > 0 {
+					_, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
+				}
 				initializedColumns = true
+				lastRow := parser.LastRow()
+				lastRowLen := len(lastRow.Row)
+				extendColsMap := make(map[string]int)
+				for i, c := range sampleFile.ExtendData.Columns {
+					extendColsMap[c] = lastRowLen + i
+				}
+				for i, col := range tableInfo.Columns {
+					if p, ok := extendColsMap[col.Name.O]; ok {
+						columnPermutation[i] = p
+					}
+				}
 			}
 		case io.EOF:
 			break outloop
@@ -685,6 +703,7 @@ outloop:
 		}
 		lastRow := parser.LastRow()
 		rowCount++
+		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)

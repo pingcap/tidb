@@ -186,6 +186,10 @@ const (
 	TableVariablesInfo = "VARIABLES_INFO"
 	// TableUserAttributes is the string constant of user_attributes view.
 	TableUserAttributes = "USER_ATTRIBUTES"
+	// TableMemoryUsage is the memory usage status of tidb instance.
+	TableMemoryUsage = "MEMORY_USAGE"
+	// TableMemoryUsageOpsHistory is the memory control operators history.
+	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 )
 
 const (
@@ -288,6 +292,10 @@ var tableIDMap = map[string]int64{
 	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
 	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
 	TableUserAttributes:                  autoid.InformationSchemaDBID + 83,
+	TableMemoryUsage:                     autoid.InformationSchemaDBID + 84,
+	TableMemoryUsageOpsHistory:           autoid.InformationSchemaDBID + 85,
+	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
+	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1361,6 +1369,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "AVG_STABLE_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_STABLE_SIZE", tp: mysql.TypeDouble, size: 64},
 	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
+	{name: "MAX_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
 	{name: "AVG_PACK_COUNT_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_ROWS_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_SIZE_IN_DELTA", tp: mysql.TypeDouble, size: 64},
@@ -1372,23 +1381,14 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
@@ -1543,6 +1543,35 @@ var tableUserAttributesCols = []columnInfo{
 	{name: "USER", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
 	{name: "ATTRIBUTE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+}
+
+var tableMemoryUsageCols = []columnInfo{
+	{name: "MEMORY_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_MAX_USED", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "CURRENT_OPS", tp: mysql.TypeVarchar, size: 50},
+	{name: "SESSION_KILL_LAST", tp: mysql.TypeDatetime},
+	{name: "SESSION_KILL_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "GC_LAST", tp: mysql.TypeDatetime},
+	{name: "GC_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "QUERY_FORCE_DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+}
+
+var tableMemoryUsageOpsHistoryCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeDatetime, size: 64, flag: mysql.NotNullFlag},
+	{name: "OPS", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "PROCESSID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "CLIENT", tp: mysql.TypeVarchar, size: 64},
+	{name: "DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "USER", tp: mysql.TypeVarchar, size: 16},
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1700,8 +1729,8 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 
 	// The user hasn't set the config 'ServerVersion'.
 	if isDefaultVersion {
-		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
-		if nodeVersion[0] == 'v' {
+		nodeVersion = TiDBVersion[strings.Index(TiDBVersion, "TiDB-")+len("TiDB-"):]
+		if len(nodeVersion) > 0 && nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
 		}
 		nodeVersions := strings.Split(nodeVersion, "-")
@@ -2005,6 +2034,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTrxSummary:                         tableTrxSummaryCols,
 	TableVariablesInfo:                      tableVariablesInfoCols,
 	TableUserAttributes:                     tableUserAttributesCols,
+	TableMemoryUsage:                        tableMemoryUsageCols,
+	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

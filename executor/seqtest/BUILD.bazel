@@ -9,6 +9,7 @@ go_test(
         "seq_executor_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 39,
     deps = [
         "//config",
@@ -23,7 +24,6 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
-        "//parser/terror",
         "//planner/core",
         "//server",
         "//session",

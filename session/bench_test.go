@@ -492,6 +492,26 @@ func BenchmarkSort(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkSort2(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	prepareSortBenchData(se, "int", "%v", 1000000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t order by col")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(ctx, rs[0], 1000000)
+	}
+	b.StopTimer()
+}
+
 func BenchmarkJoin(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
