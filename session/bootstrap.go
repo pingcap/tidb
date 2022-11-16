@@ -2042,7 +2042,6 @@ func upgradeToVer99After(s Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
-
 }
 
 func upgradeToVer100(s Session, ver int64) {
