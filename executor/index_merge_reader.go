@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-	"reflect"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -794,18 +794,25 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 	}
 }
 
-func (w *indexMergeProcessWorker) doIntersectionPerPartition(handles []kv.Handle, handleMap *kv.HandleMap) {
-	var newAllocMapEle int64
-	for _, h := range handles {
-		if cntPtr, ok := handleMap.Get(h); ok {
-			(*cntPtr.(*int))++
-		} else {
-			cnt := 1
-			handleMap.Set(h, &cnt)
-			newAllocMapEle++
+type processWorker struct {
+	handleMap  *kv.HandleMap
+	workerCh   chan *indexMergeTableTask
+	indexMerge *IndexMergeReaderExecutor
+	wg         *sync.WaitGroup
+}
+
+func (w *processWorker) doIntersectionPerPartition() {
+	for task := range w.workerCh {
+		for _, h := range task.handles {
+			if cntPtr, ok := w.handleMap.Get(h); ok {
+				(*cntPtr.(*int))++
+			} else {
+				cnt := 1
+				w.handleMap.Set(h, &cnt)
+			}
 		}
 	}
-	w.indexMerge.memTracker.Consume(newAllocMapEle * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
+	w.wg.Done()
 }
 
 func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
@@ -827,17 +834,34 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		mapLen = len(w.indexMerge.prunedPartitions)
 	}
 	handleMaps := make([]*kv.HandleMap, 0, mapLen)
+	workers := make([]*processWorker, 0, len(handleMaps))
+	wg := sync.WaitGroup{}
 	for i := 0; i < mapLen; i++ {
 		handleMaps = append(handleMaps, kv.NewHandleMap())
+		workers = append(workers, &processWorker{
+			handleMap:  handleMaps[i],
+			workerCh:   make(chan *indexMergeTableTask, 10000),
+			indexMerge: w.indexMerge,
+			wg:         &wg,
+		})
+		go workers[i].doIntersectionPerPartition()
+		wg.Add(1)
 	}
 
 	for task := range fetchCh {
-		w.doIntersectionPerPartition(task.handles, handleMaps[task.parTblIdx])
+		workers[task.parTblIdx].workerCh <- task
+	}
+	for _, w := range workers {
+		close(w.workerCh)
+	}
+	wg.Wait()
+	for _, w := range workers {
+		w.indexMerge.memTracker.Consume(int64(w.handleMap.Len()) * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
 	}
 
 	intersected := make([][]kv.Handle, len(handleMaps))
 	for parTblIdx, m := range handleMaps {
-		m.Range(func (h kv.Handle, val interface{}) bool {
+		m.Range(func(h kv.Handle, val interface{}) bool {
 			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
 				intersected[parTblIdx] = append(intersected[parTblIdx], h)
