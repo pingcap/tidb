@@ -1550,7 +1550,6 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		g := &gluetidb.MockGlue{
 			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
 		}
-
 		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
 
 		t.Logf("[%d] Got Error: %v\n", i, err)

@@ -2680,10 +2680,14 @@ func CheckNewCollationEnable(
 			backupNewCollationEnable, newCollationEnable)
 	}
 
+	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
+	// so we need to modify this value according to the config of the cluster
+	// before using the collate package.
 	enabled := false
 	if newCollationEnable == "True" {
 		enabled = true
 	}
+	// modify collate.newCollationEnabled according to the configuration of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
