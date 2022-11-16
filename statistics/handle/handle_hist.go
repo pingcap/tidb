@@ -60,14 +60,6 @@ type NeededItemTask struct {
 // SendLoadRequests send neededColumns requests
 func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
 	remainedItems := h.removeHistLoadedColumns(neededHistItems)
-
-	failpoint.Inject("assertRemainedItems", func(val failpoint.Value) {
-		count := val.(int)
-		if len(remainedItems) != count {
-			panic("remained items count wrong")
-		}
-	})
-
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -150,7 +142,10 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
+		if !ok {
+			continue
+		}
+		if colHist.IsHistNeeded(tbl.Pseudo) {
 			remainedItems = append(remainedItems, item)
 		}
 	}

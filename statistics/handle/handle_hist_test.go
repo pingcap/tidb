@@ -29,25 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("create table t1(a int)")
-	h := dom.StatsHandle()
-	h.SetLease(1)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems", `return(0)`))
-	tk.MustQuery("explain select * from t where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems")
-	tk.MustExec("analyze table t1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertRemainedItems", `return(1)`))
-	tk.MustQuery("explain select * from t1 where a > 10")
-}
-
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
