@@ -47,6 +47,7 @@ export DUMPLING_TEST_PORT=3306
 
 # dumping
 export DUMPLING_TEST_DATABASE=$DB_NAME
+rm -rf $DUMPLING_OUTPUT_DIR
 run_dumpling --compress "snappy"
 
 cat "$cur/conf/lightning.toml"

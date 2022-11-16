@@ -35,6 +35,9 @@ for BACKEND in tidb local; do
     run_sql 'SELECT count(*) FROM compress.threads WHERE PROCESSLIST_TIME IS NOT NULL'
     check_contains 'count(*): 12'
 
+    run_sql 'SELECT count(*) FROM compress.multi_rows WHERE a="aaaaaaaaaa"'
+    check_contains 'count(*): 100000'
+
     run_sql 'SELECT hex(t), j, hex(b) FROM compress.escapes WHERE i = 1'
     check_contains 'hex(t): 5C'
     check_contains 'j: {"?": []}'
