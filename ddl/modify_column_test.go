@@ -890,5 +890,5 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	require.True(t, checkMiddleAddedCount)
 
 	res := tk.MustQuery("show warnings")
-	require.Len(t, res.Rows(), count)
+	require.Len(t, res.Rows(), 1)
 }
