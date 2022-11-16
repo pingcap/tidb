@@ -828,7 +828,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 		if len(remains) == 0 {
 			if ingestBeCtx != nil {
-				ingestBeCtx.EngMgr.ResetWorkers(job.ID, reorgInfo.currElement.ID)
+				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
 			}
 			break
 		}

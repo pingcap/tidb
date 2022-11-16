@@ -103,13 +103,15 @@ func (m *engineManager) Unregister(jobID, indexID int64) {
 
 // ResetWorkers reset the writer count of the engineInfo because
 // the goroutines of backfill workers have been terminated.
-func (m *engineManager) ResetWorkers(jobID, indexID int64) {
+func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
 	ei, exist := m.Load(indexID)
 	if !exist {
 		return
 	}
 	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
+	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+	m.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
 	ei.writerCount = 0
 }
 
