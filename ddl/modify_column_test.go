@@ -813,10 +813,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 	// 111.22 will be truncated the fraction .22 as .2 with truncated warning for each row.
 	tk.MustExec("alter table t modify column a decimal(4,1)")
 	// there should 4 rows of warnings corresponding to the origin rows.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '111.22'"))
 
 	// Test the strict warnings is treated as errors under the strict mode.
 	tk.MustExec("drop table if exists t")
@@ -829,9 +826,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 	// Test the strict warnings is treated as warnings under the non-strict mode.
 	tk.MustExec("set @@sql_mode=\"\"")
 	tk.MustExec("alter table t modify column a decimal(3,1)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 DECIMAL value is out of range in '(3, 1)'",
-		"Warning 1690 DECIMAL value is out of range in '(3, 1)'",
-		"Warning 1690 DECIMAL value is out of range in '(3, 1)'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 3 warnings with this error code, first warning: DECIMAL value is out of range in '(3, 1)'"))
 }
 
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
