@@ -6686,3 +6686,15 @@ func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
+
+func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		id INTEGER NOT NULL AUTO_INCREMENT,
+		CHECK (id IN (0, 1)),
+		KEY idx_autoinc_id (id)
+	)`)
+}
