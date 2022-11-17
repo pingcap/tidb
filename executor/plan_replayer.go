@@ -106,8 +106,15 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.ctx, e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("plan replayer capture task already exists")
+	}
 	exec := e.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
+	_, err = exec.ExecuteInternal(ctx1, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
