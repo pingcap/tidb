@@ -72,6 +72,22 @@ func TestSortedBasic(t *testing.T) {
 				kv(s("0008", ""), 0),
 			},
 		},
+		{
+			InputSequence: []spans.Valued{
+				kv(s("0001", "0004"), 3),
+				kv(s("0004", "0008"), 5),
+				kv(s("0001", "0007"), 4),
+				kv(s("", "0002"), 2),
+				kv(s("0001", "0004"), 5),
+				kv(s("0008", ""), 10),
+				kv(s("", "0001"), 20),
+			},
+			RetainLessThan: 11,
+			Result: []spans.Valued{
+				kv(s("0001", "0004"), 5),
+				kv(s("0008", ""), 10),
+			},
+		},
 	}
 
 	for i, c := range cases {

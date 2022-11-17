@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -105,8 +106,8 @@ func (s *subscription) listenOver(cli eventStream) {
 		for _, m := range msg.Events {
 			s.output <- spans.Valued{
 				Key: spans.Span{
-					StartKey: m.StartKey,
-					EndKey:   m.EndKey,
+					StartKey: decodeKey(m.StartKey),
+					EndKey:   decodeKey(m.EndKey),
 				},
 				Value: m.Checkpoint,
 			}
@@ -202,6 +203,19 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
 
 func (f *FlushSubscriber) Events() <-chan spans.Valued {
 	return f.eventsTunnel
+}
+
+// decodeKey decodes the key from TiKV, because the region range is encoded in TiKV.
+func decodeKey(key []byte) []byte {
+	if len(key) == 0 {
+		return key
+	}
+	// Ignore the timestamp...
+	_, data, err := codec.DecodeBytes(key, nil)
+	if err != nil {
+		log.Warn("the key from TiKV isn't encoded properly", logutil.Key("key", key), logutil.ShortError(err))
+	}
+	return data
 }
 
 func (f *FlushSubscriber) canBeRetried(err error) bool {
