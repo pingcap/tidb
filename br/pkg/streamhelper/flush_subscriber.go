@@ -29,6 +29,89 @@ type FlushSubscriber struct {
 	masterCtx    context.Context
 }
 
+type SubscriberConfig func(*FlushSubscriber)
+
+func WithMasterContext(ctx context.Context) SubscriberConfig {
+	return func(fs *FlushSubscriber) { fs.masterCtx = ctx }
+}
+
+func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...SubscriberConfig) *FlushSubscriber {
+	subs := &FlushSubscriber{
+		dialer:  dialer,
+		cluster: cluster,
+
+		clients:      map[uint64]*subscription{},
+		eventsTunnel: make(chan spans.Valued, 1024),
+		masterCtx:    context.Background(),
+	}
+
+	for _, c := range config {
+		c(subs)
+	}
+
+	return subs
+}
+
+func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
+	stores, err := f.cluster.Stores(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get store list")
+	}
+
+	storeSet := map[uint64]struct{}{}
+	for _, store := range stores {
+		_, ok := f.clients[store.ID]
+		if !ok {
+			f.addSubscription(ctx, store.ID)
+			f.clients[store.ID].connect(f.masterCtx, f.dialer)
+		}
+		storeSet[store.ID] = struct{}{}
+	}
+
+	for id := range f.clients {
+		_, ok := storeSet[id]
+		if !ok {
+			f.removeSubscription(id)
+		}
+	}
+	return nil
+}
+
+// Clear clears all the subscriptions.
+func (f *FlushSubscriber) Clear() {
+	log.Info("[log backup flush subscriber] Clearing.")
+	for id := range f.clients {
+		f.removeSubscription(id)
+	}
+}
+
+// Drop terminates the lifetime of the subscriber.
+// This subscriber would be no more usable.
+func (f *FlushSubscriber) Drop() {
+	f.Clear()
+	close(f.eventsTunnel)
+}
+
+// HandleErrors handles all pending errors.
+// Return them if there are some error cannot be handle internally.
+func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
+	for id, sub := range f.clients {
+		err := sub.loadError()
+		if err != nil {
+			retry := f.canBeRetried(err)
+			log.Warn("[log backup flush subscriber] Meet error.", logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
+			if retry {
+				sub.connect(f.masterCtx, f.dialer)
+			}
+		}
+	}
+	return nil
+}
+
+func (f *FlushSubscriber) Events() <-chan spans.Valued {
+	return f.eventsTunnel
+}
+
 type eventStream = logbackup.LogBackup_SubscribeFlushEventClient
 
 type subscription struct {
@@ -40,11 +123,11 @@ type subscription struct {
 	output  chan<- spans.Valued
 }
 
-func (s *subscription) EmitError(err error) {
+func (s *subscription) emitError(err error) {
 	s.err.Store(err)
 }
 
-func (s *subscription) LoadError() error {
+func (s *subscription) loadError() error {
 	err, ok := s.err.Load().(error)
 	if !ok {
 		return nil
@@ -67,7 +150,6 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) err
 		return err
 	}
 	cx, cancel := context.WithCancel(ctx)
-	s.cancel = cancel
 	cli, err := c.SubscribeFlushEvent(cx, &logbackup.SubscribeFlushEventRequest{
 		ClientId: uuid.NewString(),
 	})
@@ -75,6 +157,7 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) err
 		cancel()
 		return err
 	}
+	s.cancel = cancel
 	go s.listenOver(cli)
 	return nil
 }
@@ -99,7 +182,7 @@ func (s *subscription) listenOver(cli eventStream) {
 			if err == io.EOF || err == context.Canceled {
 				return
 			}
-			s.EmitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
+			s.emitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
 			return
 		}
 
@@ -116,93 +199,17 @@ func (s *subscription) listenOver(cli eventStream) {
 	}
 }
 
-type SubscriberConfig func(*FlushSubscriber)
-
-func WithMasterContext(ctx context.Context) SubscriberConfig {
-	return func(fs *FlushSubscriber) { fs.masterCtx = ctx }
-}
-
-func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...SubscriberConfig) *FlushSubscriber {
-	subs := &FlushSubscriber{
-		dialer:  dialer,
-		cluster: cluster,
-
-		clients:      map[uint64]*subscription{},
-		eventsTunnel: make(chan spans.Valued, 1024),
-		masterCtx:    context.Background(),
-	}
-
-	for _, c := range config {
-		c(subs)
-	}
-
-	return subs
-}
-
-func (f *FlushSubscriber) AddSubscription(ctx context.Context, toStore uint64) {
+func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore uint64) {
 	f.clients[toStore] = newSubscription(toStore, f.eventsTunnel)
 }
 
-func (f *FlushSubscriber) RemoveSubscription(toStore uint64) {
+func (f *FlushSubscriber) removeSubscription(toStore uint64) {
 	subs, ok := f.clients[toStore]
 	if ok {
 		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
 		subs.close()
 		delete(f.clients, toStore)
 	}
-}
-
-func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
-	stores, err := f.cluster.Stores(ctx)
-	if err != nil {
-		return errors.Annotate(err, "failed to get store list")
-	}
-
-	storeSet := map[uint64]struct{}{}
-	for _, store := range stores {
-		_, ok := f.clients[store.ID]
-		if !ok {
-			f.AddSubscription(ctx, store.ID)
-			f.clients[store.ID].connect(f.masterCtx, f.dialer)
-		}
-		storeSet[store.ID] = struct{}{}
-	}
-
-	for id := range f.clients {
-		_, ok := storeSet[id]
-		if !ok {
-			f.RemoveSubscription(id)
-		}
-	}
-	return nil
-}
-
-// Clear clears all the subscriptions,
-func (f *FlushSubscriber) Clear() {
-	log.Info("[log backup flush subscriber] Clearing.")
-	for id := range f.clients {
-		f.RemoveSubscription(id)
-	}
-}
-
-// HandleErrors handles all pending errors.
-// Return them if there are some error cannot be handle internally.
-func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
-	for id, sub := range f.clients {
-		err := sub.LoadError()
-		if err != nil {
-			retry := f.canBeRetried(err)
-			log.Warn("[log backup flush subscriber] Meet error.", logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
-			if retry {
-				sub.connect(f.masterCtx, f.dialer)
-			}
-		}
-	}
-	return nil
-}
-
-func (f *FlushSubscriber) Events() <-chan spans.Valued {
-	return f.eventsTunnel
 }
 
 // decodeKey decodes the key from TiKV, because the region range is encoded in TiKV.

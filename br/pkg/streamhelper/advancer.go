@@ -64,15 +64,15 @@ type CheckpointAdvancer struct {
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
 
-	subscriber *FlushSubscriber
+	subscriber   *FlushSubscriber
+	subscriberMu sync.Mutex
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
-		env:        env,
-		cfg:        config.Default(),
-		subscriber: NewSubscriber(env, env),
+		env: env,
+		cfg: config.Default(),
 	}
 }
 
@@ -291,6 +291,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = nil
 		c.taskRange = nil
 		c.checkpoints = nil
+		c.clearSubscriptions()
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
@@ -299,6 +300,13 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		return e.Err
 	}
 	return nil
+}
+
+func (c *CheckpointAdvancer) clearSubscriptions() {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+
+	c.subscriber.Clear()
 }
 
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
@@ -329,7 +337,17 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	return nil
 }
 
+func (c *CheckpointAdvancer) stopSubscriber() {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+	c.subscriber.Drop()
+	c.subscriber = nil
+}
+
 func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+	c.subscriber = NewSubscriber(c.env, c.env, WithMasterContext(ctx))
 	es := c.subscriber.Events()
 
 	go func() {

@@ -44,6 +44,7 @@ func (c *CheckpointAdvancer) Name() string {
 
 func (c *CheckpointAdvancer) onStop() {
 	metrics.AdvancerOwner.Set(0.0)
+	c.stopSubscriber()
 }
 
 func OwnerManagerForLogBackup(ctx context.Context, etcdCli *clientv3.Client) owner.Manager {
