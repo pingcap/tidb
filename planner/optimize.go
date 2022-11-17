@@ -547,14 +547,14 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	_, digestWithoutDB := parser.NormalizeDigest(br.OriginalSQL)
+	_, sqlDigestWithoutDB := parser.NormalizeDigest(br.OriginalSQL)
 	binding := bindinfo.Binding{
-		BindSQL:    bindSQL,
-		Status:     bindinfo.PendingVerify,
-		Charset:    charset,
-		Collation:  collation,
-		Source:     bindinfo.Evolve,
-		PlanDigest: digestWithoutDB.String(),
+		BindSQL:   bindSQL,
+		Status:    bindinfo.PendingVerify,
+		Charset:   charset,
+		Collation: collation,
+		Source:    bindinfo.Evolve,
+		SQLDigest: sqlDigestWithoutDB.String(),
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

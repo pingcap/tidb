@@ -243,8 +243,8 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
-	_, digestWithoutDB := parser.NormalizeDigest("select * from t where a > 10") // test sqlDigest if exists after add columns to mysql.bind_info
-	require.Equal(t, rows[0][9], digestWithoutDB.String())
+	_, sqlDigestWithoutDB := parser.NormalizeDigest("select * from t where a > 10") // test sqlDigest if exists after add columns to mysql.bind_info
+	require.Equal(t, rows[0][9], sqlDigestWithoutDB.String())
 }
 
 func TestSetBindingStatus(t *testing.T) {

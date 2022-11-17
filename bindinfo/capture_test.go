@@ -1012,7 +1012,7 @@ func TestCaptureHints(t *testing.T) {
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res), 1)                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
-		_, digestWithoutDB := parser.NormalizeDigest(capCase.query)         // test sqlDigest if exists after add columns to mysql.bind_info
-		require.Equal(t, res[0][9], digestWithoutDB.String())
+		_, sqlDigestWithoutDB := parser.NormalizeDigest(capCase.query)      // test sqlDigest if exists after add columns to mysql.bind_info
+		require.Equal(t, res[0][9], sqlDigestWithoutDB.String())
 	}
 }

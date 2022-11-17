@@ -1295,7 +1295,7 @@ func TestBindSQLDigest(t *testing.T) {
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res[0]), 11)
-		_, digestWithoutDB := parser.NormalizeDigest(c.origin) // test sqlDigest if exists after add columns to mysql.bind_info
-		require.Equal(t, res[0][9], digestWithoutDB.String())
+		_, sqlDigestWithoutDB := parser.NormalizeDigest(c.origin) // test sqlDigest if exists after add columns to mysql.bind_info
+		require.Equal(t, res[0][9], sqlDigestWithoutDB.String())
 	}
 }
