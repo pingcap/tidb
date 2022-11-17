@@ -9,10 +9,11 @@ import (
 )
 
 const (
-	flagBackoffTime      = "backoff-time"
-	flagTickInterval     = "tick-interval"
-	flagFullScanDiffTick = "full-scan-tick"
-	flagAdvancingByCache = "advancing-by-cache"
+	flagBackoffTime         = "backoff-time"
+	flagTickInterval        = "tick-interval"
+	flagFullScanDiffTick    = "full-scan-tick"
+	flagAdvancingByCache    = "advancing-by-cache"
+	flagTryAdvanceThreshold = "try-advance-threshold"
 
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 5 * time.Minute
@@ -31,27 +32,21 @@ type Config struct {
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
 	// The gap between calculating checkpoints.
 	TickDuration time.Duration `toml:"tick-interval" json:"tick-interval"`
-	// The backoff time of full scan.
-	FullScanTick int `toml:"full-scan-tick" json:"full-scan-tick"`
-
-	// Whether enable the optimization -- use a cached heap to advancing the global checkpoint.
-	// This may reduce the gap of checkpoint but may cost more CPU.
-	AdvancingByCache bool `toml:"advancing-by-cache" json:"advancing-by-cache"`
+	// The threshold for polling TiKV for checkpoint of some range.
+	TryAdvanceThreshold time.Duration `toml:"try-advance-threshold" json:"try-advance-threshold"`
 }
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
 	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
-	f.Bool(flagAdvancingByCache, DefaultAdvanceByCache, "Whether enable the optimization -- use a cached heap to advancing the global checkpoint.")
-	f.Int(flagFullScanDiffTick, DefaultFullScanTick, "The backoff of full scan.")
+	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold, "If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
 }
 
 func Default() Config {
 	return Config{
-		BackoffTime:      DefaultBackOffTime,
-		TickDuration:     DefaultTickInterval,
-		FullScanTick:     DefaultFullScanTick,
-		AdvancingByCache: DefaultAdvanceByCache,
+		BackoffTime:         DefaultBackOffTime,
+		TickDuration:        DefaultTickInterval,
+		TryAdvanceThreshold: DefaultTryAdvanceThreshold,
 	}
 }
 
@@ -65,11 +60,7 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
-	conf.FullScanTick, err = f.GetInt(flagFullScanDiffTick)
-	if err != nil {
-		return err
-	}
-	conf.AdvancingByCache, err = f.GetBool(flagAdvancingByCache)
+	conf.TryAdvanceThreshold, err = f.GetDuration(flagTryAdvanceThreshold)
 	if err != nil {
 		return err
 	}

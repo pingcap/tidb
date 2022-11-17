@@ -11,7 +11,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
@@ -51,9 +50,6 @@ func TestTick(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *config.Config) {
-		cac.FullScanTick = 0
-	})
 	require.NoError(t, adv.OnTick(ctx))
 	for i := 0; i < 5; i++ {
 		cp := c.advanceCheckpoints()
@@ -76,9 +72,6 @@ func TestWithFailure(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *config.Config) {
-		cac.FullScanTick = 0
-	})
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()

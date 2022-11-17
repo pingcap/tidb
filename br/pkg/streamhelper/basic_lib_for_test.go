@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -61,7 +63,7 @@ func (c *flushSimulator) fork() flushSimulator {
 }
 
 type region struct {
-	rng        kv.KeyRange
+	rng        spans.Span
 	leader     uint64
 	epoch      uint64
 	id         uint64
@@ -73,6 +75,10 @@ type region struct {
 type fakeStore struct {
 	id      uint64
 	regions map[uint64]*region
+
+	clientMu    sync.Mutex
+	supportsSub bool
+	fsub        func(logbackup.SubscribeFlushEventResponse)
 }
 
 type fakeCluster struct {
@@ -104,8 +110,59 @@ func (r *region) flush() {
 	r.fsim.flushedEpoch.Store(r.epoch)
 }
 
+type trivialFlushStream <-chan logbackup.SubscribeFlushEventResponse
+
+func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, error) {
+	item, ok := <-t
+	if !ok {
+		return nil, io.EOF
+	}
+	return &item, nil
+}
+
+func (t trivialFlushStream) Header() (metadata.MD, error) {
+	return make(metadata.MD), nil
+}
+
+func (t trivialFlushStream) Trailer() metadata.MD {
+	return make(metadata.MD)
+}
+
+func (t trivialFlushStream) CloseSend() error {
+	return nil
+}
+
+func (t trivialFlushStream) Context() context.Context {
+	return context.Background()
+}
+
+func (t trivialFlushStream) SendMsg(m interface{}) error {
+	return nil
+}
+
+func (t trivialFlushStream) RecvMsg(m interface{}) error {
+	return nil
+}
+
 func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
-	return nil, status.Error(codes.Unimplemented, "meow?")
+	f.clientMu.Lock()
+	defer f.clientMu.Unlock()
+	if !f.supportsSub {
+		return nil, status.Error(codes.Unimplemented, "meow?")
+	}
+
+	ch := make(chan logbackup.SubscribeFlushEventResponse)
+	f.fsub = func(glftrr logbackup.SubscribeFlushEventResponse) {
+		ch <- glftrr
+	}
+	return trivialFlushStream(ch), nil
+}
+
+func (f *fakeStore) SetSupportFlushSub(b bool) {
+	f.clientMu.Lock()
+	defer f.clientMu.Unlock()
+
+	f.supportsSub = b
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -408,10 +465,22 @@ outer:
 }
 
 func (f *fakeStore) flush() {
+	resp := make([]*logbackup.FlushEvent, 0, len(f.regions))
 	for _, r := range f.regions {
 		if r.leader == f.id {
 			r.flush()
+			resp = append(resp, &logbackup.FlushEvent{
+				StartKey:   r.rng.StartKey,
+				EndKey:     r.rng.EndKey,
+				Checkpoint: r.checkpoint.Load(),
+			})
 		}
+	}
+
+	if f.fsub != nil {
+		f.fsub(logbackup.SubscribeFlushEventResponse{
+			Events: resp,
+		})
 	}
 }
 

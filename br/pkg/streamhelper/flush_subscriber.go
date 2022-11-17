@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -22,21 +23,96 @@ type FlushSubscriber struct {
 	dialer  LogBackupService
 	cluster TiKVClusterMeta
 
-	clients      map[uint64]subscription
+	clients      map[uint64]*subscription
 	eventsTunnel chan spans.Valued
-	errorsTunnel chan storeError
 	masterCtx    context.Context
-}
-
-type storeError struct {
-	id uint64
-	error
 }
 
 type eventStream = logbackup.LogBackup_SubscribeFlushEventClient
 
 type subscription struct {
 	cancel context.CancelFunc
+	err    atomic.Value
+
+	// Immutable state.
+	storeID uint64
+	output  chan<- spans.Valued
+}
+
+func (s *subscription) EmitError(err error) {
+	s.err.Store(err)
+}
+
+func (s *subscription) LoadError() error {
+	err, ok := s.err.Load().(error)
+	if !ok {
+		return nil
+	}
+	return err
+}
+
+func newSubscription(toStore uint64, output chan<- spans.Valued) *subscription {
+	return &subscription{
+		storeID: toStore,
+		output:  output,
+	}
+}
+
+func (s *subscription) connect(ctx context.Context, dialer LogBackupService) error {
+	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID))
+
+	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
+	if err != nil {
+		return err
+	}
+	cx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+	cli, err := c.SubscribeFlushEvent(cx, &logbackup.SubscribeFlushEventRequest{
+		ClientId: uuid.NewString(),
+	})
+	if err != nil {
+		cancel()
+		return err
+	}
+	go s.listenOver(cli)
+	return nil
+}
+
+func (s *subscription) close() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	// HACK: don't close the internal channel here,
+	// because it is a ever-sharing channel.
+}
+
+func (s *subscription) listenOver(cli eventStream) {
+	storeID := s.storeID
+	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
+	for {
+		// Shall we use RecvMsg for better performance?
+		// Note that the spans.Full requires the input slice be immutable.
+		msg, err := cli.Recv()
+		if err != nil {
+			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
+			if err == io.EOF || err == context.Canceled {
+				return
+			}
+			s.EmitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
+			return
+		}
+
+		for _, m := range msg.Events {
+			s.output <- spans.Valued{
+				Key: spans.Span{
+					StartKey: m.StartKey,
+					EndKey:   m.EndKey,
+				},
+				Value: m.Checkpoint,
+			}
+		}
+		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(strconv.Itoa(int(storeID))).Add(float64(len(msg.Events)))
+	}
 }
 
 type SubscriberConfig func(*FlushSubscriber)
@@ -50,9 +126,8 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 		dialer:  dialer,
 		cluster: cluster,
 
-		clients:      map[uint64]subscription{},
+		clients:      map[uint64]*subscription{},
 		eventsTunnel: make(chan spans.Valued, 1024),
-		errorsTunnel: make(chan storeError, 128),
 		masterCtx:    context.Background(),
 	}
 
@@ -63,35 +138,15 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 	return subs
 }
 
-func (f *FlushSubscriber) AddSubscription(ctx context.Context, toStore uint64) error {
-	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", toStore))
-
-	f.RemoveSubscription(toStore)
-	c, err := f.dialer.GetLogBackupClient(ctx, toStore)
-	if err != nil {
-		return err
-	}
-	cx, cancel := context.WithCancel(f.masterCtx)
-	cli, err := c.SubscribeFlushEvent(cx, &logbackup.SubscribeFlushEventRequest{
-		ClientId: uuid.NewString(),
-	})
-	if err != nil {
-		cancel()
-		return err
-	}
-	go f.listenOver(toStore, cli)
-	sub := subscription{
-		cancel: cancel,
-	}
-	f.clients[toStore] = sub
-	return nil
+func (f *FlushSubscriber) AddSubscription(ctx context.Context, toStore uint64) {
+	f.clients[toStore] = newSubscription(toStore, f.eventsTunnel)
 }
 
 func (f *FlushSubscriber) RemoveSubscription(toStore uint64) {
 	subs, ok := f.clients[toStore]
 	if ok {
 		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
-		subs.cancel()
+		subs.close()
 		delete(f.clients, toStore)
 	}
 }
@@ -107,6 +162,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 		_, ok := f.clients[store.ID]
 		if !ok {
 			f.AddSubscription(ctx, store.ID)
+			f.clients[store.ID].connect(f.masterCtx, f.dialer)
 		}
 		storeSet[store.ID] = struct{}{}
 	}
@@ -131,64 +187,21 @@ func (f *FlushSubscriber) Clear() {
 // HandleErrors handles all pending errors.
 // Return them if there are some error cannot be handle internally.
 func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
-	es := map[uint64]error{}
-
-collect:
-	for {
-		select {
-		case err := <-f.errorsTunnel:
-			es[err.id] = multierr.Append(es[err.id], err)
-		default:
-			break collect
+	for id, sub := range f.clients {
+		err := sub.LoadError()
+		if err != nil {
+			retry := f.canBeRetried(err)
+			log.Warn("[log backup flush subscriber] Meet error.", logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
+			if retry {
+				sub.connect(f.masterCtx, f.dialer)
+			}
 		}
 	}
-
-	for id, err := range es {
-		retry := f.canBeRetried(err)
-		log.Warn("[log backup flush subscriber] Meet error.", logutil.ShortError(err), zap.Bool("can-retry?", retry))
-
-		if retry {
-			f.AddSubscription(ctx, id)
-		}
-	}
-
 	return nil
 }
 
 func (f *FlushSubscriber) Events() <-chan spans.Valued {
 	return f.eventsTunnel
-}
-
-func (f *FlushSubscriber) listenOver(storeID uint64, cli eventStream) {
-	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
-	for {
-		// Shall we use RecvMsg for better performance?
-		// Note that the spans.Full requires the input slice be immutable.
-		msg, err := cli.Recv()
-		if err != nil {
-			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
-			if err == io.EOF || err == context.Canceled {
-				return
-			}
-			f.onError(storeID, errors.Annotatef(err, "while receiving from store id %d", storeID))
-			return
-		}
-
-		for _, m := range msg.Events {
-			f.eventsTunnel <- spans.Valued{
-				Key: spans.Span{
-					StartKey: m.StartKey,
-					EndKey:   m.EndKey,
-				},
-				Value: m.Checkpoint,
-			}
-		}
-		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(strconv.Itoa(int(storeID))).Add(float64(len(msg.Events)))
-	}
-}
-
-func (f *FlushSubscriber) onError(byStore uint64, err error) {
-	f.errorsTunnel <- storeError{error: err, id: byStore}
 }
 
 func (f *FlushSubscriber) canBeRetried(err error) bool {
