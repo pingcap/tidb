@@ -2231,6 +2231,11 @@ error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
 '''
 
+["privilege:1862"]
+error = '''
+Your password has expired. To log in you must change it using a client that supports expired passwords.
+'''
+
 ["privilege:3530"]
 error = '''
 %s is not granted to %s
