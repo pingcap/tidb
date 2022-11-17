@@ -6120,6 +6120,82 @@ func (b *builtinTimestampAddSig) Clone() builtinFunc {
 	return newSig
 }
 
+var (
+	MinDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.Local)
+	MinDatetimeNanos       = float64(MinDatetimeInGoTime.Unix())*1e9 + float64(MinDatetimeInGoTime.Nanosecond())
+	MaxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
+	MaxDatetimeNanos       = float64(MaxDatetimeInGoTime.Unix())*1e9 + float64(MaxDatetimeInGoTime.Nanosecond())
+	MinDatetimeMonths      = float64(1000*12 + 0)
+	MaxDatetimeMonths      = float64(9999*12 + 11)
+)
+
+func validAddTime(nano1 float64, nano2 float64) bool {
+	return nano1+nano2 >= MinDatetimeNanos && nano1+nano2 <= MaxDatetimeNanos
+}
+
+func validAddMonth(month1 float64, year, month int) bool {
+	tmp := month1 + float64(year)*12 + float64(month-1)
+	return tmp >= MinDatetimeMonths && tmp <= MaxDatetimeMonths
+}
+
+func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error) {
+	s := math.Round(v * 1000000)
+	// round to the nearest int
+	v = math.Round(v)
+	var tb time.Time
+	nano := float64(t.Unix())*1e9 + float64(t.Nanosecond())
+	switch unit {
+	case "MICROSECOND":
+		if !validAddTime(v*float64(time.Microsecond), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Microsecond)
+	case "SECOND":
+		if !validAddTime(s*float64(time.Microsecond), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(s) * time.Microsecond)
+	case "MINUTE":
+		if !validAddTime(v*float64(time.Minute), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Minute)
+	case "HOUR":
+		if !validAddTime(v*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Hour)
+	case "DAY":
+		if !validAddTime(v*24*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 0, int(v))
+	case "WEEK":
+		if !validAddTime(v*24*7*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 0, 7*int(v))
+	case "MONTH":
+		if !validAddMonth(v, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, int(v), 0)
+	case "QUARTER":
+		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 3*int(v), 0)
+	case "YEAR":
+		if !validAddMonth(v*12, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(int(v), 0, 0)
+	default:
+		return tb, false, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+	}
+	return tb, false, nil
+}
+
 // evalString evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error) {
@@ -6131,9 +6207,6 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	s := int64(v * 1000000)
-	// round to the nearest int
-	v = math.Round(v)
 	arg, isNull, err := b.args[2].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6143,30 +6216,14 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return "", true, nil
 	}
-	var tb time.Time
-	fsp := types.DefaultFsp
-	switch unit {
-	case "MICROSECOND":
-		tb = tm1.Add(time.Duration(v) * time.Microsecond)
-	case "SECOND":
-		tb = tm1.Add(time.Duration(s) * time.Microsecond)
-	case "MINUTE":
-		tb = tm1.Add(time.Duration(v) * time.Minute)
-	case "HOUR":
-		tb = tm1.Add(time.Duration(v) * time.Hour)
-	case "DAY":
-		tb = tm1.AddDate(0, 0, int(v))
-	case "WEEK":
-		tb = tm1.AddDate(0, 0, 7*int(v))
-	case "MONTH":
-		tb = tm1.AddDate(0, int(v), 0)
-	case "QUARTER":
-		tb = tm1.AddDate(0, 3*int(v), 0)
-	case "YEAR":
-		tb = tm1.AddDate(int(v), 0, 0)
-	default:
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+	tb, overflow, err := addUnitToTime(unit, tm1, v)
+	if err != nil {
+		return "", true, err
 	}
+	if overflow {
+		return "", true, handleInvalidTimeError(b.ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+	fsp := types.DefaultFsp
 	// use MaxFsp when microsecond is not zero
 	if tb.Nanosecond()/1000 != 0 {
 		fsp = types.MaxFsp

@@ -7390,7 +7390,7 @@ func TestIssue31569(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
-func TestTimestampAddWithFrationalSecond(t *testing.T) {
+func TestTimestampAddWithFractionalSecond(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -7404,6 +7404,13 @@ func TestTimestampAddWithFrationalSecond(t *testing.T) {
 	tk.MustQuery("select timestampadd(second, 1, '2021-08-20 00:00:01.0001')").Check(testkit.Rows("2021-08-20 00:00:02.000100"))
 	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00')").Check(testkit.Rows("2021-08-20 00:02:00"))
 	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001')").Check(testkit.Rows("2021-08-20 00:02:00.000100"))
+	// overflow
+	tk.MustQuery("SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result").Check(testkit.Rows("<nil>"))
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	for _, warning := range warnings {
+		require.EqualError(t, warning.Err, "[types:1441]Datetime function: datetime field overflow")
+	}
 }
 
 func TestDateAddForNonExistingTimestamp(t *testing.T) {
