@@ -926,7 +926,7 @@ outer:
 // CheckTableExists checks whether the restored tables already exist in the target cluster.
 func (rc *Client) CheckTableExists(ctx context.Context) error {
 	userDBs := GetExistedUserDBs(rc.dom)
-	if len(userDBs) == 0 {
+	if len(userDBs) == 0 || rc.IsIncremental() {
 		return nil
 	}
 
@@ -2708,6 +2708,7 @@ func NewMockRestoreClient(
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
 	dbs map[string]*utils.Database,
+	backupMeta *backuppb.BackupMeta,
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
@@ -2718,6 +2719,7 @@ func NewMockRestoreClient(
 		deleteRangeQuery:   make([]string, 0),
 		deleteRangeQueryCh: make(chan string, 10),
 		databases:          dbs,
+		backupMeta:         backupMeta,
 	}
 }
 

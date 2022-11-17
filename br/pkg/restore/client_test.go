@@ -1570,6 +1570,7 @@ func TestCheckTablesExists(t *testing.T) {
 	caseList := []struct {
 		userDB2Tables   map[string][]string
 		backupDB2Tables map[string][]string
+		backupMeta      *backuppb.BackupMeta
 		isErr           bool
 	}{
 		{
@@ -1580,6 +1581,10 @@ func TestCheckTablesExists(t *testing.T) {
 			backupDB2Tables: map[string][]string{
 				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
 				"test":                      {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
 			},
 			isErr: true,
 		},
@@ -1592,6 +1597,10 @@ func TestCheckTablesExists(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
 				"test":                      {"T1", "T2"},
 			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
 			isErr: true,
 		},
 		{
@@ -1602,6 +1611,10 @@ func TestCheckTablesExists(t *testing.T) {
 			backupDB2Tables: map[string][]string{
 				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
 				"items":                     {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
 			},
 			isErr: false,
 		},
@@ -1614,6 +1627,10 @@ func TestCheckTablesExists(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
 				"test":                      {"T3", "T4"},
 			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
 			isErr: false,
 		},
 		{
@@ -1625,6 +1642,10 @@ func TestCheckTablesExists(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
 				"test":                      {"T2", "T3"},
 			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
 			isErr: true,
 		},
 		{
@@ -1634,14 +1655,46 @@ func TestCheckTablesExists(t *testing.T) {
 			backupDB2Tables: map[string][]string{
 				"test": {"t2", "t3"},
 			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
 			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				"test": {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"test": {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 0, // client.IsIncremental() return false when StartVersion is 0
+				EndVersion:   100,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{ // restore incremental data
+				StartVersion: 42,
+				EndVersion:   100,
+			},
+			isErr: false,
 		},
 	}
 
 	ctx := context.Background()
 	for i, ca := range caseList {
 		t.Run(fmt.Sprintf("case %d:", i), func(t *testing.T) {
-			m, client := prepareClusterAndClient(t, ca.userDB2Tables, ca.backupDB2Tables)
+			m, client := prepareClusterAndClient(t, ca.userDB2Tables, ca.backupDB2Tables, ca.backupMeta)
 			defer m.Stop()
 
 			err := client.CheckTableExists(ctx)
@@ -1656,7 +1709,8 @@ func TestCheckTablesExists(t *testing.T) {
 }
 
 func prepareClusterAndClient(t *testing.T,
-	userDB2Tables, backupDB2Tables map[string][]string) (*mock.Cluster, *restore.Client) {
+	userDB2Tables, backupDB2Tables map[string][]string,
+	backupMeta *backuppb.BackupMeta) (*mock.Cluster, *restore.Client) {
 	m := getStartedMockedCluster(t)
 
 	// prepare backup tables
@@ -1681,7 +1735,7 @@ func prepareClusterAndClient(t *testing.T,
 		}
 	}
 
-	client := restore.NewMockRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false, backupDBs)
+	client := restore.NewMockRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false, backupDBs, backupMeta)
 	g := gluetidb.New()
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
