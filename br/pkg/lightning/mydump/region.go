@@ -34,8 +34,8 @@ const (
 	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
 	// the increment ratio of large CSV file size threshold by `region-split-size`
 	largeCSVLowerThresholdRation = 10
-	// tableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
-	tableFileSizeINF = 10 * 1024 * tableRegionSizeWarningThreshold
+	// TableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
+	TableFileSizeINF = 10 * 1024 * tableRegionSizeWarningThreshold
 )
 
 // TableRegion contains information for a table region during import.
@@ -301,7 +301,7 @@ func MakeSourceFileRegion(
 	// TODO: update progress bar calculation for compressed files.
 	if fi.FileMeta.Compression != CompressionNone {
 		rowIDMax = fileSize * 100 / divisor
-		fileSize = tableFileSizeINF
+		fileSize = TableFileSizeINF
 	}
 	tableRegion := &TableRegion{
 		DB:       meta.DB,
