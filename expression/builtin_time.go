@@ -6094,21 +6094,21 @@ func (b *builtinTimestampAddSig) Clone() builtinFunc {
 }
 
 var (
-	MinDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.Local)
-	MinDatetimeNanos       = float64(MinDatetimeInGoTime.Unix())*1e9 + float64(MinDatetimeInGoTime.Nanosecond())
-	MaxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
-	MaxDatetimeNanos       = float64(MaxDatetimeInGoTime.Unix())*1e9 + float64(MaxDatetimeInGoTime.Nanosecond())
-	MinDatetimeMonths      = float64(1000*12 + 0)
-	MaxDatetimeMonths      = float64(9999*12 + 11)
+	minDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.Local)
+	minDatetimeNanos       = float64(minDatetimeInGoTime.Unix())*1e9 + float64(minDatetimeInGoTime.Nanosecond())
+	maxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
+	maxDatetimeNanos       = float64(maxDatetimeInGoTime.Unix())*1e9 + float64(maxDatetimeInGoTime.Nanosecond())
+	minDatetimeMonths      = float64(1000*12 + 0)
+	maxDatetimeMonths      = float64(9999*12 + 11)
 )
 
 func validAddTime(nano1 float64, nano2 float64) bool {
-	return nano1+nano2 >= MinDatetimeNanos && nano1+nano2 <= MaxDatetimeNanos
+	return nano1+nano2 >= minDatetimeNanos && nano1+nano2 <= maxDatetimeNanos
 }
 
 func validAddMonth(month1 float64, year, month int) bool {
 	tmp := month1 + float64(year)*12 + float64(month-1)
-	return tmp >= MinDatetimeMonths && tmp <= MaxDatetimeMonths
+	return tmp >= minDatetimeMonths && tmp <= maxDatetimeMonths
 }
 
 func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error) {
