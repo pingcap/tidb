@@ -1228,7 +1228,7 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 	return false, canDeleteNum, nil
 }
 
-func preventPasswordReuse(ctx context.Context, sctx sessionctx.Context, Username string, Hostname string, passwdlockinfo *passwordLockInfo, pwd string) error {
+func checkPasswordReusePolicy(ctx context.Context, sctx sessionctx.Context, Username string, Hostname string, passwdlockinfo *passwordLockInfo, pwd string) error {
 	// read password reuse info from mysql.user and global variables
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sctx, Username, Hostname, passwdlockinfo)
 	if err != nil {
@@ -1391,7 +1391,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			// for Support Password Reuse Policy
 			if len(pwd) != 0 {
-				err := preventPasswordReuse(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdlockinfo, pwd)
+				err := checkPasswordReusePolicy(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdlockinfo, pwd)
 				if err != nil {
 					return err
 				}
@@ -1956,7 +1956,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
 			passwordReuseIntervalFlag: false}
 	if len(pwd) != 0 {
-		err := preventPasswordReuse(ctx, e.ctx, u, h, passwdlockinfo, pwd)
+		err := checkPasswordReusePolicy(ctx, e.ctx, u, h, passwdlockinfo, pwd)
 		if err != nil {
 			return err
 		}
