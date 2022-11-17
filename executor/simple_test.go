@@ -228,7 +228,7 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustExec(`drop USER testReuse `)
 
 	rootTK.MustExec(`set global password_reuse_interval = 0;`)
-	// nil is not stored
+	//password nil is not stored
 	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 6 DAY`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
 	rootTK.MustExec(`drop USER testReuse `)
@@ -312,13 +312,20 @@ func TestUserReuseFunction(t *testing.T) {
 func TestUserReuseMultiuser(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	rootTK := testkit.NewTestKit(t, store)
+	//alter multi user seccess
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test', testReuse1 identified by 'test', testReuse2 identified by 'test' PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`65535 65535`, `65535 65535`, `65535 65535`))
 	rootTK.MustExec(`ALTER USER testReuse identified by 'test1', testReuse1 identified by 'test1', testReuse2 identified by 'test1' PASSWORD HISTORY 3 PASSWORD REUSE INTERVAL 3 DAY`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`3 3`, `3 3`, `3 3`))
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
-	rootTK.MustExec(`drop User testReuse, testReuse1, testReuse2`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%'`).Check(testkit.Rows(`0`))
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
+	//alter multi user fail
+	rootTK.MustExec(`CREATE USER testReuse3 identified by 'test'`)
+	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`3 3`, `3 3`, `3 3`, `<nil> <nil>`))
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
+	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test1', testReuse3 identified by 'test1'`, 3638)
+	//drop user
+	rootTK.MustExec(`drop User testReuse, testReuse1, testReuse2, testReuse3`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' `).Check(testkit.Rows(`0`))
 }
 
 func TestUserReuseRename(t *testing.T) {
