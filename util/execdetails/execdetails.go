@@ -375,10 +375,17 @@ type CopRuntimeStats struct {
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
 	defer crs.Unlock()
+	fmt.Printf("hyy RecordOneCopTask summary GetFullTableScanContext GetScanPacksCount is %v", summary.GetFullTableScanContext().GetScanPacksCount())
+	fmt.Println("")
 	crs.stats[address] = append(crs.stats[address],
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows)},
+			rows:    int64(*summary.NumProducedRows),
+			fullTableScanContext: &FullTableScanContext{
+				scanPacksCount: summary.GetFullTableScanContext().GetScanPacksCount(),
+				skipPacksCount: summary.GetFullTableScanContext().GetSkipPacksCount(),
+				scanRowsCount:  summary.GetFullTableScanContext().GetScanRowsCount(),
+				skipRowsCount:  summary.GetFullTableScanContext().GetSkipRowsCount()}},
 			threads:   int32(summary.GetConcurrency()),
 			storeType: crs.storeType})
 }
@@ -394,14 +401,16 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalFullTableScanContext *FullTableScanContext) {
 	procTimes = make([]time.Duration, 0, 32)
+	totalFullTableScanContext = &FullTableScanContext{}
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalTime += time.Duration(stat.consume)
 			totalLoops += stat.loop
 			totalThreads += stat.threads
+			totalFullTableScanContext.Merge(stat.fullTableScanContext)
 			totalTasks++
 		}
 	}
@@ -413,7 +422,7 @@ func (crs *CopRuntimeStats) String() string {
 		return ""
 	}
 
-	procTimes, totalTime, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
+	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalFullTableScanContext := crs.MergeBasicStats()
 	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == "tiflash"
 
@@ -422,6 +431,9 @@ func (crs *CopRuntimeStats) String() string {
 		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			if !totalFullTableScanContext.Empty() {
+				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d}", totalFullTableScanContext.scanPacksCount, totalFullTableScanContext.skipPacksCount, totalFullTableScanContext.scanRowsCount, totalFullTableScanContext.skipRowsCount))
+			}
 		} else {
 			buf.WriteString("}")
 		}
@@ -433,6 +445,9 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			if !totalFullTableScanContext.Empty() {
+				buf.WriteString(fmt.Sprintf("table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d}", totalFullTableScanContext.scanPacksCount, totalFullTableScanContext.skipPacksCount, totalFullTableScanContext.scanRowsCount, totalFullTableScanContext.skipRowsCount))
+			}
 		} else {
 			buf.WriteString("}")
 		}
@@ -490,6 +505,30 @@ type RuntimeStats interface {
 	Tp() int
 }
 
+type FullTableScanContext struct {
+	scanPacksCount uint64
+	scanRowsCount  uint64
+	skipPacksCount uint64
+	skipRowsCount  uint64
+}
+
+func (context *FullTableScanContext) Merge(other *FullTableScanContext) {
+	context.scanPacksCount += other.scanPacksCount
+	context.scanRowsCount += other.scanRowsCount
+	context.skipPacksCount += other.skipPacksCount
+	context.skipRowsCount += other.skipRowsCount
+
+	fmt.Printf("hyy FullTableScanContext Merge context.scanPacksCount is %v", context.scanPacksCount)
+	fmt.Println("")
+}
+
+func (context *FullTableScanContext) Empty() bool {
+	res := (context.scanPacksCount == 0 && context.skipPacksCount == 0)
+	fmt.Printf("hyy FullTableScanContext empty is %v", res)
+	fmt.Println(" ")
+	return res
+}
+
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
@@ -498,6 +537,8 @@ type BasicRuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
+	// executor extra infos
+	fullTableScanContext *FullTableScanContext
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -508,9 +549,10 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	return &BasicRuntimeStats{
-		loop:    e.loop,
-		consume: e.consume,
-		rows:    e.rows,
+		loop:                 e.loop,
+		consume:              e.consume,
+		rows:                 e.rows,
+		fullTableScanContext: e.fullTableScanContext,
 	}
 }
 
@@ -523,6 +565,7 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.loop += tmp.loop
 	e.consume += tmp.consume
 	e.rows += tmp.rows
+	e.fullTableScanContext.Merge(tmp.fullTableScanContext)
 }
 
 // Tp implements the RuntimeStats interface.

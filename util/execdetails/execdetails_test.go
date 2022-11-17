@@ -135,9 +135,15 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 		NumIterations: &NumIterations, XXX_unrecognized: nil}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, ScanPacksCount, ScanRowsCount, SkipPacksCount, SkipRowsCount uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+	fullTableScanContext := tipb.FullTableScanContext{
+		ScanPacksCount: &ScanPacksCount,
+		ScanRowsCount:  &ScanRowsCount,
+		SkipPacksCount: &SkipPacksCount,
+		SkipRowsCount:  &SkipRowsCount,
+	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, XXX_unrecognized: nil}
+		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_FullTableScanContext{FullTableScanContext: &fullTableScanContext}, XXX_unrecognized: nil}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
