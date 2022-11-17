@@ -1916,7 +1916,7 @@ func hasEmptyAttributes(ctx context.Context, user *auth.UserIdentity, exec sqlex
 		return false, err
 	}
 	// no attributes set before
-	if len(rows) == 0 || rows[0].GetString(0) == "" {
+	if len(rows) == 0 || rows[0].IsNull(0) {
 		return true, nil
 	}
 	return false, nil
