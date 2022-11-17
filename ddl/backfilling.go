@@ -62,7 +62,7 @@ const (
 	typeAddIndexMergeTmpWorker backfillWorkerType = 3
 
 	// InstanceLease is the instance lease.
-	InstanceLease = 60 // s
+	InstanceLease = 1 * time.Minute
 )
 
 // enableDistReorg means whether to enable dist reorg. The default is enable.

@@ -243,7 +243,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	eleID1 := int64(4)
 	eleID2 := int64(5)
 	uuid := d.GetID()
-	instanceLease := ddl.InstanceLease * time.Second
+	instanceLease := ddl.InstanceLease
 	// test no backfill job
 	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, true, []int64{jobID}, instanceLease)
 	require.NoError(t, err)
