@@ -180,9 +180,7 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
-	_, err := tk.Exec("plan replayer capture '123' '123';")
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "plan replayer capture task already exists")
+	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
 }
 
 func TestShow(t *testing.T) {
