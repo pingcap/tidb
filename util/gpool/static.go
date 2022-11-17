@@ -28,6 +28,7 @@ type Statistic struct {
 
 	maxPASSCache atomic.Pointer[counterCache]
 	minRtCache   atomic.Pointer[counterCache]
+	queueSize    atomic.Int64
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
 	maxTaskCntCache atomic.Uint64
@@ -46,6 +47,18 @@ func NewStatistic() Statistic {
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),
 	}
+}
+
+func (s *Statistic) GetQueueSize() int64 {
+	return s.queueSize.Load()
+}
+
+func (s *Statistic) InQueue() {
+	s.queueSize.Add(1)
+}
+
+func (s *Statistic) OutQueue() {
+	s.queueSize.Add(-1)
 }
 
 func (s *Statistic) MaxInFlight() int64 {

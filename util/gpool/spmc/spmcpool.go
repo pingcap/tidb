@@ -301,6 +301,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 					Task: task,
 					Done: doneFunc,
 				}
+				p.statistic.InQueue()
 				inputCh <- task
 			}
 		}
@@ -355,6 +356,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				Task: task,
 				Done: doneFunc,
 			}
+			p.statistic.InQueue()
 			inputCh <- t
 		}
 	}()
@@ -460,4 +462,20 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 // DeleteTask is to delete task.
 func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	p.taskManager.DeleteTask(id)
+}
+
+func (p *Pool[T, U, C, CT, TF]) MaxInFlight() int64 {
+	return p.statistic.MaxInFlight()
+}
+
+func (p *Pool[T, U, C, CT, TF]) GetQueueSize() int64 {
+	return p.statistic.GetQueueSize()
+}
+
+func (p *Pool[T, U, C, CT, TF]) MaxPASS() uint64 {
+	return p.statistic.MaxPASS()
+}
+
+func (p *Pool[T, U, C, CT, TF]) MinRT() uint64 {
+	return p.statistic.MinRT()
 }

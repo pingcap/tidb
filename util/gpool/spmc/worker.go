@@ -57,6 +57,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 		}()
 
 		for f := range w.taskBoxCh {
+			w.pool.statistic.OutQueue()
 			if f == nil {
 				return
 			}
@@ -76,6 +77,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
 					if f.GetStatus() == pooltask.PendingTask {
+						w.pool.statistic.InQueue()
 						w.taskBoxCh <- f
 						break
 					}
