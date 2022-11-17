@@ -97,3 +97,54 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 }
+
+func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key) partition by hash(a) partitions 32;")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 100; i++ {
+		sb.WriteString(fmt.Sprintf("(%d)", i))
+		if i != 99 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
+	tk.MustExec("alter table t add index idx(a);")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 20;")
+	tk.MustExec("create table t (a int primary key);")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("(%d000)", i))
+		if i != 19 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
+	tk.MustQuery("split table t between (0) and (20000) regions 20;").Check(testkit.Rows("19 1"))
+	tk.MustExec("alter table t add index idx(a);")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}

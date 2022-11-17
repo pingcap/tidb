@@ -1532,11 +1532,17 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(ctx sessionctx.Context) {
-	do.planReplayerHandle = &planReplayerHandle{
-		planReplayerTaskCollectorHandle: &planReplayerTaskCollectorHandle{
-			sctx: ctx,
-		},
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	do.planReplayerHandle = &planReplayerHandle{}
+	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
+		ctx:  ctx,
+		sctx: collectorSctx,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
+		ctx:    ctx,
+		sctx:   dumperSctx,
+		taskCH: make(chan *PlanReplayerDumpTask, 16),
 	}
 }
 
@@ -1557,24 +1563,39 @@ func (do *Domain) StartPlanReplayerHandle() {
 	if planReplayerHandleLease < 1 {
 		return
 	}
-	do.wg.Add(1)
+	do.wg.Add(2)
 	go func() {
 		tikcer := time.NewTicker(planReplayerHandleLease)
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerHandle exited.")
-			util.Recover(metrics.LabelDomain, "PlanReplayerHandle", nil, false)
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
 		}()
 		for {
 			select {
 			case <-do.exit:
 				return
 			case <-tikcer.C:
-				err := do.planReplayerHandle.CollectPlanReplayerTask(context.Background())
+				err := do.planReplayerHandle.CollectPlanReplayerTask()
 				if err != nil {
 					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
 				}
+			}
+		}
+	}()
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
+				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
 			}
 		}
 	}()

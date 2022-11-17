@@ -2878,7 +2878,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 8)
+	ses, err := createSessions(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -2953,10 +2953,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	// setup plan replayer handle
-	dom.SetupPlanReplayerHandle(ses[6])
+	dom.SetupPlanReplayerHandle(ses[6], ses[7])
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
-	dom.SetupDumpFileGCChecker(ses[7])
+	dom.SetupDumpFileGCChecker(ses[8])
 	dom.DumpFileGcCheckerLoop()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
