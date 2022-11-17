@@ -41,24 +41,33 @@ const copReadBatchFactor = 10
 
 func (w *addIndexWorker) fetchRowColValsFromCop(txn kv.Transaction, handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
 	w.idxRecords = w.idxRecords[:0]
-	srcResult, err := w.coprCtx.buildTableScan(w.ctx, txn.StartTS(), handleRange.startKey, handleRange.excludedEndKey())
+	start, end := handleRange.startKey, handleRange.excludedEndKey()
+	batchCnt := w.batchCnt * copReadBatchFactor
+	return FetchRowsFromCop(w.ctx, w.coprCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
+}
+
+// FetchRowsFromCop sends a coprocessor request and fetches the first batchCnt rows.
+func FetchRowsFromCop(ctx context.Context, copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
+	buf []*indexRecord, batchCnt int) ([]*indexRecord, kv.Key, bool, error) {
+	srcResult, err := copCtx.buildTableScan(ctx, startTS, startKey, endKey)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}
 	var done bool
-	w.idxRecords, done, err = w.coprCtx.fetchTableScanResult(w.ctx, srcResult, w.idxRecords, w.batchCnt*copReadBatchFactor)
-	nextKey := handleRange.endKey
+	buf, done, err = copCtx.fetchTableScanResult(ctx, srcResult, buf, batchCnt)
+	nextKey := endKey
 	if !done {
-		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
-		prefix := tablecodec.GenTableRecordPrefix(w.coprCtx.tblInfo.ID)
+		lastHandle := buf[len(buf)-1].handle
+		prefix := tablecodec.GenTableRecordPrefix(copCtx.tblInfo.ID)
 		nextKey = tablecodec.EncodeRecordKey(prefix, lastHandle).Next()
 	}
-	return w.idxRecords, nextKey, done, err
+	return buf, nextKey, done, err
 }
 
 type copContext struct {
 	tblInfo  *model.TableInfo
 	idxInfo  *model.IndexInfo
+	pkInfo   *model.IndexInfo
 	colInfos []*model.ColumnInfo
 	fieldTps []*types.FieldType
 	sessCtx  sessionctx.Context
@@ -75,13 +84,14 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 		fieldTps = append(fieldTps, &c.FieldType)
 	}
 
-	pkColInfos, pkFieldTps := buildHandleColInfoAndFieldTypes(tblInfo)
+	pkColInfos, pkFieldTps, pkInfo := buildHandleColInfoAndFieldTypes(tblInfo)
 	colInfos = append(colInfos, pkColInfos...)
 	fieldTps = append(fieldTps, pkFieldTps...)
 
 	copCtx := &copContext{
 		tblInfo:  tblInfo,
 		idxInfo:  idxInfo,
+		pkInfo:   pkInfo,
 		colInfos: colInfos,
 		fieldTps: fieldTps,
 		sessCtx:  sessCtx,
@@ -126,7 +136,7 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		iter := chunk.NewIterator4Chunk(c.srcChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
-			handle, err := buildHandle(hdDt, c.tblInfo, c.idxInfo, sctx)
+			handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -163,11 +173,11 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {
+func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, *model.IndexInfo) {
 	if tbInfo.PKIsHandle {
 		for i := range tbInfo.Columns {
 			if mysql.HasPriKeyFlag(tbInfo.Columns[i].GetFlag()) {
-				return []*model.ColumnInfo{tbInfo.Columns[i]}, []*types.FieldType{&tbInfo.Columns[i].FieldType}
+				return []*model.ColumnInfo{tbInfo.Columns[i]}, []*types.FieldType{&tbInfo.Columns[i].FieldType}, nil
 			}
 		}
 	} else if tbInfo.IsCommonHandle {
@@ -178,10 +188,10 @@ func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnIn
 			pkCols = append(pkCols, tbInfo.Columns[i])
 			pkFts = append(pkFts, &tbInfo.Columns[i].FieldType)
 		}
-		return pkCols, pkFts
+		return pkCols, pkFts, primaryIdx
 	}
 	extra := model.NewExtraHandleColInfo()
-	return []*model.ColumnInfo{extra}, []*types.FieldType{&extra.FieldType}
+	return []*model.ColumnInfo{extra}, []*types.FieldType{&extra.FieldType}, nil
 }
 
 func extractIdxValsAndHandle(row chunk.Row, idxInfo *model.IndexInfo, fieldTps []*types.FieldType) ([]types.Datum, []types.Datum) {
@@ -194,9 +204,9 @@ func extractIdxValsAndHandle(row chunk.Row, idxInfo *model.IndexInfo, fieldTps [
 }
 
 func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
+	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
-		tablecodec.TruncateIndexValues(tblInfo, idxInfo, pkDts)
+		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
 		handleBytes, err := codec.EncodeKey(stmtCtx, nil, pkDts...)
 		if err != nil {
 			return nil, err
