@@ -823,7 +823,7 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	taskTp = fmt.Sprintf("%v(%v)", taskTp, e.TargetPlan.SCtx().GetSessionVars().CostModelVersion)
+	//taskTp = fmt.Sprintf("%v(%v)", taskTp, e.TargetPlan.SCtx().GetSessionVars().CostModelVersion)
 	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
