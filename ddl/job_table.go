@@ -141,10 +141,6 @@ func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 
 func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 	rows, err := sess.execute(context.Background(), sql, "check_runnable")
-	logutil.BgLogger().Error("aaaaaaaaaaaaaaaaaaaaaaaa", zap.Bool("err == nil", err == nil))
-	if err != nil {
-		logutil.BgLogger().Error("err", zap.Error(err), zap.Stack("err"))
-	}
 	return len(rows) == 0, err
 }
 
@@ -214,7 +210,7 @@ func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*ses
 	job, err := getJob(sess)
 	if job == nil || err != nil {
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] get job met error", zap.Stack("err"), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] get job met error", zap.Error(err))
 		}
 		pool.put(wk)
 		return

@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"runtime/trace"
 	"strconv"
 	"sync/atomic"
@@ -1141,7 +1139,6 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return nil
 	}
 	if result.err != nil {
-		logutil.BgLogger().Error("result.err", zap.Error(result.err))
 		e.finished.Store(true)
 		return result.err
 	}
