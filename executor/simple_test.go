@@ -135,8 +135,6 @@ func TestValidatePassword(t *testing.T) {
 	require.NoError(t, err)
 
 	authPlugins := []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}
-	dictFile, err := util.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
-	require.NoError(t, err)
 	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("0"))
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
 	tk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
@@ -180,11 +178,11 @@ func TestValidatePassword(t *testing.T) {
 		// STRONG: Length; numeric, lowercase/uppercase, and special characters; dictionary file
 		tk.MustExec("SET GLOBAL validate_password.policy = 'STRONG'")
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc1234567'")
-		tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary_file = '%s'", dictFile))
+		tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary = '%s'", "1234;5678"))
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc123567'")
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc43218765'")
 		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '!Abc1234567'", "Password contains word in the dictionary")
-		tk.MustExec("SET GLOBAL validate_password.dictionary_file = ''")
+		tk.MustExec("SET GLOBAL validate_password.dictionary = ''")
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY '!Abc1234567'")
 
 		// "IDENTIFIED AS 'xxx'" is not affected by validation

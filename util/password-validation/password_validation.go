@@ -18,11 +18,46 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 )
+
+const maxPwdValidationLength int = 100
+
+const minPwdValidationLength int = 4
+
+// ValidateDictionaryPassword checks if the password contains words in the dictionary.
+func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccessor) (bool, error) {
+	dictionary, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordDictionary)
+	pwdLength := len(pwd)
+	if err != nil {
+		return false, err
+	}
+	words := strings.Split(dictionary, ";")
+	if len(words) == 0 {
+		return true, nil
+	}
+	cache := make(map[string]interface{}, len(words))
+	for _, word := range words {
+		word = strings.ToLower(word)
+		if len(word) >= minPwdValidationLength && len(word) <= maxPwdValidationLength {
+			cache[word] = nil
+		}
+	}
+	for subStrLen := mathutil.Min(maxPwdValidationLength, pwdLength); subStrLen >= minPwdValidationLength; subStrLen-- {
+		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
+			subStr := strings.ToLower(pwd[subStrPos : subStrPos+subStrLen])
+			if _, ok := cache[subStr]; ok {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
 
 // ValidateUserNameInPassword checks whether pwd exists in the dictionary.
 func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (string, error) {
@@ -140,7 +175,9 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	}
 
 	// STRONG
-	if !variable.ValidateDictionaryPassword(pwd) {
+	if ok, err := ValidateDictionaryPassword(pwd, &globalVars); err != nil {
+		return err
+	} else if !ok {
 		return variable.ErrNotValidPassword.GenWithStack("Password contains word in the dictionary")
 	}
 	return nil

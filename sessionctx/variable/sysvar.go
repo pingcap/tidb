@@ -518,14 +518,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: ValidatePasswordDictionaryFile, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		// Use 'SET @@global.validate_password.dictionary_file = ""' to clean the dictionary.
-		if len(val) == 0 {
-			CleanPasswordDictionary()
-			return nil
-		}
-		return UpdatePasswordDictionary(val)
-	}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -2356,6 +2349,6 @@ const (
 	ValidatePasswordNumberCount = "validate_password.number_count"
 	// ValidatePasswordSpecialCharCount specified the minimum number of nonalphanumeric characters that validate_password requires
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
-	// ValidatePasswordDictionaryFile specified the path name of the dictionary file that validate_password uses for checking passwords
-	ValidatePasswordDictionaryFile = "validate_password.dictionary_file"
+	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is seperated by semicolon (;).
+	ValidatePasswordDictionary = "validate_password.dictionary"
 )

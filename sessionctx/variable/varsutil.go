@@ -15,14 +15,10 @@
 package variable
 
 import (
-	"bufio"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -535,71 +529,6 @@ func collectAllowFuncName4ExpressionIndex() string {
 	}
 	slices.Sort(str)
 	return strings.Join(str, ", ")
-}
-
-type passwordDictionaryImpl struct {
-	Cache map[string]struct{}
-	m     sync.RWMutex
-}
-
-const maxPwdValidationLength int = 100
-
-const minPwdValidationLength int = 4
-
-var passwordDictionary = passwordDictionaryImpl{Cache: make(map[string]struct{})}
-
-// CleanPasswordDictionary removes all the words in the dictionary.
-func CleanPasswordDictionary() {
-	passwordDictionary.m.Lock()
-	defer passwordDictionary.m.Unlock()
-	passwordDictionary.Cache = make(map[string]struct{})
-}
-
-// UpdatePasswordDictionary update the dictionary for validating password.
-func UpdatePasswordDictionary(filePath string) error {
-	passwordDictionary.m.Lock()
-	defer passwordDictionary.m.Unlock()
-	newDictionary := make(map[string]struct{})
-	file, err := os.Open(filepath.Clean(filePath))
-	if err != nil {
-		return err
-	}
-	if fileInfo, err := file.Stat(); err != nil {
-		return err
-	} else if fileInfo.Size() > 1*1024*1024 {
-		return errors.New("Too Large Dictionary. The maximum permitted file size is 1MB")
-	}
-	s := bufio.NewScanner(file)
-	for s.Scan() {
-		line := strings.ToLower(string(hack.String(s.Bytes())))
-		if len(line) >= minPwdValidationLength && len(line) <= maxPwdValidationLength {
-			newDictionary[line] = struct{}{}
-		}
-	}
-	if err := s.Err(); err != nil {
-		return err
-	}
-	passwordDictionary.Cache = newDictionary
-	return file.Close()
-}
-
-// ValidateDictionaryPassword checks if the password contains words in the dictionary.
-func ValidateDictionaryPassword(pwd string) bool {
-	passwordDictionary.m.RLock()
-	defer passwordDictionary.m.RUnlock()
-	if len(passwordDictionary.Cache) == 0 {
-		return true
-	}
-	pwdLength := len(pwd)
-	for subStrLen := mathutil.Min(maxPwdValidationLength, pwdLength); subStrLen >= minPwdValidationLength; subStrLen-- {
-		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
-			subStr := pwd[subStrPos : subStrPos+subStrLen]
-			if _, ok := passwordDictionary.Cache[subStr]; ok {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // GAFunction4ExpressionIndex stores functions GA for expression index.

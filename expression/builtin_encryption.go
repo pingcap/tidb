@@ -730,7 +730,6 @@ func (c *sm3FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
 	sig := &builtinSM3Sig{bf}
-	//sig.setPbCode(tipb.ScalarFuncSig_SM3) // TODO
 	return sig, nil
 }
 
@@ -1021,7 +1020,6 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Conte
 	}
 	bf.tp.SetFlen(21)
 	sig := &builtinValidatePasswordStrengthSig{bf}
-	//sig.setPbCode(tipb.ScalarFuncSig_ValidatePasswordStrength)
 	return sig, nil
 }
 
@@ -1069,7 +1067,9 @@ func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars 
 	} else if len(warn) > 0 {
 		return 50, false, nil
 	}
-	if ok := variable.ValidateDictionaryPassword(str); !ok {
+	if ok, err := pwdValidator.ValidateDictionaryPassword(str, globalVars); err != nil {
+		return 0, true, err
+	} else if !ok {
 		return 75, false, nil
 	}
 	return 100, false, nil

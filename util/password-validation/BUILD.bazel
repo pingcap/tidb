@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//sessionctx/variable",
         "//util/hack",
+        "//util/mathutil",
     ],
 )
 

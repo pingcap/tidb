@@ -23,6 +23,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateDictionaryPassword(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	mock := variable.NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	err := mock.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234;5678;HIJK")
+	require.NoError(t, err)
+	testcases := []struct {
+		pwd    string
+		result bool
+	}{
+		{"abcdefg", true},
+		{"abcd123efg", true},
+		{"abcd1234efg", false},
+		{"abcd12345efg", false},
+		{"abcd123efghij", true},
+		{"abcd123efghijk", false},
+	}
+	for _, testcase := range testcases {
+		ok, err := ValidateDictionaryPassword(testcase.pwd, &vars.GlobalVarsAccessor)
+		require.NoError(t, err)
+		require.Equal(t, testcase.result, ok, testcase.pwd)
+	}
+}
+
 func TestValidateUserNameInPassword(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
 	sessionVars.User = &auth.UserIdentity{Username: "user", AuthUsername: "authuser"}
