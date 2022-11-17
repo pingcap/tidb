@@ -1473,6 +1473,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.probeWorkers = make([]probeWorker, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
+		e.probeWorkers[i].hashJoinCtx = e.hashJoinCtx
 		e.probeWorkers[i].workerID = i
 		e.probeWorkers[i].sessCtx = e.ctx
 		e.probeWorkers[i].joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
