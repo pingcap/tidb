@@ -645,6 +645,15 @@ type SelectInto struct {
 	IntoOpt    *ast.SelectIntoOption
 }
 
+type ExplainRow struct {
+	ID           string
+	EstRows      float64
+	TaskType     string
+	AccessObject string
+	OperatorInfo string
+	ExecuteInfo  string
+}
+
 // Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer
