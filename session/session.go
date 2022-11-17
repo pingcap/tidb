@@ -2850,14 +2850,15 @@ func InitMDLTable(store kv.Storage) error {
 
 // InitMDLVariableForBootstrap initializes the metadata lock variable.
 func InitMDLVariableForBootstrap(store kv.Storage) error {
+	initValue := variable.DefTiDBEnableConcurrentDDL
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return t.SetMetadataLock(true)
+		return t.SetMetadataLock(initValue)
 	})
 	if err != nil {
 		return err
 	}
-	variable.EnableMDL.Store(true)
+	variable.EnableMDL.Store(initValue)
 	return nil
 }
 
