@@ -163,34 +163,6 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, srcChk *chunk.Chunk,
-	startTS uint64, start, end kv.Key) error {
-	sctx := c.sessCtx.GetSessionVars().StmtCtx
-	srcResult, err := c.buildTableScan(ctx, startTS, start, end)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for {
-		err := srcResult.Next(ctx, srcChk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if srcChk.NumRows() == 0 {
-			return nil
-		}
-		iter := chunk.NewIterator4Chunk(srcChk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
-			handle, err := buildHandle(hdDt, c.tblInfo, c.idxInfo, sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
-			ch <- &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false}
-		}
-	}
-}
-
 func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {
 	if tbInfo.PKIsHandle {
 		for i := range tbInfo.Columns {
