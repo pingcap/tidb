@@ -1131,65 +1131,6 @@ func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1"))
 }
 
-// Test filter different kind of allocators.
-// In special ddl type, for example:
-// 1: ActionRenameTable             : it will abandon all the old allocators.
-// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
-// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
-// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
-func TestFilterDifferentAllocators(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-
-	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(1), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_increment.
-	tk.MustExec("alter table t auto_increment 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(2), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_random.
-	tk.MustExec("alter table t auto_random_base 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(3000000), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rename table.
-	tk.MustExec("rename table t to t1")
-	tk.MustExec("insert into t1 values()")
-	res := tk.MustQuery("select b from t1")
-	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Greater(t, strInt64, int64(3000002))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t1")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Greater(t, orderedHandles[0], int64(3000001))
-}
-
 func TestMaxHandleAddIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
