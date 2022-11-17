@@ -946,13 +946,21 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwdlockinfo.passwordExpired = "Y"
 	}
 
-	var userAttributes any = nil
+	var userAttributes = ""
 	if s.CommentOrAttributeOption != nil {
-		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
-		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+		if s.CommentOrAttributeOption.Type != ast.UserResourceGroupName {
+			userAttributes = `{"metadata": {"resource group": "default"`
+			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+				userAttributes += fmt.Sprintf(`, "comment": "%s"`, s.CommentOrAttributeOption.Value)
+			} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
+				userAttributes = fmt.Sprintf(`,  %s`, s.CommentOrAttributeOption.Value)
+			}
+			userAttributes += `}}`
+		} else {
+			userAttributes = fmt.Sprintf(`{"metadata": {"resource group": "%s"}}`, s.CommentOrAttributeOption.Value)
 		}
+	} else {
+		userAttributes = `{"metadata": {"resource group": "default"}}`
 	}
 
 	tokenIssuer := ""
@@ -1587,8 +1595,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
-			} else {
+			} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+			} else {
+				newAttributesStr = fmt.Sprintf(`{"metadata": {"resource group": "%s"}}`, s.CommentOrAttributeOption.Value)
 			}
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}

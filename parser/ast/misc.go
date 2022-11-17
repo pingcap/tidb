@@ -1517,6 +1517,7 @@ const (
 
 	UserCommentType
 	UserAttributeType
+	UserResourceGroupName
 )
 
 type PasswordOrLockOption struct {
@@ -1568,6 +1569,9 @@ func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(c.Value)
 	} else if c.Type == UserAttributeType {
 		ctx.WriteKeyWord(" ATTRIBUTE ")
+		ctx.WriteString(c.Value)
+	} else if c.Type == UserResourceGroupName {
+		ctx.WriteKeyWord(" RESOURCE GROUP ")
 		ctx.WriteString(c.Value)
 	}
 	return nil

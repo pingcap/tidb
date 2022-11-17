@@ -226,6 +226,7 @@ import (
 	repeat            "REPEAT"
 	replace           "REPLACE"
 	require           "REQUIRE"
+	resource          "RESOURCE"
 	restrict          "RESTRICT"
 	revoke            "REVOKE"
 	right             "RIGHT"
@@ -12993,6 +12994,11 @@ CommentOrAttributeOption:
 	{
 		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
+
+|  "RESOURCE" "GROUP" stringLit
+{
+	$$ = &ast.CommentOrAttributeOption{Type: ast.UserResourceGroupName, Value: $3}
+}
 
 PasswordOrLockOptions:
 	{
