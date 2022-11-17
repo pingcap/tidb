@@ -43,11 +43,11 @@ func (w *addIndexWorker) fetchRowColValsFromCop(txn kv.Transaction, handleRange 
 	w.idxRecords = w.idxRecords[:0]
 	start, end := handleRange.startKey, handleRange.excludedEndKey()
 	batchCnt := w.batchCnt * copReadBatchFactor
-	return FetchRowsFromCop(w.ctx, w.coprCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
+	return fetchRowsFromCop(w.ctx, w.coprCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
 }
 
-// FetchRowsFromCop sends a coprocessor request and fetches the first batchCnt rows.
-func FetchRowsFromCop(ctx context.Context, copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
+// fetchRowsFromCop sends a coprocessor request and fetches the first batchCnt rows.
+func fetchRowsFromCop(ctx context.Context, copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
 	buf []*indexRecord, batchCnt int) ([]*indexRecord, kv.Key, bool, error) {
 	srcResult, err := copCtx.buildTableScan(ctx, startTS, startKey, endKey)
 	if err != nil {
@@ -184,9 +184,9 @@ func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnIn
 		primaryIdx := tables.FindPrimaryIndex(tbInfo)
 		pkCols := make([]*model.ColumnInfo, 0, len(primaryIdx.Columns))
 		pkFts := make([]*types.FieldType, 0, len(primaryIdx.Columns))
-		for i := range tbInfo.Columns {
-			pkCols = append(pkCols, tbInfo.Columns[i])
-			pkFts = append(pkFts, &tbInfo.Columns[i].FieldType)
+		for _, pkCol := range primaryIdx.Columns {
+			pkCols = append(pkCols, tbInfo.Columns[pkCol.Offset])
+			pkFts = append(pkFts, &tbInfo.Columns[pkCol.Offset].FieldType)
 		}
 		return pkCols, pkFts, primaryIdx
 	}
