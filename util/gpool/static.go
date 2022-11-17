@@ -43,6 +43,7 @@ type Statistic struct {
 	maxPASSCache atomic.Pointer[counterCache]
 	minRtCache   atomic.Pointer[counterCache]
 	queueSize    atomic.Int64
+	longRTT      *mathutil.ExponentialAverageMeasurement
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
 	maxTaskCntCache atomic.Uint64
@@ -60,6 +61,7 @@ func NewStatistic() Statistic {
 		taskCntStat:     window.NewRollingCounter[uint64](opts),
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),
+		longRTT:         mathutil.NewExponentialAverageMeasurement(100, 10),
 	}
 }
 

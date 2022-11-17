@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mathutil",
     srcs = [
-        "exponential_average.go",
         "math.go",
         "rand.go",
     ],
@@ -16,7 +15,6 @@ go_test(
     name = "mathutil_test",
     timeout = "short",
     srcs = [
-        "exponential_average_test.go",
         "main_test.go",
         "math_test.go",
         "rand_test.go",
