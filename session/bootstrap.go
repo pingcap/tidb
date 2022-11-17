@@ -864,7 +864,7 @@ func upgrade(s Session) {
 	if ver < version92 {
 		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
 		if err != nil {
-			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
 		}
 		if !useConcurrentDDL {
 			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
@@ -875,7 +875,7 @@ func upgrade(s Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[Upgrade] init metadata lock failed", zap.Error(err))
+		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
 	if isNull {
@@ -912,7 +912,7 @@ func upgrade(s Session) {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
+		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))

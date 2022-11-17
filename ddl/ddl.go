@@ -1266,7 +1266,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 			return err
 		}
 		if oldEnable != enable {
-			err = meta.NewMeta(txn).SetMetadataLock(enable)
+			err = m.SetMetadataLock(enable)
 		}
 		return err
 	})
