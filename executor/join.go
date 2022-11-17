@@ -63,8 +63,8 @@ type hashJoinCtx struct {
 	stats              *hashJoinRuntimeStats
 	probeTypes         []*types.FieldType
 	buildTypes         []*types.FieldType
-	buildNAKeys        []*expression.Column
 	outerFilter        expression.CNFExprs
+	isNullAware        bool
 }
 
 // probeSideTupleFetcher reads tuples from probeSideExec and send them to probeWorkers.
@@ -112,6 +112,7 @@ type HashJoinExec struct {
 	probeKeys         []*expression.Column
 	probeNAKeys       []*expression.Column
 	buildKeys         []*expression.Column
+	buildNAKeys       []*expression.Column
 
 	worker util.WaitGroupWrapper
 	waiter util.WaitGroupWrapper
@@ -501,7 +502,7 @@ func (w *probeWorker) runJoinWorker(probeKeyColIdx, probeNAKeyColIdx []int) {
 		if w.useOuterToBuild {
 			ok, joinResult = w.join2ChunkForOuterHashJoin(probeSideResult, hCtx, joinResult)
 		} else {
-			ok, joinResult = w.join2Chunk(probeSideResult, hCtx, w.rowContainerForProbe, joinResult, selected)
+			ok, joinResult = w.join2Chunk(probeSideResult, hCtx, joinResult, selected)
 		}
 		probeTime += int64(time.Since(start))
 		if !ok {
@@ -890,8 +891,8 @@ func (w *probeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKey
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	NAAntiSemiJoin := w.joinType == plannercore.AntiSemiJoin && len(w.buildNAKeys) > 0
-	NAAntiLeftOuterSemiJoin := w.joinType == plannercore.AntiLeftOuterSemiJoin && len(w.buildNAKeys) > 0
+	NAAntiSemiJoin := w.joinType == plannercore.AntiSemiJoin && w.isNullAware
+	NAAntiLeftOuterSemiJoin := w.joinType == plannercore.AntiLeftOuterSemiJoin && w.isNullAware
 	if NAAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
@@ -954,7 +955,7 @@ func (w *probeWorker) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 	return ok, joinResult
 }
 
-func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult,
+func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(w.sessCtx, w.outerFilter, chunk.NewIterator4Chunk(probeSideChk), selected)
@@ -969,7 +970,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, r
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, i := range hCtx.keyColIdx {
 		ignoreNull := len(w.isNullEQ) > keyIdx && w.isNullEQ[keyIdx]
-		err = codec.HashChunkSelected(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err = codec.HashChunkSelected(w.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -979,7 +980,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, r
 	isNAAJ := len(hCtx.naKeyColIdx) > 0
 	for keyIdx, i := range hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them up to probe.
-		err = codec.HashChunkSelected(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
+		err = codec.HashChunkSelected(w.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
