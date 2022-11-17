@@ -126,7 +126,13 @@ func TestUserAttributes(t *testing.T) {
 func TestValidatePassword(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	subtk := testkit.NewTestKit(t, store)
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	require.NoError(t, err)
+	tk.MustExec("CREATE USER ''@'localhost'")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO ''@'localhost';")
+	err = subtk.Session().Auth(&auth.UserIdentity{Hostname: "localhost"}, nil, nil)
+	require.NoError(t, err)
 
 	authPlugins := []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}
 	dictFile, err := util.CreateTmpDictWithContent("3.dict", []byte("1234\n5678"))
@@ -184,12 +190,11 @@ func TestValidatePassword(t *testing.T) {
 		// "IDENTIFIED AS 'xxx'" is not affected by validation
 		tk.MustExec(fmt.Sprintf("ALTER USER testuser IDENTIFIED WITH '%s' AS ''", authPlugin))
 	}
+	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost'", "Your password does not satisfy the current policy requirements")
+	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password'", "Your password does not satisfy the current policy requirements")
+	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS ''", "Your password does not satisfy the current policy requirements")
 
 	// if the username is '', all password can pass the check_user_name
-	tk.MustExec("CREATE USER ''@'localhost'")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO ''@'localhost';")
-	subtk := testkit.NewTestKit(t, store)
-	require.NoError(t, subtk.Session().Auth(&auth.UserIdentity{Hostname: "localhost"}, nil, nil))
 	subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
 	subtk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
 	subtk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))

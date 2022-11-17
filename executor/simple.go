@@ -899,9 +899,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
-		if e.enableValidatePassword() && e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-			if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
-				return err
+		if e.enableValidatePassword() {
+			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
+				return variable.ErrNotValidPassword.GenWithStackByArgs()
+			}
+			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
 			}
 		}
 		pwd, ok := spec.EncodedPassword()
