@@ -15,6 +15,10 @@
 package privilege
 
 import (
+<<<<<<< HEAD
+=======
+	"crypto/tls"
+>>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -59,7 +63,11 @@ type Manager interface {
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
+<<<<<<< HEAD
 	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) error
+=======
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) (string, error)
+>>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
 	// Requires exact match on user name and host name.

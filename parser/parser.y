@@ -226,7 +226,6 @@ import (
 	repeat            "REPEAT"
 	replace           "REPLACE"
 	require           "REQUIRE"
-	resource          "RESOURCE"
 	restrict          "RESTRICT"
 	revoke            "REVOKE"
 	right             "RIGHT"

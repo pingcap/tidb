@@ -102,9 +102,13 @@ type UserRecord struct {
 	AuthPlugin           string
 	AuthTokenIssuer      string
 	Email                string
+<<<<<<< HEAD
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
+=======
+	ResourceGroup        string
+>>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -677,6 +681,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				}
 				value.Email = email
 			}
+<<<<<<< HEAD
 		case f.ColumnAsName.L == "password_expired":
 			if row.GetEnum(i).String() == "Y" {
 				value.PasswordExpired = true
@@ -703,6 +708,20 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
+=======
+
+			pathExpr, err = types.ParseJSONPathExpr("$.metadata.resource_group")
+			if err != nil {
+				return err
+			}
+			if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+				resourceGroup, err := resourceGroup.Unquote()
+				if err != nil {
+					return err
+				}
+				value.ResourceGroup = resourceGroup
+			}
+>>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 		default:
 			value.assignUserOrHost(row, i, f)
 		}
