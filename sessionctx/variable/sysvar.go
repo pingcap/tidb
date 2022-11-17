@@ -2349,6 +2349,6 @@ const (
 	ValidatePasswordNumberCount = "validate_password.number_count"
 	// ValidatePasswordSpecialCharCount specified the minimum number of nonalphanumeric characters that validate_password requires
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
-	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is seperated by semicolon (;).
+	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
 )
