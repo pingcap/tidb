@@ -3375,6 +3375,10 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
 		CheckAt([]int{0, 3, 6}, rows)
 
+	rows[1][2] = "eq(json_valid(test.t.c), 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where json_valid(c)=1;").
+		CheckAt([]int{0, 3, 6}, rows)
+
 	rows[1][2] = "json_contains(cast(test.t.c, json BINARY), cast(\"1\", json BINARY))"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where json_contains(c, '1');").
 		CheckAt([]int{0, 3, 6}, rows)

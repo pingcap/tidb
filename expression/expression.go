@@ -1071,8 +1071,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		// FIXME: JSONUnquote is incompatible with Coprocessor
-		ast.JSONUnquote, ast.JSONContains,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
