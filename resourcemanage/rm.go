@@ -80,9 +80,14 @@ type GorotinuePool interface {
 	Tune(size int)
 	LastTunerTs() time.Time
 	MaxInFlight() int64
+	InFlight() int64
 	MinRT() uint64
 	MaxPASS() uint64
 	Cap() int
+	LongRTT() float64
+	ShortRTT() uint64
+	GetQueueSize() int64
+	Running() int
 }
 
 // PoolContainer is a pool container

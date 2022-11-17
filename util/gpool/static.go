@@ -43,7 +43,9 @@ type Statistic struct {
 	maxPASSCache atomic.Pointer[counterCache]
 	minRtCache   atomic.Pointer[counterCache]
 	queueSize    atomic.Int64
+	shortRTT     atomic.Uint64
 	longRTT      *mathutil.ExponentialAverageMeasurement
+
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
 	maxTaskCntCache atomic.Uint64
@@ -51,7 +53,6 @@ type Statistic struct {
 }
 
 func NewStatistic() Statistic {
-
 	opts := window.RollingCounterOpts{
 		Size:           bucketSize,
 		BucketDuration: win / bucketSize,
@@ -148,12 +149,35 @@ func (s *Statistic) timespan(lastTime time.Time) int {
 	return bucketSize
 }
 
+func (s *Statistic) Inflight() int64 {
+	return s.inFlight.Load()
+}
+
+func (s *Statistic) LongRTT() float64 {
+	return s.longRTT.Get()
+}
+
+func (s *Statistic) ShortRTT() uint64 {
+	return s.shortRTT.Load()
+}
+
 func (s *Statistic) Static() (DoneFunc, error) {
 	s.inFlight.Add(1)
 	start := time.Now().UnixNano()
 	ms := float64(time.Millisecond)
 	return func() {
 		rt := uint64(math.Ceil(float64(time.Now().UnixNano()-start)) / ms)
+		s.shortRTT.Store(rt)
+		long, _ := s.longRTT.Add(float64(rt))
+		// If the long RTT is substantially larger than the short RTT then reduce the long RTT measurement.
+		// This can happen when latency returns to normal after a prolonged prior of excessive load.  Reducing the
+		// long RTT without waiting for the exponential smoothing helps bring the system back to steady state.
+		if (long / float64(rt)) > 2 {
+			s.longRTT.Update(func(value float64) float64 {
+				return value * 0.9
+			})
+		}
+
 		s.rtStat.Add(rt)
 		s.inFlight.Add(-1)
 		s.taskCntStat.Add(1)
