@@ -43,7 +43,7 @@ func (w *addIndexWorker) fetchRowColValsFromCop(txn kv.Transaction, handleRange 
 	w.idxRecords = w.idxRecords[:0]
 	start, end := handleRange.startKey, handleRange.excludedEndKey()
 	batchCnt := w.batchCnt * copReadBatchFactor
-	return fetchRowsFromCop(w.ctx, w.coprCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
+	return fetchRowsFromCop(w.ctx, w.copCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
 }
 
 // fetchRowsFromCop sends a coprocessor request and fetches the first batchCnt rows.

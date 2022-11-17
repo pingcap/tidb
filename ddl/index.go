@@ -1177,7 +1177,7 @@ type baseIndexWorker struct {
 type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
-	coprCtx   *copContext
+	copCtx    *copContext
 	writerCtx *ingest.WriterContext
 
 	// The following attributes are used to reduce memory allocation.
@@ -1227,7 +1227,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			jobContext:     jc,
 		},
 		index:     index,
-		coprCtx:   copCtx,
+		copCtx:    copCtx,
 		writerCtx: lwCtx,
 	}, nil
 }
@@ -1498,7 +1498,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.coprCtx != nil {
+		if w.copCtx != nil {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(txn, handleRange)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
