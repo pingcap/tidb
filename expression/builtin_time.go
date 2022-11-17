@@ -6125,8 +6125,8 @@ var (
 	minDatetimeNanos       = float64(minDatetimeInGoTime.Unix())*1e9 + float64(minDatetimeInGoTime.Nanosecond())
 	maxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
 	maxDatetimeNanos       = float64(maxDatetimeInGoTime.Unix())*1e9 + float64(maxDatetimeInGoTime.Nanosecond())
-	minDatetimeMonths      = float64(1000*12 + 0)
-	maxDatetimeMonths      = float64(9999*12 + 11)
+	minDatetimeMonths      = float64(types.MinDatetime.Year()*12 + types.MinDatetime.Month() - 1) // 0001-01-01 00:00:00
+	maxDatetimeMonths      = float64(types.MaxDatetime.Year()*12 + types.MaxDatetime.Month() - 1) // 9999-12-31 00:00:00
 )
 
 func validAddTime(nano1 float64, nano2 float64) bool {
