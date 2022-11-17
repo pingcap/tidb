@@ -282,8 +282,10 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
-	failpoint.Inject("mockGetServerInfo", func() {
-		failpoint.Return(serverInfo4Test, nil)
+	failpoint.Inject("mockGetServerInfo", func(v failpoint.Value) {
+		var res ServerInfo
+		err := json.Unmarshal([]byte(v.(string)), &res)
+		failpoint.Return(&res, err)
 	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -317,26 +319,12 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 	return info, nil
 }
 
-// global variables only used in failpoint tests.
-var (
-	allServerInfo4Test map[string]*ServerInfo
-	serverInfo4Test    *ServerInfo
-)
-
-// SetAllServerInfo4Test set the value of `allServerInfo4Test` used in unit test.
-func SetAllServerInfo4Test(infos map[string]*ServerInfo) {
-	allServerInfo4Test = infos
-}
-
-// SetServerInfo4Test set the value of `serverInfo4Test` used in unit test.
-func SetServerInfo4Test(info *ServerInfo) {
-	serverInfo4Test = info
-}
-
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	failpoint.Inject("mockGetAllServerInfo", func() {
-		failpoint.Return(allServerInfo4Test, nil)
+	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*ServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
 	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

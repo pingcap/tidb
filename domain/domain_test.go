@@ -17,6 +17,8 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"net"
 	"runtime"
 	"testing"
@@ -247,6 +249,12 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 	dom.sysVarCache.Unlock()
 
+	makeFailpointRes := func(v interface{}) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
+	}
+
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
 			ID: "s1",
@@ -261,10 +269,9 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 			},
 		},
 	}
-	infosync.SetAllServerInfo4Test(mockedAllServerInfos)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", `return("")`))
-	infosync.SetServerInfo4Test(mockedAllServerInfos["s2"])
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", `return("")`))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos["s2"])))
 
 	stores := []*metapb.Store{
 		{
@@ -355,7 +362,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 	pdClient.stores = stores
-	infosync.SetAllServerInfo4Test(mockedAllServerInfos)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	cases := []struct {
 		id      string
 		matches bool
@@ -382,7 +389,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		infosync.SetServerInfo4Test(mockedAllServerInfos[c.id])
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos[c.id])))
 		variable.SetEnableAdaptiveReplicaRead(!c.matches)
 		err = dom.checkReplicaRead(ctx, pdClient)
 		require.Nil(t, err)
