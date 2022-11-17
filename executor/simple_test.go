@@ -312,7 +312,7 @@ func TestUserReuseFunction(t *testing.T) {
 func TestUserReuseMultiuser(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	rootTK := testkit.NewTestKit(t, store)
-	//alter multi user seccess
+	//alter multi user success
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test', testReuse1 identified by 'test', testReuse2 identified by 'test' PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`65535 65535`, `65535 65535`, `65535 65535`))
 	rootTK.MustExec(`ALTER USER testReuse identified by 'test1', testReuse1 identified by 'test1', testReuse2 identified by 'test1' PASSWORD HISTORY 3 PASSWORD REUSE INTERVAL 3 DAY`)
