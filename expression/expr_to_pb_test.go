@@ -1073,6 +1073,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// regexp_like: supported
+	function, err = NewFunction(mock.NewContext(), ast.RegexpLike, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn, binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// greatest
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
