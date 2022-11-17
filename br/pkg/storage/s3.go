@@ -68,11 +68,22 @@ var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
 	GetObject:     getObject,
 }
 
-// S3Storage info for s3 storage.
+// S3Storage defines some standard operations for BR/Lightning on the S3 storage.
+// It implements the `ExternalStorage` interface.
 type S3Storage struct {
 	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
+}
+
+// GetS3APIHandle gets the handle to the S3 API.
+func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
+	return rs.svc
+}
+
+// GetOptions gets the external storage operations for the S3.
+func (rs *S3Storage) GetOptions() *backuppb.S3 {
+	return rs.options
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -248,19 +259,6 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 	}
 }
 
-// NewS3Storage initialize a new s3 storage for metadata.
-//
-// Deprecated: Create the storage via `New()` instead of using this.
-func NewS3Storage( // revive:disable-line:flag-parameter
-	backend *backuppb.S3,
-	sendCredential bool,
-) (*S3Storage, error) {
-	return newS3Storage(backend, &ExternalStorageOptions{
-		SendCredentials:  sendCredential,
-		CheckPermissions: []Permission{AccessBuckets},
-	})
-}
-
 // auto access without ak / sk.
 func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
@@ -288,7 +286,8 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+// NewS3Storage initialize a new s3 storage for metadata.
+func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
