@@ -6112,7 +6112,7 @@ func validAddMonth(month1 float64, year, month int) bool {
 }
 
 func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error) {
-	s := math.Round(v * 1000000)
+	s := math.Trunc(v * 1000000)
 	// round to the nearest int
 	v = math.Round(v)
 	var tb time.Time
