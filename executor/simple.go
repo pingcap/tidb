@@ -1228,6 +1228,33 @@ func passwordVerification(ctx context.Context, sctx sessionctx.Context, name str
 	return false, canDeleteNum, nil
 }
 
+func preventPasswordReuse(ctx context.Context, sctx sessionctx.Context, Username string, Hostname string, passwdlockinfo *passwordLockInfo, pwd string) error {
+	// read password reuse info from mysql.user and global variables
+	passwdReuseInfo, err := getUserPasswordLimit(ctx, sctx, Username, Hostname, passwdlockinfo)
+	if err != nil {
+		return err
+	}
+	// check whether password can be used
+	res, maxDelNum, err := passwordVerification(ctx, sctx, Username, Hostname, passwdReuseInfo, pwd)
+	if err != nil {
+		return err
+	}
+	if !res {
+		return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(Username, Hostname))
+	}
+	// delete useless password logging
+	err = deleteHistoricalData(ctx, sctx, Username, Hostname, maxDelNum, passwdReuseInfo)
+	if err != nil {
+		return err
+	}
+	// insert password logging
+	err = addHistoricalData(ctx, sctx, Username, Hostname, passwdReuseInfo, pwd)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
@@ -1364,26 +1391,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			// for Support Password Reuse Policy
 			if len(pwd) != 0 {
-				// read password reuse info from mysql.user and global variables
-				passwdReuseInfo, err := getUserPasswordLimit(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdlockinfo)
-				if err != nil {
-					return err
-				}
-				// check whether password can be used
-				res, maxDelNum, err := passwordVerification(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdReuseInfo, pwd)
-				if err != nil {
-					return err
-				}
-				if !res {
-					return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(spec.User.Username, spec.User.Hostname))
-				}
-				// delete useless password logging
-				err = deleteHistoricalData(ctx, e.ctx, spec.User.Username, spec.User.Hostname, maxDelNum, passwdReuseInfo)
-				if err != nil {
-					return err
-				}
-				// insert password logging
-				err = addHistoricalData(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdReuseInfo, pwd)
+				err := preventPasswordReuse(ctx, e.ctx, spec.User.Username, spec.User.Hostname, passwdlockinfo, pwd)
 				if err != nil {
 					return err
 				}
@@ -1403,7 +1411,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if passwdlockinfo.passwordHistory == notSpecified {
 				fields = append(fields, alterField{"Password_reuse_history = NULL ", ""})
 			} else {
-				fields = append(fields, alterField{"Password_reuse_history = %?", strconv.FormatInt(passwdlockinfo.passwordHistory, 10)})
+				fields = append(fields, alterField{"Password_reuse_history = %? ", strconv.FormatInt(passwdlockinfo.passwordHistory, 10)})
 			}
 		}
 		if passwdlockinfo.passwordReuseIntervalFlag {
@@ -1632,6 +1640,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "USER", "HOST", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.DefaultRoleTable + " error"
+			break
+		}
+
+		// rename passwordhistory from  PasswordHistoryTable
+		if err = renameUserHostInSystemTable(sqlExecutor, mysql.PasswordHistoryTable, "USER", "HOST", userToUser); err != nil {
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.PasswordHistoryTable + " error"
 			break
 		}
 
@@ -1936,6 +1950,17 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
+	// for Support Password Reuse Policy
+	passwdlockinfo :=
+		&passwordLockInfo{lockAccount: "", passwordHistory: notSpecified,
+			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
+			passwordReuseIntervalFlag: false}
+	if len(pwd) != 0 {
+		err := preventPasswordReuse(ctx, e.ctx, u, h, passwdlockinfo, pwd)
+		if err != nil {
+			return err
+		}
+	}
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))

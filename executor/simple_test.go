@@ -289,6 +289,7 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test'`)
 	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
 	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustGetErrCode(`set PASSWORD FOR testReuse = 'test'`, 3638)
 	rootTK.MustExec(`alter USER testReuse identified by ''`)
 	rootTK.MustExec(`alter USER testReuse identified by ''`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`2`))
@@ -316,4 +317,18 @@ func TestUserReuseMultiuser(t *testing.T) {
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
 	rootTK.MustExec(`drop User testReuse, testReuse1, testReuse2`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%'`).Check(testkit.Rows(`0`))
+}
+
+func TestUserReuseRename(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	rootTK := testkit.NewTestKit(t, store)
+	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
+	rootTK.MustExec(`rename USER testReuse to testReuse1`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse1'`).Check(testkit.Rows(`4`))
 }
