@@ -6238,3 +6238,34 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
 }
+
+func TestIssue39211(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists s;")
+
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `s` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("insert into t values(1,1),(2,2);")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+
+	tk.MustExec("insert into s values(3,3),(4,4),(1,null),(2,null),(null,null);")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
+	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
+}
