@@ -1108,7 +1108,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			if empty, err := hasEmptyAttributes(ctx, spec.User, exec); err != nil {
+				return errors.Trace(err)
+			} else if empty {
+				fields = append(fields, alterField{"user_attributes=%?", newAttributesStr})
+			} else {
+				fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			}
 		}
 
 		switch authTokenOptionHandler {
@@ -1912,4 +1918,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		domain.GetDomain(e.ctx).SetExpiredTimeStamp4PC(now)
 	}
 	return nil
+}
+
+func hasEmptyAttributes(ctx context.Context, user *auth.UserIdentity, exec sqlexec.RestrictedSQLExecutor) (bool, error) {
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user_attributes FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, user.Username, user.Hostname)
+	if err != nil {
+		return false, err
+	}
+	// no attributes set before
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return true, nil
+	}
+	return false, nil
 }
