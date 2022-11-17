@@ -30,6 +30,7 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
+	github.com/elastic/gosigar v0.9.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
@@ -134,6 +135,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v0.8.1 // indirect
 	github.com/DataDog/zstd v1.4.5 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
+	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d // indirect
