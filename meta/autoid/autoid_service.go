@@ -133,6 +133,9 @@ retry:
 		}
 		return 0, 0, errors.Trace(err)
 	}
+	if len(resp.Errmsg) != 0 {
+		return 0, 0, errors.Trace(errors.New(string(resp.Errmsg)))
+	}
 
 	du := time.Since(start)
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
@@ -182,7 +185,8 @@ retry:
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = cli.Rebase(ctx, &autoid.RebaseRequest{
+	var resp *autoid.RebaseResponse
+	resp, err = cli.Rebase(ctx, &autoid.RebaseRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
 		Base:       newBase,
@@ -197,8 +201,11 @@ retry:
 		}
 		return errors.Trace(err)
 	}
+	if len(resp.Errmsg) != 0 {
+		return errors.Trace(errors.New(string(resp.Errmsg)))
+	}
 	sp.lastAllocated = newBase
-	return err
+	return nil
 }
 
 // ForceRebase set the next global auto ID to newBase.
