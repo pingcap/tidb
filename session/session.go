@@ -2898,11 +2898,7 @@ func InitMDLVariable(store kv.Storage) error {
 	if isNull {
 		return errors.New("metadata lock is null")
 	}
-	if !enable {
-		variable.EnableMDL.Store(false)
-	} else {
-		variable.EnableMDL.Store(true)
-	}
+	variable.EnableMDL.Store(enable)
 	return err
 }
 
