@@ -1728,9 +1728,6 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		unit := buf.GetString(i)
 		v := nums[i]
 		arg := ds[i]
-		s := int64(v * 1000000)
-		// round to the nearest int
-		v = math.Round(v)
 
 		tm1, err := arg.GoTime(time.Local)
 		if err != nil {
@@ -1738,30 +1735,18 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 			result.AppendNull()
 			continue
 		}
-		var tb time.Time
-		fsp := types.DefaultFsp
-		switch unit {
-		case "MICROSECOND":
-			tb = tm1.Add(time.Duration(v) * time.Microsecond)
-		case "SECOND":
-			tb = tm1.Add(time.Duration(s) * time.Microsecond)
-		case "MINUTE":
-			tb = tm1.Add(time.Duration(v) * time.Minute)
-		case "HOUR":
-			tb = tm1.Add(time.Duration(v) * time.Hour)
-		case "DAY":
-			tb = tm1.AddDate(0, 0, int(v))
-		case "WEEK":
-			tb = tm1.AddDate(0, 0, 7*int(v))
-		case "MONTH":
-			tb = tm1.AddDate(0, int(v), 0)
-		case "QUARTER":
-			tb = tm1.AddDate(0, 3*int(v), 0)
-		case "YEAR":
-			tb = tm1.AddDate(int(v), 0, 0)
-		default:
-			return types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+		tb, overflow, err := addUnitToTime(unit, tm1, v)
+		if err != nil {
+			return err
 		}
+		if overflow {
+			if err = handleInvalidTimeError(b.ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime")); err != nil {
+				return err
+			}
+			result.AppendNull()
+			continue
+		}
+		fsp := types.DefaultFsp
 		// use MaxFsp when microsecond is not zero
 		if tb.Nanosecond()/1000 != 0 {
 			fsp = types.MaxFsp
