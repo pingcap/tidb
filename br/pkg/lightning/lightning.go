@@ -547,6 +547,7 @@ func (l *Lightning) Status() (finished int64, total int64) {
 }
 
 // Metrics returns the metrics of lightning.
+// it's inited during `run`, so might return nil.
 func (l *Lightning) Metrics() *metric.Metrics {
 	return l.metrics
 }
