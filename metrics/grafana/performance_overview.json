@@ -3362,29 +3362,20 @@
         },
         {
           "aliasColors": {},
-          "bars": false,
           "dashLength": 10,
-          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "decimals": 1,
           "description": "The memory usage per TiFlash instance",
-          "editable": true,
-          "error": false,
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
-          "fill": 0,
-          "fillGradient": 0,
-          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
             "y": 70
           },
-          "hiddenSeries": false,
-          "id": 163,
+          "id": 1709,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -3406,31 +3397,25 @@
           "options": {
             "alertThreshold": true
           },
-          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 5,
-          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
               "expr": "avg(tiflash_proxy_process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (instance)",
-              "format": "time_series",
-              "interval": "",
-              "intervalFactor": 2,
               "legendFormat": "{{instance}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "intervalFactor": 2,
               "refId": "A",
               "step": 10
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Memory",
           "tooltip": {
             "msResolution": false,
@@ -3467,7 +3452,22 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          }
+          },
+          "decimals": 1,
+          "editable": true,
+          "grid": {},
+          "bars": false,
+          "dashes": false,
+          "error": false,
+          "fill": 0,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null,
+          "fillGradient": 0,
+          "hiddenSeries": false
         },
         {
           "aliasColors": {},
