@@ -507,6 +507,7 @@ type RuntimeStats interface {
 	Tp() int
 }
 
+// TableScanContext is used to express the table scan information in tiflash
 type TableScanContext struct {
 	scanPacksCount                      uint64
 	scanRowsCount                       uint64
@@ -517,6 +518,7 @@ type TableScanContext struct {
 	createSnapshotTimeInMilliseconds    uint64
 }
 
+// Merge make sum to merge the information in TableScanContext
 func (context *TableScanContext) Merge(other *TableScanContext) {
 	context.scanPacksCount += other.scanPacksCount
 	context.scanRowsCount += other.scanRowsCount
@@ -527,6 +529,7 @@ func (context *TableScanContext) Merge(other *TableScanContext) {
 	context.createSnapshotTimeInMilliseconds += other.createSnapshotTimeInMilliseconds
 }
 
+// Empty check whether TableScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TableScanContext) Empty() bool {
 	res := (context.scanPacksCount == 0 && context.skipPacksCount == 0)
 	return res
