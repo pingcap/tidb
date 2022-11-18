@@ -14,7 +14,6 @@
 
 package main
 
-// #nosec G108
 import (
 	"context"
 	"flag"

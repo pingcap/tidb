@@ -1108,7 +1108,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 
 		switch authTokenOptionHandler {

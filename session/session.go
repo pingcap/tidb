@@ -2848,6 +2848,61 @@ func InitMDLTable(store kv.Storage) error {
 	})
 }
 
+// InitMDLVariableForBootstrap initializes the metadata lock variable.
+func InitMDLVariableForBootstrap(store kv.Storage) error {
+	initValue := variable.DefTiDBEnableConcurrentDDL
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(initValue)
+	})
+	if err != nil {
+		return err
+	}
+	variable.EnableMDL.Store(initValue)
+	return nil
+}
+
+// InitMDLVariableForUpgrade initializes the metadata lock variable.
+func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull || !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return isNull, err
+}
+
+// InitMDLVariable initializes the metadata lock variable.
+func InitMDLVariable(store kv.Storage) error {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull {
+		return errors.New("metadata lock is null")
+	}
+	variable.EnableMDL.Store(enable)
+	return err
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2874,11 +2929,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
+	} else {
+		err = InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 8)
+	ses, err := createSessions(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -2953,10 +3013,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	// setup plan replayer handle
-	dom.SetupPlanReplayerHandle(ses[6])
+	dom.SetupPlanReplayerHandle(ses[6], ses[7])
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
-	dom.SetupDumpFileGCChecker(ses[7])
+	dom.SetupDumpFileGCChecker(ses[8])
 	dom.DumpFileGcCheckerLoop()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.

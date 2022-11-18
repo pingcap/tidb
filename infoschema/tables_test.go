@@ -676,8 +676,14 @@ func TestSelectHiddenColumn(t *testing.T) {
 
 func TestFormatVersion(t *testing.T) {
 	// Test for defaultVersions.
-	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	defaultVersions := []string{
+		"5.7.25-TiDB-None",
+		"5.7.25-TiDB-8.0.18",
+		"5.7.25-TiDB-8.0.18-beta.1",
+		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
+		"5.7.25-TiDB-",
+		"5.7.25-TiDB-v4.0.0-TiDB-446"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
 	for i, v := range defaultVersions {
 		version := infoschema.FormatTiDBVersion(v, true)
 		require.Equal(t, defaultRes[i], version)
@@ -1547,15 +1553,14 @@ func TestVariablesInfo(t *testing.T) {
 	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
 	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
 	stmt.Check(testkit.Rows(
-		"last_sql_use_alloc OFF ON",                   // for test stability
-		"tidb_enable_auto_analyze ON OFF",             // always changed for tests
-		"tidb_enable_collect_execution_info ON OFF",   // for test stability
-		"tidb_enable_mutation_checker OFF ON",         // for new installs
-		"tidb_enable_plan_replayer_capture OFF false", // for enable plan replayer capture
-		"tidb_mem_oom_action CANCEL LOG",              // always changed for tests
-		"tidb_row_format_version 1 2",                 // for new installs
-		"tidb_txn_assertion_level OFF FAST",           // for new installs
-		"timestamp 0 123456789",                       // always dynamic
+		"last_sql_use_alloc OFF ON",                 // for test stability
+		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
+		"tidb_enable_collect_execution_info ON OFF", // for test stability
+		"tidb_enable_mutation_checker OFF ON",       // for new installs
+		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_row_format_version 1 2",               // for new installs
+		"tidb_txn_assertion_level OFF FAST",         // for new installs
+		"timestamp 0 123456789",                     // always dynamic
 	))
 }
 
