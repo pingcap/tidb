@@ -418,8 +418,8 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		}
 	}
 	for _, cond := range predicates {
-		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
-		if !expression.HasGetSetVarFunc(newFilter) {
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
@@ -879,8 +879,10 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 // AddExprPrefix4CNFCond
 // add the prefix expression for CNF condition, e.g. `WHERE a = 1`, `WHERE a = 1 AND b = 10`, ......
 // @param[in] conds        the original condtion of the datasoure. e.g. `WHERE t1.a = 1 AND t1.b = 10 AND t2.a = 20`.
-//                         if current datasource is `t1`, conds is {t1.a = 1, t1.b = 10}. if current datasource is
-//                         `t2`, conds is {t2.a = 20}
+//
+//	if current datasource is `t1`, conds is {t1.a = 1, t1.b = 10}. if current datasource is
+//	`t2`, conds is {t2.a = 20}
+//
 // @return  -     the new condition after adding expression prefix
 func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
 	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx,
@@ -893,7 +895,9 @@ func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expressio
 // add the prefix expression for DNF condition, e.g. `WHERE a = 1 OR a = 10`, ......
 // The condition returned is `WHERE (tidb_shard(a) = 214 AND a = 1) OR (tidb_shard(a) = 142 AND a = 10)`
 // @param[in] condition    the original condtion of the datasoure. e.g. `WHERE a = 1 OR a = 10`.
-//                          condtion is `a = 1 OR a = 10`
+//
+//	condtion is `a = 1 OR a = 10`
+//
 // @return 	 -          the new condition after adding expression prefix. It's still a LogicOr expression.
 func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
 	var err error
