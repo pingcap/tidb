@@ -16,6 +16,8 @@ package unistore
 
 import (
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"github.com/pingcap/errors"
 	usconf "github.com/pingcap/tidb/store/mockstore/unistore/config"
@@ -35,6 +37,9 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	}
 
 	if err := os.MkdirAll(path, 0750); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := checkDirectIO(path); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -69,4 +74,20 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	pdClient := newPDClient(pd)
 
 	return client, pdClient, cluster, nil
+}
+
+func checkDirectIO(path string) error {
+	fileName := "direct-io-test"
+	testFilePath := filepath.Join(path, fileName)
+	_, err := os.OpenFile(testFilePath, os.O_CREATE|os.O_RDWR|syscall.O_DIRECT, 0600)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = os.Remove(testFilePath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
