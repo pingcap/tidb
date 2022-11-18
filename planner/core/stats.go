@@ -815,51 +815,50 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		return nil
 	}
 
-	// 2. Move some filters that can't be covered by the partial paths to the AccessPath.TableFilters.
+	// 2. Move filters that can't be covered by the partial paths to the AccessPath.TableFilters.
 
-	// Iterate all access conditions and filter conditions in all partial paths,
-	// if it can't be in the partial paths, remove it from the partial path and place it in the finalFilters,
-	// otherwise, record it in the partialConds and record its hash code in the hashCodeSet.
 	finalFilters := make([]expression.Expression, 0)
+	partialFilters := make([]expression.Expression, 0, len(partialPaths))
 	hashCodeSet := make(map[string]struct{})
-	partialConds := make([]expression.Expression, 0, len(partialPaths))
 	for _, path := range partialPaths {
-		// handle AccessConds
-		partialConds = append(partialConds, path.AccessConds...)
-		for _, cond := range path.AccessConds {
-			// For access condition, just record it.
-			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
-			hashCodeSet[hashCode] = struct{}{}
-		}
-		// handle IndexFilters
+		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
+		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
+
+		// AccessConds can be covered by partial path.
+		coveredConds = append(coveredConds, path.AccessConds...)
 		for i, cond := range path.IndexFilters {
-			// For index filter, record it if it can be pushed down to TiKV, otherwise, move it into finalFilters.
+			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
 			if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
 				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
-				finalFilters = append(finalFilters, cond)
+				notCoveredConds = append(notCoveredConds, cond)
 			} else {
-				partialConds = append(partialConds, cond)
-				hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+				coveredConds = append(coveredConds, cond)
+			}
+		}
+		// TableFilters can't be covered by partial path.
+		notCoveredConds = append(notCoveredConds, path.TableFilters...)
+
+		// If a not-covered filter is not recorded in hashCodeSet, add it to finalFilters and record it.
+		// This avoids adding duplicated filters.
+		for _, cond := range notCoveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			if _, ok := hashCodeSet[hashCode]; !ok {
+				finalFilters = append(finalFilters, cond)
 				hashCodeSet[hashCode] = struct{}{}
 			}
 		}
-		// handle TableFilters
-		finalFilters = append(finalFilters, path.TableFilters...)
-	}
-
-	// deduplicate the finalFilters
-	// expressions already appeared in the partialConds are also removed
-	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
-	for _, cond := range finalFilters {
-		hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
-		if _, ok := hashCodeSet[hashCode]; !ok {
-			dedupedFinalFilters = append(dedupedFinalFilters, cond)
+		// Record covered filters in hashCodeSet.
+		// Note that we first process notCoveredConds then coveredConds here, this makes sure if a condition appears in
+		// both (e.g. because of prefix index), we can add it to finalFilters and won't deduplicate it wrongly.
+		for _, cond := range coveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
 			hashCodeSet[hashCode] = struct{}{}
 		}
+		partialFilters = append(partialFilters, coveredConds...)
 	}
 
 	// 3. Estimate the row count after partial paths.
-	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialConds, nil)
+	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		sel = SelectionFactor
@@ -868,7 +867,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	indexMergePath := &util.AccessPath{
 		PartialIndexPaths:        partialPaths,
 		IndexMergeIsIntersection: true,
-		TableFilters:             dedupedFinalFilters,
+		TableFilters:             finalFilters,
 		CountAfterAccess:         sel * ds.tableStats.RowCount,
 	}
 	return indexMergePath
