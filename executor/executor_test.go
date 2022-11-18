@@ -174,6 +174,15 @@ func TestPlanReplayer(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
+func TestPlanReplayerCapture(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("plan replayer capture '123' '123';")
+	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
+	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+}
+
 func TestShow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

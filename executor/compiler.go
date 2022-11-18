@@ -156,7 +156,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture {
+	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
 	}
 

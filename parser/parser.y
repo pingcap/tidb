@@ -14275,7 +14275,8 @@ RowStmt:
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *			| 'file_name'
- *		| LOAD 'file_name']
+ *		| LOAD 'file_name'
+ *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
 	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
@@ -14380,6 +14381,21 @@ PlanReplayerStmt:
 			Where:   nil,
 			OrderBy: nil,
 			Limit:   nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Capture:    true,
+			SQLDigest:  $4,
+			PlanDigest: $5,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
 		}
 
 		$$ = x

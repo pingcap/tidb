@@ -1047,7 +1047,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
-			return strconv.FormatBool(vars.EnablePlanReplayerCapture), nil
+			return BoolToOnOff(vars.EnablePlanReplayerCapture), nil
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
