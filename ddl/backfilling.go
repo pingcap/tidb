@@ -158,6 +158,13 @@ type reorgBackfillTask struct {
 	endInclude      bool
 }
 
+func (r *reorgBackfillTask) excludedEndKey() kv.Key {
+	if r.endInclude {
+		return r.endKey.Next()
+	}
+	return r.endKey
+}
+
 func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := tryDecodeToHandleString(r.startKey)
@@ -342,6 +349,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task, bf)
 		w.resultCh <- result
+		if result.err != nil {
+			logutil.BgLogger().Info("[ddl] backfill worker exit on error",
+				zap.Stringer("type", w.tp), zap.Int("workerID", w.id), zap.Error(result.err))
+			return
+		}
 	}
 }
 
