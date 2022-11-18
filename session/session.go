@@ -2603,8 +2603,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		return err
 	}
 	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-
-		failedLogin(s, user.Username, user.Hostname)
+		if strings.Index(err.Error(), "decode") != -1 || strings.Index(err.Error(), "caching_sha2_password") != -1 || strings.Index(err.Error(), "socket") != -1 {
+			failedLogin(s, user.Username, user.Hostname)
+		}
 		return err
 	}
 	successLogin(s, user.Username, user.Hostname)
