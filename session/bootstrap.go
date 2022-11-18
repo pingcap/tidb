@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -471,6 +472,11 @@ const (
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
+	err := InitMDLVariableForBootstrap(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("init metadata lock error",
+			zap.Error(err))
+	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -872,7 +878,7 @@ func upgrade(s Session) {
 	if ver < version92 {
 		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
 		if err != nil {
-			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
 		}
 		if !useConcurrentDDL {
 			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
@@ -881,12 +887,19 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
-	needEnableMdl := upgradeToVer99Before(s, ver)
+	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+	}
+
+	if isNull {
+		upgradeToVer99Before(s)
+	}
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
-	if needEnableMdl {
-		upgradeToVer99After(s, ver)
+	if isNull {
+		upgradeToVer99After(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -913,7 +926,7 @@ func upgrade(s Session) {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
+		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
@@ -2033,6 +2046,30 @@ func upgradeToVer98(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99Before(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+}
+
+func upgradeToVer99After(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+	mustExecute(s, sql)
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(true)
+	})
+	terror.MustNil(err)
+}
+
+func upgradeToVer100(s Session, ver int64) {
+	if ver >= version100 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func upgradeToVer101(s Session, ver int64) {
