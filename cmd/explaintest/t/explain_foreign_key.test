@@ -34,7 +34,7 @@ drop table if exists t1,t2,t3,t4,t5,t6;
 drop table if exists t_1,t_2,t_3,t_4;
 create table t_1 (id int key);
 create table t_2 (id int key);
-create table t_3 (id int key, id2 int, foreign key fk_1(id) references t_1(id), foreign key fk_2(id2) references t_2(id), foreign key fk_3(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
+create table t_3 (id int key, id2 int, foreign key fk_1(id) references t_1(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
 create table t_4 (id int key, id2 int, foreign key fk_1(id) references t_2(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_1(id) ON UPDATE CASCADE ON DELETE CASCADE);
 
 explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
