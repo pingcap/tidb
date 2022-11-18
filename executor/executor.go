@@ -757,10 +757,23 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 		return nil
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
-	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+	appendedJobID := make(map[int64]struct{})
+	i := e.cursor
+	for {
 		if i >= int(e.offset) && i < int(e.offset+e.limit) {
-			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
-			req.AppendString(1, e.jobs[i].Query)
+			// check whether the job has been read
+			// for situations when this operation happens at the same time with new DDLs being executed
+			if _, ok := appendedJobID[e.jobs[i].ID]; ok {
+				numCurBatch++
+			} else {
+				appendedJobID[e.jobs[i].ID] = struct{}{}
+				req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
+				req.AppendString(1, e.jobs[i].Query)
+			}
+		}
+		i++
+		if i >= e.cursor+numCurBatch {
+			break
 		}
 	}
 	e.cursor += numCurBatch

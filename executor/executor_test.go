@@ -5609,6 +5609,13 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	// check situations when `admin show ddl job queries limit 3 offset 2` happens at the same time with new DDLs being executed
+	go func() {
+		result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+		result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	}()
+	tk.MustExec("drop table if exists admin_test9")
+	tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
 	require.NoError(t, err)
 
 	// check table test
