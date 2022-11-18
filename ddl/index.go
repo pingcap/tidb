@@ -1179,9 +1179,10 @@ type baseIndexWorker struct {
 
 type addIndexWorker struct {
 	baseIndexWorker
-	index     table.Index
-	copCtx    *copContext
-	writerCtx *ingest.WriterContext
+	index            table.Index
+	copCtx           *copContext
+	writerCtx        *ingest.WriterContext
+	copReqSenderPool *copReqSenderPool
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -1501,8 +1502,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.copCtx != nil {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(txn, handleRange)
+		if w.copCtx != nil && w.copReqSenderPool != nil {
+			idxRecords, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
@@ -1565,6 +1566,10 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				writeBufs.IndexKeyBuf = key
 			}
 			taskCtx.addedCount++
+		}
+
+		if w.copCtx != nil && w.copReqSenderPool != nil {
+			w.copReqSenderPool.recycleIdxRecords(idxRecords)
 		}
 
 		return nil

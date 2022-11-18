@@ -440,6 +440,9 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	batchTasks []*reorgBackfillTask) error {
 	reorgInfo := scheduler.reorgInfo
 	for _, task := range batchTasks {
+		if scheduler.copReqSenderPool != nil {
+			scheduler.copReqSenderPool.sendTask(task)
+		}
 		scheduler.taskCh <- task
 	}
 
@@ -633,6 +636,8 @@ type backfillScheduler struct {
 
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
+
+	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
 
 const backfillTaskChanSize = 1024
@@ -710,6 +715,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			if err != nil {
 				return b.handleCreateBackfillWorkerErr(err)
 			}
+			if idxWorker.copCtx != nil && b.copReqSenderPool == nil {
+				startTS := latestStartTS(sessCtx.GetStore())
+				b.copReqSenderPool = newCopReqSenderPool(b.ctx, idxWorker.copCtx, startTS)
+				idxWorker.copReqSenderPool = b.copReqSenderPool
+			}
 			worker, runner = idxWorker, idxWorker.backfillWorker
 		case typeAddIndexMergeTmpWorker:
 			tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, b.tbl, reorgInfo, jc)
@@ -736,7 +746,21 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		b.workers = b.workers[:workerCnt]
 		closeBackfillWorkers(workers)
 	}
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.adjustSize(len(b.workers))
+	}
 	return injectCheckBackfillWorkerNum(len(b.workers))
+}
+
+func latestStartTS(storage kv.Storage) (startTS uint64) {
+	txn, err := storage.Begin()
+	if err != nil {
+		logutil.BgLogger().Info("[ddl] cannot get latest startTS for cop request sender", zap.Error(err))
+		_ = txn.Rollback()
+		return 0
+	}
+	_ = txn.Rollback()
+	return txn.StartTS()
 }
 
 func (b *backfillScheduler) handleCreateBackfillWorkerErr(err error) error {
@@ -750,6 +774,9 @@ func (b *backfillScheduler) handleCreateBackfillWorkerErr(err error) error {
 }
 
 func (b *backfillScheduler) Close() {
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.close()
+	}
 	closeBackfillWorkers(b.workers)
 	close(b.taskCh)
 	close(b.resultCh)
