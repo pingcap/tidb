@@ -815,15 +815,14 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		return nil
 	}
 
-	// 2. Move filters that can't be covered by the partial paths to the AccessPath.TableFilters.
-
+	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
 	finalFilters := make([]expression.Expression, 0)
 	partialFilters := make([]expression.Expression, 0, len(partialPaths))
 	hashCodeSet := make(map[string]struct{})
 	for _, path := range partialPaths {
+		// Classify filters into coveredConds and notCoveredConds.
 		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
 		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
-
 		// AccessConds can be covered by partial path.
 		coveredConds = append(coveredConds, path.AccessConds...)
 		for i, cond := range path.IndexFilters {
@@ -838,23 +837,34 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		// TableFilters can't be covered by partial path.
 		notCoveredConds = append(notCoveredConds, path.TableFilters...)
 
-		// If a not-covered filter is not recorded in hashCodeSet, add it to finalFilters and record it.
-		// This avoids adding duplicated filters.
+		// Record covered filters in hashCodeSet.
+		// Note that we only record filters that not appear in the notCoveredConds. It's possible that a filter appear
+		// in both coveredConds and notCoveredConds (e.g. because of prefix index). So we need this extra check to
+		// avoid wrong deduplication.
+		notCoveredHashCodeSet := make(map[string]struct{})
 		for _, cond := range notCoveredConds {
 			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
-			if _, ok := hashCodeSet[hashCode]; !ok {
-				finalFilters = append(finalFilters, cond)
+			notCoveredHashCodeSet[hashCode] = struct{}{}
+		}
+		for _, cond := range coveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
 				hashCodeSet[hashCode] = struct{}{}
 			}
 		}
-		// Record covered filters in hashCodeSet.
-		// Note that we first process notCoveredConds then coveredConds here, this makes sure if a condition appears in
-		// both (e.g. because of prefix index), we can add it to finalFilters and won't deduplicate it wrongly.
-		for _, cond := range coveredConds {
-			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+
+		finalFilters = append(finalFilters, notCoveredConds...)
+		partialFilters = append(partialFilters, coveredConds...)
+	}
+
+	// Remove covered filters from finalFilters and deduplicate finalFilters.
+	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
+	for _, cond := range finalFilters {
+		hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+		if _, ok := hashCodeSet[hashCode]; !ok {
+			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
 		}
-		partialFilters = append(partialFilters, coveredConds...)
 	}
 
 	// 3. Estimate the row count after partial paths.
@@ -867,7 +877,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	indexMergePath := &util.AccessPath{
 		PartialIndexPaths:        partialPaths,
 		IndexMergeIsIntersection: true,
-		TableFilters:             finalFilters,
+		TableFilters:             dedupedFinalFilters,
 		CountAfterAccess:         sel * ds.tableStats.RowCount,
 	}
 	return indexMergePath
