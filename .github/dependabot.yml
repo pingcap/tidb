@@ -7,4 +7,8 @@ updates:
       day: "friday"
       time: "16:00"
       timezone: "Asia/Shanghai"
+    allow:
+      - dependency-name: "golang.org/*"
+      - dependency-name: "github.com/golangci/golangci-lint"
     open-pull-requests-limit: 2
+
