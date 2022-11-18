@@ -82,10 +82,6 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "description": "Service Time Per Second, show service time distribution among different SQL types:\n1. Database time, the total time that the TiDB cluster is processing application requests.\n2. The service time of different SQL types.\n",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
@@ -120,7 +116,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -231,10 +227,6 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "description": "Service Time Per Second, show service time distribution among different SQL phases.\n1. Database time, the total time that the TiDB cluster is processing application requests.\n2. The service time of different SQL phases.\n",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
@@ -269,7 +261,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -400,10 +392,6 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "description": "Service Time Per Second, show service time distribution among different KV/PD request:\n1. Execute time, the execute time in SQL Phase\n2. Service time  of different KV/PD request ",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
@@ -438,7 +426,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -588,10 +576,6 @@
       "description": "TiDB statement statistics.\nBold red line on right Y axis for Failed Queries per second",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -626,7 +610,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -727,10 +711,6 @@
       "description": "TiDB command total statistics including both successful and failed ones",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -765,7 +745,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -838,10 +818,6 @@
       "description": "TiDB plan cache hit total.",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -876,7 +852,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -962,10 +938,6 @@
       "description": "kv/tso request total by command type",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1000,7 +972,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1097,10 +1069,6 @@
       "description": "TiDB current connection counts",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1135,7 +1103,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1235,10 +1203,6 @@
       "description": "- avg: average cpu usage for all instance.\n- delta: max(cpu utilization) - min(cpu utilization)\n- max: max(cpu utilization)",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1271,7 +1235,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1362,10 +1326,6 @@
       "description": "1. CPU: CPU utilization for all TiKV instances.\n- CPU-Avg: avg(cpu utilization)\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n2. IO MBps: The total bytes of read and write in all TiKV instances",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1398,7 +1358,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1530,10 +1490,6 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "description": "TiDB query durations",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
@@ -1565,7 +1521,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1654,10 +1610,6 @@
       "description": "TiDB connection idle durations",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1691,7 +1643,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1791,10 +1743,6 @@
       "description": "The time cost of parsing SQL to AST",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1830,7 +1778,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1919,10 +1867,6 @@
       "description": "The time to build plan",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -1953,7 +1897,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2034,10 +1978,6 @@
       "description": "The time cost of executing the SQL which does not include the time to get the results of the query .",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2073,7 +2013,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2163,10 +2103,6 @@
       "description": "tidb avg kv request duration",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2202,7 +2138,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2275,10 +2211,6 @@
       "description": "tikv grpc avg duration",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2314,7 +2246,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2386,10 +2318,6 @@
       "description": "- TSO Wait Duration: The duration of a client starting to wait for the TS until received the TS result.\n- TSO RPC Duration: The duration of a client sending TSO request until received the response.\n- PD Server Handle Time: The time consumed by handling TiDB requests.",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2420,7 +2348,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2537,10 +2465,6 @@
       "description": "The time consumed by processing asynchronous write requests.\nStorage async write duration = store duration + apply duration",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2574,7 +2498,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2655,10 +2579,6 @@
       "description": "The store time duration of each request",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2694,7 +2614,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2775,10 +2695,6 @@
       "description": "The apply time duration of each request",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2814,7 +2730,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2895,10 +2811,6 @@
       "description": "The time consumed when Raft appends log",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2934,7 +2846,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -3015,10 +2927,6 @@
       "description": "The time consumed when Raft commits log",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -3054,7 +2962,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -3135,10 +3043,6 @@
       "description": "The time consumed for Raft to apply logs",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -3174,7 +3078,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -3303,7 +3207,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3324,9 +3228,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "CPU",
           "tooltip": {
             "msResolution": false,
@@ -3412,7 +3314,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3433,9 +3335,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Memory",
           "tooltip": {
             "msResolution": false,
@@ -3521,7 +3421,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3542,9 +3442,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "IO utilization",
           "tooltip": {
             "msResolution": false,
@@ -3625,7 +3523,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3645,9 +3543,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "MPP Query count",
           "tooltip": {
             "shared": true,
@@ -3727,7 +3623,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3745,9 +3641,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom":G null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Request QPS",
           "tooltip": {
             "shared": true,
@@ -3828,7 +3722,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3848,9 +3742,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Executor QPS",
           "tooltip": {
             "shared": true,
@@ -3930,7 +3822,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3950,9 +3842,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Request Duration Overview",
           "tooltip": {
             "shared": true,
@@ -4032,7 +3922,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4071,9 +3961,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Request Duration",
           "tooltip": {
             "shared": true,
@@ -4153,7 +4041,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4192,9 +4080,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Request Handle Duration",
           "tooltip": {
             "shared": true,
@@ -4276,7 +4162,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4326,9 +4212,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Raft Wait Index Duration",
           "tooltip": {
             "shared": true,
@@ -4411,7 +4295,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4456,9 +4340,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Raft Batch Read Index Duration",
           "tooltip": {
             "shared": true,
@@ -4544,7 +4426,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4580,9 +4462,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Write Throughput By Instance",
           "tooltip": {
             "shared": true,
@@ -4667,7 +4547,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4711,9 +4591,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Write flow",
           "tooltip": {
             "shared": true,
@@ -4798,7 +4676,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4841,9 +4719,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Read flow",
           "tooltip": {
             "shared": true,
@@ -4942,7 +4818,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -4975,9 +4851,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "CPU usage",
           "tooltip": {
             "shared": true,
@@ -5063,7 +4937,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5088,9 +4962,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Memory usage",
           "tooltip": {
             "shared": true,
@@ -5173,7 +5045,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5199,9 +5071,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Goroutine count",
           "tooltip": {
             "shared": true,
@@ -5284,7 +5154,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5313,9 +5183,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Changefeed checkpoint lag",
           "tooltip": {
             "shared": true,
@@ -5400,7 +5268,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5429,9 +5297,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Changefeed resolved ts lag",
           "tooltip": {
             "shared": true,
@@ -5508,7 +5374,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 1,
           "points": true,
           "renderer": "flot",
@@ -5529,9 +5395,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "The status of changefeeds",
           "tooltip": {
             "shared": true,
@@ -5614,7 +5478,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5634,9 +5498,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Puller output events/s",
           "tooltip": {
             "shared": true,
@@ -5719,7 +5581,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5737,9 +5599,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Sorter output events/s",
           "tooltip": {
             "shared": true,
@@ -5822,7 +5682,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5840,9 +5700,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Mounter output events/s",
           "tooltip": {
             "shared": true,
@@ -5926,7 +5784,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5946,9 +5804,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Table sink output events/s",
           "tooltip": {
             "shared": true,
@@ -6027,7 +5883,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -6046,9 +5902,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "SinkV2 - Sink flush rows/s",
           "tooltip": {
             "shared": true,
@@ -6129,7 +5983,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -6156,9 +6010,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Transaction Sink Full Flush Duration",
           "tooltip": {
             "shared": true,
@@ -6237,7 +6089,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -6264,9 +6116,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "MQ Worker Send Message Duration Percentile",
           "tooltip": {
             "shared": true,
@@ -6349,7 +6199,7 @@
           },
           "paceLength": 10,
           "percentage": false,
-          "pluginVersion": "7.5.11",
+          "pluginVersion": "8.0.7",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -6369,9 +6219,7 @@
             }
           ],
           "thresholds": [],
-          "timeFrom": null,
           "timeRegions": [],
-          "timeShift": null,
           "title": "Kafka Outgoing Bytes",
           "tooltip": {
             "shared": true,
