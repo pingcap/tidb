@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/resourcemanage/limiter"
+	"github.com/pingcap/tidb/resourcemanage/scheduler"
 	"github.com/pingcap/tidb/util/cpu"
 )
 
@@ -28,6 +30,8 @@ var GlobalReourceManage ResourceManage = NewResourceMange()
 type ResourceManage struct {
 	poolMap map[string]*PoolContainer
 
+	limiter     []limiter.Limiter
+	scheduler   []scheduler.Scheduler
 	cpuObserver cpu.Observer
 	exitCh      chan struct{}
 }
@@ -47,6 +51,7 @@ func (r *ResourceManage) Start() {
 	for {
 		select {
 		case <-tick.C:
+			r.schedule()
 		case <-r.exitCh:
 			return
 		}

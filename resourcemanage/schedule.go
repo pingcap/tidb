@@ -15,5 +15,7 @@
 package resourcemanage
 
 func (r *ResourceManage) schedule() {
-
+	for _, pool := range r.poolMap {
+		pool.schedule()
+	}
 }
