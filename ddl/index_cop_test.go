@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -43,8 +42,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		idxRec, _, done, err := ddl.FetchRowsFromCop4Test(context.Background(), copCtx, startKey, endKey,
-			txn.StartTS(), nil, 10)
+		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, startKey, endKey, txn.StartTS(), 10)
 		require.NoError(t, err)
 		require.True(t, done)
 		require.NoError(t, txn.Rollback())
