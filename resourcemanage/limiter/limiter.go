@@ -12,28 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package limiter
 
-import (
-	"time"
-
-	"github.com/pingcap/tidb/resourcemanage"
-)
-
-const (
-	DefaultHighCPULoad      float64 = 0.6
-	minCPUSchedulerInterval         = time.Duration(800) * time.Millisecond
-)
+import "github.com/pingcap/tidb/resourcemanage"
 
 type SchedulerCommand int
 
-const (
-	NoIdea SchedulerCommand = iota
-	Downclock
-	Hold
-	Overclock
-)
-
-type Scheduler interface {
-	Tune(component resourcemanage.Component, p resourcemanage.GorotinuePool) SchedulerCommand
+type Limiter interface {
+	Limit(component resourcemanage.Component, p resourcemanage.GorotinuePool) bool
 }

@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	defaultSmoothing                float64 = 0.2
-	defaultMinConcurrency           int     = 2
-	defaultOverloadConcurrencyDelta int     = 2
+	defaultSmoothing      float64 = 0.2
+	defaultMinConcurrency int     = 2
+
+	defaultOverloadConcurrencyDelta int = 2 // minimum concurrency = user setting concurrency - delta
 )
 
 type Gradient2Scheduler struct {
