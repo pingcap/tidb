@@ -36,10 +36,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"go.uber.org/zap"
 )
 
 // TiDBDriver implements IDriver.
@@ -229,13 +227,11 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
-	if tc.SandBoxMode() {
+	if !tc.Session.GetSessionVars().InRestrictedSQL && tc.SandBoxMode() {
 		switch stmt.(type) {
 		case *ast.SetPwdStmt, *ast.AlterUserStmt:
-			logutil.BgLogger().Error("Sandbox run stmt: ", zap.String("stmt", stmt.Text()))
 		default:
-			logutil.BgLogger().Error("Sandbox can't run stmt: ", zap.String("stmt", stmt.Text()))
-			//return nil, errMustChangePassword.GenWithStackByArgs()
+			return nil, errMustChangePassword.GenWithStackByArgs()
 		}
 	}
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
