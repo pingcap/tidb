@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -432,6 +433,11 @@ func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessio
 	return errors.Errorf("Not Supported")
 }
 
+// GetExtensions returns the `*extension.SessionExtensions` object
+func (*Context) GetExtensions() *extension.SessionExtensions {
+	return nil
+}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 
@@ -439,20 +445,25 @@ func (*Context) Close() {}
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
-		values:      make(map[fmt.Stringer]interface{}),
-		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
-		cancel:      cancel,
+		values: make(map[fmt.Stringer]interface{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
-	sctx.sessionVars.InitChunkSize = 2
-	sctx.sessionVars.MaxChunkSize = 32
-	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
-	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
-	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-	sctx.sessionVars.EnablePaging = variable.DefTiDBEnablePaging
-	sctx.sessionVars.MinPagingSize = variable.DefMinPagingSize
-	sctx.sessionVars.EnableChunkRPC = true
+	vars := variable.NewSessionVars(sctx)
+	sctx.sessionVars = vars
+	vars.InitChunkSize = 2
+	vars.MaxChunkSize = 32
+	vars.StmtCtx.TimeZone = time.UTC
+	vars.MemTracker.SetBytesLimit(-1)
+	vars.DiskTracker.SetBytesLimit(-1)
+	vars.StmtCtx.MemTracker, vars.StmtCtx.DiskTracker = memory.NewTracker(-1, -1), disk.NewTracker(-1, -1)
+	vars.MemTracker.AttachTo(vars.MemTracker)
+	vars.DiskTracker.AttachTo(vars.DiskTracker)
+	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	vars.EnablePaging = variable.DefTiDBEnablePaging
+	vars.MinPagingSize = variable.DefMinPagingSize
+	vars.CostModelVersion = variable.DefTiDBCostModelVer
+	vars.EnableChunkRPC = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}

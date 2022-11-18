@@ -109,37 +109,38 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
-	NoZeroDate             bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	TruncateAsWarning      bool
-	OverflowAsWarning      bool
-	InShowWarning          bool
-	UseCache               bool
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	AllowInvalidDate       bool
-	IgnoreNoPartition      bool
-	SkipPlanCache          bool
-	IgnoreExplainIDSuffix  bool
-	SkipUTF8Check          bool
-	SkipASCIICheck         bool
-	SkipUTF8MB4Check       bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue               bool
+	DDLJobID                      int64
+	InInsertStmt                  bool
+	InUpdateStmt                  bool
+	InDeleteStmt                  bool
+	InSelectStmt                  bool
+	InLoadDataStmt                bool
+	InExplainStmt                 bool
+	InCreateOrAlterStmt           bool
+	InSetSessionStatesStmt        bool
+	InPreparedPlanBuilding        bool
+	IgnoreTruncate                bool
+	IgnoreZeroInDate              bool
+	NoZeroDate                    bool
+	DupKeyAsWarning               bool
+	BadNullAsWarning              bool
+	DividedByZeroAsWarning        bool
+	TruncateAsWarning             bool
+	OverflowAsWarning             bool
+	ErrAutoincReadFailedAsWarning bool
+	InShowWarning                 bool
+	UseCache                      bool
+	BatchCheck                    bool
+	InNullRejectCheck             bool
+	AllowInvalidDate              bool
+	IgnoreNoPartition             bool
+	SkipPlanCache                 bool
+	IgnoreExplainIDSuffix         bool
+	SkipUTF8Check                 bool
+	SkipASCIICheck                bool
+	SkipUTF8MB4Check              bool
+	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -312,7 +313,8 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
-
+	// IsReadOnly uses to indicate whether the SQL is read-only.
+	IsReadOnly bool
 	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
@@ -324,6 +326,25 @@ type StatementContext struct {
 
 	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
 	RangeFallback bool
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
+
+	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
+	InHandleForeignKeyTrigger bool
+
+	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
+	ForeignKeyTriggerCtx struct {
+		// The SavepointName is use to do rollback when handle foreign key cascade failed.
+		SavepointName string
+		HasFKCascades bool
+	}
+
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
+	// useChunkAlloc indicates whether statement use chunk alloc
+	useChunkAlloc bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -367,6 +388,8 @@ const (
 	StmtNowTsCacheKey StmtCacheKey = iota
 	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
 	StmtSafeTSCacheKey
+	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
+	StmtExternalTSCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -380,6 +403,23 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 		sc.stmtCache.data[key] = value
 	}
 	return sc.stmtCache.data[key]
+}
+
+// GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	}
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		value, err := valueEvaluator()
+		if err != nil {
+			return nil, err
+		}
+		sc.stmtCache.data[key] = value
+	}
+	return sc.stmtCache.data[key], nil
 }
 
 // ResetInStmtCache resets the cache of given key.
@@ -468,6 +508,21 @@ func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger
 	}
 }
 
+// SetUseChunkAlloc set use chunk alloc status
+func (sc *StatementContext) SetUseChunkAlloc() {
+	sc.useChunkAlloc = true
+}
+
+// ClearUseChunkAlloc clear useChunkAlloc status
+func (sc *StatementContext) ClearUseChunkAlloc() {
+	sc.useChunkAlloc = false
+}
+
+// GetUseChunkAllocStatus returns useChunkAlloc status
+func (sc *StatementContext) GetUseChunkAllocStatus() bool {
+	return sc.useChunkAlloc
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
 	if planDigest != nil {
@@ -516,6 +571,10 @@ type TableEntry struct {
 
 // AddAffectedRows adds affected rows.
 func (sc *StatementContext) AddAffectedRows(rows uint64) {
+	if sc.InHandleForeignKeyTrigger {
+		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
+		return
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.affectedRows += rows

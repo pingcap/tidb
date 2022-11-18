@@ -248,6 +248,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 func (p *LogicalJoin) updateEQCond() {
 	lChild, rChild := p.children[0], p.children[1]
 	var lKeys, rKeys []expression.Expression
+	var lNAKeys, rNAKeys []expression.Expression
+	// We need two steps here:
+	// step1: try best to extract normal EQ condition from OtherCondition to join EqualConditions.
 	for i := len(p.OtherConditions) - 1; i >= 0; i-- {
 		need2Remove := false
 		if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
@@ -272,33 +275,78 @@ func (p *LogicalJoin) updateEQCond() {
 			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
 		}
 	}
-	if len(lKeys) > 0 {
-		needLProj, needRProj := false, false
-		for i := range lKeys {
-			_, lOk := lKeys[i].(*expression.Column)
-			_, rOk := rKeys[i].(*expression.Column)
-			needLProj = needLProj || !lOk
-			needRProj = needRProj || !rOk
-		}
+	// eg: explain select * from t1, t3 where t1.a+1 = t3.a;
+	// tidb only accept the join key in EqualCondition as a normal column (join OP take granted for that)
+	// so once we found the left and right children's schema can supply the all columns in complicated EQ condition that used by left/right key.
+	// we will add a layer of projection here to convert the complicated expression of EQ's left or right side to be a normal column.
+	adjustKeyForm := func(leftKeys, rightKeys []expression.Expression, isNA bool) {
+		if len(leftKeys) > 0 {
+			needLProj, needRProj := false, false
+			for i := range leftKeys {
+				_, lOk := leftKeys[i].(*expression.Column)
+				_, rOk := rightKeys[i].(*expression.Column)
+				needLProj = needLProj || !lOk
+				needRProj = needRProj || !rOk
+			}
 
-		var lProj, rProj *LogicalProjection
-		if needLProj {
-			lProj = p.getProj(0)
-		}
-		if needRProj {
-			rProj = p.getProj(1)
-		}
-		for i := range lKeys {
-			lKey, rKey := lKeys[i], rKeys[i]
-			if lProj != nil {
-				lKey = lProj.appendExpr(lKey)
+			var lProj, rProj *LogicalProjection
+			if needLProj {
+				lProj = p.getProj(0)
 			}
-			if rProj != nil {
-				rKey = rProj.appendExpr(rKey)
+			if needRProj {
+				rProj = p.getProj(1)
 			}
-			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
-			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+			for i := range leftKeys {
+				lKey, rKey := leftKeys[i], rightKeys[i]
+				if lProj != nil {
+					lKey = lProj.appendExpr(lKey)
+				}
+				if rProj != nil {
+					rKey = rProj.appendExpr(rKey)
+				}
+				eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				if isNA {
+					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
+				} else {
+					p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+				}
+			}
 		}
+	}
+	adjustKeyForm(lKeys, rKeys, false)
+
+	// Step2: when step1 is finished, then we can determine whether we need to extract NA-EQ from OtherCondition to NAEQConditions.
+	// when there are still no EqualConditions, let's try to be a NAAJ.
+	// todo: by now, when there is already a normal EQ condition, just keep NA-EQ as other-condition filters above it.
+	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
+	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
+	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
+	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
+		for i := len(p.OtherConditions) - 1; i >= 0; i-- {
+			need2Remove := false
+			if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
+				// not a naaj operator, continue.
+				if !expression.IsEQCondFromIn(eqCond) {
+					continue
+				}
+				// here must be a EQCondFromIn.
+				lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
+				if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
+					lNAKeys = append(lNAKeys, lExpr)
+					rNAKeys = append(rNAKeys, rExpr)
+					need2Remove = true
+				} else if expression.ExprFromSchema(lExpr, rChild.Schema()) && expression.ExprFromSchema(rExpr, lChild.Schema()) {
+					lNAKeys = append(lNAKeys, rExpr)
+					rNAKeys = append(rNAKeys, lExpr)
+					need2Remove = true
+				}
+			}
+			if need2Remove {
+				p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
+			}
+		}
+		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
+		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
 }
 
@@ -392,16 +440,20 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.InNullRejectCheck = true
-	result := expression.EvaluateExprWithNull(ctx, schema, expr)
-	sc.InNullRejectCheck = false
-	x, ok := result.(*expression.Constant)
-	if !ok {
-		return false
-	}
-	if x.Value.IsNull() {
-		return true
-	} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
-		return true
+	defer func() {
+		sc.InNullRejectCheck = false
+	}()
+	for _, cond := range expression.SplitCNFItems(expr) {
+		result := expression.EvaluateExprWithNull(ctx, schema, cond)
+		x, ok := result.(*expression.Constant)
+		if !ok {
+			continue
+		}
+		if x.Value.IsNull() {
+			return true
+		} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
+			return true
+		}
 	}
 	return false
 }
@@ -422,8 +474,8 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		}
 	}
 	for _, cond := range predicates {
-		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
-		if !expression.HasGetSetVarFunc(newFilter) {
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)

@@ -558,6 +558,14 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// ExtractDuration
+	extractDurationUnitCol := new(Constant)
+	extractDurationUnitCol.Value = types.NewStringDatum("microsecond")
+	extractDurationUnitCol.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDurationUnitCol, durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// CastIntAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
@@ -1065,6 +1073,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// regexp_like: supported
+	function, err = NewFunction(mock.NewContext(), ast.RegexpLike, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn, binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// greatest
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
@@ -1175,6 +1188,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// HexInt
 	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// Bin
+	function, err = NewFunction(mock.NewContext(), ast.Bin, types.NewFieldType(mysql.TypeString), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 

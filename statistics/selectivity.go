@@ -335,7 +335,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				case ast.LogicOr:
 					notCoveredDNF[i] = x
 					continue
-				case ast.Like, ast.Regexp:
+				case ast.Like, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -343,7 +343,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 					innerSF, ok := inner.(*expression.ScalarFunction)
 					if ok {
 						switch innerSF.FuncName.L {
-						case ast.Like, ast.Regexp:
+						case ast.Like, ast.Regexp, ast.RegexpLike:
 							notCoveredNegateStrMatch[i] = x
 							continue
 						}
@@ -498,7 +498,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
 		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
@@ -506,7 +506,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}

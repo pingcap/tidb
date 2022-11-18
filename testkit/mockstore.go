@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
@@ -47,11 +49,15 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 			dom.Close()
 			err := store.Close()
 			require.NoError(t, err)
+			view.Stop()
 		})
 		require.NoError(t, err)
 		return store
 	}
-
+	t.Cleanup(func() {
+		view.Stop()
+	})
+	gctuner.GlobalMemoryLimitTuner.Stop()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
 }
@@ -63,12 +69,17 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		view.Stop()
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
 	return schematracker.UnwrapStorage(store), dom
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -78,6 +89,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
+		view.Stop()
 	})
 	return dom
 }

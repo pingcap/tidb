@@ -66,7 +66,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType().Equal(col.VirtualExpr.GetType()) {
+				if col != nil && col.GetType().PartialEqual(col.VirtualExpr.GetType(), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}

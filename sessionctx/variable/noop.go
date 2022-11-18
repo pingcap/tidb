@@ -295,7 +295,8 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SlowQueryLog, Value: "0"},
 	{Scope: ScopeSession, Name: "debug_sync", Value: ""},
 	{Scope: ScopeGlobal, Name: InnodbStatsAutoRecalc, Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US", ReadOnly: true},
+	// lc_messages cannot be read_only, see https://github.com/pingcap/tidb/issues/38231.
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "bulk_insert_buffer_size", Value: "8388608", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},

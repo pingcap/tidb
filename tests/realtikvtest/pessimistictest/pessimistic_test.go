@@ -37,11 +37,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
@@ -1836,6 +1839,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1867,6 +1871,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
@@ -2133,6 +2138,7 @@ func TestAmendTxnVariable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk3 := testkit.NewTestKit(t, store)
@@ -2412,7 +2418,6 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestAmendForUniqueIndex(t *testing.T) {
-	t.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2538,6 +2543,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2890,6 +2896,7 @@ func TestAmendForIndexChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
@@ -2964,6 +2971,7 @@ func TestAmendForColumnChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
@@ -3031,6 +3039,12 @@ func TestAmendForColumnChange(t *testing.T) {
 		}
 
 		// Start a pessimistic transaction for partition table, the amend should fail.
+		if i == 5 {
+			// alter table t_part modify column c_int bigint(20) default 100
+			// Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions
+			// Skip this case
+			continue
+		}
 		tk.MustExec("begin pessimistic")
 		tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
 		tk2.MustExec(colChangeFunc(true, i))
@@ -3237,7 +3251,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("insert into t4 values (1, 2), (2, 2)")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 2", "2 2"))
 	err = tk.ExecToErr("delete from t4 where id = 1")
-	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 't4.PRIMARY'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t4")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 1"))
@@ -3258,7 +3272,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (2, 1)")
 	err = tk.ExecToErr("delete from t5")
-	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'i1'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 
 	// case: update unique key, but conflict exists before the txn
@@ -3267,7 +3281,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t5 set uk = 3 where id = 1")
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: update unique key, but conflict with concurrent write
@@ -3286,7 +3300,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (3, 1) on duplicate key update uk = 3")
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: insert on duplicate update unique key, but conflict with concurrent write
@@ -3344,7 +3358,7 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry
 	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
 
@@ -3355,9 +3369,168 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err = tk.ExecToErr("update t5 set id = id + 10") // write conflict -> unset PresumeKNE -> retry
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
+}
+
+func TestRCPointWriteLockIfExists(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+	tk.MustQuery("show variables like 'transaction_isolation'").Check(testkit.Rows("transaction_isolation READ-COMMITTED"))
+
+	tableID := external.GetTableByName(t, tk, "test", "t1").Meta().ID
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	require.NoError(t, err)
+	secIdxKey1 := tablecodec.EncodeIndexSeekKey(tableID, 1, idxVal)
+	key1 := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
+
+	// cluster index, lock wait
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id1 = 1 for update").Check(testkit.Rows("1 1 1"))
+	txnCtx := tk.Session().GetSessionVars().TxnCtx
+	_, ok := txnCtx.GetKeyInPessimisticLockCache(key1)
+	require.True(t, ok)
+	_, err = tk2.Exec("update t1 set id3 = 100 where id1 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// cluster index, select ... for update + update
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id1 = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t1 set id3 = 200 where id1 = 1")
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1 where id1 = 1").Check(testkit.Rows("1 1 200"))
+
+	// cluster index, need projection, lock wait
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select id1+id2, id3*id3 from t1 where id1 = 1 for update")
+	txnCtx = tk.Session().GetSessionVars().TxnCtx
+	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
+	require.True(t, ok)
+	_, err = tk2.Exec("update t1 set id3 = 1000 where id1 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// cluster index, key doesn't exist
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("select * from t1 where id1 = 20 for update")
+	tk2.MustExec("select * from t1 where id1 = 20 for update")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// cluster index, the record is filtered out by selection execution
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("select * from t1 where id1 = 1 and id2 = 2 for update")
+	_, err = tk2.Exec("update t1 set id3 = 300 where id1 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// cluster index, the record is filtered out by selection execution
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(15, 15, 15)")
+	tk.MustExec("SELECT * FROM t1 WHERE id1 = 15 for update")
+	tk.MustExec("update t1 set id3 = 100 where id1 = 15")
+	_, err = tk2.Exec("SELECT * FROM t1 where id1 = 15 FOR UPDATE")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustQuery("SELECT * FROM t1 WHERE id1 = 15").Check(testkit.Rows("15 15 100"))
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// write conflict
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = 100 where id1 = 10")
+	tk.MustQuery("SELECT * FROM t1 WHERE id1 = 10 for update").Check(testkit.Rows("10 10 100"))
+	tk.MustExec("commit")
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.Equal(t, false, ok)
+
+	// secondary unique index, lock wait
+	tk.MustExec("update t1 set id3 = 1 where id1 = 1")
+	tk.MustExec("update t1 set id3 = 10 where id1 = 10")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update").Check(testkit.Rows("1 1 1"))
+	txnCtx = tk.Session().GetSessionVars().TxnCtx
+	val, ok := txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
+	require.Equal(t, true, ok)
+	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	require.NoError(t, err)
+	require.Equal(t, kv.IntHandle(1), handle)
+	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
+	require.Equal(t, true, ok)
+	_, err = tk2.Exec("update t1 set id3 = 100 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, select ... for update + update
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t1 set id3 = 1000 where id1 = 1")
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1 where id2 = 1").Check(testkit.Rows("1 1 1000"))
+
+	// unique index, covered index
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select id2 from t1 where id2 = 1 for update").Check(testkit.Rows("1"))
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, need projection
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select id2*2 from t1 where id2 = 1 for update").Check(testkit.Rows("2"))
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, cluster index
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update")
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id1 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, key doesn't exist
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 20 for update")
+	tk2.MustQuery("select * from t1 where id2 = 20 for update")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
 func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
@@ -3381,7 +3554,7 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
 	err := tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '1' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '1' for key 't2.i1'")
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 
@@ -3393,4 +3566,14 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+}
+
+func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk.MustExec("begin pessimistic")
+	err := tk.ExecToErr("savepoint s1")
+	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }

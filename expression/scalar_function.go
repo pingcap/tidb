@@ -194,6 +194,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
+		if extFunc, exist := extensionFuncs.Load(funcName); exist {
+			fc = extFunc.(functionClass)
+			ok = true
+		}
+	}
+
+	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
@@ -488,6 +495,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	return true
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
+}
+
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
 // when used as a sort key, otherwise returns (nil, false).
 //
@@ -600,7 +625,12 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + sf.RetType.MemoryUsage() +
-		int64(cap(sf.hashcode)) + sf.Function.MemoryUsage()
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + int64(cap(sf.hashcode))
+	if sf.RetType != nil {
+		sum += sf.RetType.MemoryUsage()
+	}
+	if sf.Function != nil {
+		sum += sf.Function.MemoryUsage()
+	}
 	return sum
 }

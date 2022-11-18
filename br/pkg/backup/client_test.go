@@ -32,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"go.opencensus.io/stats/view"
 )
 
 type testBackup struct {
@@ -71,6 +72,7 @@ func createBackupSuite(t *testing.T) *testBackup {
 		s.cluster.Stop()
 		tikvClient.Close()
 		pdClient.Close()
+		view.Stop()
 	})
 	return s
 }

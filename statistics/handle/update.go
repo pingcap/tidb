@@ -194,9 +194,15 @@ var (
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return nil
 	}
+
+	// if table locked, skip
+	if h.IsTableLocked(q.PhysicalID) {
+		return nil
+	}
+
 	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
 	if err != nil {
 		return errors.Trace(err)
@@ -229,6 +235,9 @@ func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
 
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
@@ -307,6 +316,8 @@ func (s *SessionIndexUsageCollector) Delete() {
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
 func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.idxUsageListHead.Lock()
 	defer h.idxUsageListHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{
@@ -539,10 +550,18 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
 		var err error
-		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		if h.IsTableLocked(id) {
+			if delta.Delta < 0 {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+			} else {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			}
 		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			if delta.Delta < 0 {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+			} else {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			}
 		}
 		statsVer = startTS
 		return errors.Trace(err)
@@ -886,7 +905,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
+	err := h.SaveStatsToStorage(tableID, -1, 0, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -1088,6 +1107,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
+			//if table locked, skip analyze
+			if h.IsTableLocked(tbl.Meta().ID) {
+				continue
+			}
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue
@@ -1105,7 +1128,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				continue
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
+				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
 					return true
 				}
@@ -1157,10 +1180,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
-func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
+func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
 	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 	h.mu.RUnlock()
+	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
@@ -1184,13 +1208,29 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 		sqlBuilder.WriteString(suffix)
 		return sqlBuilder.String()
 	}
+	if len(partitionNames) < 1 {
+		return false
+	}
+	logutil.BgLogger().Info("[stats] start to auto analyze",
+		zap.String("table", tblInfo.Name.String()),
+		zap.Any("partitions", partitionNames),
+		zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 	if len(partitionNames) > 0 {
-		logutil.BgLogger().Info("[stats] auto analyze triggered")
-		sql := getSQL("analyze table %n.%n partition", "", len(partitionNames))
-		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
 		statsTbl := h.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
+			start := i
+			end := start + analyzePartitionBatchSize
+			if end >= len(partitionNames) {
+				end = len(partitionNames)
+			}
+			sql := getSQL("analyze table %n.%n partition", "", end-start)
+			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+			logutil.BgLogger().Info("[stats] auto analyze triggered",
+				zap.String("table", tblInfo.Name.String()),
+				zap.Any("partitions", partitionNames[start:end]))
+			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+		}
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1205,13 +1245,23 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 			}
 		}
 		if len(partitionNames) > 0 {
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed")
-			sql := getSQL("analyze table %n.%n partition", " index %n", len(partitionNames))
-			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
-			params = append(params, idx.Name.O)
 			statsTbl := h.GetTableStats(tblInfo)
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+			for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
+				start := i
+				end := start + analyzePartitionBatchSize
+				if end >= len(partitionNames) {
+					end = len(partitionNames)
+				}
+				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
+				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
+				params = append(params, idx.Name.O)
+				logutil.BgLogger().Info("[stats] auto analyze for unanalyzed",
+					zap.String("table", tblInfo.Name.String()),
+					zap.String("index", idx.Name.String()),
+					zap.Any("partitions", partitionNames[start:end]))
+				h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
+			}
 			return true
 		}
 	}

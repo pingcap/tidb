@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx(a));
@@ -36,8 +37,8 @@ id	estRows	task	access object	operator info
 IndexJoin	8000.00	root		semi join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexReader(Probe)	1.25	root		index:IndexRangeScan
-  └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+└─IndexReader(Probe)	12500.00	root		index:IndexRangeScan
+  └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 set @@tidb_opt_insubq_to_join_and_agg=1;
@@ -50,6 +51,6 @@ IndexJoin	10000.00	root		inner join, inner:IndexLookUp, outer key:test.t2.a, inn
 ├─StreamAgg(Build)	8000.00	root		group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
 │ └─IndexReader	10000.00	root		index:IndexFullScan
 │   └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
-└─IndexLookUp(Probe)	1.25	root		
-  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	10000.00	root		
+  ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

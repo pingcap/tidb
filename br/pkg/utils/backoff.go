@@ -29,6 +29,10 @@ const (
 	resetTSRetryTime       = 16
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 500 * time.Millisecond
+
+	resetTSRetryTimeExt       = 600
+	resetTSWaitIntervalExt    = 500 * time.Millisecond
+	resetTSMaxWaitIntervalExt = 300 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -158,6 +162,14 @@ func NewPDReqBackoffer() Backoffer {
 	}
 }
 
+func NewPDReqBackofferExt() Backoffer {
+	return &pdReqBackoffer{
+		attempt:      resetTSRetryTimeExt,
+		delayTime:    resetTSWaitIntervalExt,
+		maxDelayTime: resetTSMaxWaitIntervalExt,
+	}
+}
+
 func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 	// bo.delayTime = 2 * bo.delayTime
 	// bo.attempt--
@@ -167,6 +179,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		// Excepted error, finish the operation
 		bo.delayTime = 0
 		bo.attempt = 0
+	case berrors.ErrRestoreTotalKVMismatch:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
 	default:
 		switch status.Code(e) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:

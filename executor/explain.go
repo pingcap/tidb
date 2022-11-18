@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -114,12 +115,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
+				memTracker:   e.ctx.GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
 		e.executed = true
-		chk := newFirstChunk(e.analyzeExec)
+		chk := tryNewCacheChunk(e.analyzeExec)
 		for {
 			err = Next(ctx, e.analyzeExec, chk)
 			if err != nil || chk.NumRows() == 0 {
@@ -168,8 +169,7 @@ func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, tr
 	if gc {
 		runtime.GC()
 	}
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ForceReadMemStats()
 	heapInUse = instanceStats.HeapInuse
 	trackedMem = uint64(h.memTracker.BytesConsumed())
 	return
@@ -186,6 +186,31 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 		h.infoField = append(h.infoField, zap.String("heap profile", fileName))
 	}
 	return h.infoField, err
+}
+
+func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
+	trackerMemUseMap := h.memTracker.CountAllChildrenMemUse()
+	logs := make([]zap.Field, 0, len(trackerMemUseMap))
+	keys := make([]string, 0, len(trackerMemUseMap))
+	for k := range trackerMemUseMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		logs = append(logs, zap.String("TrackerTree "+k, memory.FormatBytes(trackerMemUseMap[k])))
+	}
+	return logs
+}
+
+func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
+	const GB uint64 = 1 << 30
+	if heapInUse < 30*GB {
+		return 5 * time.Second, 6
+	} else if heapInUse < 40*GB {
+		return 15 * time.Second, 2
+	} else {
+		return 30 * time.Second, 1
+	}
 }
 
 func (h *memoryDebugModeHandler) run() {
@@ -213,7 +238,9 @@ func (h *memoryDebugModeHandler) run() {
 		zap.String("minHeapInUse", memory.FormatBytes(h.minHeapInUse)),
 		zap.Int64("alarmRatio", h.alarmRatio),
 	)
-	ticker, loop := time.NewTicker(5*time.Second), 0
+	triggerInterval := 5 * time.Second
+	printMod := 6
+	ticker, loop := time.NewTicker(triggerInterval), 0
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -221,13 +248,15 @@ func (h *memoryDebugModeHandler) run() {
 		case <-ticker.C:
 			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
 			loop++
-			if loop%6 == 0 {
+			if loop%printMod == 0 {
 				fields, err = h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
 				logutil.BgLogger().Info("Memory Debug Mode", fields...)
 				if err != nil {
 					return
 				}
 			}
+			triggerInterval, printMod = updateTriggerIntervalByHeapInUse(heapInUse)
+			ticker.Reset(triggerInterval)
 
 			if !h.autoGC {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
@@ -249,7 +278,8 @@ func (h *memoryDebugModeHandler) run() {
 					for _, t := range ts {
 						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 					}
-					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log all executors that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log the tracker tree", h.getTrackerTreeMemUseLogs()...)
 				}
 			}
 		}

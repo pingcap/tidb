@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
 )
 
@@ -198,8 +199,23 @@ func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = col.Column.MemoryUsage() + col.Data.MemUsage()
+	sum = col.Column.MemoryUsage() + size.SizeOfPointer
+	if col.Data != nil {
+		sum += col.Data.MemUsage()
+	}
 	return sum
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error) {
+	mapped := m[(&col.Column).UniqueID]
+	if mapped == nil {
+		return nil, errors.Errorf("Can't remap column for %s", col)
+	}
+	return &CorrelatedColumn{
+		Column: *mapped,
+		Data:   col.Data,
+	}, nil
 }
 
 // Column represents a column.
@@ -537,6 +553,15 @@ func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	return false
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (col *Column) RemapColumn(m map[int64]*Column) (Expression, error) {
+	mapped := m[col.UniqueID]
+	if mapped == nil {
+		return nil, errors.Errorf("Can't remap column for %s", col)
+	}
+	return mapped, nil
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (col *Column) Vectorized() bool {
 	return true
@@ -742,9 +767,11 @@ func (col *Column) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyColumnSize + col.RetType.MemoryUsage() + int64(cap(col.hashcode)) +
-		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
+	sum = emptyColumnSize + int64(cap(col.hashcode)) + int64(len(col.OrigName)+len(col.charset)+len(col.collation))
 
+	if col.RetType != nil {
+		sum += col.RetType.MemoryUsage()
+	}
 	if col.VirtualExpr != nil {
 		sum += col.VirtualExpr.MemoryUsage()
 	}

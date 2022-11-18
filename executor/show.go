@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,6 +140,24 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ShowExec) fetchAll(ctx context.Context) error {
+	// Temporary disables select limit to avoid miss the result.
+	// Because some of below fetch show result stmt functions will generate
+	// a SQL stmt and then execute the new SQL stmt to do the fetch result task
+	// for the up-level show stmt.
+	// Here, the problem is the new SQL stmt will be influenced by SelectLimit value
+	// and return a limited result set back to up level show stmt. This, in fact, may
+	// cause a filter effect on result set that may exclude the qualified record outside of
+	// result set.
+	// Finally, when above result set, may not include qualified record, is returned to up
+	// level show stmt's selection, which really applies the filter operation on returned
+	// result set, it may return empty result to client.
+	oldSelectLimit := e.ctx.GetSessionVars().SelectLimit
+	e.ctx.GetSessionVars().SelectLimit = math.MaxUint64
+	defer func() {
+		// Restore session Var SelectLimit value.
+		e.ctx.GetSessionVars().SelectLimit = oldSelectLimit
+	}()
+
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
@@ -185,7 +204,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(ctx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings(false)
 	case ast.ShowErrors:
@@ -207,6 +226,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowStatsLocked:
+		return e.fetchShowStatsLocked()
 	case ast.ShowHistogramsInFlight:
 		e.fetchShowHistogramsInFlight()
 		return nil
@@ -798,7 +819,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
@@ -830,7 +851,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
-				value, err = sessionVars.GetGlobalSystemVar(v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -855,7 +876,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
-		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1104,7 +1125,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		if fk.RefSchema.L != "" {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+		} else {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
@@ -1115,6 +1140,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
+		}
+		if fk.Version < model.FKVersion1 {
+			buf.WriteString(" /* FOREIGN KEY INVALID */")
 		}
 	}
 
@@ -1193,7 +1221,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1326,52 +1354,6 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
-	if partitionInfo == nil {
-		return
-	}
-	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
-	// include the /*!50100 or /*!50500 comments for TiDB.
-	// This also solves the issue with comments within comments that would happen for
-	// PLACEMENT POLICY options.
-	if partitionInfo.Type == model.PartitionTypeHash {
-		defaultPartitionDefinitions := true
-		for i, def := range partitionInfo.Definitions {
-			if def.Name.O != fmt.Sprintf("p%d", i) {
-				defaultPartitionDefinitions = false
-				break
-			}
-			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
-				defaultPartitionDefinitions = false
-				break
-			}
-		}
-
-		if defaultPartitionDefinitions {
-			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
-			return
-		}
-	}
-	// this if statement takes care of lists/range columns case
-	if len(partitionInfo.Columns) > 0 {
-		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
-		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
-		for i, col := range partitionInfo.Columns {
-			buf.WriteString(stringutil.Escape(col.O, sqlMode))
-			if i < len(partitionInfo.Columns)-1 {
-				buf.WriteString(",")
-			}
-		}
-		buf.WriteString(")\n(")
-	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
-	}
-
-	ddl.AppendPartitionDefs(partitionInfo, buf, sqlMode)
-	buf.WriteString(")")
-}
-
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
 func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
 	sqlMode := ctx.GetSessionVars().SQLMode
@@ -1481,7 +1463,7 @@ func (e *ShowExec) fetchShowCollation() error {
 	return nil
 }
 
-// fetchShowCreateUser composes show create create user result.
+// fetchShowCreateUser composes 'show create user' result.
 func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -1505,7 +1487,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
+		FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1519,6 +1503,22 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	authplugin := mysql.AuthNativePassword
 	if len(rows) == 1 && rows[0].GetString(0) != "" {
 		authplugin = rows[0].GetString(0)
+	}
+
+	accountLockedRaw := rows[0].GetString(1)
+	accountLocked := "LOCK"
+	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
+		accountLocked = "UNLOCK"
+	}
+
+	userAttributes := rows[0].GetString(2)
+	if len(userAttributes) > 0 {
+		userAttributes = " ATTRIBUTE " + userAttributes
+	}
+
+	tokenIssuer := rows[0].GetString(3)
+	if len(tokenIssuer) > 0 {
+		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1544,8 +1544,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1987,10 +1987,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
-		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
-		}
+		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
+		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err
 		}
@@ -2022,7 +2020,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
+		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
 			for _, col := range tbl.Columns {

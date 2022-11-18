@@ -724,6 +724,7 @@ func main() {
 		"set @@tidb_window_concurrency=4",
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
+		"set @@tidb_enable_clustered_index='int_only';",
 		"set @@global.tidb_enable_clustered_index=0;",
 		"set @@global.tidb_mem_quota_query=34359738368",
 		"set @@tidb_mem_quota_query=34359738368",

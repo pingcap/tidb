@@ -589,3 +589,24 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 }
+
+func TestTempIndexKey(t *testing.T) {
+	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.UTC}, nil, values...)
+	require.NoError(t, err)
+	tableID := int64(4)
+	indexID := int64(5)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	IndexKey2TempIndexKey(indexID, indexKey)
+	tid, iid, _, err := DecodeKeyHead(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, tid, tableID)
+	require.NotEqual(t, indexID, iid)
+	require.Equal(t, indexID, iid&IndexIDMask)
+
+	TempIndexKey2IndexKey(indexID, indexKey)
+	tid, iid, _, err = DecodeKeyHead(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, tid, tableID)
+	require.Equal(t, indexID, iid)
+}

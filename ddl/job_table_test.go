@@ -15,23 +15,17 @@
 package ddl_test
 
 import (
-	"context"
-	"fmt"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
 
@@ -158,7 +152,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 				return false
 			}
 		}
-		require.FailNow(t, "should not reach here")
+		require.FailNow(t, "should not reach here", record)
 		return false
 	}
 
@@ -169,7 +163,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 			if id == j {
 				meet = true
 			}
-			require.False(t, meet && id == i)
+			require.False(t, meet && id == i, record)
 		}
 	}
 
@@ -184,110 +178,67 @@ func check(t *testing.T, record []int64, ids ...int64) {
 	}
 }
 
-func TestConcurrentDDLSwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	type table struct {
-		columnIdx int
-		indexIdx  int
+func TestAlwaysChoiceProcessingJob(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
 	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	var tables []*table
-	tblCount := 20
-	for i := 0; i < tblCount; i++ {
-		tables = append(tables, &table{1, 0})
-	}
+	d := dom.DDL()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt=1")
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size=32")
+	tk.MustExec("create table t(a int, b int)")
 
-	for i := range tables {
-		tk.MustExec(fmt.Sprintf("create table t%d (col0 int) partition by range columns (col0) ("+
-			"partition p1 values less than (100), "+
-			"partition p2 values less than (300), "+
-			"partition p3 values less than (500), "+
-			"partition p4 values less than (700), "+
-			"partition p5 values less than (1000), "+
-			"partition p6 values less than maxvalue);",
-			i))
-		for j := 0; j < 1000; j++ {
-			tk.MustExec(fmt.Sprintf("insert into t%d values (%d)", i, j))
-		}
+	ddlJobs := []string{
+		"alter table t add index idx(a)",
+		"alter table t add index idx(b)",
 	}
 
-	ddls := make([]string, 0, tblCount)
-	ddlCount := 100
-	for i := 0; i < ddlCount; i++ {
-		tblIdx := rand.Intn(tblCount)
-		if rand.Intn(2) == 0 {
-			ddls = append(ddls, fmt.Sprintf("alter table t%d add index idx%d (col0)", tblIdx, tables[tblIdx].indexIdx))
-			tables[tblIdx].indexIdx++
-		} else {
-			ddls = append(ddls, fmt.Sprintf("alter table t%d add column col%d int", tblIdx, tables[tblIdx].columnIdx))
-			tables[tblIdx].columnIdx++
-		}
-	}
-
-	c := atomic.NewInt32(0)
-	ch := make(chan struct{})
-	go func() {
-		var wg util.WaitGroupWrapper
-		for i := range ddls {
-			wg.Add(1)
-			go func(idx int) {
-				tk := testkit.NewTestKit(t, store)
-				tk.MustExec("use test")
-				tk.MustExec(ddls[idx])
-				c.Add(1)
-				wg.Done()
-			}(i)
-		}
-		wg.Wait()
-		ch <- struct{}{}
-	}()
-
-	ticker := time.NewTicker(time.Second * 2)
-	count := 0
-	done := false
-	for !done {
-		select {
-		case <-ch:
-			done = true
-		case <-ticker.C:
-			var b bool
-			var err error
-			err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				b, err = meta.NewMeta(txn).IsConcurrentDDL()
-				return err
-			})
-			require.NoError(t, err)
-			rs, err := testkit.NewTestKit(t, store).Exec(fmt.Sprintf("set @@global.tidb_enable_concurrent_ddl=%t", !b))
-			if rs != nil {
-				require.NoError(t, rs.Close())
-			}
-			if err == nil {
-				count++
-				if b {
+	hook := &ddl.TestDDLCallback{}
+	var wg util.WaitGroupWrapper
+	wg.Add(1)
+	var once sync.Once
+	var idxa, idxb int64
+	hook.OnGetJobBeforeExported = func(jobType string) {
+		once.Do(func() {
+			var jobs []*model.Job
+			for i, job := range ddlJobs {
+				wg.Run(func() {
 					tk := testkit.NewTestKit(t, store)
-					tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
-					tk.MustQuery("select count(*) from mysql.tidb_ddl_reorg").Check(testkit.Rows("0"))
+					tk.MustExec("use test")
+					recordSet, _ := tk.Exec(job)
+					if recordSet != nil {
+						require.NoError(t, recordSet.Close())
+					}
+				})
+				for {
+					time.Sleep(time.Millisecond * 100)
+					var err error
+					jobs, err = ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
+					require.NoError(t, err)
+					if len(jobs) == i+1 {
+						break
+					}
 				}
 			}
-		}
+			idxa = jobs[0].ID
+			idxb = jobs[1].ID
+			require.Greater(t, idxb, idxa)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("update mysql.tidb_ddl_job set processing = 1 where job_id = ?", idxb)
+			wg.Done()
+		})
 	}
 
-	require.Equal(t, int32(ddlCount), c.Load())
-	require.Greater(t, count, 0)
-
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	for i, tbl := range tables {
-		tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't%d'", i)).Check(testkit.Rows(fmt.Sprintf("%d", tbl.columnIdx)))
-		tk.MustExec(fmt.Sprintf("admin check table t%d", i))
-		for j := 0; j < tbl.indexIdx; j++ {
-			tk.MustExec(fmt.Sprintf("admin check index t%d idx%d", i, j))
-		}
+	record := make([]int64, 0, 16)
+	hook.OnGetJobAfterExported = func(jobType string, job *model.Job) {
+		// record the job schedule order
+		record = append(record, job.ID)
 	}
+
+	d.SetHook(hook)
+	wg.Wait()
+
+	check(t, record, idxb, idxa)
 }

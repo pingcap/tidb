@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -128,6 +129,26 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestAutoIDNoCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.CachedTable)
+	tk.MustExec("drop table if exists tele_autoid")
+	tk.MustExec("create table tele_autoid (id int) auto_id_cache 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.AutoIDNoCache)
+	tk.MustExec("alter table tele_autoid auto_id_cache=0")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.AutoIDNoCache)
+}
+
 func TestAccountLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -211,6 +232,9 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt1Cnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt2Cnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt3Cnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
@@ -229,18 +253,39 @@ func TestTablePartition(t *testing.T) {
 	tk.MustExec("drop table if exists pt1")
 	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
 		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
+	tk.MustExec("create table pt2 (d datetime, v varchar(255)) partition by range columns(d,v)" +
+		" (partition p0 values less than ('2022-01-01', ''), partition p1 values less than ('2023-01-01','ZZZ'))")
+	tk.MustExec("create table pt3 (d datetime, v varchar(255), i int) partition by range columns(d,v,i)" +
+		" (partition p0 values less than ('2022-01-01', '', 0), partition p1 values less than ('2023-01-01','ZZZ', 1))")
+	tk.MustExec("create table pt4 (d datetime, v varchar(255), s bigint unsigned, u tinyint) partition by range columns(d,v,s,u)" +
+		" (partition p0 values less than ('2022-01-01', '', 1, -3), partition p1 values less than ('2023-01-01','ZZZ', 1, 3))")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
-	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(11), usage.TablePartition.TablePartitionMaxPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
-	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(3), usage.TablePartition.TablePartitionRangeColumnsGt1Cnt)
+	require.Equal(t, int64(2), usage.TablePartition.TablePartitionRangeColumnsGt2Cnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsGt3Cnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt2")
+	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (10)," +
+		"partition p1 values less than (20))")
+	tk.MustExec("drop table if exists nt")
+	tk.MustExec("create table nt (a int,b int)")
+	require.Equal(t, int64(0), usage.ExchangePartition.ExchangePartitionCnt)
+	tk.MustExec(`alter table pt2 exchange partition p1 with table nt`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {
@@ -377,7 +422,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.False(t, usage.EnableCostModelVer2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -418,4 +463,82 @@ func TestLazyPessimisticUniqueCheck(t *testing.T) {
 	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
 	usage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
+}
+
+func TestFlashbackCluster(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(0), usage.DDLUsageCounter.FlashbackClusterUsed)
+	require.NoError(t, err)
+
+	tk.MustExecToErr("flashback cluster to timestamp '2011-12-21 00:00:00'")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(1), usage.DDLUsageCounter.FlashbackClusterUsed)
+	require.NoError(t, err)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int)")
+	usage, err = telemetry.GetFeatureUsage(tk1.Session())
+	require.Equal(t, int64(1), usage.DDLUsageCounter.FlashbackClusterUsed)
+	require.NoError(t, err)
+}
+
+func TestAddIndexAccelerationAndMDL(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.NoError(t, err)
+
+	allow := ddl.IsEnableFastReorg()
+	require.Equal(t, false, allow)
+	tk.MustExec("set global tidb_enable_metadata_lock = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tele_t")
+	tk.MustExec("create table tele_t(id int, b int)")
+	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1")
+	allow = ddl.IsEnableFastReorg()
+	require.Equal(t, true, allow)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	tk.MustExec("alter table tele_t add index idx_new(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
+}
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableGlobalMemoryControl == (variable.DefTiDBServerMemoryLimit != "0"))
+
+	tk.MustExec("set global tidb_server_memory_limit = 5 << 30")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableGlobalMemoryControl)
+
+	tk.MustExec("set global tidb_server_memory_limit = 0")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnableGlobalMemoryControl)
 }

@@ -59,6 +59,8 @@ go_test(
         "tsheap_test.go",
     ],
     flaky = True,
+    race = "on",
+    shard_count = 20,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
@@ -66,6 +68,7 @@ go_test(
         "//br/pkg/redact",
         "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
+        "//br/pkg/utils",
         "//kv",
         "//tablecodec",
         "@com_github_pingcap_errors//:errors",
@@ -82,6 +85,7 @@ go_test(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
 )

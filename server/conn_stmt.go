@@ -158,6 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
+	if !useCursor {
+		// not using streaming ,can reuse chunk
+		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	}
 	// skip iteration-count, always 1
 	pos += 4
 
@@ -200,7 +204,15 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
-	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+
+	sessVars := cc.ctx.GetSessionVars()
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	expiredTaskID := sessVars.StmtCtx.TaskID
+	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+	cc.onExtensionBinaryExecuteEnd(stmt, args, sessVars.StmtCtx.TaskID != expiredTaskID, err)
+	return err
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
@@ -254,6 +266,11 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if rs == nil {
 		return false, cc.writeOK(ctx)
 	}
+	if result, ok := rs.(*tidbResultSet); ok {
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
+	}
 
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
@@ -290,6 +307,7 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
+	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
