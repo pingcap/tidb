@@ -85,7 +85,6 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -129,6 +128,7 @@ var (
 	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
 	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryFlashbackClusterUsage  = metrics.TelemetryFlashbackClusterCnt
 
 	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
 	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
@@ -459,7 +459,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 		if s.generalPlanCache == nil { // lazy construction
 			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
 				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-				plannercore.PickPlanFromBucket)
+				plannercore.PickPlanFromBucket, s)
 		}
 		return s.generalPlanCache
 	}
@@ -471,7 +471,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-			plannercore.PickPlanFromBucket)
+			plannercore.PickPlanFromBucket, s)
 	}
 	return s.preparedPlanCache
 }
@@ -1351,6 +1351,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1374,6 +1378,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 			return nil, errors.Trace(err)
 		}
 		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1564,10 +1572,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
-	canExplainAnalyze := false
-	if _, ok := p.(plannercore.PhysicalPlan); ok {
-		canExplainAnalyze = true
-	}
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1575,7 +1579,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1588,7 +1591,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		CanExplainAnalyze:     canExplainAnalyze,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1598,7 +1600,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
-			_, pi.CanExplainAnalyze = pi.Plan.(plannercore.PhysicalPlan)
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
@@ -1625,17 +1626,6 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
-}
-
-func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
-	explain := &plannercore.Explain{
-		TargetPlan:       p.(plannercore.Plan),
-		Format:           types.ExplainFormatROW,
-		Analyze:          false,
-		RuntimeStatsColl: runtimeStatsColl,
-	}
-	explain.SetSCtx(s)
-	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -2721,9 +2711,11 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	pm := &privileges.UserPrivileges{
-		Handle: do.PrivilegeHandle(),
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		return nil, err
 	}
+	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(s, pm)
 
 	// Add stats collector, and it will be freed by background stats worker
@@ -2856,6 +2848,61 @@ func InitMDLTable(store kv.Storage) error {
 	})
 }
 
+// InitMDLVariableForBootstrap initializes the metadata lock variable.
+func InitMDLVariableForBootstrap(store kv.Storage) error {
+	initValue := variable.DefTiDBEnableConcurrentDDL
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(initValue)
+	})
+	if err != nil {
+		return err
+	}
+	variable.EnableMDL.Store(initValue)
+	return nil
+}
+
+// InitMDLVariableForUpgrade initializes the metadata lock variable.
+func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull || !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return isNull, err
+}
+
+// InitMDLVariable initializes the metadata lock variable.
+func InitMDLVariable(store kv.Storage) error {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull {
+		return errors.New("metadata lock is null")
+	}
+	variable.EnableMDL.Store(enable)
+	return err
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2882,11 +2929,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
+	} else {
+		err = InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
+	ses, err := createSessions(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -2960,21 +3012,36 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
+	// setup plan replayer handle
+	dom.SetupPlanReplayerHandle(ses[6], ses[7])
+	dom.StartPlanReplayerHandle()
+	// setup dumpFileGcChecker
+	dom.SetupDumpFileGCChecker(ses[8])
+	dom.DumpFileGcCheckerLoop()
+
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
+	syncStatsCtxs, err := createSessions(store, cnt)
+	if err != nil {
+		return nil, err
+	}
 	subCtxs := make([]sessionctx.Context, cnt)
 	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(ses[6+i])
+		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
+
+	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
+	if err != nil {
+		return nil, err
+	}
 	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
 	for i := 0; i < analyzeConcurrencyQuota; i++ {
-		subCtxs2[i] = ses[7+concurrency+i]
+		subCtxs2[i] = analyzeCtxs[i]
 	}
 	dom.SetupAnalyzeExec(subCtxs2)
-	dom.DumpFileGcCheckerLoop()
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
@@ -3480,7 +3547,8 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 
 func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
 	is := domain.GetDomain(s).InfoSchema()
-	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
+	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
@@ -3512,6 +3580,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UseFlashbackToCluster {
+		telemetryFlashbackClusterUsage.Inc()
 	}
 
 	if ti.UesExchangePartition {

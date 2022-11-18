@@ -57,7 +57,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
-		0.1, math.MaxUint64, plannercore.PickPlanFromBucket)})
+		0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session())})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -676,8 +676,14 @@ func TestSelectHiddenColumn(t *testing.T) {
 
 func TestFormatVersion(t *testing.T) {
 	// Test for defaultVersions.
-	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	defaultVersions := []string{
+		"5.7.25-TiDB-None",
+		"5.7.25-TiDB-8.0.18",
+		"5.7.25-TiDB-8.0.18-beta.1",
+		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
+		"5.7.25-TiDB-",
+		"5.7.25-TiDB-v4.0.0-TiDB-446"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
 	for i, v := range defaultVersions {
 		version := infoschema.FormatTiDBVersion(v, true)
 		require.Equal(t, defaultRes[i], version)
@@ -1513,6 +1519,10 @@ func TestVariablesInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip test when concurrent DDL is disabled")
+	}
+
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
 
@@ -1543,6 +1553,7 @@ func TestVariablesInfo(t *testing.T) {
 	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
 	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
 	stmt.Check(testkit.Rows(
+		"last_sql_use_alloc OFF ON",                 // for test stability
 		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs

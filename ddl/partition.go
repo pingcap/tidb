@@ -170,6 +170,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
+		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+			sleepSecond := val.(int)
+			time.Sleep(time.Duration(sleepSecond) * time.Second)
+		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
@@ -193,6 +197,15 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
+				err = infosync.UpdateTiFlashProgressCache(d.ID, 1)
+				if err != nil {
+					// just print log, progress will be updated in `refreshTiFlashTicker`
+					logutil.BgLogger().Error("update tiflash sync progress cache failed",
+						zap.Error(err),
+						zap.Int64("tableID", tblInfo.ID),
+						zap.Int64("partitionID", d.ID),
+					)
+				}
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
@@ -782,6 +795,9 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	}
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := collectColumnsType(tbInfo)
+		if len(colTypes) != len(tbInfo.Partition.Columns) {
+			return dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
 			return err
 		}
@@ -1081,6 +1097,9 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
+	if len(colTypes) != len(tbInfo.Partition.Columns) {
+		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+	}
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -1139,7 +1158,11 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := make([]types.FieldType, 0, len(tbInfo.Partition.Columns))
 		for _, col := range tbInfo.Partition.Columns {
-			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldType)
+			c := findColumnByName(col.L, tbInfo)
+			if c == nil {
+				return nil
+			}
+			colTypes = append(colTypes, c.FieldType)
 		}
 
 		return colTypes
@@ -1152,6 +1175,9 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
+	if len(colTypes) != len(tbInfo.Partition.Columns) {
+		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+	}
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -2805,6 +2831,54 @@ func hexIfNonPrint(s string) string {
 	// Not possible to create an easy interpreted MySQL string, return as hex string
 	// Can be converted to string in MySQL like: CAST(UNHEX('<hex string>') AS CHAR(255))
 	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
+}
+
+// AppendPartitionInfo is used in SHOW CREATE TABLE as well as generation the SQL syntax
+// for the PartitionInfo during validation of various DDL commands
+func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+	if partitionInfo == nil {
+		return
+	}
+	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
+	// include the /*!50100 or /*!50500 comments for TiDB.
+	// This also solves the issue with comments within comments that would happen for
+	// PLACEMENT POLICY options.
+	if partitionInfo.Type == model.PartitionTypeHash {
+		defaultPartitionDefinitions := true
+		for i, def := range partitionInfo.Definitions {
+			if def.Name.O != fmt.Sprintf("p%d", i) {
+				defaultPartitionDefinitions = false
+				break
+			}
+			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
+				defaultPartitionDefinitions = false
+				break
+			}
+		}
+
+		if defaultPartitionDefinitions {
+			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			return
+		}
+	}
+	// this if statement takes care of lists/range columns case
+	if len(partitionInfo.Columns) > 0 {
+		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// Notice that MySQL uses two spaces between LIST and COLUMNS...
+		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
+		for i, col := range partitionInfo.Columns {
+			buf.WriteString(stringutil.Escape(col.O, sqlMode))
+			if i < len(partitionInfo.Columns)-1 {
+				buf.WriteString(",")
+			}
+		}
+		buf.WriteString(")\n(")
+	} else {
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
+	}
+
+	AppendPartitionDefs(partitionInfo, buf, sqlMode)
+	buf.WriteString(")")
 }
 
 // AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
