@@ -75,15 +75,23 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
+	tasks := make([]*NeededItemTask, 0)
 	for _, item := range remainedItems {
 		task := &NeededItemTask{
 			TableItemID: item,
 			ToTimeout:   time.Now().Local().Add(timeout),
 			ResultCh:    sc.StatsLoad.ResultCh,
 		}
-		err := h.AppendNeededItem(task, timeout)
-		if err != nil {
-			return err
+		tasks = append(tasks, task)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, task := range tasks {
+		select {
+		case h.StatsLoad.NeededItemsCh <- task:
+			continue
+		case <-timer.C:
+			return errors.New("sync load stats channel is full and timeout sending task to channel")
 		}
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
@@ -91,9 +99,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
+func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
-		return true
+		return nil
 	}
 	var errorMsgs []string
 	defer func() {
@@ -120,15 +128,14 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return true
+					return nil
 				}
 			} else {
-				return false
+				return errors.New("sync load stats channel closed unexpectedly")
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout")
-			return false
+			return errors.New("sync load stats timeout")
 		}
 	}
 }
@@ -154,9 +161,16 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 	return remainedItems
 }
 
-// AppendNeededItem appends needed columns/indices to ch, if exists, do not append the duplicated one.
+// AppendNeededItem appends needed columns/indices to ch, it is only used for test
 func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) error {
-	return h.writeToChanWithTimeout(h.StatsLoad.NeededItemsCh, task, timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case h.StatsLoad.NeededItemsCh <- task:
+	case <-timer.C:
+		return errors.New("Channel is full and timeout writing to channel")
+	}
+	return nil
 }
 
 var errExit = errors.New("Stop loading since domain is closed")

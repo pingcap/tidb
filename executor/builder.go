@@ -1003,6 +1003,17 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 		}
 		return e
 	}
+	if v.Capture {
+		e := &PlanReplayerExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			CaptureInfo: &PlanReplayerCaptureInfo{
+				SQLDigest:  v.SQLDigest,
+				PlanDigest: v.PlanDigest,
+			},
+		}
+		return e
+	}
+
 	e := &PlanReplayerExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
@@ -1412,11 +1423,14 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
-		concurrency:     v.Concurrency,
-		joinType:        v.JoinType,
-		isOuterJoin:     v.JoinType.IsOuterJoin(),
-		useOuterToBuild: v.UseOuterToBuild,
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
+		probeSideTupleFetcher: &probeSideTupleFetcher{},
+		hashJoinCtx: &hashJoinCtx{
+			isOuterJoin:     v.JoinType.IsOuterJoin(),
+			useOuterToBuild: v.UseOuterToBuild,
+			joinType:        v.JoinType,
+		},
+		concurrency: v.Concurrency,
 	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
