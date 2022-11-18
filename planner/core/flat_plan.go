@@ -415,8 +415,8 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *opera
 	sort.Slice(tids, func(i, j int) bool {
 		return tids[i] < tids[j]
 	})
-	for _, tid := range tids {
-		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecksMap[tid], nil, len(fkCascadesMap) == 0)
+	for i, tid := range tids {
+		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecksMap[tid], nil, len(fkCascadesMap) == 0 && i == len(tids)-1)
 	}
 	tids = tids[:0]
 	for tid := range fkCascadesMap {
@@ -443,7 +443,6 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operator
 	for i, fkCascade := range fkCascades {
 		childCtx.isRoot = true
 		childCtx.label = Empty
-		childCtx.isLastChild = true
 		childCtx.isLastChild = isLast && i == len(fkCascades)-1
 		target, childIdx = f.flattenRecursively(fkCascade, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
