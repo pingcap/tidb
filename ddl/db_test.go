@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1735,4 +1736,24 @@ func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
 	tk.MustExec("alter table t add column b int")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
+}
+
+func TestDDLBlockedCreateView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		time.Sleep(20 * time.Millisecond)
+		tk2.MustExec("create view v as select * from t")
+		wg.Done()
+	}()
+	tk.MustExec("alter table t modify column a char(10)")
+	wg.Wait()
 }
