@@ -169,7 +169,7 @@ func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := tryDecodeToHandleString(r.startKey)
 	endKey := tryDecodeToHandleString(r.endKey)
-	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	rangeStr := "taskID_" + strconv.Itoa(r.id) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
 	if r.endInclude {
 		return rangeStr + "]"
 	}
@@ -274,7 +274,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
-		if num := result.scanCount - lastLogCount; num >= 30000 {
+		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
 			logutil.BgLogger().Info("[ddl] backfill worker back fill index",
 				zap.Int("workerID", w.id),
@@ -718,8 +718,8 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			if idxWorker.copCtx != nil && b.copReqSenderPool == nil {
 				startTS := latestStartTS(sessCtx.GetStore())
 				b.copReqSenderPool = newCopReqSenderPool(b.ctx, idxWorker.copCtx, startTS)
-				idxWorker.copReqSenderPool = b.copReqSenderPool
 			}
+			idxWorker.copReqSenderPool = b.copReqSenderPool
 			worker, runner = idxWorker, idxWorker.backfillWorker
 		case typeAddIndexMergeTmpWorker:
 			tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, b.tbl, reorgInfo, jc)

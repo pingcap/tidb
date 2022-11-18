@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/generic"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // copReadBatchFactor is the factor of batch size of coprocessor read.
@@ -50,18 +52,28 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 		select {
 		case rs, ok := <-c.resultsCh:
 			if !ok {
-				c.results.Delete(handleRange.id)
+				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed",
+					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
 				return nil, handleRange.endKey, true, nil
 			}
 			if rs.err != nil {
 				return nil, handleRange.startKey, false, rs.err
 			}
+			if rs.done {
+				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
+					zap.Int("id", rs.id), zap.Int("total", rs.total))
+				c.results.Store(rs.id, struct{}{})
+			}
 			if _, found := c.results.Load(handleRange.id); found {
+				logutil.BgLogger().Info("[ddl-ingest] task is found in results",
+					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
 				c.results.Delete(handleRange.id)
 				return rs.records, handleRange.endKey, true, nil
 			}
 			return rs.records, handleRange.startKey, false, nil
 		case <-ticker.C:
+			logutil.BgLogger().Info("[ddl-ingest] cop-request result channel is empty",
+				zap.Int("id", handleRange.id))
 			if _, found := c.results.Load(handleRange.id); found {
 				c.results.Delete(handleRange.id)
 				return nil, handleRange.endKey, true, nil
@@ -104,6 +116,8 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
+			zap.Int("id", task.id), zap.String("task", task.String()))
 		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
@@ -111,17 +125,19 @@ func (c *copReqSender) run() {
 		}
 		batchSize := int(variable.GetDDLReorgBatchSize()) * copReadBatchFactor
 		var done bool
+		var total int
 		for !done {
 			idxRec := p.idxBufPool.Get().([]*indexRecord)
 			srcChk.GrowAndReset(batchSize)
+			idxRec = idxRec[:0]
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				return
 			}
-			p.resultsCh <- idxRecResult{id: task.id, records: idxRec}
+			total += len(idxRec)
+			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, done: done, total: total}
 		}
-		p.results.Store(task.id, struct{}{})
 	}
 }
 
@@ -173,6 +189,7 @@ func (c *copReqSenderPool) adjustSize(n int) {
 }
 
 func (c *copReqSenderPool) close() {
+	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool", zap.Int("results not handled", len(c.results.Keys())))
 	close(c.tasksCh)
 	for _, w := range c.senders {
 		w.cancel()
@@ -253,26 +270,24 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
 	chk *chunk.Chunk, buf []*indexRecord) ([]*indexRecord, bool, error) {
 	sctx := c.sessCtx.GetSessionVars().StmtCtx
-	for {
-		err := result.Next(ctx, chk)
+	err := result.Next(ctx, chk)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if chk.NumRows() == 0 {
+		return buf, true, nil
+	}
+	iter := chunk.NewIterator4Chunk(chk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
+		handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
-			return buf, true, nil
-		}
-		iter := chunk.NewIterator4Chunk(chk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
-			handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
-			buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
-		}
-		return buf, false, nil
+		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
+		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
+	return buf, false, nil
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
@@ -346,4 +361,6 @@ type idxRecResult struct {
 	id      int
 	records []*indexRecord
 	err     error
+	done    bool
+	total   int
 }
