@@ -703,7 +703,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeAddIndexWorker:
 			idxWorker, err := newAddIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc, job)
 			if err != nil {
-				return errors.Trace(err)
+				return b.handleCreateBackfillWorkerErr(err)
 			}
 			worker, runner = idxWorker, idxWorker.backfillWorker
 		case typeAddIndexMergeTmpWorker:
@@ -732,6 +732,16 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		closeBackfillWorkers(workers)
 	}
 	return injectCheckBackfillWorkerNum(len(b.workers))
+}
+
+func (b *backfillScheduler) handleCreateBackfillWorkerErr(err error) error {
+	if len(b.workers) == 0 {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
+		zap.Int("current worker count", len(b.workers)),
+		zap.Int64("job ID", b.reorgInfo.ID), zap.Error(err))
+	return nil
 }
 
 func (b *backfillScheduler) Close() {
@@ -784,6 +794,15 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	scheduler := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, decodeColMap, jc)
 	defer scheduler.Close()
 
+	var ingestBeCtx *ingest.BackendContext
+	if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
+			ingestBeCtx = bc
+		} else {
+			return errors.New(ingest.LitErrGetBackendFail)
+		}
+	}
+
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
@@ -802,14 +821,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
-		if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
-				err := bc.Flush(reorgInfo.currElement.ID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			} else {
-				return errors.New(ingest.LitErrGetBackendFail)
+
+		if ingestBeCtx != nil {
+			err := ingestBeCtx.Flush(reorgInfo.currElement.ID)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		remains, err := dc.handleRangeTasks(scheduler, t, &totalAddedCount, kvRanges)
@@ -818,6 +834,9 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 
 		if len(remains) == 0 {
+			if ingestBeCtx != nil {
+				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
+			}
 			break
 		}
 		startKey = remains[0].StartKey
