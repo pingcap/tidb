@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -97,14 +96,17 @@ type baseRecord struct {
 type UserRecord struct {
 	baseRecord
 
-	AuthenticationString string
-	Privileges           mysql.PrivilegeType
-	AccountLocked        bool // A role record when this field is true
-	AuthPlugin           string
-	AuthTokenIssuer      string
-	Email                string
-	FailedLoginAttempts  int64
-	PasswordLockTime     int64
+	AuthenticationString  string
+	Privileges            mysql.PrivilegeType
+	AccountLocked         bool // A role record when this field is true
+	AuthPlugin            string
+	AuthTokenIssuer       string
+	Email                 string
+	FailedLoginAttempts   int64
+	PasswordLockTime      int64
+	AutoAccountLocked     bool
+	FailedLoginCount      int64
+	AutoLockedLastChanged int64
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -270,7 +272,6 @@ type MySQLPrivilege struct {
 	// non-full privileges (i.e. user.db entries).
 	User          []UserRecord
 	UserMap       map[string][]UserRecord // Accelerate User searching
-	UserLoginMap  map[string][]failedLoginRecord
 	Global        map[string][]globalPrivRecord
 	Dynamic       map[string][]dynamicPrivRecord
 	DB            []dbRecord
@@ -393,62 +394,6 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
 	return nil
-}
-
-func (p *MySQLPrivilege) FailedLogin(sctx sessionctx.Context, user string, host string) bool {
-	failLoginRecords, exists := p.UserLoginMap[user]
-	if exists {
-		records, userExists := p.UserMap[user]
-		var userFailedLoginAttempts int64
-		var passwordLockTime int64
-		if userExists {
-			for i := 0; i < len(records); i++ {
-				record := &records[i]
-				if record.Host == host { // exact match
-					userFailedLoginAttempts = record.FailedLoginAttempts
-					passwordLockTime = record.PasswordLockTime
-				}
-			}
-		}
-		var wg sync.WaitGroup
-		for i := 0; i < len(failLoginRecords); i++ {
-			record := &failLoginRecords[i]
-			if record.Host == host { // exact match
-				if userFailedLoginAttempts > record.failedCount {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						atomic.AddInt64(&record.failedCount, 1)
-						record.failedCount = atomic.LoadInt64(&record.failedCount)
-					}()
-				}
-				return false
-			} else {
-				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-				rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "ALTER USER '%?'@'%?' ACCOUNT LOCK", user, host)
-				if err != nil {
-					return false
-				}
-				defer terror.Call(rs.Close)
-				passwordLockTimeInt := int(passwordLockTime)
-				day := passwordLockTimeInt * 24 * 60 * 60
-				for {
-					select {
-					case <-time.Tick(time.Duration(day) * time.Second):
-						unLockRs, unLockErr := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "ALTER USER '%?'@'%?' ACCOUNT UNLOCK", user, host)
-						if unLockErr != nil {
-						}
-						defer terror.Call(unLockRs.Close)
-					case <-time.After(7 * time.Second):
-						fmt.Println("5 second over, timeover", time.Now().Second())
-					}
-				}
-				return true
-			}
-		}
-		wg.Wait()
-	}
-	return false
 }
 
 func noSuchTable(err error) bool {
@@ -762,6 +707,43 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			if lockTimeBJ, found := bj.Extract([]types.JSONPathExpression{lockTimePathExpr}); found {
 				value.PasswordLockTime = lockTimeBJ.GetInt64()
+			}
+
+			autoAccountLockedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_account_locked")
+			if err != nil {
+				return err
+			}
+			if autoAccountLockedBJ, found := bj.Extract([]types.JSONPathExpression{autoAccountLockedExpr}); found {
+				autoAccountLock, err := autoAccountLockedBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				if autoAccountLock == "Y" {
+					value.AutoAccountLocked = true
+				} else {
+					value.AutoAccountLocked = false
+				}
+			}
+
+			failedLoginCountExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_count")
+			if err != nil {
+				return err
+			}
+			if failedLoginCountBJ, found := bj.Extract([]types.JSONPathExpression{failedLoginCountExpr}); found {
+				value.FailedLoginCount = failedLoginCountBJ.GetInt64()
+			}
+
+			autoLockedLastChangedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_locked_last_changed")
+			if err != nil {
+				return err
+			}
+			if autoLockedLastChangedBJ, found := bj.Extract([]types.JSONPathExpression{autoLockedLastChangedExpr}); found {
+				autoLockedLastChangedTime, err := autoLockedLastChangedBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				t, _ := time.ParseInLocation(time.UnixDate, autoLockedLastChangedTime, time.Local)
+				value.AutoLockedLastChanged = t.Unix()
 			}
 		default:
 			value.assignUserOrHost(row, i, f)

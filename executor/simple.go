@@ -908,7 +908,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	var userAttributes any = nil
 	if passwdlockinfo.failedLoginAttempts > 0 {
-		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%s\",\"password_lock_time_days\": \"%s\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
+		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%d\",\"password_lock_time_days\": \"%d\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
 	}
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -1428,7 +1428,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if passwdlockinfo.failedLoginAttempts != 0 {
-			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%s\",\"password_lock_time_days\": \"%s\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
+			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%d\",\"password_lock_time_days\": \"%d\"}}", passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime)
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
 		}
 		if s.CommentOrAttributeOption != nil {
