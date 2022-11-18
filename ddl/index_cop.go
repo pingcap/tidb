@@ -80,6 +80,10 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		c := tblInfo.Columns[idxCol.Offset]
+		if c.IsGenerated() && !c.GeneratedStored {
+			// TODO(tangenta): support reading virtual generated columns.
+			return nil
+		}
 		colInfos = append(colInfos, c)
 		fieldTps = append(fieldTps, &c.FieldType)
 	}
