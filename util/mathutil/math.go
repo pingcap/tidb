@@ -68,7 +68,7 @@ func IsFinite(f float64) bool {
 }
 
 // Max returns the largest one from its arguments.
-func Max[v constraints.Ordered](x v, xs ...v) v {
+func Max[T constraints.Ordered](x T, xs ...T) T {
 	max := x
 	for _, n := range xs {
 		if n > max {
@@ -79,7 +79,7 @@ func Max[v constraints.Ordered](x v, xs ...v) v {
 }
 
 // Min returns the smallest one from its arguments.
-func Min[v constraints.Ordered](x v, xs ...v) v {
+func Min[T constraints.Ordered](x T, xs ...T) T {
 	min := x
 	for _, n := range xs {
 		if n < min {
@@ -90,7 +90,7 @@ func Min[v constraints.Ordered](x v, xs ...v) v {
 }
 
 // Clamp restrict a value to a certain interval.
-func Clamp[v constraints.Integer | constraints.Float](n, min, max v) v {
+func Clamp[T constraints.Ordered](n, min, max T) T {
 	if n >= max {
 		return max
 	} else if n <= min {

@@ -15,8 +15,10 @@ go_library(
 
 go_test(
     name = "terror_test",
+    timeout = "short",
     srcs = ["terror_test.go"],
     embed = [":terror"],
+    flaky = True,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

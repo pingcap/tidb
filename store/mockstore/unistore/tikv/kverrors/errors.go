@@ -75,7 +75,7 @@ func (e ErrInvalidOp) Error() string {
 // committed lock.
 type ErrAlreadyCommitted uint64
 
-func (e ErrAlreadyCommitted) Error() string {
+func (ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
 
@@ -84,7 +84,7 @@ type ErrKeyAlreadyExists struct {
 	Key []byte
 }
 
-func (e ErrKeyAlreadyExists) Error() string {
+func (ErrKeyAlreadyExists) Error() string {
 	return "key already exists"
 }
 
@@ -96,7 +96,7 @@ type ErrDeadlock struct {
 	WaitChain       []*deadlockpb.WaitForEntry
 }
 
-func (e ErrDeadlock) Error() string {
+func (ErrDeadlock) Error() string {
 	return "deadlock"
 }
 
@@ -106,9 +106,10 @@ type ErrConflict struct {
 	ConflictTS       uint64
 	ConflictCommitTS uint64
 	Key              []byte
+	Reason           kvrpcpb.WriteConflict_Reason
 }
 
-func (e *ErrConflict) Error() string {
+func (*ErrConflict) Error() string {
 	return "write conflict"
 }
 
@@ -120,7 +121,7 @@ type ErrCommitExpire struct {
 	Key         []byte
 }
 
-func (e *ErrCommitExpire) Error() string {
+func (*ErrCommitExpire) Error() string {
 	return "commit expired"
 }
 
@@ -130,7 +131,7 @@ type ErrTxnNotFound struct {
 	PrimaryKey []byte
 }
 
-func (e *ErrTxnNotFound) Error() string {
+func (*ErrTxnNotFound) Error() string {
 	return "txn not found"
 }
 

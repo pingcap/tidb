@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -322,10 +322,11 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	params := expression.Args2Expressions4Test(64)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -487,6 +488,26 @@ func BenchmarkSort(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(ctx, rs[0], 50)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkSort2(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	prepareSortBenchData(se, "int", "%v", 1000000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t order by col")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(ctx, rs[0], 1000000)
 	}
 	b.StopTimer()
 }
@@ -1568,6 +1589,10 @@ partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
 
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1603,6 +1628,10 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
 	alloc := chunk.NewAllocator()
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
@@ -1712,7 +1741,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+func BenchmarkCompileStmt(b *testing.B) {
 	// See issue https://github.com/pingcap/tidb/issues/27633
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1807,13 +1836,18 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
-	is := se.GetInfoSchema()
+	args := expression.Args2Expressions4Test(3401544)
 
 	b.ResetTimer()
+	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+	compiler := executor.Compiler{Ctx: se}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, kv.GlobalTxnScope, args)
+		_, err := compiler.Compile(context.Background(), stmtExec)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1824,7 +1858,8 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
-// 	make bench-daily TO=xxx.json
+//
+//	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,
@@ -1851,6 +1886,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
-		BenchmarkCompileExecutePreparedStmt,
+		BenchmarkCompileStmt,
 	)
 }

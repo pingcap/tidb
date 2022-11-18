@@ -26,7 +26,6 @@ export TIDB_STATUS_ADDR="127.0.0.1:10080"
 export TIKV_ADDR="127.0.0.1:2016"
 export TIKV_STATUS_ADDR="127.0.0.1:2018"
 export TIKV_COUNT=3
-export TIFLASH_STATUS="127.0.0.1:17000"
 export TIFLASH_HTTP="127.0.0.1:8125"
 export TIKV_PIDS="${TEST_DIR:?}/tikv_pids.txt"
 
@@ -42,6 +41,11 @@ stop() {
     killall -v -1 "$svc" 2>/dev/null || return 0
     sleep 1 # give some grace shutdown period
     killall -v -9 "$svc" &>/dev/null || return 0
+}
+
+restart_services() {
+	stop_services
+	start_services
 }
 
 stop_services() {

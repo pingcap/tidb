@@ -181,7 +181,7 @@ func (d *dupDetectIter) Close() error {
 	if d.err == nil {
 		d.flush()
 	}
-	d.writeBatch.Close()
+	_ = d.writeBatch.Close()
 	return d.iter.Close()
 }
 

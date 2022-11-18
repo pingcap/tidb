@@ -1,0 +1,71 @@
+{
+  "cluster_info" : {
+    "id": "1242154",
+    "version": "v6.1.0",
+    "max_alloc_id": 6000,
+    "resolved_ts": 456745777823347
+  },
+  "tikv": {
+    "replicas": 3,
+    "stores": [
+      {
+        "store_id": 1,
+        "volumes": [
+          {
+            "volume_id": "vol-0e65f40961a9f6244",
+            "type": "raft-engine.dir",
+            "snapshot_id": "snap-1234567890abcdef0"
+          },
+          {
+            "volume_id": "vol-0e65f40961a9f6245",
+            "type": "storage.data-dir",
+            "snapshot_id": "snap-1234567890abcdef1"
+          }
+        ]
+      },
+      {
+        "store_id": 2,
+        "volumes": [
+          {
+            "volume_id": "vol-0e65f40961a9f6246",
+            "type": "raft-engine.dir",
+            "snapshot_id": "snap-1234567890abcdef2"
+          },
+          {
+            "volume_id": "vol-0e65f40961a9f6247",
+            "type": "storage.data-dir",
+            "snapshot_id": "snap-1234567890abcdef3"
+          }
+        ]
+      },
+      {
+        "store_id": 3,
+        "volumes": [
+          {
+            "volume_id": "vol-0e65f40961a9f6248",
+            "type": "raft-engine.dir",
+            "snapshot_id": "snap-1234567890abcdef4"
+          },
+          {
+            "volume_id": "vol-0e65f40961a9f6249",
+            "type": "storage.data-dir",
+            "snapshot_id": "snap-1234567890abcdef5"
+          }
+        ]
+      }
+    ]
+  },
+  "pd": {
+    "replicas": 3
+  },
+  "tidb": {
+    "replicas": 3
+  },
+  "kubernetes": {
+    "pvs": [],
+    "pvcs": [],
+    "crd_tidb_cluster": {},
+    "options": {}
+  },
+  "options": {}
+}

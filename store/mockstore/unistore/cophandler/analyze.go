@@ -19,7 +19,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"sort"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/slices"
 )
 
 // handleCopAnalyzeRequest handles coprocessor analyze request.
@@ -112,13 +112,13 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if processor.topNCurValuePair.Count != 0 {
 			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
-		sort.Slice(processor.topNValuePairs, func(i, j int) bool {
-			if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
+		slices.SortFunc(processor.topNValuePairs, func(i, j statistics.TopNMeta) bool {
+			if i.Count > j.Count {
 				return true
-			} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
+			} else if i.Count < j.Count {
 				return false
 			}
-			return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
+			return bytes.Compare(i.Encoded, j.Encoded) < 0
 		})
 		if len(processor.topNValuePairs) > int(processor.topNCount) {
 			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
@@ -564,13 +564,13 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if e.topNCurValuePair.Count != 0 {
 			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
 		}
-		sort.Slice(e.topNValuePairs, func(i, j int) bool {
-			if e.topNValuePairs[i].Count > e.topNValuePairs[j].Count {
+		slices.SortFunc(e.topNValuePairs, func(i, j statistics.TopNMeta) bool {
+			if i.Count > j.Count {
 				return true
-			} else if e.topNValuePairs[i].Count < e.topNValuePairs[j].Count {
+			} else if i.Count < j.Count {
 				return false
 			}
-			return bytes.Compare(e.topNValuePairs[i].Encoded, e.topNValuePairs[j].Encoded) < 0
+			return bytes.Compare(i.Encoded, j.Encoded) < 0
 		})
 		if len(e.topNValuePairs) > int(e.topNCount) {
 			e.topNValuePairs = e.topNValuePairs[:e.topNCount]

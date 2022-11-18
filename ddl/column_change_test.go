@@ -39,8 +39,7 @@ import (
 )
 
 func TestColumnAdd(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	internal := testkit.NewTestKit(t, store)
@@ -61,7 +60,7 @@ func TestColumnAdd(t *testing.T) {
 	)
 	first := true
 	var jobID int64
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -81,7 +80,8 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
-	d.SetHook(tc)
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -94,7 +94,7 @@ func TestColumnAdd(t *testing.T) {
 			dropCol = tbl.VisibleCols()[2]
 		}
 	}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.NotStarted() {
 			return
 		}
@@ -106,7 +106,8 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	}
-	d.SetHook(tc)
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
@@ -114,7 +115,7 @@ func TestColumnAdd(t *testing.T) {
 
 	// Add column not default.
 	first = true
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc3 := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -134,14 +135,14 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
 	d.SetHook(tc)
 	tk.MustExec("alter table t add column c3 int")
 	testCheckJobDone(t, store, jobID, true)
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -161,7 +162,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 		tID = job.TableID
 		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
 			atomic.AddInt32(&errCount, -1)
-			genAutoRandErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBackfillDDLPrefix+ddl.DDLBackfillers[model.ActionModifyColumn])
+			genAutoRandErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
@@ -176,7 +178,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	const newAutoRandomBits uint64 = 10
 	testCheckJobDone(t, store, jobID, true)
 	var newTbInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		newTbInfo, err = t.GetTable(dbID, tID)
@@ -417,7 +420,13 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
 	if isAdd {
-		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		if historyJob.Type == model.ActionMultiSchemaChange {
+			for _, sub := range historyJob.MultiSchemaInfo.SubJobs {
+				require.Equal(t, sub.SchemaState, model.StatePublic)
+			}
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		}
 	} else {
 		require.Equal(t, historyJob.SchemaState, model.StateNone)
 	}

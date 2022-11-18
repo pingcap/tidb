@@ -109,8 +109,7 @@ func TestTikvRegionPeers(t *testing.T) {
 	router.HandleFunc(pdapi.RegionByID+"/"+"{id}", regionsInfoHandler)
 	defer server.Close()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	store = &mockStore{
 		store.(helper.Storage),

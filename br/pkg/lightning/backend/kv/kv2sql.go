@@ -17,6 +17,7 @@ package kv
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -75,7 +76,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 				row[i] = types.GetMinValue(&col.FieldType)
 			}
 		}
-		if err, _ := evaluateGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
+		if _, err := evaluateGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
 			return err
 		}
 	}
@@ -104,8 +105,13 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 	return nil
 }
 
-func NewTableKVDecoder(tbl table.Table, tableName string, options *SessionOptions) (*TableKVDecoder, error) {
-	se := newSession(options)
+func NewTableKVDecoder(
+	tbl table.Table,
+	tableName string,
+	options *SessionOptions,
+	logger log.Logger,
+) (*TableKVDecoder, error) {
+	se := newSession(options, logger)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))

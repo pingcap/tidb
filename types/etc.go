@@ -66,6 +66,11 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeTimestamp
 }
 
+// IsTypeFloat indicates whether the type is TypeFloat
+func IsTypeFloat(tp byte) bool {
+	return tp == mysql.TypeFloat
+}
+
 // IsTypeInteger returns a boolean indicating whether the tp is integer type.
 func IsTypeInteger(tp byte) bool {
 	switch tp {
@@ -157,6 +162,7 @@ func KindStr(kind byte) (r string) {
 // It is used for converting Text to Blob,
 // or converting Char to Binary.
 // Args:
+//
 //	tp: type enum
 //	cs: charset
 var TypeToStr = ast.TypeToStr

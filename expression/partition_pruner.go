@@ -39,7 +39,7 @@ func (p *hashPartitionPruner) getColID(col *Column) int {
 func (p *hashPartitionPruner) insertCol(col *Column) {
 	_, ok := p.colMapper[col.UniqueID]
 	if !ok {
-		p.numColumn += 1
+		p.numColumn++
 		p.colMapper[col.UniqueID] = len(p.colMapper)
 	}
 }

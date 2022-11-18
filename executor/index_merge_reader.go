@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -57,13 +58,13 @@ var (
 //
 // The execution flow is really like IndexLookUpReader. However, it uses multiple index scans
 // or table scans to get the handles:
-// 1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
-//    and send them to the indexMergeProcessWorker.
-// 2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
-//    For every handle in the batch:
-//    1. check whether it has been accessed.
-//    2. if not, record it and send it to the indexMergeTableScanWorker.
-//    3. if accessed, just ignore it.
+//  1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
+//     and send them to the indexMergeProcessWorker.
+//  2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
+//     For every handle in the batch:
+//  1. check whether it has been accessed.
+//  2. if not, record it and send it to the indexMergeTableScanWorker.
+//  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
@@ -104,8 +105,10 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
 
-	partialPlans [][]plannercore.PhysicalPlan
-	tblPlans     []plannercore.PhysicalPlan
+	partialPlans        [][]plannercore.PhysicalPlan
+	tblPlans            []plannercore.PhysicalPlan
+	partialNetDataSizes []float64
+	dataAvgRowSize      float64
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
@@ -304,12 +307,14 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
+					SetTxnScope(e.txnScope).
 					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
-					SetFromInfoSchema(e.ctx.GetInfoSchema())
+					SetFromInfoSchema(e.ctx.GetInfoSchema()).
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
@@ -320,6 +325,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 
 					// init kvReq and worker for this partition
+					// The key ranges should be ordered.
+					slices.SortFunc(keyRange, func(i, j kv.KeyRange) bool {
+						return bytes.Compare(i.StartKey, j.StartKey) < 0
+					})
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
 						worker.syncErr(e.resultCh, err)
@@ -383,11 +392,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
 					startTS:          e.startTS,
+					txnScope:         e.txnScope,
 					readReplicaScope: e.readReplicaScope,
 					isStaleness:      e.isStaleness,
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
+					netDataSize:      e.partialNetDataSizes[workID],
 				}
 
 				worker := &partialTableWorker{
@@ -455,7 +466,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
-	if e.runtimeStats != nil && e.stats == nil {
+	if e.runtimeStats != nil {
 		e.stats = &IndexMergeRuntimeStat{
 			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
@@ -497,7 +508,7 @@ func (w *partialTableWorker) syncErr(resultCh chan<- *lookupTableTask, err error
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
+	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
 	var basic *execdetails.BasicRuntimeStats
 	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
 		basic = be.runtimeStats
@@ -603,11 +614,13 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:            tbl,
 		dagPB:            e.tableRequest,
 		startTS:          e.startTS,
+		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
 		columns:          e.columns,
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
+		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
 		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
@@ -948,7 +961,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := newFirstChunk(tableReader)
+		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
@@ -1020,7 +1033,6 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	e.FetchRow += tmp.FetchRow
 	e.WaitTime += e.WaitTime
 	e.TableTaskNum += tmp.TableTaskNum
-	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.

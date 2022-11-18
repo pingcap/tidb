@@ -79,6 +79,14 @@ func escapeBytesBackslash(buf []byte, v []byte) []byte {
 	return buf[:pos]
 }
 
+// EscapeString is used by session/bootstrap.go, which has some
+// dynamic query building cases not well handled by this package.
+// For normal usage, please use EscapeSQL instead!
+func EscapeString(s string) string {
+	buf := make([]byte, 0, len(s))
+	return string(escapeStringBackslash(buf, s))
+}
+
 // escapeStringBackslash will escape string into the buffer, with backslash.
 func escapeStringBackslash(buf []byte, v string) []byte {
 	return escapeBytesBackslash(buf, hack.Slice(v))
@@ -225,14 +233,17 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 // 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
 // 2. %%: output %
 // 3. %n: for identifiers, for example ("use %n", db)
-// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
+// But it does not prevent you from doing:
+/*
+	EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
+*/
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
 	str, err := escapeSQL(sql, args...)
 	return string(str), err
 }
 
-// MustEscapeSQL is an helper around EscapeSQL. The error returned from escapeSQL can be avoided statically if you do not pass interface{}.
+// MustEscapeSQL is a helper around EscapeSQL. The error returned from escapeSQL can be avoided statically if you do not pass interface{}.
 func MustEscapeSQL(sql string, args ...interface{}) string {
 	r, err := EscapeSQL(sql, args...)
 	if err != nil {
@@ -251,7 +262,7 @@ func FormatSQL(w io.Writer, sql string, args ...interface{}) error {
 	return err
 }
 
-// MustFormatSQL is an helper around FormatSQL, like MustEscapeSQL. But it asks that the writer must be strings.Builder,
+// MustFormatSQL is a helper around FormatSQL, like MustEscapeSQL. But it asks that the writer must be strings.Builder,
 // which will not return error when w.Write(...).
 func MustFormatSQL(w *strings.Builder, sql string, args ...interface{}) {
 	err := FormatSQL(w, sql, args...)

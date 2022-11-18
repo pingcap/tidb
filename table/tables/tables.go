@@ -20,6 +20,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -319,6 +320,11 @@ func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 // RecordPrefix implements table.Table interface.
 func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
+}
+
+// IndexPrefix implements table.Table interface.
+func (t *TableCommon) IndexPrefix() kv.Key {
+	return t.indexPrefix
 }
 
 // RecordKey implements table.Table interface.
@@ -840,14 +846,19 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 		if err == nil {
 			handleStr := getDuplicateErrorHandleString(t, recordID, r)
-			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
 		}
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() &&
+			!sessVars.InRestrictedSQL && sessVars.ConnectionID > 0 {
+			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
+		}
+		err = memBuffer.SetWithFlags(key, value, flags...)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -965,10 +976,9 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			if err != nil {
 				return nil, err
 			}
-			idxMeta := v.Meta()
-			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
+			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1246,18 +1256,19 @@ func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 	return nil
 }
 
-func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string, end int64) error {
+func writeSequenceUpdateValueBinlog(sctx sessionctx.Context, db, sequence string, end int64) error {
 	// 1: when sequenceCommon update the local cache passively.
 	// 2: When sequenceCommon setval to the allocator actively.
 	// Both of this two case means the upper bound the sequence has changed in meta, which need to write the binlog
 	// to the downstream.
 	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
-	binlogCli := ctx.GetSessionVars().BinlogClient
-	sqlMode := ctx.GetSessionVars().SQLMode
+	binlogCli := sctx.GetSessionVars().BinlogClient
+	sqlMode := sctx.GetSessionVars().SQLMode
 	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
 	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
 
-	err := kv.RunInNewTxn(context.Background(), ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		mockJobID, err := m.GenGlobalID()
 		if err != nil {
@@ -1335,7 +1346,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1345,7 +1356,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", idx.TableMeta().Name.String(), idx.Meta().Name.String()))
 		}
 		return err
 	}
@@ -1476,7 +1487,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 		if stmtCtx := sctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.
 			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID += 1
+				stmtCtx.BaseRowID++
 				return kv.IntHandle(stmtCtx.BaseRowID), nil
 			}
 		}
@@ -1493,6 +1504,7 @@ func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table,
 		return 0, 0, err
 	}
 	if meta.ShardRowIDBits > 0 {
+		shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), meta.ShardRowIDBits, autoid.RowIDBitLength)
 		// Use max record ShardRowIDBits to check overflow.
 		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
 			// If overflow, the rowID may be duplicated. For examples,
@@ -1505,9 +1517,9 @@ func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table,
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := sctx.GetSessionVars().TxnCtx
-		shard := txnCtx.GetShard(meta.ShardRowIDBits, autoid.RowIDBitLength, true, int(n))
-		base |= shard
-		maxID |= shard
+		shard := txnCtx.GetCurrentShard(int(n))
+		base = shardFmt.Compose(shard, base)
+		maxID = shardFmt.Compose(shard, maxID)
 	}
 	return base, maxID, nil
 }
@@ -1855,14 +1867,14 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
+func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
-	pkIdx := FindPrimaryIndex(t.Meta())
+	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
-		pkCol := t.Meta().Columns[pkIdxCol.Offset]
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
 		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
@@ -1932,17 +1944,47 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
-func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.PartitionTableScan {
+func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
 		PrimaryColumnIds: pkColIds,
+		IsFastScan:       &fastScan,
 	}
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
+}
+
+// SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfo.
+func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+	for i, c := range columns {
+		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
+		// They real values will be computed later.
+		if c.IsGenerated() && !c.GeneratedStored {
+			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
+		}
+		if c.GetOriginDefaultValue() == nil {
+			continue
+		}
+
+		sessVars := ctx.GetSessionVars()
+		originStrict := sessVars.StrictSQLMode
+		sessVars.StrictSQLMode = false
+		d, err := table.GetColOriginDefaultValue(ctx, c)
+		sessVars.StrictSQLMode = originStrict
+		if err != nil {
+			return err
+		}
+
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.

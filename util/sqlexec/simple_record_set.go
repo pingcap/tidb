@@ -36,7 +36,7 @@ func (r *SimpleRecordSet) Fields() []*ast.ResultField {
 }
 
 // Next implements the sqlexec.RecordSet interface.
-func (r *SimpleRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+func (r *SimpleRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	for r.idx < len(r.Rows) {
 		if req.IsFull() {

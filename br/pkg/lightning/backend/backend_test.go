@@ -326,9 +326,9 @@ func TestNewEncoder(t *testing.T) {
 
 	encoder := mock.NewMockEncoder(s.controller)
 	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890}
-	s.mockBackend.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
+	s.mockBackend.EXPECT().NewEncoder(nil, nil, options).Return(encoder, nil)
 
-	realEncoder, err := s.mockBackend.NewEncoder(nil, options)
+	realEncoder, err := s.mockBackend.NewEncoder(nil, nil, options)
 	require.Equal(t, realEncoder, encoder)
 	require.NoError(t, err)
 }

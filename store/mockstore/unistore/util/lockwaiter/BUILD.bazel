@@ -9,17 +9,20 @@ go_library(
         "//store/mockstore/unistore/config",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_log//:log",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "lockwaiter_test",
+    timeout = "short",
     srcs = [
         "lockwaiter_test.go",
         "main_test.go",
     ],
     embed = [":lockwaiter"],
+    flaky = True,
     deps = [
         "//store/mockstore/unistore/config",
         "//testkit/testsetup",

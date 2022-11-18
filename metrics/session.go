@@ -18,6 +18,15 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
+	AutoIDReqDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "meta",
+			Name:      "autoid_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
+		})
+
 	SessionExecuteParseDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -81,7 +90,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Bucketed histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
-		}, []string{LbTxnMode, LblType})
+		}, []string{LblTxnMode, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -90,7 +99,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		}, []string{LbTxnMode, LblType})
+		}, []string{LblTxnMode, LblType})
 
 	StatementDeadlockDetectDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -128,41 +137,77 @@ var (
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 
-	NonTransactionalDeleteCount = prometheus.NewCounter(
+	NonTransactionalDMLCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "non_transactional_delete_count",
+			Name:      "non_transactional_dml_count",
 			Help:      "Counter of non-transactional delete",
-		})
+		}, []string{LblType},
+	)
+	TxnStatusEnteringCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_entering_count",
+			Help:      "How many times transactions enter this state",
+		}, []string{LblType},
+	)
+	TxnDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_seconds",
+			Help:      "Bucketed histogram of different states of a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType, LblHasLock})
+	LazyPessimisticUniqueCheckSetCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "lazy_pessimistic_unique_check_set_count",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false, note that it doesn't count the default value set by tidb config",
+		},
+	)
 )
 
 // Label constants.
 const (
-	LblUnretryable = "unretryable"
-	LblReachMax    = "reach_max"
-	LblOK          = "ok"
-	LblError       = "error"
-	LblCommit      = "commit"
-	LblAbort       = "abort"
-	LblRollback    = "rollback"
-	LblType        = "type"
-	LblDb          = "db"
-	LblResult      = "result"
-	LblSQLType     = "sql_type"
-	LblCoprType    = "copr_type"
-	LblGeneral     = "general"
-	LblInternal    = "internal"
-	LbTxnMode      = "txn_mode"
-	LblPessimistic = "pessimistic"
-	LblOptimistic  = "optimistic"
-	LblStore       = "store"
-	LblAddress     = "address"
-	LblBatchGet    = "batch_get"
-	LblGet         = "get"
-	LblLockKeys    = "lock_keys"
-	LblInTxn       = "in_txn"
-	LblVersion     = "version"
-	LblHash        = "hash"
-	LblCTEType     = "cte_type"
+	LblUnretryable    = "unretryable"
+	LblReachMax       = "reach_max"
+	LblOK             = "ok"
+	LblError          = "error"
+	LblCommit         = "commit"
+	LblAbort          = "abort"
+	LblRollback       = "rollback"
+	LblType           = "type"
+	LblDb             = "db"
+	LblResult         = "result"
+	LblSQLType        = "sql_type"
+	LblCoprType       = "copr_type"
+	LblGeneral        = "general"
+	LblInternal       = "internal"
+	LblTxnMode        = "txn_mode"
+	LblPessimistic    = "pessimistic"
+	LblOptimistic     = "optimistic"
+	LblStore          = "store"
+	LblAddress        = "address"
+	LblBatchGet       = "batch_get"
+	LblGet            = "get"
+	LblLockKeys       = "lock_keys"
+	LblInTxn          = "in_txn"
+	LblVersion        = "version"
+	LblHash           = "hash"
+	LblCTEType        = "cte_type"
+	LblAccountLock    = "account_lock"
+	LblIdle           = "idle"
+	LblRunning        = "executing_sql"
+	LblLockWaiting    = "waiting_for_lock"
+	LblCommitting     = "committing"
+	LblRollingBack    = "rolling_back"
+	LblHasLock        = "has_lock"
+	LblPhase          = "phase"
+	LblModule         = "module"
+	LblRCReadCheckTS  = "read_check"
+	LblRCWriteCheckTS = "write_check"
 )

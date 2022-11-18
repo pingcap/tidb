@@ -27,11 +27,13 @@ go_library(
 
 go_test(
     name = "metautil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "metafile_test.go",
     ],
     embed = [":metautil"],
+    flaky = True,
     deps = [
         "//br/pkg/mock/storage",
         "//testkit/testsetup",

@@ -16,11 +16,11 @@ package executor
 
 import (
 	"context"
-	"sort"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"golang.org/x/exp/slices"
 )
 
 type inspectionRuleRetriever struct {
@@ -61,7 +61,7 @@ func (e *inspectionRuleRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		for rule := range inspectionSummaryRules {
 			summaryRules = append(summaryRules, rule)
 		}
-		sort.Strings(summaryRules)
+		slices.Sort(summaryRules)
 
 		for _, rule := range summaryRules {
 			finalRows = append(finalRows, types.MakeDatums(

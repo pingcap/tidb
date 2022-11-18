@@ -12,7 +12,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
@@ -202,6 +205,25 @@ func TestPDRequestRetry(t *testing.T) {
 	require.Error(t, reqErr)
 }
 
+func TestPDResetTSCompatibility(t *testing.T) {
+	ctx := context.Background()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+	pd := PdController{addrs: []string{ts.URL}, cli: http.DefaultClient}
+	reqErr := pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts2.Close()
+	pd = PdController{addrs: []string{ts2.URL}, cli: http.DefaultClient}
+	reqErr = pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+}
+
 func TestStoreInfo(t *testing.T) {
 	storeInfo := pdtypes.StoreInfo{
 		Status: &pdtypes.StoreStatus{
@@ -230,4 +252,58 @@ func TestStoreInfo(t *testing.T) {
 	require.NotNil(t, resp.Status)
 	require.Equal(t, "Tombstone", resp.Store.StateName)
 	require.Equal(t, uint64(1024), uint64(resp.Status.Available))
+}
+
+func TestPauseSchedulersByKeyRange(t *testing.T) {
+	const ttl = time.Second
+
+	labelExpires := make(map[string]time.Time)
+
+	var (
+		mu      sync.Mutex
+		deleted bool
+	)
+
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if deleted {
+			return
+		}
+		if r.Method == http.MethodDelete {
+			ruleID := strings.TrimPrefix(r.URL.Path, "/"+regionLabelPrefix+"/")
+			delete(labelExpires, ruleID)
+			deleted = true
+			return
+		}
+		var labelRule LabelRule
+		err := json.NewDecoder(r.Body).Decode(&labelRule)
+		require.NoError(t, err)
+		require.Len(t, labelRule.Labels, 1)
+		regionLabel := labelRule.Labels[0]
+		require.Equal(t, "schedule", regionLabel.Key)
+		require.Equal(t, "deny", regionLabel.Value)
+		reqTTL, err := time.ParseDuration(regionLabel.TTL)
+		require.NoError(t, err)
+		if reqTTL == 0 {
+			delete(labelExpires, labelRule.ID)
+		} else {
+			require.Equal(t, ttl, reqTTL)
+			if expire, ok := labelExpires[labelRule.ID]; ok {
+				require.True(t, expire.After(time.Now()), "should not expire before now")
+			}
+			labelExpires[labelRule.ID] = time.Now().Add(ttl)
+		}
+	}))
+	defer httpSrv.Close()
+
+	pdController := &PdController{addrs: []string{httpSrv.URL}, cli: http.DefaultClient}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done, err := pdController.pauseSchedulerByKeyRangeWithTTL(ctx, []byte{0, 0, 0, 0}, []byte{0xff, 0xff, 0xff, 0xff}, ttl)
+	require.NoError(t, err)
+	time.Sleep(ttl * 3)
+	cancel()
+	<-done
+	require.Len(t, labelExpires, 0)
 }

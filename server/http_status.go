@@ -38,10 +38,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	pb "github.com/pingcap/kvproto/pkg/autoid"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
@@ -225,6 +228,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
+	router.Handle("/labels", labelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
@@ -456,6 +460,29 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	if s.cfg.Store == "tikv" {
+		for {
+			fullPath := fmt.Sprintf("tikv://%s", s.cfg.Path)
+			store, err := store.New(fullPath)
+			if err != nil {
+				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				break
+			}
+			ebd, ok := store.(kv.EtcdBackend)
+			if !ok {
+				break
+			}
+			etcdAddr, err := ebd.EtcdAddrs()
+			if err != nil {
+				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				break
+			}
+			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store, ebd.TLSConfig())
+			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			s.autoIDService = service
+			break
+		}
+	}
 
 	s.statusServer = statusServer
 	s.grpcServer = grpcServer

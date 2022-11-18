@@ -128,7 +128,8 @@ func createMetaBundleSuite() *metaBundleSuite {
 }
 
 func (s *metaBundleSuite) prepareMeta(t *testing.T, store kv.Storage) {
-	err := kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, m.CreatePolicy(s.policy1))
 		require.NoError(t, m.CreatePolicy(s.policy2))
@@ -145,7 +146,8 @@ func TestNewTableBundle(t *testing.T) {
 
 	s := createMetaBundleSuite()
 	s.prepareMeta(t, store)
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
 		// tbl1
@@ -180,7 +182,8 @@ func TestNewPartitionBundle(t *testing.T) {
 	s := createMetaBundleSuite()
 	s.prepareMeta(t, store)
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
 		// tbl1.par0
@@ -205,7 +208,8 @@ func TestNewPartitionListBundles(t *testing.T) {
 	s := createMetaBundleSuite()
 	s.prepareMeta(t, store)
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
 		bundles, err := placement.NewPartitionListBundles(m, s.tbl1.Partition.Definitions)
@@ -236,7 +240,8 @@ func TestNewFullTableBundles(t *testing.T) {
 	s := createMetaBundleSuite()
 	s.prepareMeta(t, store)
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
 		bundles, err := placement.NewFullTableBundles(m, s.tbl1)

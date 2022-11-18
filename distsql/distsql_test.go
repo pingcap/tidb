@@ -110,12 +110,13 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
-		copRespTime:      []time.Duration{time.Second, time.Millisecond},
-		procKeys:         []int64{100, 200},
-		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
-		totalProcessTime: time.Second,
-		totalWaitTime:    time.Second,
-		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+		copRespTime:        []time.Duration{time.Second, time.Millisecond},
+		procKeys:           []int64{100, 200},
+		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime:   time.Second,
+		totalWaitTime:      time.Second,
+		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+		distSQLConcurrency: 15,
 	}
 
 	s2 := *s1
@@ -124,7 +125,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -135,7 +136,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	}
 	stmtStats.RegisterStats(2, s1)
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -156,7 +157,7 @@ func TestAnalyze(t *testing.T) {
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		Build()
 	require.NoError(t, err)
@@ -320,7 +321,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
@@ -389,7 +390,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	require.NoError(t, err)

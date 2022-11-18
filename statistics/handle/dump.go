@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -119,17 +120,21 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 }
 
 // DumpStatsToJSON dumps statistic to json.
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
+	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error) {
 	var snapshot uint64
 	if historyStatsExec != nil {
 		sctx := historyStatsExec.(sessionctx.Context)
 		snapshot = sctx.GetSessionVars().SnapshotTS
 	}
-	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot)
+	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
-func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
+	h.mu.Lock()
+	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	h.mu.Unlock()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -139,15 +144,18 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 		TableName:    tableInfo.Name.L,
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
-	for _, def := range pi.Definitions {
-		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
-		if err != nil {
-			return nil, errors.Trace(err)
+	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
+	if !isDynamicMode || dumpPartitionStats {
+		for _, def := range pi.Definitions {
+			tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if tbl == nil {
+				continue
+			}
+			jsonTbl.Partitions[def.Name.L] = tbl
 		}
-		if tbl == nil {
-			continue
-		}
-		jsonTbl.Partitions[def.Name.L] = tbl
 	}
 	// dump its global-stats if existed
 	tbl, err := h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -160,15 +168,8 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 	return jsonTbl, nil
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
-	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
-	if err != nil || tbl == nil {
-		return nil, err
-	}
-	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
-	if err != nil {
-		return nil, err
-	}
+// GenJSONTableFromStats generate jsonTable from tableInfo and stats
+func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*JSONTable, error) {
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
@@ -177,7 +178,6 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
 	}
-
 	for _, col := range tbl.Columns {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
@@ -191,6 +191,22 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
+	return jsonTbl, nil
+}
+
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	if err != nil || tbl == nil {
+		return nil, err
+	}
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
+	if err != nil {
+		return nil, err
+	}
 	return jsonTbl, nil
 }
 
@@ -236,14 +252,18 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 	for _, col := range tbl.Columns {
 		// loadStatsFromJSON doesn't support partition table now.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false)
+		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// to care about them here.
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false)
+		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// to care about them here.
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -283,11 +303,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				statsVer = *jsonIdx.StatsVer
 			}
 			idx := &statistics.Index{
-				Histogram: *hist,
-				CMSketch:  cm,
-				TopN:      topN,
-				Info:      idxInfo,
-				StatsVer:  statsVer,
+				Histogram:         *hist,
+				CMSketch:          cm,
+				TopN:              topN,
+				Info:              idxInfo,
+				StatsVer:          statsVer,
+				PhysicalID:        physicalID,
+				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			tbl.Indices[idx.ID] = idx
 		}
@@ -300,17 +322,20 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
-			orgLen := colInfo.FieldType.GetFlen()
-			if types.IsString(colInfo.FieldType.GetType()) {
-				colInfo.SetFlen(types.UnspecifiedLength)
+			tmpFT := colInfo.FieldType
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
+			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
+				tmpFT = *types.NewFieldType(mysql.TypeBlob)
 			}
-			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
+			hist, err := hist.ConvertTo(sc, &tmpFT)
 			if err != nil {
 				return nil, errors.Trace(err)
-			}
-			if types.IsString(colInfo.FieldType.GetType()) {
-				colInfo.SetFlen(orgLen)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
@@ -322,15 +347,15 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				statsVer = *jsonCol.StatsVer
 			}
 			col := &statistics.Column{
-				PhysicalID:      physicalID,
-				Histogram:       *hist,
-				CMSketch:        cm,
-				TopN:            topN,
-				FMSketch:        fms,
-				Info:            colInfo,
-				IsHandle:        tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:        statsVer,
-				ColLoadedStatus: statistics.NewColFullLoadStatus(),
+				PhysicalID:        physicalID,
+				Histogram:         *hist,
+				CMSketch:          cm,
+				TopN:              topN,
+				FMSketch:          fms,
+				Info:              colInfo,
+				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				StatsVer:          statsVer,
+				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col

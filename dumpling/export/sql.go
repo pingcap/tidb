@@ -10,16 +10,12 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -27,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (
@@ -205,9 +203,9 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 			return "", err
 		}
 		for _, oneRow := range results {
-			nextGlobalRowId, idType := oneRow[0], oneRow[1]
+			nextGlobalRowID, idType := oneRow[0], oneRow[1]
 			if idType == "SEQUENCE" {
-				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowID, 10, 64)
 			}
 		}
 		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
@@ -362,6 +360,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+// ListAllPlacementPolicyNames returns all placement policy names.
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string
@@ -663,14 +662,13 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 		return []string{}, nil
 	}
 	defer rows.Close()
-	columnName = strings.ToUpper(columnName)
 	var strs []string
 	columns, _ := rows.Columns()
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
 	for i, col := range columns {
-		if strings.ToUpper(col) == columnName {
+		if strings.EqualFold(col, columnName) {
 			fieldIndex = i
 		}
 		addr[i] = &oneRow[i]
@@ -707,7 +705,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	for i, col := range columns {
 		addr[i] = &oneRow[i]
 		for j, name := range columnName {
-			if strings.ToUpper(col) == name {
+			if strings.EqualFold(col, name) {
 				fieldIndexMp[i] = j
 			}
 		}
@@ -779,7 +777,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil
@@ -833,7 +833,7 @@ func isUnknownSystemVariableErr(err error) bool {
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]interface{}) (*sql.DB, error) {
 	support := make(map[string]interface{})
 	for k, v := range params {
 		var pv interface{}
@@ -861,6 +861,10 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		support[k] = pv
 	}
 
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
+	}
+
 	for k, v := range support {
 		var s string
 		// Wrap string with quote to handle string with space. For example, '2020-10-20 13:41:40'
@@ -870,19 +874,21 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		} else {
 			s = fmt.Sprintf("%v", v)
 		}
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
+		cfg.Params[k] = s
 	}
 
 	db.Close()
-	newDB, err := sql.Open("mysql", dsn)
-	if err == nil {
-		// ping to make sure all session parameters are set correctly
-		err = newDB.PingContext(tctx)
-		if err != nil {
-			newDB.Close()
-		}
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return newDB, errors.Trace(err)
+	newDB := sql.OpenDB(c)
+	// ping to make sure all session parameters are set correctly
+	err = newDB.PingContext(tctx)
+	if err != nil {
+		newDB.Close()
+	}
+	return newDB, nil
 }
 
 func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead bool) (*sql.Conn, error) {

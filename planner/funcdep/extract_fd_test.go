@@ -39,8 +39,7 @@ func testGetIS(t *testing.T, ctx sessionctx.Context) infoschema.InfoSchema {
 }
 
 func TestFDSet_ExtractFD(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
@@ -211,15 +210,16 @@ func TestFDSet_ExtractFD(t *testing.T) {
 
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -236,8 +236,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 }
 
 func TestFDSet_ExtractFDForApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
@@ -255,21 +254,21 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	}{
 		{
 			sql: "select * from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//    +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection",
 			// Since semi join will keep the **all** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
 		},
 		{
 			sql: "select a, b from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//   +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection", // semi join
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
 			// Since semi join will keep the **part** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2)}",
 		},
@@ -310,15 +309,16 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -335,8 +335,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 }
 
 func TestFDSet_MakeOuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
@@ -345,7 +344,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
-	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n) NONCLUSTERED)")
 
 	tests := []struct {
 		sql  string
@@ -367,7 +366,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})

@@ -94,7 +94,11 @@ function build_tidb_server()
     tidb_server="./explaintest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
-    GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
+    else
+        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+    fi
 }
 
 function build_explain_test()
@@ -288,6 +292,9 @@ function run_explain_test()
 }
 
 function check_data_race() {
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        return
+    fi
     race=`grep 'DATA RACE' $explain_test_log || true`
     if [ ! -z "$race" ]; then
         echo "tidb-server DATA RACE!"

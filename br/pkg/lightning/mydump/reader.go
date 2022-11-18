@@ -31,6 +31,7 @@ import (
 )
 
 var (
+	// ErrInsertStatementNotFound is the error that cannot find the insert statement.
 	ErrInsertStatementNotFound = errors.New("insert statement not found")
 	errInvalidSchemaEncoding   = errors.New("invalid schema encoding")
 )
@@ -67,6 +68,7 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	return data, nil
 }
 
+// ExportStatement exports the SQL statement in the schema file.
 func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
 	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
 	if err != nil {
@@ -107,7 +109,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.L().Error("cannot decode input file, please convert to target encoding manually",
+		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)
@@ -132,7 +134,7 @@ func NewStringReader(s string) StringReader {
 }
 
 // Close implements io.Closer
-func (sr StringReader) Close() error {
+func (StringReader) Close() error {
 	return nil
 }
 
