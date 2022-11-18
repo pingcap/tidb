@@ -1180,6 +1180,7 @@ type baseIndexWorker struct {
 type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
+	copCtx    *copContext
 	writerCtx *ingest.WriterContext
 
 	// The following attributes are used to reduce memory allocation.
@@ -1200,6 +1201,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	var lwCtx *ingest.WriterContext
+	var copCtx *copContext
 	if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 		if !ok {
@@ -1213,6 +1215,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		if err != nil {
 			return nil, err
 		}
+		copCtx = newCopContext(t.Meta(), indexInfo, sessCtx)
 	}
 
 	return &addIndexWorker{
@@ -1227,6 +1230,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			jobContext:     jc,
 		},
 		index:     index,
+		copCtx:    copCtx,
 		writerCtx: lwCtx,
 	}, nil
 }
@@ -1484,7 +1488,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1492,7 +1496,16 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			idxRecords []*indexRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.copCtx != nil {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(txn, handleRange)
+		} else {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
