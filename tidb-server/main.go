@@ -118,8 +118,9 @@ const (
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
 
-	nmInitializeSecure   = "initialize-secure"
-	nmInitializeInsecure = "initialize-insecure"
+	nmInitializeSecure            = "initialize-secure"
+	nmInitializeInsecure          = "initialize-insecure"
+	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 )
 
 var (
@@ -164,8 +165,9 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
 
 	// Security
-	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
-	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
 )
 
 func main() {
@@ -535,6 +537,9 @@ func overrideConfig(cfg *config.Config) {
 	// Store the inverted value of this to the secure bootstrap cfg item
 	if actualFlags[nmInitializeInsecure] {
 		cfg.Security.SecureBootstrap = !*initializeInsecure
+	}
+	if actualFlags[nmDisconnectOnExpiredPassword] {
+		cfg.Security.DisconnectOnExpiredPassword = *disconnectOnExpiredPassword
 	}
 	// Secure bootstrap initializes with Socket authentication
 	// which is not supported on windows. Only the insecure bootstrap

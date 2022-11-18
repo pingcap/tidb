@@ -1679,18 +1679,18 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
+	if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
+		e.ctx.DisableSandBoxMode()
+	}
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	if err != nil {
 		return err
 	}
 	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 	if err != nil {
 		return err
-	}
-	if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
-		e.ctx.DisableSandBoxMode()
 	}
 	return err
 }

@@ -16,6 +16,8 @@ package variable
 
 import (
 	"math"
+
+	"github.com/pingcap/tidb/config"
 )
 
 // The following sysVars are noops.
@@ -170,7 +172,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxUserConnections, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "innodb_api_trx_level", Value: "0"},
-	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: BoolToOnOff(config.GetGlobalConfig().Security.DisconnectOnExpiredPassword), Type: TypeBool, ReadOnly: true},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "expire_logs_days", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogRowQueryLogEvents, Value: Off, Type: TypeBool},
