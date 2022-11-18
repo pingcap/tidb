@@ -29,7 +29,9 @@ explain format = 'brief' update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 
 explain format = 'brief' insert into t5 values (1,1,1);
 explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100;
 explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id2=100, id3=100;
+drop table if exists t1,t2,t3,t4,t5,t6;
 
+drop table if exists t_1,t_2,t_3,t_4;
 create table t_1 (id int key);
 create table t_2 (id int key);
 create table t_3 (id int key, foreign key fk_1(id) references t_1(id), foreign key fk_2(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
@@ -40,3 +42,4 @@ explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id an
 set @@foreign_key_checks=0;
 explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
 explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
+drop table if exists t_1,t_2,t_3,t_4;

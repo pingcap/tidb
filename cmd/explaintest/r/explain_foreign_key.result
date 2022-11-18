@@ -117,6 +117,8 @@ Insert	N/A	root		N/A
 └─Foreign_Key_Check	0.00	root	table:t6, index:fk_3	foreign_key:fk_3, check_not_exist
 └─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_update:CASCADE
 └─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id2	foreign_key:fk_2, on_update:CASCADE
+drop table if exists t1,t2,t3,t4,t5,t6;
+drop table if exists t_1,t_2,t_3,t_4;
 create table t_1 (id int key);
 create table t_2 (id int key);
 create table t_3 (id int key, foreign key fk_1(id) references t_1(id), foreign key fk_2(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
@@ -158,3 +160,4 @@ Delete	N/A	root		N/A
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t_2	range:(0,+inf], keep order:true, stats:pseudo
   └─TableReader(Probe)	3333.33	root		data:TableRangeScan
     └─TableRangeScan	3333.33	cop[tikv]	table:t_1	range:(0,+inf], keep order:true, stats:pseudo
+drop table if exists t_1,t_2,t_3,t_4;
