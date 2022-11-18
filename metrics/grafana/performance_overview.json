@@ -58,7 +58,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": 26,
-  "iteration": 1668662322506,
+  "iteration": 1668763131596,
   "links": [],
   "panels": [
     {
@@ -491,6 +491,11 @@
           "lines": true,
           "linewidth": 2,
           "stack": false
+        },
+        {
+          "$$hashKey": "object:321",
+          "alias": "tiflash_mpp",
+          "color": "#8F3BB8"
         }
       ],
       "spaceLength": 10,
@@ -526,7 +531,7 @@
           "expr": "sum(rate(tiflash_coprocessor_request_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) ",
           "hide": false,
           "interval": "",
-          "legendFormat": "mpp",
+          "legendFormat": "tiflash_mpp",
           "refId": "A"
         }
       ],
@@ -3272,7 +3277,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 70
+            "y": 2
           },
           "hiddenSeries": false,
           "id": 161,
@@ -3362,19 +3367,28 @@
         },
         {
           "aliasColors": {},
+          "bars": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "decimals": 1,
           "description": "The memory usage per TiFlash instance",
+          "editable": true,
+          "error": false,
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 70
+            "y": 2
           },
+          "hiddenSeries": false,
           "id": 1709,
           "legend": {
             "alignAsTable": true,
@@ -3397,25 +3411,31 @@
           "options": {
             "alertThreshold": true
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 5,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "avg(tiflash_proxy_process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (instance)",
-              "legendFormat": "{{instance}}",
-              "interval": "",
               "exemplar": true,
+              "expr": "avg(tiflash_proxy_process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (instance)",
               "format": "time_series",
+              "interval": "",
               "intervalFactor": 2,
+              "legendFormat": "{{instance}}",
               "refId": "A",
               "step": 10
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Memory",
           "tooltip": {
             "msResolution": false,
@@ -3452,22 +3472,7 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "decimals": 1,
-          "editable": true,
-          "grid": {},
-          "bars": false,
-          "dashes": false,
-          "error": false,
-          "fill": 0,
-          "percentage": false,
-          "points": false,
-          "stack": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null,
-          "fillGradient": 0,
-          "hiddenSeries": false
+          }
         },
         {
           "aliasColors": {},
@@ -3490,7 +3495,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 70
+            "y": 2
           },
           "hiddenSeries": false,
           "id": 165,
@@ -3595,7 +3600,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 77
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 157,
@@ -3697,7 +3702,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 77
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 9,
@@ -3798,7 +3803,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 77
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 2,
@@ -3900,7 +3905,7 @@
             "h": 6,
             "w": 8,
             "x": 0,
-            "y": 84
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 166,
@@ -4002,7 +4007,7 @@
             "h": 6,
             "w": 8,
             "x": 8,
-            "y": 84
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 11,
@@ -4123,7 +4128,7 @@
             "h": 6,
             "w": 8,
             "x": 16,
-            "y": 84
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 13,
@@ -4244,7 +4249,7 @@
             "h": 6,
             "w": 12,
             "x": 0,
-            "y": 90
+            "y": 22
           },
           "hiddenSeries": false,
           "id": 37,
@@ -4379,7 +4384,7 @@
             "h": 6,
             "w": 12,
             "x": 12,
-            "y": 90
+            "y": 22
           },
           "hiddenSeries": false,
           "id": 23763571994,
@@ -4510,7 +4515,7 @@
             "h": 6,
             "w": 24,
             "x": 0,
-            "y": 96
+            "y": 28
           },
           "height": "",
           "hiddenSeries": false,
@@ -4633,7 +4638,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 102
+            "y": 34
           },
           "height": "",
           "hiddenSeries": false,
@@ -4764,7 +4769,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 102
+            "y": 34
           },
           "height": "",
           "hiddenSeries": false,
@@ -6514,6 +6519,6 @@
   },
   "timezone": "browser",
   "title": "Test-Cluster-Performance-Overview",
-  "uid": "eDbRZpnWa",
-  "version": 2
+  "uid": "eDbRZpnWa2",
+  "version": 1
 }
