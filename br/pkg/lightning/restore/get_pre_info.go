@@ -444,23 +444,7 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreRestoreInfoGetter interface.
 func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	var (
-		reader storage.ReadSeekCloser
-		err    error
-	)
-	switch {
-	case dataFileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, dataFileMeta.Path, dataFileMeta.FileSize)
-	case dataFileMeta.Compression != mydump.CompressionNone:
-		var compressType storage.CompressType
-		compressType, err = mydump.ToStorageCompressType(dataFileMeta.Compression)
-		if err != nil {
-			break
-		}
-		reader, err = storage.WithCompression(p.srcStorage, compressType).Open(ctx, dataFileMeta.Path)
-	default:
-		reader, err = p.srcStorage.Open(ctx, dataFileMeta.Path)
-	}
+	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -598,23 +582,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	var (
-		reader storage.ReadSeekCloser
-		err    error
-	)
-	switch {
-	case sampleFile.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, sampleFile.Path, sampleFile.FileSize)
-	case sampleFile.Compression != mydump.CompressionNone:
-		var compressType storage.CompressType
-		compressType, err = mydump.ToStorageCompressType(sampleFile.Compression)
-		if err != nil {
-			break
-		}
-		reader, err = storage.WithCompression(p.srcStorage, compressType).Open(ctx, sampleFile.Path)
-	default:
-		reader, err = p.srcStorage.Open(ctx, sampleFile.Path)
-	}
+	reader, err := openReader(ctx, sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
