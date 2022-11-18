@@ -25,15 +25,9 @@ go_library(
 )
 
 go_binary(
-    name = "mysql-tester",
+    name = "mysql_tester",
     embed = [":mysql-tester_lib"],
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "mysql-tester_test",
-    srcs = ["query_test.go"],
-    embed = [":mysql-tester_lib"],
 )
 
 go_test(

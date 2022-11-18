@@ -58,6 +58,7 @@
   },
   "printf": {
     "exclude_files": {
+      "tools/mysql_tester": "mysql_tester",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -244,6 +245,7 @@
   },
   "gosec": {
     "exclude_files": {
+      "tools/mysql_tester": "no need to mysql_tester",
       "external/": "no need to vet third party code",
       "parser/goyacc/": "ignore goyacc code",
       ".*_test\\.go$": "ignore generated code",
@@ -317,6 +319,7 @@
   },
   "nilness": {
     "exclude_files": {
+      "tools/mysql_tester": "no need to mysql_tester",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
@@ -691,6 +694,7 @@
   },
   "S1032": {
     "exclude_files": {
+      "tools/mysql_tester": "no need to mysql_tester",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }

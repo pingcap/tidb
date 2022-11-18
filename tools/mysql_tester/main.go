@@ -148,7 +148,7 @@ func newTester(name string) *tester {
 	t.name = name
 	t.enableQueryLog = true
 	// disable warning by default since our a lot of test cases
-	// are ported wihtout explictly "disablewarning"
+	// are ported wihtout explicitly "disablewarning"
 	t.enableWarning = false
 	t.enableConcurrent = false
 	t.ctx = parser.New()
@@ -538,8 +538,8 @@ func (t *tester) concurrentExecute(querys []query, wg *sync.WaitGroup, errOccure
 
 		}
 	}
-	return
 }
+
 func (t *tester) loadQueries() ([]query, error) {
 	data, err := ioutil.ReadFile(t.testFileName())
 	if err != nil {
