@@ -326,7 +326,7 @@ type basicCopRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.threads)
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d}", FormatDuration(time.Duration(e.consume)), e.loop, e.threads, e.fullTableScanContext.scanPacksCount, e.fullTableScanContext.skipPacksCount, e.fullTableScanContext.scanRowsCount, e.fullTableScanContext.skipRowsCount)
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
@@ -334,7 +334,7 @@ func (e *basicCopRuntimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	return &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, fullTableScanContext: e.fullTableScanContext},
 		threads:           e.threads,
 		storeType:         e.storeType,
 	}
@@ -446,7 +446,7 @@ func (crs *CopRuntimeStats) String() string {
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalFullTableScanContext.Empty() {
-				buf.WriteString(fmt.Sprintf("table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d}", totalFullTableScanContext.scanPacksCount, totalFullTableScanContext.skipPacksCount, totalFullTableScanContext.scanRowsCount, totalFullTableScanContext.skipRowsCount))
+				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d}", totalFullTableScanContext.scanPacksCount, totalFullTableScanContext.skipPacksCount, totalFullTableScanContext.scanRowsCount, totalFullTableScanContext.skipRowsCount))
 			}
 		} else {
 			buf.WriteString("}")
