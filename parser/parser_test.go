@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample", "attributes",
+		"match", "until", "placement", "tablesample",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -98,7 +98,7 @@ func TestSimple(t *testing.T) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
-		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement",
+		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -364,10 +364,10 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool) {
 	for _, tbl := range table {
 		_, _, err := p.Parse(tbl.src, "", "")
 		if !tbl.ok {
-			require.Errorf(t, err, "source %v", tbl.src)
+			require.Errorf(t, err, "source %v", tbl.src, errors.Trace(err))
 			continue
 		}
-		require.NoErrorf(t, err, "source %v", tbl.src)
+		require.NoErrorf(t, err, "source %v", tbl.src, errors.Trace(err))
 		// restore correctness test
 		if tbl.ok {
 			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc)
@@ -1135,6 +1135,9 @@ func TestDBAStmt(t *testing.T) {
 		// for show stats_meta.
 		{"show stats_meta", true, "SHOW STATS_META"},
 		{"show stats_meta where table_name = 't'", true, "SHOW STATS_META WHERE `table_name`=_UTF8MB4't'"},
+		// for show stats_locked.
+		{"show stats_locked", true, "SHOW STATS_LOCKED"},
+		{"show stats_locked where table_name = 't'", true, "SHOW STATS_LOCKED WHERE `table_name`=_UTF8MB4't'"},
 		// for show stats_histograms
 		{"show stats_histograms", true, "SHOW STATS_HISTOGRAMS"},
 		{"show stats_histograms where col_name = 'a'", true, "SHOW STATS_HISTOGRAMS WHERE `col_name`=_UTF8MB4'a'"},
@@ -1174,6 +1177,12 @@ func TestDBAStmt(t *testing.T) {
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
+		// for lock stats
+		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
+		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		// for unlock stats
+		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
+		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
@@ -2364,6 +2373,8 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name ASC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name`))"},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name DESC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name` DESC))"},
 		// test enable or disable cached table
 		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
 		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
@@ -2649,9 +2660,10 @@ func TestDDL(t *testing.T) {
 		{"drop view if exists xxx", true, "DROP VIEW IF EXISTS `xxx`"},
 		{"drop view if exists xxx, yyy", true, "DROP VIEW IF EXISTS `xxx`, `yyy`"},
 		{"drop stats t", true, "DROP STATS `t`"},
+		{"drop stats t1, t2, t3", true, "DROP STATS `t1`, `t2`, `t3`"},
+		{"drop stats t global", true, "DROP STATS `t` GLOBAL"},
 		{"drop stats t partition p0", true, "DROP STATS `t` PARTITION `p0`"},
 		{"drop stats t partition p0, p1, p2", true, "DROP STATS `t` PARTITION `p0`,`p1`,`p2`"},
-		{"drop stats t global", true, "DROP STATS `t` GLOBAL"},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -2966,7 +2978,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
 		{"ALTER TABLE t ADD KEY IF NOT EXISTS (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX IF NOT EXISTS(`a`) USING HASH COMMENT 'a'"},
-		{"ALTER TABLE t ADD PRIMARY KEY ident USING RTREE ( a DESC , b   )", true, "ALTER TABLE `t` ADD PRIMARY KEY `ident`(`a`, `b`) USING RTREE"},
+		{"ALTER TABLE t ADD PRIMARY KEY ident USING RTREE ( a DESC , b   )", true, "ALTER TABLE `t` ADD PRIMARY KEY `ident`(`a` DESC, `b`) USING RTREE"},
 		{"ALTER TABLE t ADD KEY USING RTREE   ( a ) ", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE"},
 		{"ALTER TABLE t ADD KEY USING RTREE ( ident ASC , ident ( 123 ) )", true, "ALTER TABLE `t` ADD INDEX(`ident`, `ident`(123)) USING RTREE"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) COMMENT 'a'", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) COMMENT 'a'"},
@@ -2983,8 +2995,8 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ENGINE = 'innodb'", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE t ENGINE = innodb", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE `db`.`t` ENGINE = ``", true, "ALTER TABLE `db`.`t` ENGINE = ''"},
-		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = 'FIRST'"},
-		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = 'LAST'"},
+		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = FIRST"},
+		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = LAST"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT UNSIGNED, ADD COLUMN `a` SMALLINT"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT, ENGINE = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ENGINE = '', COMMENT = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
@@ -3244,11 +3256,24 @@ func TestDDL(t *testing.T) {
 		// for flashback table.
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
+		{"flashback table t TO timestamp", true, "FLASHBACK TABLE `t` TO `timestamp`"},
 
-		// for flashback cluster
+		// for flashback database.
+		{"flashback database db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback schema db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback database db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+		{"flashback schema db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+
+		// for flashback to timestamp
 		{"flashback cluster to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t,t1 to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t`, `t1` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback database test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback schema test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
 		{"flashback cluster to timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", false, ""},
 		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
+		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
+		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
@@ -3439,7 +3464,7 @@ func TestDDL(t *testing.T) {
 		{"create table a(a int, b int, key((a+1), (b+1)));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1), (`b`+1)))"},
 		{"create table a(a int, b int, key(a, (b+1)));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX(`a`, (`b`+1)))"},
 		{"create table a(a int, b int, key((a+1), b));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1), `b`))"},
-		{"create table a(a int, b int, key((a + 1) desc));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1)))"},
+		{"create table a(a int, b int, key((a + 1) desc));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1) DESC))"},
 
 		// for create sequence
 		{"create sequence sequence", true, "CREATE SEQUENCE `sequence`"},
@@ -3629,6 +3654,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t STATS_OPTIONS=default", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS=DeFaUlT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS", false, ""},
+
+		// Restore INSERT_METHOD table option
+		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false)
 }
@@ -4198,6 +4226,35 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "hash_agg", hints[0].HintName.L)
 	require.Equal(t, "hash_agg", hints[1].HintName.L)
 
+	// Test MPPAgg
+	stmt, _, err = p.Parse("select /*+ MPP_1PHASE_AGG(), mpp_1phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "mpp_1phase_agg", hints[0].HintName.L)
+	require.Equal(t, "mpp_1phase_agg", hints[1].HintName.L)
+
+	stmt, _, err = p.Parse("select /*+ MPP_2PHASE_AGG(), mpp_2phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "mpp_2phase_agg", hints[0].HintName.L)
+	require.Equal(t, "mpp_2phase_agg", hints[1].HintName.L)
+
+	// Test ShuffleJoin
+	stmt, _, err = p.Parse("select /*+ SHUFFLE_JOIN(t1, t2), shuffle_join(t1, t2) */ * from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "shuffle_join", hints[0].HintName.L)
+	require.Equal(t, "shuffle_join", hints[1].HintName.L)
+
 	// Test STREAM_AGG
 	stmt, _, err = p.Parse("select /*+ STREAM_AGG(), stream_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4372,6 +4429,7 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE USER 'sha_test'@'localhost' IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'", true, "CREATE USER `sha_test`@`localhost` IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'"},
 		{"CREATE USER 'sha_test3'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS 0x24412430303524255B03496C662C1055127B3B654A2F04207D01485276703644704B76303247474564416A516662346C5868646D32764C6B514F43585A473779565947514F34", true, "CREATE USER `sha_test3`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
 		{"CREATE USER 'sha_test4'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'", true, "CREATE USER `sha_test4`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
+		{"CREATE USER `user@pingcap.com`@'localhost' IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc' ATTRIBUTE '{\"email\": \"user@pingcap.com\"}'", true, "CREATE USER `user@pingcap.com`@`localhost` IDENTIFIED WITH 'tidb_auth_token' REQUIRE TOKEN_ISSUER 'issuer-abc' ATTRIBUTE '{\"email\": \"user@pingcap.com\"}'"},
 		{"CREATE USER 'nopwd_native'@'localhost' IDENTIFIED WITH 'mysql_native_password'", true, "CREATE USER `nopwd_native`@`localhost` IDENTIFIED WITH 'mysql_native_password'"},
 		{"CREATE USER 'nopwd_sha'@'localhost' IDENTIFIED WITH 'caching_sha2_password'", true, "CREATE USER `nopwd_sha`@`localhost` IDENTIFIED WITH 'caching_sha2_password'"},
 		{"CREATE ROLE `test-role`, `role1`@'localhost'", true, "CREATE ROLE `test-role`@`%`, `role1`@`localhost`"},
@@ -4496,6 +4554,14 @@ func TestComment(t *testing.T) {
 		{"create table t (never int)", true, "CREATE TABLE `t` (`never` INT)"},
 		{"create table t (subject int)", true, "CREATE TABLE `t` (`subject` INT)"},
 		{"create table t (x509 int)", true, "CREATE TABLE `t` (`x509` INT)"},
+
+		// COMMENT/ATTRIBUTE in CREATE/ALTER USER
+		{"create user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"alter user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"create user commentUser COMMENT '123456'", true, "CREATE USER `commentUser`@`%` COMMENT '123456'"},
+		{"alter user commentUser COMMENT '123456'", true, "ALTER USER `commentUser`@`%` COMMENT '123456'"},
+		{"create user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "CREATE USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
+		{"alter user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "ALTER USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
 	}
 	RunTest(t, table, false)
 }
@@ -5226,6 +5292,7 @@ func TestSessionManage(t *testing.T) {
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
 		{"kill 23123", true, "KILL 23123"},
+		{"kill CONNECTION_ID()", true, "KILL CONNECTION_ID()"},
 		{"kill connection 23123", true, "KILL 23123"},
 		{"kill query 23123", true, "KILL QUERY 23123"},
 		{"kill tidb 23123", true, "KILL TIDB 23123"},
@@ -6744,6 +6811,7 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
 		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
+		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
 	}
 	RunTest(t, table, false)
 
@@ -6861,8 +6929,9 @@ func TestCharsetIntroducer(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
 
-func TestNonTransactionalDelete(t *testing.T) {
+func TestNonTransactionalDML(t *testing.T) {
 	cases := []testCase{
+		// deletes
 		{"batch on c limit 10 delete from t where c = 10", true,
 			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
 		{"batch on c limit 10 dry run delete from t where c = 10", true,
@@ -6875,6 +6944,45 @@ func TestNonTransactionalDelete(t *testing.T) {
 			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
 		{"batch limit 10 dry run query delete from t where c = 10", true,
 			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		// updates
+		{"batch on c limit 10 update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run query update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		{"batch limit 10 update t set c = 10", true,
+			"BATCH LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run query update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		// inserts
+		{"batch on c limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		// inserts on duplicate key update
+		{"batch on c limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
 	}
 
 	RunTest(t, cases, false)

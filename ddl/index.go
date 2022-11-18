@@ -709,6 +709,10 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
 func canUseIngest(w *worker) bool {
+	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
+	if len(ingest.LitBackCtxMgr.Keys()) > 0 {
+		return false
+	}
 	ctx, err := w.sessPool.get()
 	if err != nil {
 		return false
@@ -754,6 +758,7 @@ func tryFallbackToTxnMerge(job *model.Job, err error) {
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
+		job.RowCount = 0
 	}
 }
 
@@ -778,8 +783,10 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
-		logutil.BgLogger().Info("[ddl] index backfill state running", zap.Int64("job ID", job.ID),
-			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
+		logutil.BgLogger().Info("[ddl] index backfill state running",
+			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -1200,7 +1207,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		}
 		ei, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
-			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
+			return nil, errors.Trace(err)
 		}
 		lwCtx, err = ei.NewWriterCtx(id)
 		if err != nil {
@@ -1210,7 +1217,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexWorker),
+			backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexWorker),
 			indexes:        []table.Index{index},
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
@@ -1270,7 +1277,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table.Meta(), nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
@@ -1289,7 +1296,10 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 		recordKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), lastHandle)
 		return recordKey.Next()
 	}
-	return taskRange.endKey.Next()
+	if taskRange.endInclude {
+		return taskRange.endKey.Next()
+	}
+	return taskRange.endKey
 }
 
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
@@ -1389,7 +1399,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	if err != nil {
 		return err
 	}
-	indexName := w.index.Meta().Name.String()
+	indexName := fmt.Sprintf("%s.%s", w.index.TableMeta().Name.String(), w.index.Meta().Name.String())
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
@@ -1705,7 +1715,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeCleanUpIndexWorker),
+			backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeCleanUpIndexWorker),
 			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),

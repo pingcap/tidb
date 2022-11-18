@@ -237,7 +237,7 @@ func TestJsonUnmarshalErrWhenPanicInCancellingPath(t *testing.T) {
 	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
 	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
-	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'cc'")
+	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'test_add_index_after_add_col.cc'")
 }
 
 func TestIssue22819(t *testing.T) {
@@ -576,7 +576,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -609,6 +609,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
@@ -962,9 +963,10 @@ func TestDDLJobErrorCount(t *testing.T) {
 
 	var jobID int64
 	hook := &ddl.TestDDLCallback{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	originHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	defer dom.DDL().SetHook(originHook)
@@ -1141,7 +1143,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 						}
 					}
 				}
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				onJobUpdatedExportedFunc := func(job *model.Job) {
 					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
@@ -1154,6 +1156,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 						committed = true
 					}
 				}
+				hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 				originalCallback := do.GetHook()
 				do.SetHook(hook)
 				tk2.MustExec(curCase.idxDDL)

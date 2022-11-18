@@ -162,7 +162,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "database time",
@@ -302,7 +302,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "database time",
@@ -850,12 +850,23 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "avg",
+          "legendFormat": "avg-hit",
           "refId": "A",
+          "step": 30
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+          "format": "time_series",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "avg-miss",
+          "refId": "B",
           "step": 30
         }
       ],
@@ -1109,11 +1120,19 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "active connections",
-          "refId": "C"
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (instance)",
+          "hide": true,
+          "interval": "",
+          "legendFormat": "ac-{{instance}}",
+          "refId": "E"
         }
       ],
       "thresholds": [],
@@ -2283,7 +2302,7 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "description": "- TSO Wait Duration: The duration of a client starting to wait for the TS until received the TS result.\n- TSO RPC Duration: The duration of a client sending TSO request until received the response.",
+      "description": "- TSO Wait Duration: The duration of a client starting to wait for the TS until received the TS result.\n- TSO RPC Duration: The duration of a client sending TSO request until received the response.\n- PD Server Handle Time: The time consumed by handling TiDB requests.",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -2343,6 +2362,14 @@
         },
         {
           "exemplar": true,
+          "expr": "(sum(rate(pd_server_handle_tso_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(pd_server_handle_tso_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "handle - avg",
+          "refId": "F"
+        },
+        {
+          "exemplar": true,
           "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
           "format": "time_series",
           "interval": "",
@@ -2359,6 +2386,16 @@
           "intervalFactor": 2,
           "legendFormat": "rpc - 99",
           "refId": "E"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(pd_server_handle_tso_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])) by (type, le))",
+          "format": "time_series",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "handle - 99",
+          "refId": "C"
         }
       ],
       "thresholds": [],

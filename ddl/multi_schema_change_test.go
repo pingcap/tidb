@@ -933,17 +933,19 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2);")
 	originHook := dom.DDL().GetHook()
 	var checked bool
-	dom.DDL().SetHook(&ddl.TestDDLCallback{Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			assert.NotNil(t, job.MultiSchemaInfo)
-			// "modify column a tinyint" in write-reorg.
-			if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
-				checked = true
-				rs, err := tk.Exec("select * from t use index(i1);")
-				assert.NoError(t, err)
-				assert.NoError(t, rs.Close())
-			}
-		}})
+	callback := &ddl.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		assert.NotNil(t, job.MultiSchemaInfo)
+		// "modify column a tinyint" in write-reorg.
+		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
+			checked = true
+			rs, err := tk.Exec("select * from t use index(i1);")
+			assert.NoError(t, err)
+			assert.NoError(t, rs.Close())
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
 	dom.DDL().SetHook(originHook)
 	require.True(t, checked)
@@ -1137,6 +1139,33 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
+}
+
+func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+	tk.MustExec("insert into t values (1,2,3,4)")
+
+	schemaVerMap := map[int64]struct{}{}
+
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobSchemaStateChanged = func(schemaVer int64) {
+		if schemaVer != 0 {
+			// No same return schemaVer during multi-schema change
+			_, ok := schemaVerMap[schemaVer]
+			assert.False(t, ok)
+			schemaVerMap[schemaVer] = struct{}{}
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column b, drop column c")
+	tk.MustExec("alter table t add column b int, add column c int")
+	tk.MustExec("alter table t add index k(b), add column e int")
+	tk.MustExec("alter table t alter index k invisible, drop column e")
+	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {

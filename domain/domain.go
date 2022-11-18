@@ -64,6 +64,8 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -105,12 +107,14 @@ type Domain struct {
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
+	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 
@@ -123,6 +127,11 @@ type Domain struct {
 	sysProcesses SysProcesses
 
 	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
 }
 
 type mdlCheckTableInfo struct {
@@ -887,9 +896,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
@@ -1521,6 +1531,81 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	do.planReplayerHandle = &planReplayerHandle{}
+	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
+		ctx:  ctx,
+		sctx: collectorSctx,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
+		ctx:    ctx,
+		sctx:   dumperSctx,
+		taskCH: make(chan *PlanReplayerDumpTask, 16),
+	}
+}
+
+// SetupDumpFileGCChecker setup sctx
+func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
+	do.dumpFileGcChecker.setupSctx(ctx)
+}
+
+var planReplayerHandleLease = 10 * time.Second
+
+// DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
+func DisablePlanReplayerBackgroundJob4Test() {
+	planReplayerHandleLease = 0
+}
+
+// StartPlanReplayerHandle start plan replayer handle job
+func (do *Domain) StartPlanReplayerHandle() {
+	if planReplayerHandleLease < 1 {
+		return
+	}
+	do.wg.Add(2)
+	go func() {
+		tikcer := time.NewTicker(planReplayerHandleLease)
+		defer func() {
+			tikcer.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-tikcer.C:
+				err := do.planReplayerHandle.CollectPlanReplayerTask()
+				if err != nil {
+					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
+				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
+			}
+		}
+	}()
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
@@ -1569,6 +1654,46 @@ func (do *Domain) SetStatsUpdating(val bool) {
 		do.statsUpdating.Store(1)
 	} else {
 		do.statsUpdating.Store(0)
+	}
+}
+
+// ReleaseAnalyzeExec returned extra exec for Analyze
+func (do *Domain) ReleaseAnalyzeExec(sctxs []sessionctx.Context) {
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for _, ctx := range sctxs {
+		do.analyzeMu.sctxs[ctx] = false
+	}
+}
+
+// FetchAnalyzeExec get needed exec for analyze
+func (do *Domain) FetchAnalyzeExec(need int) []sessionctx.Context {
+	if need < 1 {
+		return nil
+	}
+	count := 0
+	r := make([]sessionctx.Context, 0)
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for sctx, used := range do.analyzeMu.sctxs {
+		if used {
+			continue
+		}
+		r = append(r, sctx)
+		do.analyzeMu.sctxs[sctx] = true
+		count++
+		if count >= need {
+			break
+		}
+	}
+	return r
+}
+
+// SetupAnalyzeExec setups exec for Analyze Executor
+func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
+	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
+	for _, ctx := range ctxs {
+		do.analyzeMu.sctxs[ctx] = false
 	}
 }
 
@@ -1714,7 +1839,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -1722,6 +1849,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
+		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -1752,6 +1880,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
 			}
+		case <-loadLockedTablesTicker.C:
+			err := statsHandle.LoadLockedTables()
+			if err != nil {
+				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
+			}
 		case <-dumpFeedbackTicker.C:
 			err := statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
@@ -1770,6 +1903,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
+
+		case <-readMemTricker.C:
+			memory.ForceReadMemStats()
 		}
 	}
 }
@@ -1823,6 +1959,11 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
+}
+
+// MemoryUsageAlarmHandle returns the memory usage alarm handle.
+func (do *Domain) MemoryUsageAlarmHandle() *memoryusagealarm.Handle {
+	return do.memoryUsageAlarmHandle
 }
 
 // ServerMemoryLimitHandle returns the expensive query handle.
@@ -1884,7 +2025,10 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 }
 
 // LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
-func (do *Domain) LoadSigningCertLoop() {
+func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
+	sessionstates.SetCertPath(signingCert)
+	sessionstates.SetKeyPath(signingKey)
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {

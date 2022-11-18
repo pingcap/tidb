@@ -77,6 +77,7 @@ type Lightning struct {
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
+	metrics      *metric.Metrics
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -388,6 +389,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	defer func() {
 		metrics.UnregisterFrom(o.promRegistry)
 	}()
+	l.metrics = metrics
 
 	ctx := metric.NewContext(taskCtx, metrics)
 	ctx = log.NewContext(ctx, o.logger)
@@ -542,6 +544,12 @@ func (l *Lightning) Status() (finished int64, total int64) {
 	finished = l.status.FinishedFileSize.Load()
 	total = l.status.TotalFileSize.Load()
 	return
+}
+
+// Metrics returns the metrics of lightning.
+// it's inited during `run`, so might return nil.
+func (l *Lightning) Metrics() *metric.Metrics {
+	return l.metrics
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
