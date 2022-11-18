@@ -362,7 +362,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		target,childIdxs = f.flattenForeignKeyChecksAndCascadesMap(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
+		target, childIdxs = f.flattenForeignKeyChecksAndCascadesMap(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
 	case *Delete:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
@@ -371,7 +371,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		target,childIdxs = f.flattenForeignKeyChecksAndCascadesMap(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
+		target, childIdxs = f.flattenForeignKeyChecksAndCascadesMap(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
 	case *Execute:
 		f.InExecute = true
 		if plan.Plan != nil {
@@ -406,24 +406,24 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 }
 
 func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecksMap map[int64][]*FKCheck, fkCascadesMap map[int64][]*FKCascade) (FlatPlanTree, []int) {
-	tids := make(sortutil.Int64Slice,0,len(fkChecksMap))
-	for tid := range fkChecksMap{
+	tids := make(sortutil.Int64Slice, 0, len(fkChecksMap))
+	for tid := range fkChecksMap {
 		tids = append(tids, tid)
 	}
 	// Sort by table id for explain result stable.
 	tids.Sort()
-	for _,tid := range tids{
-		target,childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecksMap[tid], nil)
+	for _, tid := range tids {
+		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecksMap[tid], nil)
 	}
 	tids = tids[:0]
-	for tid := range fkCascadesMap{
+	for tid := range fkCascadesMap {
 		tids = append(tids, tid)
 	}
 	tids.Sort()
-	for _,tid := range tids{
-		target,childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, nil, fkCascadesMap[tid])
+	for _, tid := range tids {
+		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, nil, fkCascadesMap[tid])
 	}
-	return target,childIdxs
+	return target, childIdxs
 }
 
 func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecks []*FKCheck, fkCascades []*FKCascade) (FlatPlanTree, []int) {
