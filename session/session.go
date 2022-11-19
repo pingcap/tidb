@@ -1866,8 +1866,8 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
-// SandBoxMode checks if sandbox mode is enable.
-func (s *session) SandBoxMode() bool {
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
 	return s.sandBoxMode
 }
 

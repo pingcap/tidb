@@ -1148,7 +1148,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				if passwordExpire == "" {
 					passwordExpire = "N"
 				}
-				if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == spec.User.Username || spec.User.CurrentUser) {
+				if e.ctx.InSandBoxMode() && (e.ctx.GetSessionVars().User.Username == spec.User.Username || spec.User.CurrentUser) {
 					e.ctx.DisableSandBoxMode()
 				}
 			}
@@ -1679,7 +1679,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
-	if e.ctx.SandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
+	if e.ctx.InSandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
 		e.ctx.DisableSandBoxMode()
 	}
 	// update mysql.user

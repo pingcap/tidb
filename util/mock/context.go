@@ -446,8 +446,8 @@ func (*Context) EnableSandBoxMode() {
 func (*Context) DisableSandBoxMode() {
 }
 
-// SandBoxMode checks if sandbox mode is enable.
-func (*Context) SandBoxMode() bool {
+// InSandBoxMode indicates that this Session is in sandbox mode
+func (*Context) InSandBoxMode() bool {
 	return false
 }
 
