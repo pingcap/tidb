@@ -687,9 +687,8 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			if err != nil {
 				if b.canSkipError(err) {
 					continue
-				} else {
-					return err
 				}
+				return err
 			}
 			if idxWorker.copCtx != nil && b.copReqSenderPool == nil {
 				startTS := latestStartTS(sessCtx.GetStore())
