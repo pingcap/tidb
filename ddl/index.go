@@ -1181,7 +1181,6 @@ type baseIndexWorker struct {
 type addIndexWorker struct {
 	baseIndexWorker
 	index            table.Index
-	copCtx           *copContext
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
 
@@ -1203,7 +1202,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	var lwCtx *ingest.WriterContext
-	var copCtx *copContext
 	if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 		if !ok {
@@ -1217,7 +1215,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		if err != nil {
 			return nil, err
 		}
-		copCtx = newCopContext(t.Meta(), indexInfo, sessCtx)
 	}
 
 	return &addIndexWorker{
@@ -1232,7 +1229,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			jobContext:     jc,
 		},
 		index:     index,
-		copCtx:    copCtx,
 		writerCtx: lwCtx,
 	}, nil
 }
@@ -1503,7 +1499,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.copCtx != nil && w.copReqSenderPool != nil {
+		if w.copReqSenderPool != nil {
 			idxRecords, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
@@ -1569,7 +1565,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			taskCtx.addedCount++
 		}
 
-		if w.copCtx != nil && w.copReqSenderPool != nil {
+		if w.copReqSenderPool != nil {
 			w.copReqSenderPool.recycleIdxRecords(idxRecords)
 		}
 

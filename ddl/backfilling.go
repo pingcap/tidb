@@ -663,6 +663,7 @@ func (b *backfillScheduler) workerSize() int {
 }
 
 func (b *backfillScheduler) adjustWorkerSize() error {
+	b.initCopReqSenderPool()
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
@@ -670,7 +671,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 	}
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	if b.copReqSenderPool != nil {
+		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
+	} else {
+		workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	}
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
 		sessCtx, err := b.newSessCtx()
@@ -689,10 +694,6 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 					continue
 				}
 				return err
-			}
-			if idxWorker.copCtx != nil && b.copReqSenderPool == nil {
-				startTS := latestStartTS(sessCtx.GetStore())
-				b.copReqSenderPool = newCopReqSenderPool(b.ctx, idxWorker.copCtx, startTS)
 			}
 			idxWorker.copReqSenderPool = b.copReqSenderPool
 			worker, runner = idxWorker, idxWorker.backfillWorker
@@ -727,15 +728,38 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	return injectCheckBackfillWorkerNum(len(b.workers))
 }
 
-func latestStartTS(storage kv.Storage) (startTS uint64) {
+func (b *backfillScheduler) initCopReqSenderPool() {
+	if b.copReqSenderPool != nil || len(b.workers) > 0 || b.tp != typeAddIndexWorker {
+		return
+	}
+	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
+	if indexInfo == nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
+			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
+		return
+	}
+	sessCtx, err := b.newSessCtx()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		return
+	}
+	copCtx := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	startTS, err := latestStartTS(sessCtx.GetStore())
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		return
+	}
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, startTS)
+}
+
+func latestStartTS(storage kv.Storage) (startTS uint64, err error) {
 	txn, err := storage.Begin()
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] cannot get latest startTS for cop request sender", zap.Error(err))
 		_ = txn.Rollback()
-		return 0
+		return 0, err
 	}
 	_ = txn.Rollback()
-	return txn.StartTS()
+	return txn.StartTS(), nil
 }
 
 func (b *backfillScheduler) canSkipError(err error) bool {

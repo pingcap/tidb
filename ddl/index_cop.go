@@ -152,10 +152,6 @@ func renewChunk(oldChk *chunk.Chunk, fts []*types.FieldType) *chunk.Chunk {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
-	if startTS == 0 {
-		// Cannot get the startTS, so we cannot use coprocessor to read table records.
-		return nil
-	}
 	return &copReqSenderPool{
 		tasksCh:   make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh: make(chan idxRecResult, backfillTaskChanSize),
