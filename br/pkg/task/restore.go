@@ -65,7 +65,7 @@ const (
 	defaultPiTRBatchCount           = 16
 	defaultPiTRBatchSize            = 32 * 1024 * 1024
 	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 256
+	defaultRestoreStreamConcurrency = 128
 	maxRestoreBatchSizeLimit        = 10240
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second

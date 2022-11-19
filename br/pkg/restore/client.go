@@ -1829,7 +1829,7 @@ func ApplyKVFilesWithBatchMethod(
 	batchCount int,
 	batchSize uint64,
 	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
-) {
+) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
 		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
@@ -1837,6 +1837,10 @@ func ApplyKVFilesWithBatchMethod(
 		tmpKVCount    int64  = 0
 	)
 	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
 			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
@@ -1920,16 +1924,22 @@ func ApplyKVFilesWithBatchMethod(
 			}
 		}
 	}
+
+	return nil
 }
 
 func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
 	files LogIter,
 	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
-) {
+) error {
 	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Delete {
 			deleteKVFiles = append(deleteKVFiles, f)
@@ -1943,6 +1953,8 @@ func ApplyKVFilesWithSingelMethod(
 		f := file
 		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
+
+	return nil
 }
 
 func (rc *Client) RestoreKVFiles(
@@ -2008,9 +2020,12 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	if supportBatch {
-		ApplyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		err = ApplyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 	} else {
-		ApplyKVFilesWithSingelMethod(ctx, files, applyFunc)
+		err = ApplyKVFilesWithSingelMethod(ctx, files, applyFunc)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
