@@ -729,7 +729,8 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 }
 
 func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.copReqSenderPool != nil || len(b.workers) > 0 || b.tp != typeAddIndexWorker {
+	if b.tp != typeAddIndexWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
+		b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
 	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
