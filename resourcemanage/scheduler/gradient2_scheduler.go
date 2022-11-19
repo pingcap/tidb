@@ -3,7 +3,7 @@ package scheduler
 import (
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/resourcemanage/util"
 	"github.com/pingcap/tidb/util/cpu"
 	"github.com/pingcap/tidb/util/mathutil"
 )
@@ -27,12 +27,12 @@ func NewGradient2Scheduler() *Gradient2Scheduler {
 	}
 }
 
-func (b *Gradient2Scheduler) Tune(component resourcemanage.Component, p resourcemanage.GorotinuePool) SchedulerCommand {
+func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool) SchedulerCommand {
 	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
 		return NoIdea
 	}
 	usage := cpu.GetCPUUsage()
-	if usage > 0.8 && component == resourcemanage.DDL {
+	if usage > 0.8 && component == util.DDL {
 		return Downclock
 	}
 

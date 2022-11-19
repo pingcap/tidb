@@ -17,7 +17,7 @@ package limiter
 import (
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/resourcemanage/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
 
@@ -25,7 +25,13 @@ type BBRLimiter struct {
 	cpuThreshold int64
 }
 
-func (b *BBRLimiter) Limit(component resourcemanage.Component, p resourcemanage.GorotinuePool) bool {
+func NewBBRLimiter(cpuThreshold int64) Limiter {
+	return &BBRLimiter{
+		cpuThreshold: cpuThreshold,
+	}
+}
+
+func (b *BBRLimiter) Limit(component util.Component, p util.GorotinuePool) bool {
 	usage := cpu.GetCPUUsage() * 100
 	if usage < float64(b.cpuThreshold) {
 		// current cpu payload below the threshold
@@ -41,7 +47,6 @@ func (b *BBRLimiter) Limit(component resourcemanage.Component, p resourcemanage.
 			inFlight := p.InFlight()
 			return inFlight > 1 && inFlight > p.MaxInFlight()
 		}
-		//l.prevDropTime.Store(time.Duration(0))
 		return false
 	}
 	// current cpu payload exceeds the threshold
@@ -53,8 +58,6 @@ func (b *BBRLimiter) Limit(component resourcemanage.Component, p resourcemanage.
 			// already started drop, return directly
 			return drop
 		}
-		// store start drop time
-		//l.prevDropTime.Store(now)
 	}
 	return drop
 }

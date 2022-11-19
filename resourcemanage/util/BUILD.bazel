@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+package_group(
+    name = "util_friend",
+    packages = [
+        "//resourcemanage/...",
+    ],
+)
+
+go_library(
+    name = "util",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanage/util",
+    visibility = [
+        ":util_friend",
+    ],
+)

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/resourcemanage/limiter"
 	"github.com/pingcap/tidb/resourcemanage/scheduler"
+	"github.com/pingcap/tidb/resourcemanage/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
 
@@ -28,7 +29,7 @@ var GlobalReourceManage ResourceManage = NewResourceMange()
 
 // ResourceManage is a resource manage
 type ResourceManage struct {
-	poolMap map[string]*PoolContainer
+	poolMap map[string]*util.PoolContainer
 
 	limiter     []limiter.Limiter
 	scheduler   []scheduler.Scheduler
@@ -38,8 +39,14 @@ type ResourceManage struct {
 
 // NewResourceMange is to create a new resource manage
 func NewResourceMange() ResourceManage {
+	li := make([]limiter.Limiter, 0, 1)
+	li = append(li, limiter.NewBBRLimiter(80))
+	sc := make([]scheduler.Scheduler, 0, 1)
+	sc = append(sc, scheduler.NewGradient2Scheduler())
 	return ResourceManage{
-		poolMap: make(map[string]*PoolContainer),
+		poolMap:   make(map[string]*util.PoolContainer),
+		limiter:   li,
+		scheduler: sc,
 	}
 }
 
@@ -64,56 +71,16 @@ func (r *ResourceManage) Stop() {
 }
 
 // Register is to register pool into resource manage
-func (r *ResourceManage) Register(pool GorotinuePool, name string, _ TaskPriority, component Component) error {
-	p := PoolContainer{Pool: pool, component: component}
+func (r *ResourceManage) Register(pool util.GorotinuePool, name string, _ util.TaskPriority, component util.Component) error {
+	p := util.PoolContainer{Pool: pool, Component: component}
 	return r.registerPool(name, &p)
 
 }
 
-func (r *ResourceManage) registerPool(name string, pool *PoolContainer) error {
+func (r *ResourceManage) registerPool(name string, pool *util.PoolContainer) error {
 	if _, contain := r.poolMap[name]; contain {
 		return errors.New("pool name is already exist")
 	}
 	r.poolMap[name] = pool
 	return nil
 }
-
-// GorotinuePool is a pool interface
-type GorotinuePool interface {
-	Release()
-
-	Tune(size int)
-	LastTunerTs() time.Time
-	MaxInFlight() int64
-	InFlight() int64
-	MinRT() uint64
-	MaxPASS() uint64
-	Cap() int
-	LongRTT() float64
-	ShortRTT() uint64
-	GetQueueSize() int64
-	Running() int
-}
-
-// PoolContainer is a pool container
-type PoolContainer struct {
-	Pool      GorotinuePool
-	component Component
-}
-
-// TaskPriority is the priority of the task.
-type TaskPriority int
-
-const (
-	HighPriority TaskPriority = iota
-	NormalPriority
-	LowPriority
-)
-
-// Component is ID for difference component
-type Component int
-
-const (
-	UNKNOWN Component = iota // it is only for test
-	DDL
-)

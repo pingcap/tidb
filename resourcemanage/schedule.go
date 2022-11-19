@@ -14,8 +14,21 @@
 
 package resourcemanage
 
+import "github.com/pingcap/tidb/resourcemanage/util"
+
 func (r *ResourceManage) schedule() {
 	for _, pool := range r.poolMap {
-		pool.schedule()
+		r.schedulePool(pool)
 	}
+	for _, pool := range r.poolMap {
+		r.limitPool(pool)
+	}
+}
+
+func (r *ResourceManage) schedulePool(pool *util.PoolContainer) {
+
+}
+
+func (r *ResourceManage) limitPool(pool *util.PoolContainer) {
+
 }

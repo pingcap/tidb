@@ -17,7 +17,7 @@ package scheduler
 import (
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/resourcemanage/util"
 )
 
 const (
@@ -35,5 +35,5 @@ const (
 )
 
 type Scheduler interface {
-	Tune(component resourcemanage.Component, p resourcemanage.GorotinuePool) SchedulerCommand
+	Tune(component util.Component, p util.GorotinuePool) SchedulerCommand
 }

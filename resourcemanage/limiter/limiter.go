@@ -14,10 +14,18 @@
 
 package limiter
 
-import "github.com/pingcap/tidb/resourcemanage"
+import (
+	"github.com/pingcap/tidb/resourcemanage/util"
+)
 
 type SchedulerCommand int
 
 type Limiter interface {
-	Limit(component resourcemanage.Component, p resourcemanage.GorotinuePool) bool
+	Limit(component util.Component, p util.GorotinuePool) bool
+}
+
+func NewLimiter() []Limiter {
+	return []Limiter{
+		NewBBRLimiter(80),
+	}
 }
