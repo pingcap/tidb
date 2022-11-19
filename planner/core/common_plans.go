@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 
@@ -646,14 +647,39 @@ type SelectInto struct {
 }
 
 type JsonExplainRow struct {
-	ID           string  `json:"id"`
-	EstRows      float64 `json:"estRows"`
-	EstCost      float64 `json:"estCost"`
-	TaskType     string  `json:"taskType"`
-	AccessObject string  `json:"accessObject"`
-	OperatorInfo string  `json:"operatorInfo"`
-	CostFormula  string  `json:"costFormula"`
-	//ExecuteInfo  string  `json:"executeInfo"`
+	ID                  string `json:"id"`
+	EstRows             string `json:"estRows"`
+	ActRows             string `json:"actRows,omitempty"`
+	TaskType            string `json:"taskType"`
+	AccessObject        string `json:"accessObject"`
+	ExecuteInfo         string `json:"executeInfo,omitempty"`
+	OperatorInfo        string `json:"operatorInfo"`
+	EstCost             string `json:"estCost,omitempty"`
+	CostFormula         string `json:"costFormula,omitempty"`
+	Idx                 int    `json:"idx,omitempty"`
+	ChildrenIdx         []int  `json:"childrenIdx,omitempty"`
+	ChildrenEndIdx      int    `json:"childrenEndIdx,omitempty"`
+	IsRoot              bool   `json:"isRoot,omitempty"`
+	IsLastChildren      bool   `json:"isLastChildren,omitempty"`
+	MemoryInfo          string `json:"memoryInfo,omitempty"`
+	DiskInfo            string `json:"diskInfo,omitempty"`
+	TotalMemoryConsumed string `json:"totalMemoryConsumed,omitempty"`
+}
+
+type JsonRows []*JsonExplainRow
+
+// ToString convert json to string
+func (j *JsonRows) ToString() string {
+	b, err := json.Marshal(*j)
+	if err != nil {
+		logutil.BgLogger().Error("Explain: encode json failed")
+	}
+	var out bytes.Buffer
+	err = json.Indent(&out, b, "", "    ")
+	if err != nil {
+		logutil.BgLogger().Error("Explain: resolve json to string failed")
+	}
+	return out.String()
 }
 
 // Explain represents a explain plan.
@@ -668,7 +694,7 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	JsonRows    []*JsonExplainRow
+	JsonRows    JsonRows
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -722,6 +748,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"hint"}
 	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
+	case format == types.ExplainFormatJSON:
+		fieldNames = []string{"json"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -811,13 +839,15 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
 		e.explainFlatPlanInJsonFormat(flat)
-		//if e.Analyze &&
-		//	e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
-		//	e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-		//	row := e.Rows[0]
-		//	tracker := e.SCtx().GetSessionVars().MemTracker
-		//	row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
-		//}
+		if e.Analyze && len(e.JsonRows) > 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			jsonRow := e.JsonRows[0]
+			tracker := e.SCtx().GetSessionVars().MemTracker
+			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
+		}
+		//row := []string{e.JsonRows.ToString()}
+		e.Rows = append(e.Rows, []string{e.JsonRows.ToString()})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -845,11 +875,11 @@ func (e *Explain) explainFlatPlanInJsonFormat(flat *FlatPhysicalPlan) {
 	for _, flatOp := range flat.Main {
 		e.explainFlatOpInJsonFormat(flatOp)
 	}
-	//for _, cte := range flat.CTEs {
-	//	for _, flatOp := range cte {
-	//		e.explainFlatOpInRowFormat(flatOp)
-	//	}
-	//}
+	for _, cte := range flat.CTEs {
+		for _, flatOp := range cte {
+			e.explainFlatOpInJsonFormat(flatOp)
+		}
+	}
 }
 
 func (e *Explain) explainFlatOpInJsonFormat(flatOp *FlatOperator) {
@@ -859,15 +889,16 @@ func (e *Explain) explainFlatOpInJsonFormat(flatOp *FlatOperator) {
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
+	explainID := flatOp.Origin.ExplainID().String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
-	e.prepareOperatorInfoForJsonFormat(flatOp.Origin, taskTp, textTreeExplainID)
-	//if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
-	//	if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
-	//		e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
-	//	}
-	//}
+	e.prepareOperatorInfoForJsonFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+		}
+	}
 }
 
 func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
@@ -972,94 +1003,38 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJsonFormat(p Plan, taskType, id string) {
+func (e *Explain) prepareOperatorInfoForJsonFormat(p Plan, taskType, id string, explainID string) {
 	if p.ExplainID().String() == "_0" {
 		return
 	}
 
-	jsonRow := e.getOperatorInfoForJsonFormat(p, id)
-	jsonRow.ID = id
-	jsonRow.TaskType = taskType
-
-	//var row []string
-	//if e.Analyze || e.RuntimeStatsColl != nil {
-	//	row = []string{id, estRows}
-	//	if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-	//		row = append(row, estCost)
-	//	}
-	//	if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-	//		row = append(row, costFormula)
-	//	}
-	//	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
-	//	row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
-	//} else {
-	//	row = []string{id, estRows}
-	//	if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-	//		row = append(row, estCost)
-	//	}
-	//	row = append(row, taskType, accessObject, operatorInfo)
-	//}
-
-	e.JsonRows = append(e.JsonRows, jsonRow)
-	// todo(json): e.Rows = append(e.Rows, row)
-}
-
-func (e *Explain) getOperatorInfoForJsonFormat(p Plan, id string) *JsonExplainRow {
-	jsonRow := &JsonExplainRow{}
-	// For `explain for connection` statement, `e.ExplainRows` will be set. todo(json)
-	for _, row := range e.ExplainRows {
-		if len(row) < 5 {
-			panic("should never happen")
-		}
-		if row[0] == id {
-			//return row[1], "N/A", "N/A", row[3], row[4]
-			// return estRows, estCost, costFormula, accessObject, operatorInfo
-			if estRows, err := strconv.ParseFloat(row[1], 64); err == nil {
-				jsonRow.EstRows = estRows
-			}
-			jsonRow.AccessObject = row[3]
-			jsonRow.OperatorInfo = row[4]
-			return jsonRow
-		}
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	jsonRow := &JsonExplainRow{
+		ID:           explainID,
+		EstRows:      estRows,
+		TaskType:     taskType,
+		AccessObject: accessObject,
+		OperatorInfo: operatorInfo,
 	}
 
-	pp, isPhysicalPlan := p.(PhysicalPlan)
-	//estRows := "N/A"
-	//estCost := "N/A"
-	//costFormula := "N/A"
-	if isPhysicalPlan {
-		if estRows, err := strconv.ParseFloat(strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64), 64); err == nil {
-			jsonRow.EstRows = estRows
-		}
-		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-			// todo(json)
-			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
-			if estCost, err := strconv.ParseFloat(strconv.FormatFloat(costVer2.cost, 'f', 2, 64), 64); err == nil {
-				jsonRow.EstCost = estCost
-			}
-			jsonRow.CostFormula = costVer2.formula
-		} else {
-			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
-			if estCost, err := strconv.ParseFloat(strconv.FormatFloat(planCost, 'f', 2, 64), 64); err == nil {
-				jsonRow.EstCost = estCost
-			}
-		}
-	} else if si := p.statsInfo(); si != nil {
-		if estCost, err := strconv.ParseFloat(strconv.FormatFloat(si.RowCount, 'f', 2, 64), 64); err == nil {
+	if e.Analyze || e.RuntimeStatsColl != nil {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			jsonRow.EstCost = estCost
 		}
-	}
-
-	if plan, ok := p.(dataAccesser); ok {
-		jsonRow.AccessObject = plan.AccessObject().String()
-		jsonRow.OperatorInfo = plan.OperatorInfo(false)
-	} else {
-		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
-			jsonRow.AccessObject = pa.accessObject(e.ctx).String()
+		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+			jsonRow.CostFormula = costFormula
 		}
-		jsonRow.OperatorInfo = p.ExplainInfo()
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
+		jsonRow.ActRows = actRows
+		jsonRow.ExecuteInfo = analyzeInfo
+		jsonRow.MemoryInfo = memoryInfo
+		jsonRow.DiskInfo = diskInfo
+	} else {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+			jsonRow.CostFormula = costFormula
+		}
 	}
-	return jsonRow
+	e.JsonRows = append(e.JsonRows, jsonRow)
 }
 
 func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
