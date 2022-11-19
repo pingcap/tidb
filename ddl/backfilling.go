@@ -685,7 +685,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeAddIndexWorker:
 			idxWorker, err := newAddIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc, job)
 			if err != nil {
-				return b.handleCreateBackfillWorkerErr(err)
+				if b.canSkipError(err) {
+					continue
+				} else {
+					return err
+				}
 			}
 			if idxWorker.copCtx != nil && b.copReqSenderPool == nil {
 				startTS := latestStartTS(sessCtx.GetStore())
@@ -735,14 +739,15 @@ func latestStartTS(storage kv.Storage) (startTS uint64) {
 	return txn.StartTS()
 }
 
-func (b *backfillScheduler) handleCreateBackfillWorkerErr(err error) error {
-	if len(b.workers) == 0 {
-		return errors.Trace(err)
+func (b *backfillScheduler) canSkipError(err error) bool {
+	if len(b.workers) > 0 {
+		// The error can be skipped because the rest workers can handle the tasks.
+		return true
 	}
 	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
 		zap.Int("current worker count", len(b.workers)),
 		zap.Int64("job ID", b.reorgInfo.ID), zap.Error(err))
-	return nil
+	return false
 }
 
 func (b *backfillScheduler) Close() {

@@ -107,7 +107,7 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
-	srcChk := chunk.NewChunkWithCapacity(p.copCtx.fieldTps, 1)
+	srcChk := renewChunk(nil, p.copCtx.fieldTps)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -123,13 +123,12 @@ func (c *copReqSender) run() {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
-		batchSize := int(variable.GetDDLReorgBatchSize()) * copReadBatchFactor
 		var done bool
 		var total int
 		for !done {
 			idxRec := p.idxBufPool.Get().([]*indexRecord)
-			srcChk.GrowAndReset(batchSize)
 			idxRec = idxRec[:0]
+			srcChk = renewChunk(srcChk, p.copCtx.fieldTps)
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
@@ -139,6 +138,17 @@ func (c *copReqSender) run() {
 			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, done: done, total: total}
 		}
 	}
+}
+
+// renewChunk creates a new chunk when the reorg batch size is changed.
+func renewChunk(oldChk *chunk.Chunk, fts []*types.FieldType) *chunk.Chunk {
+	newSize := variable.GetDDLReorgBatchSize()
+	newCap := int(newSize) * copReadBatchFactor
+	if oldChk == nil || oldChk.Capacity() != newCap {
+		return chunk.NewChunkWithCapacity(fts, newCap)
+	}
+	oldChk.Reset()
+	return oldChk
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
@@ -287,7 +297,8 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
 		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
-	return buf, false, nil
+	done := chk.NumRows() < chk.Capacity()
+	return buf, done, nil
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
