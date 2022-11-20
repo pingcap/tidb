@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
@@ -646,7 +646,8 @@ type SelectInto struct {
 	IntoOpt    *ast.SelectIntoOption
 }
 
-type JsonExplainRow struct {
+// JSONExplainRow store explain info for JSON encode
+type JSONExplainRow struct {
 	ID                  string `json:"id"`
 	EstRows             string `json:"estRows"`
 	ActRows             string `json:"actRows,omitempty"`
@@ -666,10 +667,11 @@ type JsonExplainRow struct {
 	TotalMemoryConsumed string `json:"totalMemoryConsumed,omitempty"`
 }
 
-type JsonRows []*JsonExplainRow
+// JSONRows store JSONExplainRows
+type JSONRows []*JSONExplainRow
 
 // ToString convert json to string
-func (j *JsonRows) ToString() string {
+func (j *JSONRows) ToString() string {
 	b, err := json.Marshal(*j)
 	if err != nil {
 		logutil.BgLogger().Error("Explain: encode json failed")
@@ -694,7 +696,7 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	JsonRows    JsonRows
+	JsonRows    JSONRows
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -838,7 +840,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
-		e.explainFlatPlanInJsonFormat(flat)
+		e.explainFlatPlanInJSONFormat(flat)
 		if e.Analyze && len(e.JsonRows) > 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
@@ -868,21 +870,21 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 	}
 }
 
-func (e *Explain) explainFlatPlanInJsonFormat(flat *FlatPhysicalPlan) {
+func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {
-		e.explainFlatOpInJsonFormat(flatOp)
+		e.explainFlatOpInJSONFormat(flatOp)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			e.explainFlatOpInJsonFormat(flatOp)
+			e.explainFlatOpInJSONFormat(flatOp)
 		}
 	}
 }
 
-func (e *Explain) explainFlatOpInJsonFormat(flatOp *FlatOperator) {
+func (e *Explain) explainFlatOpInJSONFormat(flatOp *FlatOperator) {
 	taskTp := ""
 	if flatOp.IsRoot {
 		taskTp = "root"
@@ -893,7 +895,7 @@ func (e *Explain) explainFlatOpInJsonFormat(flatOp *FlatOperator) {
 	textTreeExplainID := texttree.PrettyIdentifier(explainID+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
-	e.prepareOperatorInfoForJsonFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
 	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
 		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
@@ -1003,13 +1005,13 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJsonFormat(p Plan, taskType, id string, explainID string) {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, explainID string) {
 	if p.ExplainID().String() == "_0" {
 		return
 	}
 
 	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
-	jsonRow := &JsonExplainRow{
+	jsonRow := &JSONExplainRow{
 		ID:           explainID,
 		EstRows:      estRows,
 		TaskType:     taskType,
