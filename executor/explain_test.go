@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -514,4 +515,67 @@ func TestIssue35105(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place=1")
 	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+}
+
+func TestExplainJSONFormatOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+	cases := []string{
+		"select * from t1",
+		"select count(*) from t2",
+		"select * from t1, t2 where t1.id = t2.id",
+		"select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id",
+		"with top10 as ( select * from t1 order by id desc limit 10 ) select * from top10 where id in (1,2)",
+		"insert into t1 values(1)",
+		"delete from t2 where t2.id > 10",
+		"update t2 set id = 1 where id =2",
+		"select * from t1 where t1.id < (select sum(t2.id) from t2 where t2.id = t1.id)",
+	}
+
+	// explain
+	for _, sql := range cases {
+		jsonForamt := "explain format = json " + sql
+		rowForamt := "explain format = row " + sql
+		resJson := tk.MustQuery(jsonForamt).Rows()
+		resRow := tk.MustQuery(rowForamt).Rows()
+
+		j := new(plannercore.JSONRows)
+		require.NoError(t, json.Unmarshal([]byte(resJson[0][0].(string)), j))
+		require.Equal(t, len(*j), len(resRow))
+		for i, row := range resRow {
+			require.Contains(t, row[0], (*j)[i].ID)
+			require.Equal(t, (*j)[i].EstRows, row[1])
+			require.Equal(t, (*j)[i].TaskType, row[2])
+			require.Equal(t, (*j)[i].AccessObject, row[3])
+			require.Equal(t, (*j)[i].OperatorInfo, row[4])
+		}
+	}
+
+	// explain analyze
+	for _, sql := range cases {
+		jsonForamt := "explain analyze format = json " + sql
+		rowForamt := "explain analyze format = row " + sql
+		resJson := tk.MustQuery(jsonForamt).Rows()
+		resRow := tk.MustQuery(rowForamt).Rows()
+
+		j := new(plannercore.JSONRows)
+		require.NoError(t, json.Unmarshal([]byte(resJson[0][0].(string)), j))
+		require.Equal(t, len(*j), len(resRow))
+		for i, row := range resRow {
+			require.Contains(t, row[0], (*j)[i].ID)
+			require.Equal(t, (*j)[i].EstRows, row[1])
+			require.Equal(t, (*j)[i].ActRows, row[2])
+			require.Equal(t, (*j)[i].TaskType, row[3])
+			require.Equal(t, (*j)[i].AccessObject, row[4])
+			require.Equal(t, (*j)[i].OperatorInfo, row[6])
+			// executeInfo, memory, disk maybe vary in multi execution
+			require.NotEqual(t, (*j)[i].ExecuteInfo, "")
+			require.NotEqual(t, (*j)[i].MemoryInfo, "")
+			require.NotEqual(t, (*j)[i].DiskInfo, "")
+		}
+	}
 }
