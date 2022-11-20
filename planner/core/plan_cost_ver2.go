@@ -567,9 +567,10 @@ func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
 	// TODO: remove this empirical value.
-	batchRatio := 1024.0
+	batchRatio := 1800.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
-	doubleReadCost := doubleReadCostVer2(option, buildRows/batchRatio, requestFactor)
+	numTasks := math.Max(buildRows/batchRatio, 0.001)
+	doubleReadCost := doubleReadCostVer2(option, numTasks, requestFactor)
 
 	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, doubleReadCost), probeConcurrency))
 	p.planCostInit = true
