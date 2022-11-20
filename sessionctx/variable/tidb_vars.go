@@ -1079,7 +1079,7 @@ const (
 	DefTiDBForeignKeyChecks                      = false
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 1
+	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
 	DefTiDBMergePartitionStatsConcurrency        = 1
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
@@ -1148,9 +1148,8 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
+	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
 var (
