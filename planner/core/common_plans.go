@@ -650,8 +650,8 @@ type SelectInto struct {
 	IntoOpt    *ast.SelectIntoOption
 }
 
-// JSONExplainRow store explain info for JSON encode
-type JSONExplainRow struct {
+// ExplainInfoForEncode store explain info for JSON encode
+type ExplainInfoForEncode struct {
 	ID                  string `json:"id"`
 	EstRows             string `json:"estRows"`
 	ActRows             string `json:"actRows,omitempty"`
@@ -671,11 +671,11 @@ type JSONExplainRow struct {
 	TotalMemoryConsumed string `json:"totalMemoryConsumed,omitempty"`
 }
 
-// JSONRows store JSONExplainRows
-type JSONRows []*JSONExplainRow
+// JSONSlice store JSONExplainRows
+type JSONSlice []*ExplainInfoForEncode
 
 // ToString convert json to string
-func (j *JSONRows) ToString() string {
+func (j *JSONSlice) ToString() string {
 	b, err := json.Marshal(*j)
 	if err != nil {
 		logutil.BgLogger().Error("Explain: encode json failed")
@@ -700,7 +700,7 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	JSONRows    JSONRows
+	JSON        JSONSlice
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -845,15 +845,15 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
 		e.explainFlatPlanInJSONFormat(flat)
-		if e.Analyze && len(e.JSONRows) > 0 &&
+		if e.Analyze && len(e.JSON) > 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-			jsonRow := e.JSONRows[0]
+			jsonRow := e.JSON[0]
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
 		//row := []string{e.JsonRows.ToString()}
-		e.Rows = append(e.Rows, []string{e.JSONRows.ToString()})
+		e.Rows = append(e.Rows, []string{e.JSON.ToString()})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1015,7 +1015,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 	}
 
 	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
-	jsonRow := &JSONExplainRow{
+	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
 		TaskType:     taskType,
@@ -1040,7 +1040,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 			jsonRow.CostFormula = costFormula
 		}
 	}
-	e.JSONRows = append(e.JSONRows, jsonRow)
+	e.JSON = append(e.JSON, jsonRow)
 }
 
 func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {

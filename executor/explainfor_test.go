@@ -1413,7 +1413,7 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
-	j := new(core.JSONRows)
+	j := new(core.JSONSlice)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 	require.Equal(t, len(*j), len(resRow))
 	for i, row := range resRow {
@@ -1434,7 +1434,7 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
-	j = new(core.JSONRows)
+	j = new(core.JSONSlice)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 	require.Equal(t, len(*j), len(resRow))
 	for i, row := range resRow {

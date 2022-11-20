@@ -552,7 +552,7 @@ func TestExplainJSON(t *testing.T) {
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
-		j := new(plannercore.JSONRows)
+		j := new(plannercore.JSONSlice)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 		require.Equal(t, len(*j), len(resRow))
 		for i, row := range resRow {
@@ -571,7 +571,7 @@ func TestExplainJSON(t *testing.T) {
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
-		j := new(plannercore.JSONRows)
+		j := new(plannercore.JSONSlice)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 		require.Equal(t, len(*j), len(resRow))
 		for i, row := range resRow {
