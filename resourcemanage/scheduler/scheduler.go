@@ -28,8 +28,7 @@ const (
 type SchedulerCommand int
 
 const (
-	NoIdea SchedulerCommand = iota
-	Downclock
+	Downclock SchedulerCommand = iota
 	Hold
 	Overclock
 )

@@ -40,8 +40,6 @@ func (r *ResourceManage) schedulePool(pool *util.PoolContainer) {
 			pool.Pool.Tune(cap - 1)
 		case scheduler.Hold:
 			continue
-		case scheduler.NoIdea:
-			continue
 		}
 	}
 }
