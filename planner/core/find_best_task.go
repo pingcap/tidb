@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
 )
 
@@ -1875,7 +1876,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	if prop.TaskTp == property.MppTaskType {
+	// In disaggregated tiflash mode, only MPP is allowed, Cop and BatchCop is deprecated.
+	if prop.TaskTp == property.MppTaskType || config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
