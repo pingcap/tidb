@@ -696,7 +696,7 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	JsonRows    JSONRows
+	JSONRows    JSONRows
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -841,15 +841,15 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
 		e.explainFlatPlanInJSONFormat(flat)
-		if e.Analyze && len(e.JsonRows) > 0 &&
+		if e.Analyze && len(e.JSONRows) > 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-			jsonRow := e.JsonRows[0]
+			jsonRow := e.JSONRows[0]
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
 		//row := []string{e.JsonRows.ToString()}
-		e.Rows = append(e.Rows, []string{e.JsonRows.ToString()})
+		e.Rows = append(e.Rows, []string{e.JSONRows.ToString()})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1036,7 +1036,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 			jsonRow.CostFormula = costFormula
 		}
 	}
-	e.JsonRows = append(e.JsonRows, jsonRow)
+	e.JSONRows = append(e.JSONRows, jsonRow)
 }
 
 func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
