@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/resourcemanage/util"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
@@ -54,13 +55,13 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	state         atomic.Int32
 	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
-	lastTuneTs    atomic.Pointer[time.Time]
-
-	waitingTask atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
+	limiter       atomic.Bool
+	limiterTTL    atomicutil.Time
+	waitingTask   atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
-func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name string, size int32, priority resourcemanage.TaskPriority, component resourcemanage.Component, options ...Option) (*Pool[T, U, C, CT, TF], error) {
+func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name string, size int32, priority util.TaskPriority, component util.Component, options ...Option) (*Pool[T, U, C, CT, TF], error) {
 	opts := loadOptions(options...)
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
@@ -191,6 +192,21 @@ func (p *Pool[T, U, C, CT, TF]) addRunning(delta int) {
 
 func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 	p.waiting.Add(int32(delta))
+}
+
+func (p *Pool[T, U, C, CT, TF]) Limit(duration time.Duration) {
+	p.limiter.Store(true)
+	p.limiterTTL.Store(time.Now().Add(duration))
+}
+
+func (p *Pool[T, U, C, CT, TF]) islimit() bool {
+	if p.limiter.Load() {
+		if time.Now().Before(p.limiterTTL.Load()) {
+			return true
+		}
+		p.limiter.Store(false)
+	}
+	return false
 }
 
 func (p *Pool[T, U, C, CT, TF]) addWaitingTask() {
@@ -398,6 +414,9 @@ func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) 
 			return
 		}
 	retry:
+		if p.islimit() {
+			goto retry
+		}
 		if p.options.MaxBlockingTasks != 0 && p.Waiting() >= p.options.MaxBlockingTasks {
 			p.lock.Unlock()
 			return
