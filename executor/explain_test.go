@@ -517,7 +517,7 @@ func TestIssue35105(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }
 
-func TestExplainJSONFormatOutput(t *testing.T) {
+func TestExplainJSON(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -535,16 +535,25 @@ func TestExplainJSONFormatOutput(t *testing.T) {
 		"update t2 set id = 1 where id =2",
 		"select * from t1 where t1.id < (select sum(t2.id) from t2 where t2.id = t1.id)",
 	}
+	// test syntax
+	tk.MustExec("explain format = 'json' select * from t1")
+	tk.MustExec("explain format = json select * from t1")
+	tk.MustExec("explain format = 'JSON' select * from t1")
+	tk.MustExec("explain format = JSON select * from t1")
+	tk.MustExec("explain analyze format = 'json' select * from t1")
+	tk.MustExec("explain analyze format = json select * from t1")
+	tk.MustExec("explain analyze format = 'JSON' select * from t1")
+	tk.MustExec("explain analyze format = JSON select * from t1")
 
 	// explain
 	for _, sql := range cases {
 		jsonForamt := "explain format = json " + sql
 		rowForamt := "explain format = row " + sql
-		resJson := tk.MustQuery(jsonForamt).Rows()
+		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
 		j := new(plannercore.JSONRows)
-		require.NoError(t, json.Unmarshal([]byte(resJson[0][0].(string)), j))
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 		require.Equal(t, len(*j), len(resRow))
 		for i, row := range resRow {
 			require.Contains(t, row[0], (*j)[i].ID)
@@ -559,11 +568,11 @@ func TestExplainJSONFormatOutput(t *testing.T) {
 	for _, sql := range cases {
 		jsonForamt := "explain analyze format = json " + sql
 		rowForamt := "explain analyze format = row " + sql
-		resJson := tk.MustQuery(jsonForamt).Rows()
+		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
 		j := new(plannercore.JSONRows)
-		require.NoError(t, json.Unmarshal([]byte(resJson[0][0].(string)), j))
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
 		require.Equal(t, len(*j), len(resRow))
 		for i, row := range resRow {
 			require.Contains(t, row[0], (*j)[i].ID)
