@@ -3843,7 +3843,8 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 	if pi.Type == model.PartitionTypeRange {
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			// Not continues range
-			return 0, 0, nil, errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of RANGE; not a single range"))
 		}
 	}
 

@@ -122,6 +122,8 @@ func (bWT backfillWorkerType) String() string {
 		return "clean up index"
 	case typeAddIndexMergeTmpWorker:
 		return "merge temporary index"
+	case typeReorgPartitionWorker:
+		return "reorganize partition"
 	default:
 		return "unknown"
 	}
