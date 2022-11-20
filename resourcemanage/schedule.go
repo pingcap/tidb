@@ -14,7 +14,10 @@
 
 package resourcemanage
 
-import "github.com/pingcap/tidb/resourcemanage/util"
+import (
+	"github.com/pingcap/tidb/resourcemanage/scheduler"
+	"github.com/pingcap/tidb/resourcemanage/util"
+)
 
 func (r *ResourceManage) schedule() {
 	for _, pool := range r.poolMap {
@@ -26,9 +29,25 @@ func (r *ResourceManage) schedule() {
 }
 
 func (r *ResourceManage) schedulePool(pool *util.PoolContainer) {
-
+	for _, sch := range r.scheduler {
+		cmd := sch.Tune(pool.Component, pool.Pool)
+		switch cmd {
+		case scheduler.Overclock:
+			cap := pool.Pool.Cap()
+			pool.Pool.Tune(cap + 1)
+		case scheduler.Downclock:
+			cap := pool.Pool.Cap()
+			pool.Pool.Tune(cap - 1)
+		case scheduler.Hold:
+			continue
+		case scheduler.NoIdea:
+			continue
+		}
+	}
 }
 
 func (r *ResourceManage) limitPool(pool *util.PoolContainer) {
-
+	for _, lim := range r.limiter {
+		lim.Limit(pool.Component, pool.Pool)
+	}
 }
