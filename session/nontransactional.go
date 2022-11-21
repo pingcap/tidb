@@ -651,7 +651,7 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 		}
 		tableSources = append(tableSources, x)
 	default:
-		return nil, errors.New("Non-transactional DML, unknown type in table refs")
+		return nil, errors.New(fmt.Sprintf("Non-transactional DML, unknown type %T in table refs", node))
 	}
 	return tableSources, nil
 }

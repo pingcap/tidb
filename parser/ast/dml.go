@@ -2221,7 +2221,7 @@ func (n *InsertStmt) SetWhereExpr(e ExprNode) {
 	s.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
+// TableRefsJoin implements ShardableDMLStmt interface.
 func (n *InsertStmt) TableRefsJoin() (*Join, bool) {
 	if n.Select == nil {
 		return nil, false
@@ -2409,10 +2409,9 @@ func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
+// TableRefsJoin implements ShardableDMLStmt interface.
 func (n *DeleteStmt) TableRefsJoin() (*Join, bool) {
-	table := n.TableRefs.TableRefs
-	return table, true
+	return n.TableRefs.TableRefs, true
 }
 
 const (
@@ -2648,7 +2647,7 @@ func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
+// TableRefsJoin implements ShardableDMLStmt interface.
 func (n *UpdateStmt) TableRefsJoin() (*Join, bool) {
 	return n.TableRefs.TableRefs, true
 }
