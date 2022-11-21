@@ -755,7 +755,7 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatJSON:
-		fieldNames = []string{"json"}
+		fieldNames = []string{"JSON"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
