@@ -2628,34 +2628,12 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	return nil
 }
 
-//func isAccountAutoLock(sctx sessionctx.Context, user string, host string, record *privilege.UserAttributes) error {
-//	autoLock := record.AutoAccountLocked
-//	if autoLock {
-//		lockTime := record.PasswordLockTimeDays
-//		lastChanged := record.AutoLockedLastChanged
-//		d := time.Now().Sub(time.Unix(lastChanged, 0))
-//		if d.Microseconds() > lockTime*24*60*60*1000 {
-//			passwordLocking(sctx, user, host, record.FailedLoginAttempts, record.PasswordLockTimeDays, false, 0)
-//			return nil
-//		}
-//		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
-//		return privileges.ErrAccessDenied.FastGenByArgs(user, host)
-//	}
-//	return nil
-//}
-
 func passwordLocking(s *session, user string, host string, newAttributesStr string) error {
-	//lock := 'Y'
-	//if !autoAccountLocked {
-	//	lock = 'N'
-	//}
 	type alterField struct {
 		expr  string
 		value string
 	}
 	var fields []alterField
-	//newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%d\",\"password_lock_time_days\": \"%d\",\"auto_account_locked\": \"%s\",\"failed_login_count\": \"%d\",\"auto_locked_last_changed\": \"%s\"}}",
-	//	failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, time.Now().Format(time.UnixDate))
 	fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
 	if len(fields) > 0 {
 		sql := new(strings.Builder)
@@ -2667,9 +2645,6 @@ func passwordLocking(s *session, user string, host string, newAttributesStr stri
 			}
 		}
 		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
-		//rs, err := s.ExecuteInternal(ctx, sql.String())
-		//defer terror.Call(rs.Close)
-
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 		_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 		if err != nil {

@@ -1410,6 +1410,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(passwdlockinfo.lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", passwdlockinfo.lockAccount})
+			if passwdlockinfo.lockAccount == "N" {
+				newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+					passwdlockinfo.lockAccount, 0, time.Now().Format(time.UnixDate))
+				fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			}
 		}
 
 		// support alter Password_reuse_history and Password_reuse_time
@@ -1428,9 +1433,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if passwdlockinfo.failedLoginAttempts != 0 {
-			lock := "Y"
-			if passwdlockinfo.lockAccount == "N" {
-				lock = "N"
+			lock := "N"
+			if passwdlockinfo.lockAccount == "Y" {
+				lock = "Y"
 			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				passwdlockinfo.failedLoginAttempts, passwdlockinfo.passwordLockTime, lock, 0, time.Now().Format(time.UnixDate))

@@ -422,7 +422,13 @@ func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
 
 func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
+	record := mysqlPriv.matchUser(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", user), zap.String("authHost", host))
+		ErrAccessDenied.FastGenByArgs(user, host)
+		return ""
+	}
 	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount)
 }
 
