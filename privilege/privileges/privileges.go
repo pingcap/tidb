@@ -380,12 +380,12 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 	if autoLock {
 		lockTime := record.PasswordLockTime
 		lastChanged := record.AutoLockedLastChanged
-		d := time.Now().Sub(time.Unix(lastChanged, 0))
-		if d.Microseconds() > lockTime*24*60*60*1000 {
+		d := time.Now().Unix() - lastChanged
+		if d > lockTime*24*60*60 {
 			return p.BuildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0), nil
 		}
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
-		return "", ErrAccessDenied.FastGenByArgs(user, host)
+		return "", ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host, lockTime, lockTime, lockTime)
 	}
 	return "", nil
 }
@@ -428,11 +428,11 @@ func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host stri
 
 func buildPasswordLockingJson(failedLoginAttempts int64,
 	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
-	lock := 'Y'
+	lock := "Y"
 	if !autoAccountLocked {
-		lock = 'N'
+		lock = "N"
 	}
-	newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%d\",\"password_lock_time_days\": \"%d\",\"auto_account_locked\": \"%s\",\"failed_login_count\": \"%d\",\"auto_locked_last_changed\": \"%s\"}}",
+	newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 		failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, time.Now().Format(time.UnixDate))
 	return newAttributesStr
 }

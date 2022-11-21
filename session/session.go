@@ -2610,8 +2610,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 	}
 	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		if strings.Index(err.Error(), "decode") != -1 || strings.Index(err.Error(), "caching_sha2_password") != -1 || strings.Index(err.Error(), "socket") != -1 {
-			failedLogin(s, user.Username, user.Hostname)
+		if strings.Index(err.Error(), "decode") != -1 || strings.Index(err.Error(), "caching_sha2_password") != -1 || strings.Index(err.Error(), "socket") != -1 || strings.Index(err.Error(), "Access denied") != -1 {
+			failedLogin(s, user.Username)
 		}
 		return err
 	}
@@ -2644,7 +2644,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 //	return nil
 //}
 
-func passwordLocking(sctx sessionctx.Context, user string, host string, newAttributesStr string) error {
+func passwordLocking(s *session, user string, host string, newAttributesStr string) error {
 	//lock := 'Y'
 	//if !autoAccountLocked {
 	//	lock = 'N'
@@ -2666,24 +2666,43 @@ func passwordLocking(sctx sessionctx.Context, user string, host string, newAttri
 				sqlexec.MustFormatSQL(sql, ",")
 			}
 		}
-		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", user, host)
+		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+		//rs, err := s.ExecuteInternal(ctx, sql.String())
+		//defer terror.Call(rs.Close)
+
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-		rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
-		defer terror.Call(rs.Close)
-		return err
+		_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				_, err1 := s.ExecuteInternal(ctx, "ROLLBACK")
+				terror.Log(err1)
+				return
+			}
+			_, err = s.ExecuteInternal(ctx, "COMMIT")
+			if err != nil {
+				return
+			}
+		}()
+		_, err = s.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func getFailedLoginCount(sctx sessionctx.Context, user string, host string) privilege.UserAttributes {
+func getFailedLoginCount(s *session, user string) privilege.UserAttributes {
 	var failedLoginCount int64
 	userAttr := privilege.UserAttributes{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "SELECT user_attributes from mysql.user WHERE USER = '%?' and HOST = '%?' for update", user, host)
+	rs, err := s.ExecuteInternal(ctx, `SELECT Host,user_attributes from mysql.user WHERE USER = %? for update`, user)
+	defer terror.Call(rs.Close)
 	if err != nil {
 		return userAttr
 	}
-	defer terror.Call(rs.Close)
 	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -2696,29 +2715,36 @@ func getFailedLoginCount(sctx sessionctx.Context, user string, host string) priv
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			//failedLoginCount = row.GetInt64(0)
-			userAttributesJson := row.GetJSON(0)
-			pathExpr, exprErr := types.ParseJSONPathExpr("$.Password_locking.failed_login_count")
-			if exprErr != nil {
-				return userAttr
-			}
-			if failedLoginCountBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{pathExpr}); found {
-				failedLoginCount = failedLoginCountBJ.GetInt64()
-				userAttr.FailedLoginCount = failedLoginCount
-			}
-
+			userAttr.User = user
+			userAttr.Host = row.GetString(0)
+			userAttributesJson := row.GetJSON(1)
 			failedloginPathExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_attempts")
 			if err != nil {
 				return userAttr
 			}
 			if failedLoginAttemptsBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{failedloginPathExpr}); found {
-				userAttr.FailedLoginAttempts = failedLoginAttemptsBJ.GetInt64()
+				failedLoginAttempts, err := failedLoginAttemptsBJ.Unquote()
+				if err != nil {
+					return userAttr
+				}
+				userAttr.FailedLoginAttempts, err = strconv.ParseInt(failedLoginAttempts, 10, 64)
+				if err != nil {
+					return userAttr
+				}
 			}
 			lockTimePathExpr, err := types.ParseJSONPathExpr("$.Password_locking.password_lock_time_days")
 			if err != nil {
 				return userAttr
 			}
 			if lockTimeBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{lockTimePathExpr}); found {
-				userAttr.PasswordLockTimeDays = lockTimeBJ.GetInt64()
+				lockTime, err := lockTimeBJ.Unquote()
+				if err != nil {
+					return userAttr
+				}
+				userAttr.PasswordLockTimeDays, err = strconv.ParseInt(lockTime, 10, 64)
+				if err != nil {
+					return userAttr
+				}
 			}
 
 			autoAccountLockedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_account_locked")
@@ -2742,7 +2768,14 @@ func getFailedLoginCount(sctx sessionctx.Context, user string, host string) priv
 				return userAttr
 			}
 			if failedLoginCountBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{failedLoginCountExpr}); found {
-				userAttr.FailedLoginCount = failedLoginCountBJ.GetInt64()
+				failedLoginCount, err := failedLoginCountBJ.Unquote()
+				if err != nil {
+					return userAttr
+				}
+				userAttr.FailedLoginCount, err = strconv.ParseInt(failedLoginCount, 10, 64)
+				if err != nil {
+					return userAttr
+				}
 			}
 
 			autoLockedLastChangedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_locked_last_changed")
@@ -2750,7 +2783,6 @@ func getFailedLoginCount(sctx sessionctx.Context, user string, host string) priv
 				return userAttr
 			}
 			if autoLockedLastChangedBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{autoLockedLastChangedExpr}); found {
-				//time.Now().Unix()
 				autoLockedLastChangedTime, err := autoLockedLastChangedBJ.Unquote()
 				if err != nil {
 					return userAttr
@@ -2758,39 +2790,101 @@ func getFailedLoginCount(sctx sessionctx.Context, user string, host string) priv
 				t, _ := time.ParseInLocation(time.UnixDate, autoLockedLastChangedTime, time.Local)
 				userAttr.AutoLockedLastChanged = t.Unix()
 			}
+
+			pathExpr, exprErr := types.ParseJSONPathExpr("$.Password_locking.failed_login_count")
+			if exprErr != nil {
+				return userAttr
+			}
+			if failedLoginCountBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{pathExpr}); found {
+				failedLoginCount = failedLoginCountBJ.GetInt64()
+				userAttr.FailedLoginCount = failedLoginCount
+			}
+
+			//failedloginPathExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_attempts")
+			//if err != nil {
+			//	return userAttr
+			//}
+			//if failedLoginAttemptsBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{failedloginPathExpr}); found {
+			//	userAttr.FailedLoginAttempts = failedLoginAttemptsBJ.GetInt64()
+			//}
+			//lockTimePathExpr, err := types.ParseJSONPathExpr("$.Password_locking.password_lock_time_days")
+			//if err != nil {
+			//	return userAttr
+			//}
+			//if lockTimeBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{lockTimePathExpr}); found {
+			//	userAttr.PasswordLockTimeDays = lockTimeBJ.GetInt64()
+			//}
+			//
+			//autoAccountLockedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_account_locked")
+			//if err != nil {
+			//	return userAttr
+			//}
+			//if autoAccountLockedBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{autoAccountLockedExpr}); found {
+			//	autoAccountLock, err := autoAccountLockedBJ.Unquote()
+			//	if err != nil {
+			//		return userAttr
+			//	}
+			//	if autoAccountLock == "Y" {
+			//		userAttr.AutoAccountLocked = true
+			//	} else {
+			//		userAttr.AutoAccountLocked = false
+			//	}
+			//}
+			//
+			//failedLoginCountExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_count")
+			//if err != nil {
+			//	return userAttr
+			//}
+			//if failedLoginCountBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{failedLoginCountExpr}); found {
+			//	userAttr.FailedLoginCount = failedLoginCountBJ.GetInt64()
+			//}
+			//
+			//autoLockedLastChangedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_locked_last_changed")
+			//if err != nil {
+			//	return userAttr
+			//}
+			//if autoLockedLastChangedBJ, found := userAttributesJson.Extract([]types.JSONPathExpression{autoLockedLastChangedExpr}); found {
+			//	//time.Now().Unix()
+			//	autoLockedLastChangedTime, err := autoLockedLastChangedBJ.Unquote()
+			//	if err != nil {
+			//		return userAttr
+			//	}
+			//	t, _ := time.ParseInLocation(time.UnixDate, autoLockedLastChangedTime, time.Local)
+			//	userAttr.AutoLockedLastChanged = t.Unix()
+			//}
 		}
 	}
 	return userAttr
 }
 
-func userAutoAccountLocked(sctx sessionctx.Context, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) bool {
+func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) bool {
 	autoAccountLocked := false
 	if failedLoginCount < userFailedLoginAttempts {
 		autoAccountLocked = false
 	} else if failedLoginCount >= userFailedLoginAttempts {
 		autoAccountLocked = true
 	}
-	pm := privilege.GetPrivilegeManager(sctx)
+	pm := privilege.GetPrivilegeManager(s)
 	newAttributesStr := pm.BuildPasswordLockingJson(userFailedLoginAttempts,
 		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
-	if err := passwordLocking(sctx, user, host, newAttributesStr); err != nil {
+	if err := passwordLocking(s, user, host, newAttributesStr); err != nil {
 		return false
 	}
 	return true
 }
 
-func successLogin(sctx sessionctx.Context, user string, host string, userAtrr string) bool {
-	if err := passwordLocking(sctx, user, host, userAtrr); err != nil {
+func successLogin(s *session, user string, host string, userAtrr string) bool {
+	if err := passwordLocking(s, user, host, userAtrr); err != nil {
 		return false
 	}
-	domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	domain.GetDomain(s).NotifyUpdatePrivilege()
 	return true
 }
 
-func failedLogin(sctx sessionctx.Context, user string, host string) bool {
-	userAttr := getFailedLoginCount(sctx, user, host)
-	lockState := userAutoAccountLocked(sctx, user, host, userAttr.FailedLoginCount+1, userAttr.FailedLoginAttempts, userAttr.PasswordLockTimeDays)
-	domain.GetDomain(sctx).NotifyUpdatePrivilege()
+func failedLogin(s *session, user string) bool {
+	userAttr := getFailedLoginCount(s, user)
+	lockState := userAutoAccountLocked(s, user, userAttr.Host, userAttr.FailedLoginCount+1, userAttr.FailedLoginAttempts, userAttr.PasswordLockTimeDays)
+	domain.GetDomain(s).NotifyUpdatePrivilege()
 	return lockState
 }
 

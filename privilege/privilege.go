@@ -30,6 +30,8 @@ func (k keyType) String() string {
 }
 
 type UserAttributes struct {
+	User                  string
+	Host                  string
 	FailedLoginCount      int64
 	PasswordLockTimeDays  int64
 	AutoAccountLocked     bool
