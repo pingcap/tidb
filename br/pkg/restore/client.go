@@ -1874,7 +1874,7 @@ func ApplyKVFilesWithBatchMethod(
 				fs.defaultSize += f.Length
 				fs.defaultKVCount += f.GetNumberOfEntries()
 				if len(fs.defaultFiles) >= batchCount || fs.defaultSize >= batchSize {
-					applyFunc(fs.defaultFiles, int64(fs.defaultKVCount), fs.defaultSize)
+					applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
 					fs.defaultFiles = nil
 					fs.defaultSize = 0
 					fs.defaultKVCount = 0

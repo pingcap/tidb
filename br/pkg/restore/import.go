@@ -897,9 +897,8 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 			StartTs: func() uint64 {
 				if file.Cf == stream.DefaultCF {
 					return shiftStartTS
-				} else {
-					return startTS
 				}
+				return startTS
 			}(),
 			RestoreTs:       restoreTS,
 			StartKey:        regionInfo.Region.GetStartKey(),
