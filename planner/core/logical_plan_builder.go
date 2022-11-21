@@ -5049,6 +5049,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.hintProcessor = hintProcessor
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	defer func() {
+		b.hintProcessor.HandleUnusedViewHints()
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
 	}()
