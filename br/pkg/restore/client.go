@@ -1820,7 +1820,7 @@ func (rc *Client) RestoreKVFiles(
 	defer func() {
 		elapsed := time.Since(start)
 		if err == nil {
-			log.Info("Restore KV files", zap.Duration("take", elapsed))
+			log.Info("Restore KV files", zap.Duration("take", elapsed), zap.Int("files", fileCount))
 			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
@@ -1866,7 +1866,8 @@ func (rc *Client) RestoreKVFiles(
 	}
 	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
 		if r.Err != nil {
-			return err
+			log.Warn("meet error duing restoring files.", logutil.ShortError(r.Err))
+			return r.Err
 		}
 		file := r.Item
 		if file.Type == backuppb.FileType_Delete {

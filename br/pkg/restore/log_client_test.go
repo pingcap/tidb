@@ -16,15 +16,27 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	mock_restore "github.com/pingcap/tidb/br/pkg/restore/mocking"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var id uint64
@@ -490,4 +502,151 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 func TestFileManger(t *testing.T) {
 	t.Run("MetaV1", func(t *testing.T) { testFileManagerWithMeta(t, m) })
 	t.Run("MetaV2", func(t *testing.T) { testFileManagerWithMeta(t, m2) })
+}
+
+type trivial struct{}
+
+// GetStore gets a store by a store id.
+func (t trivial) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+	return &metapb.Store{
+		Id: storeID,
+	}, nil
+}
+
+// GetRegion gets a region which includes a specified key.
+func (t trivial) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	return &split.RegionInfo{
+		Region:       &metapb.Region{Id: 1},
+		Leader:       &metapb.Peer{StoreId: 1},
+		PendingPeers: []*metapb.Peer{},
+		DownPeers:    []*metapb.Peer{},
+	}, nil
+}
+
+// GetRegionByID gets a region by a region id.
+func (t trivial) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	if regionID != 1 {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "no such region %d: only exists region with id = [1]", regionID)
+	}
+	return &split.RegionInfo{
+		Region: &metapb.Region{Id: 1},
+		Leader: &metapb.Peer{Id: 1},
+	}, nil
+}
+
+// SplitRegion splits a region from a key, if key is not included in the region, it will return nil.
+// note: the key should not be encoded
+func (t trivial) SplitRegion(ctx context.Context, regionInfo *split.RegionInfo, key []byte) (*split.RegionInfo, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+// BatchSplitRegions splits a region from a batch of keys.
+// note: the keys should not be encoded
+func (t trivial) BatchSplitRegions(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+// BatchSplitRegionsWithOrigin splits a region from a batch of keys and return the original region and split new regions
+func (t trivial) BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+// ScatterRegion scatters a specified region.
+func (t trivial) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	panic("not implemented") // TODO: Implement
+}
+
+// ScatterRegions scatters regions in a batch.
+func (t trivial) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
+	panic("not implemented") // TODO: Implement
+}
+
+// GetOperator gets the status of operator of the specified region.
+func (t trivial) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+// ScanRegions gets a list of regions, starts from the region that contains key.
+// Limit limits the maximum number of regions returned.
+func (t trivial) ScanRegions(ctx context.Context, key []byte, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	r, err := t.GetRegionByID(ctx, 1)
+	if err != nil {
+		return nil, err
+	}
+	return []*split.RegionInfo{r}, nil
+}
+
+// GetPlacementRule loads a placement rule from PD.
+func (t trivial) GetPlacementRule(ctx context.Context, groupID string, ruleID string) (pdtypes.Rule, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+// SetPlacementRule insert or update a placement rule to PD.
+func (t trivial) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+	panic("not implemented") // TODO: Implement
+}
+
+// DeletePlacementRule removes a placement rule from PD.
+func (t trivial) DeletePlacementRule(ctx context.Context, groupID string, ruleID string) error {
+	panic("not implemented") // TODO: Implement
+}
+
+// SetStoresLabel add or update specified label of stores. If labelValue
+// is empty, it clears the label.
+func (t trivial) SetStoresLabel(ctx context.Context, stores []uint64, labelKey string, labelValue string) error {
+	panic("not implemented") // TODO: Implement
+}
+
+func makeClientForLogBackup(t *testing.T, ctrl *gomock.Controller) (*Client, *mock_restore.MockImporterClient) {
+	mockImporter := mock_restore.NewMockImporterClient(ctrl)
+	b, err := storage.ParseBackend("noop://", &storage.BackendOptions{})
+	require.NoError(t, err)
+	cli := Client{
+		workerPool: utils.NewWorkerPool(16, "test"),
+		fileImporter: FileImporter{
+			// Hint: we cannot use TestClient here because it is in the package `restore_test`...
+			// ... And we do need to be within the same package of `restore` to access  the private fields in the Client.
+			metaClient:   trivial{},
+			importClient: mockImporter,
+			backend:      b,
+		},
+		logFileManager: &logFileManager{},
+	}
+	return &cli, mockImporter
+}
+
+func emptyLogs(n int) []Log {
+	r := make([]Log, n)
+	mkKey := func(i int) []byte {
+		key := fmt.Sprintf("f%d", i)
+		return codec.EncodeBytes(nil, []byte(key))
+	}
+	for i := range r {
+		r[i] = &backuppb.DataFileInfo{Type: backuppb.FileType_Put, MinTs: 42, MaxTs: 1001, StartKey: mkKey(i), EndKey: mkKey(i + 1)}
+	}
+	return r
+}
+
+func TestRestoreKVFiles(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	cli, im := makeClientForLogBackup(t, ctrl)
+	files := iter.ConcatAll(iter.FromSlice(emptyLogs(16)),
+		iter.Fail[Log](status.Errorf(codes.DataLoss, "A gecko spawns in the network pool. The wet air makes data weird, meow?")),
+		iter.FromSlice(emptyLogs(1024)),
+	)
+
+	rr := map[int64]*RewriteRules{
+		0: {
+			Data: []*import_sstpb.RewriteRule{{
+				OldKeyPrefix: []byte{'f'},
+				NewKeyPrefix: []byte{'l'},
+			}},
+		},
+	}
+	im.EXPECT().ApplyKVFile(gomock.Any(), gomock.Any(), gomock.Any()).MinTimes(1)
+	err := cli.RestoreKVFiles(ctx, rr, files, func(kvCount, size uint64) {}, func() {})
+	require.Error(t, err)
+	ctrl.Finish()
 }
