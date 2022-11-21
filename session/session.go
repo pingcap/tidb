@@ -2776,9 +2776,6 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 func InitDDLJobTables(store kv.Storage, targetVer string) error {
 	targetTables := DDLJobTablesVer1
 	if targetVer == meta.DDLTableVersion3 {
-		if !ddl.IsDistReorgEnable() {
-			return nil
-		}
 		targetTables = DDLJobTablesVer3
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
