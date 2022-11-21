@@ -19,11 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"strings"
-	"sync/atomic"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -42,6 +37,11 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"net"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
 )
 
 var (
@@ -699,14 +699,28 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return err
 			}
 			if failedLoginAttemptsBJ, found := bj.Extract([]types.JSONPathExpression{failedloginPathExpr}); found {
-				value.FailedLoginAttempts = failedLoginAttemptsBJ.GetInt64()
+				failedLoginAttempts, err := failedLoginAttemptsBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				value.FailedLoginAttempts, err = strconv.ParseInt(failedLoginAttempts, 10, 64)
+				if err != nil {
+					return err
+				}
 			}
 			lockTimePathExpr, err := types.ParseJSONPathExpr("$.Password_locking.password_lock_time_days")
 			if err != nil {
 				return err
 			}
 			if lockTimeBJ, found := bj.Extract([]types.JSONPathExpression{lockTimePathExpr}); found {
-				value.PasswordLockTime = lockTimeBJ.GetInt64()
+				lockTime, err := lockTimeBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				value.PasswordLockTime, err = strconv.ParseInt(lockTime, 10, 64)
+				if err != nil {
+					return err
+				}
 			}
 
 			autoAccountLockedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_account_locked")
@@ -730,7 +744,14 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return err
 			}
 			if failedLoginCountBJ, found := bj.Extract([]types.JSONPathExpression{failedLoginCountExpr}); found {
-				value.FailedLoginCount = failedLoginCountBJ.GetInt64()
+				failedLoginCount, err := failedLoginCountBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				value.FailedLoginCount, err = strconv.ParseInt(failedLoginCount, 10, 64)
+				if err != nil {
+					return err
+				}
 			}
 
 			autoLockedLastChangedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_locked_last_changed")
