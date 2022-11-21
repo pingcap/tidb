@@ -134,3 +134,12 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		}
 	}
 }
+
+func TestConcurrentDDLSwitchWithMDL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg("set global tidb_enable_concurrent_ddl=off", "can not disable concurrent ddl when metadata lock is enabled")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_enable_concurrent_ddl=off")
+	tk.MustExec("create table test.t(a int)")
+}
