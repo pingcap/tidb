@@ -758,6 +758,7 @@ func tryFallbackToTxnMerge(job *model.Job, err error) {
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
+		job.RowCount = 0
 	}
 }
 
@@ -782,8 +783,10 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
-		logutil.BgLogger().Info("[ddl] index backfill state running", zap.Int64("job ID", job.ID),
-			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
+		logutil.BgLogger().Info("[ddl] index backfill state running",
+			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -1177,6 +1180,7 @@ type baseIndexWorker struct {
 type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
+	copCtx    *copContext
 	writerCtx *ingest.WriterContext
 
 	// The following attributes are used to reduce memory allocation.
@@ -1197,6 +1201,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	var lwCtx *ingest.WriterContext
+	var copCtx *copContext
 	if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 		if !ok {
@@ -1204,12 +1209,13 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		}
 		ei, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
-			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
+			return nil, errors.Trace(err)
 		}
 		lwCtx, err = ei.NewWriterCtx(id)
 		if err != nil {
 			return nil, err
 		}
+		copCtx = newCopContext(t.Meta(), indexInfo, sessCtx)
 	}
 
 	return &addIndexWorker{
@@ -1224,6 +1230,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			jobContext:     jc,
 		},
 		index:     index,
+		copCtx:    copCtx,
 		writerCtx: lwCtx,
 	}, nil
 }
@@ -1481,7 +1488,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1489,7 +1496,16 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			idxRecords []*indexRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.copCtx != nil {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(txn, handleRange)
+		} else {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1829,10 +1845,10 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
-	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
-		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] job update reorg info", zap.Int64("jobID", reorg.Job.ID),
+		zap.ByteString("element type", reorg.currElement.TypeKey), zap.Int64("element ID", reorg.currElement.ID),
+		zap.Int64("partition table ID", pid), zap.String("start key", hex.EncodeToString(start)),
+		zap.String("end key", hex.EncodeToString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 
