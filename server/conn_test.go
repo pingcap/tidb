@@ -585,10 +585,6 @@ func TestDispatchClientProtocol41(t *testing.T) {
 }
 
 func TestQueryEndWithZero(t *testing.T) {
-	userData := append([]byte("root"), 0x0, 0x0)
-	userData = append(userData, []byte("test")...)
-	userData = append(userData, 0x0)
-
 	inputs := []dispatchInput{
 		{
 			com: mysql.ComStmtPrepare,
