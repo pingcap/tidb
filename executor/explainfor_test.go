@@ -1454,5 +1454,4 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.MustExec(fmt.Sprintf("explain format = json for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = 'JSON' for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = JSON for connection %d", tk1RootProcess.ID))
-
 }
