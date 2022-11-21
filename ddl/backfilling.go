@@ -620,6 +620,15 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}()
 	jc := dc.jobContext(job)
 
+	var ingestBeCtx *ingest.BackendContext
+	if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
+			ingestBeCtx = bc
+		} else {
+			return errors.New(ingest.LitErrGetBackendFail)
+		}
+	}
+
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
@@ -661,7 +670,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			case typeAddIndexWorker:
 				idxWorker, err := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, job)
 				if err != nil {
-					return errors.Trace(err)
+					return handleCreateBackfillWorkerErr(err, len(backfillWorkers), reorgInfo.ID)
 				}
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
@@ -716,14 +725,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
-		if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
-				err := bc.Flush(reorgInfo.currElement.ID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			} else {
-				return errors.New(ingest.LitErrGetBackendFail)
+
+		if ingestBeCtx != nil {
+			err := ingestBeCtx.Flush(reorgInfo.currElement.ID)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		remains, err := dc.handleRangeTasks(sessPool, t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
@@ -732,10 +738,23 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 
 		if len(remains) == 0 {
+			if ingestBeCtx != nil {
+				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
+			}
 			break
 		}
 		startKey = remains[0].StartKey
 	}
+	return nil
+}
+
+func handleCreateBackfillWorkerErr(err error, workerCnt int, jobID int64) error {
+	if workerCnt == 0 {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
+		zap.Int("current worker count", workerCnt),
+		zap.Int64("job ID", jobID), zap.Error(err))
 	return nil
 }
 
