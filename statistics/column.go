@@ -121,9 +121,6 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
-			return true
-		}
 		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
