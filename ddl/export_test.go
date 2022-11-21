@@ -14,6 +14,28 @@
 
 package ddl
 
+import (
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/types"
+)
+
 func SetBatchInsertDeleteRangeSize(i int) {
 	batchInsertDeleteRangeSize = i
+}
+
+var (
+	FetchRowsFromCop4Test = fetchRowsFromCop
+	NewCopContext4Test    = newCopContext
+)
+
+type (
+	IndexRecord4Test = *indexRecord
+)
+
+func (i IndexRecord4Test) GetHandle() kv.Handle {
+	return i.handle
+}
+
+func (i IndexRecord4Test) GetIndexValues() []types.Datum {
+	return i.vals
 }
