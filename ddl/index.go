@@ -796,6 +796,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			if !ok && job.SnapshotVer != 0 {
 				// The owner is crashed or changed, we need to restart the backfill.
 				job.SnapshotVer = 0
+				job.RowCount = 0
 				return false, ver, nil
 			}
 			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
