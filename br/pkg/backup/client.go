@@ -254,7 +254,7 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 func (bc *Client) CheckCheckpoint(hash []byte) error {
 	if bc.checkpointMeta != nil && !bytes.Equal(bc.checkpointMeta.ConfigHash, hash) {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "failed to backup to %v, "+
-			"becuase the checkpoint mode is used, "+
+			"because the checkpoint mode is used, "+
 			"but the hashs of the configs are not the same. Please check the config",
 			bc.storage.URI(),
 		)

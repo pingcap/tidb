@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -53,6 +54,7 @@ const (
 
 	defaultBackupConcurrency = 4
 	maxBackupConcurrency     = 256
+	checkpointDefaultGCTTL   = 15 * 3600 // 15 hours
 )
 
 const (
@@ -165,9 +167,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	// if use checkpoint and gcTTL is the default value
-	// update gcttl to 1 hours
+	// update gcttl to checkpoint's default gc ttl
 	if cfg.UseCheckpoint && gcTTL == utils.DefaultBRGCSafePointTTL {
-		gcTTL = 3600
+		gcTTL = checkpointDefaultGCTTL
+		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", gcTTL))
 	}
 	cfg.GCTTL = gcTTL
 
@@ -328,15 +331,18 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Domain loads all table info into memory. By skipping Domain, we save
 	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
 	needDomain := !skipStats
-	versionCheckerNum := conn.NormalVersionChecker
-	if cfg.UseCheckpoint {
-		versionCheckerNum = conn.CheckpointVersionChecker
-	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, versionCheckerNum)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+	// after version check, check the cluster whether support checkpoint mode
+	if cfg.UseCheckpoint {
+		err = version.CheckCheckpointSupport()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	var statsHandle *handle.Handle
 	if !skipStats {
 		statsHandle = mgr.GetDomain().StatsHandle()
