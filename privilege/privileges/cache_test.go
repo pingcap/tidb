@@ -45,6 +45,7 @@ func TestLoadUserTable(t *testing.T) {
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, user_attributes, token_issuer) VALUES ("%", "root1111", "{\"metadata\": {\"email\": \"user@pingcap.com\"}}", "<token-issuer>")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed, password_lifetime) VALUES ("%", "root2", "Y", "2022-10-10 12:00:00", 3)`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed) VALUES ("%", "root3", "N", "2022-10-10 12:00:00")`)
 
 	p = privileges.MySQLPrivilege{}
 	require.NoError(t, p.LoadUserTable(tk.Session()))
@@ -61,6 +62,9 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, true, user[5].PasswordExpired)
 	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[5].PasswordLastChanged)
 	require.Equal(t, int64(3), user[5].PasswordLifeTime)
+	require.Equal(t, false, user[6].PasswordExpired)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[6].PasswordLastChanged)
+	require.Equal(t, int64(-1), user[6].PasswordLifeTime)
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {

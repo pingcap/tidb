@@ -1118,6 +1118,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
+			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
 				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
@@ -1144,7 +1145,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
 			}
 			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
-				fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 				if passwordExpire == "" {
 					passwordExpire = "N"
 				}
@@ -1207,7 +1207,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					sqlexec.MustFormatSQL(sql, ",")
 				}
 			}
-
 			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
@@ -1684,7 +1683,13 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil,
+		`UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`,
+		mysql.SystemDB,
+		mysql.UserTable,
+		pwd,
+		u,
+		strings.ToLower(h))
 	if err != nil {
 		return err
 	}

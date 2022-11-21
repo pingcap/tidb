@@ -357,9 +357,42 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
+	disconnectOnPwdExpiredStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword)
+	if err != nil {
+		return false, err
+	}
+	disconnectOnPwdExpired := variable.TiDBOptOn(disconnectOnPwdExpiredStr)
+	if record.PasswordExpired {
+		if disconnectOnPwdExpired {
+			return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+		}
+		return true, nil
+	}
+	if record.PasswordLifeTime != 0 {
+		lifeTime := record.PasswordLifeTime
+		if lifeTime == -1 {
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
+			if err != nil {
+				return false, err
+			}
+			lifeTime, err = strconv.ParseInt(pwdLifeTimeStr, 10, 64)
+			if err != nil {
+				return false, err
+			}
+		}
+		if lifeTime > 0 && record.PasswordLastChanged.AddDate(0, 0, int(lifeTime)).Before(time.Now()) {
+			if disconnectOnPwdExpired {
+				return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (bool, error) {
-	sandBoxMode := false
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -367,7 +400,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
-		return sandBoxMode, nil
+		return false, nil
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -375,7 +408,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
-		return sandBoxMode, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
@@ -383,39 +416,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
-			return sandBoxMode, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
-	disconnectOnPwdExpiredStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword)
+	sandBoxMode, err := p.CheckPasswordExpired(sessionVars, record)
 	if err != nil {
 		return sandBoxMode, err
-	}
-	disconnectOnPwdExpired := variable.TiDBOptOn(disconnectOnPwdExpiredStr)
-	if record.PasswordExpired {
-		if disconnectOnPwdExpired {
-			return sandBoxMode, ErrMustChangePasswordLogin.GenWithStackByArgs()
-		}
-		sandBoxMode = true
-	}
-	if record.PasswordLifeTime != 0 {
-		lifeTime := record.PasswordLifeTime
-		if lifeTime == -1 {
-			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
-			if err != nil {
-				return sandBoxMode, err
-			}
-			lifeTime, err = strconv.ParseInt(pwdLifeTimeStr, 10, 64)
-			if err != nil {
-				return sandBoxMode, err
-			}
-		}
-		if lifeTime > 0 && record.PasswordLastChanged.Add(time.Duration(lifeTime)*24*time.Hour).After(time.Now()) {
-			if disconnectOnPwdExpired {
-				return sandBoxMode, ErrMustChangePasswordLogin.GenWithStackByArgs()
-			}
-			sandBoxMode = true
-		}
 	}
 
 	pwd := record.AuthenticationString

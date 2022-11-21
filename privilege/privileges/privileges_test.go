@@ -25,6 +25,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -2962,4 +2963,44 @@ func TestIssue37488(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
+
+func TestCheckPasswordExpired(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	record := privileges.NewUserRecord("%", "root")
+	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(), nil)
+
+	record.PasswordExpired = true
+	_, err := userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+
+	record.PasswordExpired = false
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultPasswordLifetime, "2")
+	require.NoError(t, err)
+	// use default_password_lifetime
+	record.PasswordLifeTime = -1
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
+	time.Sleep(time.Second)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -1)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
+
+	// never expire
+	record.PasswordLifeTime = 0
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -10)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
+
+	// expire with the specified time
+	record.PasswordLifeTime = 3
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -3)
+	time.Sleep(time.Second)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
 }

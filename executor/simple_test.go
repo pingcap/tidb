@@ -156,19 +156,41 @@ func TestPasswordExpiration(t *testing.T) {
 	expectedPasswordExpiration(t, tk, "testuser3", "N", "0")
 	tk.MustExec(`CREATE USER testuser4 PASSWORD EXPIRE INTERVAL 3 DAY`)
 	expectedPasswordExpiration(t, tk, "testuser4", "N", "3")
+	tk.MustExec(`CREATE ROLE role1`)
+	expectedPasswordExpiration(t, tk, "role1", "Y", "<nil>")
 
 	// ALTER USER
-	tk.MustExec("ALTER USER testuser IDENTIFIED BY '' PASSWORD EXPIRE")
-	expectedPasswordExpiration(t, tk, "testuser", "Y", "<nil>")
-	tk.MustExec("ALTER USER testuser IDENTIFIED WITH 'mysql_native_password' AS ''")
-	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	testcases := []struct {
+		user    string
+		expired string
+	}{
+		{"testuser", "N"},
+		{"testuser1", "Y"},
+		{"testuser2", "N"},
+		{"testuser3", "N"},
+		{"testuser4", "N"},
+		{"role1", "Y"},
+	}
+	for _, testcase := range testcases {
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE NEVER", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "0")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE DEFAULT", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "<nil>")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE INTERVAL 3 DAY", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY '' PASSWORD EXPIRE", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED WITH 'mysql_native_password' AS ''", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY ''", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
+	}
+
+	// SET PASSWORD
 	tk.MustExec("ALTER USER testuser PASSWORD EXPIRE")
-	tk.MustExec("ALTER USER testuser IDENTIFIED BY ''")
-	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
-	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE NEVER`)
-	expectedPasswordExpiration(t, tk, "testuser", "N", "0")
-	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE DEFAULT`)
-	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
-	tk.MustExec(`ALTER USER testuser PASSWORD EXPIRE INTERVAL 3 DAY`)
+	expectedPasswordExpiration(t, tk, "testuser", "Y", "3")
+	tk.MustExec("SET PASSWORD FOR testuser = '1234'")
 	expectedPasswordExpiration(t, tk, "testuser", "N", "3")
 }
