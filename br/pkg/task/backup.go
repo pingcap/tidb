@@ -419,7 +419,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// nothing to backup
-	if ranges == nil || len(ranges) <= 0 {
+	if len(ranges) == 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
