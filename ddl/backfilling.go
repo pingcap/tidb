@@ -749,22 +749,12 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender")
 		return
 	}
-	startTS, err := latestStartTS(sessCtx.GetStore())
+	ver, err := sessCtx.GetStore().CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, startTS)
-}
-
-func latestStartTS(storage kv.Storage) (startTS uint64, err error) {
-	txn, err := storage.Begin()
-	if err != nil {
-		_ = txn.Rollback()
-		return 0, err
-	}
-	_ = txn.Rollback()
-	return txn.StartTS(), nil
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, ver.Ver)
 }
 
 func (b *backfillScheduler) canSkipError(err error) bool {
