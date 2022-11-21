@@ -9,5 +9,58 @@
       "[{Idxs:[c_d_e,f],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.c, 1), gt(test.t.g, 2))]},{Idxs:[c_d_e,f],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.c, 1), gt(test.t.g, 2))]},{Idxs:[c_d_e,g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(gt(test.t.c, 5), lt(test.t.f, 7))]}]",
       "[{Idxs:[c_d_e,f],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.e, 1), gt(test.t.f, 2))]},{Idxs:[c_d_e,f],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]"
     ]
+  },
+  {
+    "Name": "TestHintForIntersectionIndexMerge",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_partition_prune_mode = 'dynamic'",
+        "Plan": null
+      },
+      {
+        "SQL": "select * from vh",
+        "Plan": [
+          "IndexMerge 0.00 root partition:p0,p1,p2 Intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tp, index:ia(a) range:[10,10], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tp, index:ib(b) range:(20,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tp, index:ic(c) range:[-inf,30), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 20.00 cop[tikv] table:tp, index:id(d) range:[2,2], [5,5], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:tp keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ qb_name(v, v), use_index_merge(@v tp, ia, ib, ic, id) */ * from v",
+        "Plan": [
+          "IndexMerge 0.00 root partition:p0,p1,p2 Intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tp, index:ia(a) range:[10,10], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tp, index:ib(b) range:(20,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tp, index:ic(c) range:[-inf,30), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 20.00 cop[tikv] table:tp, index:id(d) range:[2,2], [5,5], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:tp keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ qb_name(v, v@sel_1), use_index_merge(@v tp, ia, ib, ic, id) */ * from v",
+        "Plan": [
+          "IndexMerge 0.00 root partition:p0,p1,p2 Intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tp, index:ia(a) range:[10,10], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tp, index:ib(b) range:(20,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tp, index:ic(c) range:[-inf,30), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 20.00 cop[tikv] table:tp, index:id(d) range:[2,2], [5,5], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:tp keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ qb_name(v, v@sel_1 .@sel_1), use_index_merge(@v tp, ia, ib, ic, id) */ * from v",
+        "Plan": [
+          "IndexMerge 0.00 root partition:p0,p1,p2 Intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tp, index:ia(a) range:[10,10], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tp, index:ib(b) range:(20,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tp, index:ic(c) range:[-inf,30), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 20.00 cop[tikv] table:tp, index:id(d) range:[2,2], [5,5], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:tp keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
