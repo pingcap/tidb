@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
@@ -675,17 +674,17 @@ type ExplainInfoForEncode struct {
 type JSONSlice []*ExplainInfoForEncode
 
 // ToString convert json to string
-func (j *JSONSlice) ToString() string {
+func (j *JSONSlice) ToString() (string, error) {
 	b, err := json.Marshal(*j)
 	if err != nil {
-		logutil.BgLogger().Error("Explain: encode json failed")
+		return "", err
 	}
 	var out bytes.Buffer
 	err = json.Indent(&out, b, "", "    ")
 	if err != nil {
-		logutil.BgLogger().Error("Explain: resolve json to string failed")
+		return "", err
 	}
-	return out.String()
+	return out.String(), nil
 }
 
 // Explain represents a explain plan.
@@ -852,8 +851,11 @@ func (e *Explain) RenderResult() error {
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		//row := []string{e.JsonRows.ToString()}
-		e.Rows = append(e.Rows, []string{e.JSON.ToString()})
+		if str, err := e.JSON.ToString(); err != nil {
+			e.Rows = append(e.Rows, []string{str})
+		} else {
+			return err
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
