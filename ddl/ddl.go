@@ -1094,8 +1094,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
 				} else {
 					for key, warning := range historyJob.ReorgMeta.Warnings {
-						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
+						keyCount := historyJob.ReorgMeta.WarningsCount[key]
+						if keyCount == 1 {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						} else {
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
+							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
 					}
 				}
@@ -1259,6 +1264,20 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		oldEnable, _, err := m.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if oldEnable != enable {
+			err = m.SetMetadataLock(enable)
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
 	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
 	return nil
 }
