@@ -135,15 +135,15 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 		NumIterations: &NumIterations, XXX_unrecognized: nil}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, ScanPacksCount, ScanRowsCount, SkipPacksCount, SkipRowsCount, roughSetIndexLoadTimeInMilliseconds, dmfileReadTimeInMilliseconds, createSnapshotTimeInMilliseconds uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, ScanPacksCount, ScanRowsCount, SkipPacksCount, SkipRowsCount, roughSetIndexLoadTimeInNs, dmfileReadTimeInNs, createSnapshotTimeInNs uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
 	tableScanContext := tipb.TableScanContext{
-		ScanPacksCount:                      &ScanPacksCount,
-		ScanRowsCount:                       &ScanRowsCount,
-		SkipPacksCount:                      &SkipPacksCount,
-		SkipRowsCount:                       &SkipRowsCount,
-		RoughSetIndexLoadTimeInMilliseconds: &roughSetIndexLoadTimeInMilliseconds,
-		DmfileReadTimeInMilliseconds:        &dmfileReadTimeInMilliseconds,
-		CreateSnapshotTimeInMilliseconds:    &createSnapshotTimeInMilliseconds,
+		ScanPacksCount:            &ScanPacksCount,
+		ScanRowsCount:             &ScanRowsCount,
+		SkipPacksCount:            &SkipPacksCount,
+		SkipRowsCount:             &SkipRowsCount,
+		RoughSetIndexLoadTimeInNs: &roughSetIndexLoadTimeInNs,
+		DmfileReadTimeInNs:        &dmfileReadTimeInNs,
+		CreateSnapshotTimeInNs:    &createSnapshotTimeInNs,
 	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
 		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TableScanContext{TableScanContext: &tableScanContext}, XXX_unrecognized: nil}
@@ -206,10 +206,10 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 1, 8192, 0, 0, 15, 200, 40, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 0, 0, 2, 0, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 2, 12000, 1, 6000, 60, 1000, 20, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 1, 8192, 10, 80000, 40, 2000, 30, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 1, 8192, 0, 0, 15000000, 200000000, 40000000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 0, 0, 2000000, 0, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 2, 12000, 1, 6000, 60000000, 1000000000, 20000000, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 1, 8192, 10, 80000, 40000000, 2000000000, 30000000, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
@@ -223,15 +223,15 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time_in_milliseconds: 15, dmfile_read_time_in_milliseconds: 202, create_snapshot_time_in_milliseconds: 40}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time: 15ms, dmfile_read_time: 202ms, create_snapshot_time: 40ms}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time_in_milliseconds: 15, dmfile_read_time_in_milliseconds: 200, create_snapshot_time_in_milliseconds: 40}", copStats[0].String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:3, skip_pack_counts:11, scan_rows_counts:20192, skip_rows_count:86000, rough_set_index_load_time_in_milliseconds: 100, dmfile_read_time_in_milliseconds: 3000, create_snapshot_time_in_milliseconds: 50}"
+	require.Equal(t, "time:1s, loops:2, threads:1, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time: 15ms, dmfile_read_time: 200ms, create_snapshot_time: 40ms}", copStats[0].String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:3, skip_pack_counts:11, scan_rows_counts:20192, skip_rows_count:86000, rough_set_index_load_time: 100ms, dmfile_read_time: 3000ms, create_snapshot_time: 50ms}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)

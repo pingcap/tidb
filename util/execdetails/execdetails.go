@@ -326,7 +326,7 @@ type basicCopRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time_in_milliseconds: %d, dmfile_read_time_in_milliseconds: %d, create_snapshot_time_in_milliseconds: %d}", FormatDuration(time.Duration(e.consume)), e.loop, e.threads, e.tableScanContext.scanPacksCount, e.tableScanContext.skipPacksCount, e.tableScanContext.scanRowsCount, e.tableScanContext.skipRowsCount, e.tableScanContext.roughSetIndexLoadTimeInMilliseconds, e.tableScanContext.dmfileReadTimeInMilliseconds, e.tableScanContext.createSnapshotTimeInMilliseconds)
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time: %dms, dmfile_read_time: %dms, create_snapshot_time: %dms}", FormatDuration(time.Duration(e.consume)), e.loop, e.threads, e.tableScanContext.scanPacksCount, e.tableScanContext.skipPacksCount, e.tableScanContext.scanRowsCount, e.tableScanContext.skipRowsCount, e.tableScanContext.roughSetIndexLoadTimeInNs/1000000, e.tableScanContext.dmfileReadTimeInNs/1000000, e.tableScanContext.createSnapshotTimeInNs/1000000)
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
@@ -381,13 +381,13 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows),
 			tableScanContext: &TableScanContext{
-				scanPacksCount:                      summary.GetTableScanContext().GetScanPacksCount(),
-				skipPacksCount:                      summary.GetTableScanContext().GetSkipPacksCount(),
-				scanRowsCount:                       summary.GetTableScanContext().GetScanRowsCount(),
-				skipRowsCount:                       summary.GetTableScanContext().GetSkipRowsCount(),
-				roughSetIndexLoadTimeInMilliseconds: summary.GetTableScanContext().GetRoughSetIndexLoadTimeInMilliseconds(),
-				dmfileReadTimeInMilliseconds:        summary.GetTableScanContext().GetDmfileReadTimeInMilliseconds(),
-				createSnapshotTimeInMilliseconds:    summary.GetTableScanContext().GetCreateSnapshotTimeInMilliseconds()}},
+				scanPacksCount:            summary.GetTableScanContext().GetScanPacksCount(),
+				skipPacksCount:            summary.GetTableScanContext().GetSkipPacksCount(),
+				scanRowsCount:             summary.GetTableScanContext().GetScanRowsCount(),
+				skipRowsCount:             summary.GetTableScanContext().GetSkipRowsCount(),
+				roughSetIndexLoadTimeInNs: summary.GetTableScanContext().GetRoughSetIndexLoadTimeInNs(),
+				dmfileReadTimeInNs:        summary.GetTableScanContext().GetDmfileReadTimeInNs(),
+				createSnapshotTimeInNs:    summary.GetTableScanContext().GetCreateSnapshotTimeInNs()}},
 			threads:   int32(summary.GetConcurrency()),
 			storeType: crs.storeType})
 }
@@ -434,7 +434,7 @@ func (crs *CopRuntimeStats) String() string {
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTableScanContext.Empty() {
-				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time_in_milliseconds: %d, dmfile_read_time_in_milliseconds: %d, create_snapshot_time_in_milliseconds: %d}", totalTableScanContext.scanPacksCount, totalTableScanContext.skipPacksCount, totalTableScanContext.scanRowsCount, totalTableScanContext.skipRowsCount, totalTableScanContext.roughSetIndexLoadTimeInMilliseconds, totalTableScanContext.dmfileReadTimeInMilliseconds, totalTableScanContext.createSnapshotTimeInMilliseconds))
+				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time: %dms, dmfile_read_time: %dms, create_snapshot_time: %dms}", totalTableScanContext.scanPacksCount, totalTableScanContext.skipPacksCount, totalTableScanContext.scanRowsCount, totalTableScanContext.skipRowsCount, totalTableScanContext.roughSetIndexLoadTimeInNs/1000000, totalTableScanContext.dmfileReadTimeInNs/1000000, totalTableScanContext.createSnapshotTimeInNs/1000000))
 			}
 		} else {
 			buf.WriteString("}")
@@ -448,7 +448,7 @@ func (crs *CopRuntimeStats) String() string {
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTableScanContext.Empty() {
-				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time_in_milliseconds: %d, dmfile_read_time_in_milliseconds: %d, create_snapshot_time_in_milliseconds: %d}", totalTableScanContext.scanPacksCount, totalTableScanContext.skipPacksCount, totalTableScanContext.scanRowsCount, totalTableScanContext.skipRowsCount, totalTableScanContext.roughSetIndexLoadTimeInMilliseconds, totalTableScanContext.dmfileReadTimeInMilliseconds, totalTableScanContext.createSnapshotTimeInMilliseconds))
+				buf.WriteString(fmt.Sprintf(", table_scan_info:{scan_pack_counts:%d, skip_pack_counts:%d, scan_rows_counts:%d, skip_rows_count:%d, rough_set_index_load_time: %dms, dmfile_read_time: %dms, create_snapshot_time: %dms}", totalTableScanContext.scanPacksCount, totalTableScanContext.skipPacksCount, totalTableScanContext.scanRowsCount, totalTableScanContext.skipRowsCount, totalTableScanContext.roughSetIndexLoadTimeInNs/1000000, totalTableScanContext.dmfileReadTimeInNs/1000000, totalTableScanContext.createSnapshotTimeInNs/1000000))
 			}
 		} else {
 			buf.WriteString("}")
@@ -509,13 +509,13 @@ type RuntimeStats interface {
 
 // TableScanContext is used to express the table scan information in tiflash
 type TableScanContext struct {
-	scanPacksCount                      uint64
-	scanRowsCount                       uint64
-	skipPacksCount                      uint64
-	skipRowsCount                       uint64
-	roughSetIndexLoadTimeInMilliseconds uint64
-	dmfileReadTimeInMilliseconds        uint64
-	createSnapshotTimeInMilliseconds    uint64
+	scanPacksCount            uint64
+	scanRowsCount             uint64
+	skipPacksCount            uint64
+	skipRowsCount             uint64
+	roughSetIndexLoadTimeInNs uint64
+	dmfileReadTimeInNs        uint64
+	createSnapshotTimeInNs    uint64
 }
 
 // Merge make sum to merge the information in TableScanContext
@@ -524,9 +524,9 @@ func (context *TableScanContext) Merge(other *TableScanContext) {
 	context.scanRowsCount += other.scanRowsCount
 	context.skipPacksCount += other.skipPacksCount
 	context.skipRowsCount += other.skipRowsCount
-	context.roughSetIndexLoadTimeInMilliseconds += other.roughSetIndexLoadTimeInMilliseconds
-	context.dmfileReadTimeInMilliseconds += other.dmfileReadTimeInMilliseconds
-	context.createSnapshotTimeInMilliseconds += other.createSnapshotTimeInMilliseconds
+	context.roughSetIndexLoadTimeInNs += other.roughSetIndexLoadTimeInNs
+	context.dmfileReadTimeInNs += other.dmfileReadTimeInNs
+	context.createSnapshotTimeInNs += other.createSnapshotTimeInNs
 }
 
 // Empty check whether TableScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
