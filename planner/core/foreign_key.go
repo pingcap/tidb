@@ -45,12 +45,13 @@ type FKCheck struct {
 // FKCascade indicates the foreign key constraint cascade behaviour.
 type FKCascade struct {
 	basePhysicalPlan
-	Tp         FKCascadeType
-	ReferredFK *model.ReferredFKInfo
-	ChildTable table.Table
-	FK         *model.FKInfo
-	FKCols     []*model.ColumnInfo
-	FKIdx      *model.IndexInfo
+	Tp           FKCascadeType
+	ReferredFK   *model.ReferredFKInfo
+	ChildTable   table.Table
+	FK           *model.FKInfo
+	FKCols       []*model.ColumnInfo
+	FKIdx        *model.IndexInfo
+	CascadePlans []Plan
 }
 
 // FKCascadeType indicates in which (delete/update) statements.

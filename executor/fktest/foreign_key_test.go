@@ -2109,60 +2109,88 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			prepare: []string{
 				"insert into t1 values (1),(2),(3),(4),(5)",
 			},
-			sql:  "explain analyze insert into t2 values (1),(2),(3);",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist.*",
+			sql: "explain analyze insert into t2 values (1),(2),(3);",
+			plan: "Insert_. N/A 0 root  time:.*, loops:1, prepare:.*, insert:.*" +
+				"└─Foreign_Key_Check_. 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
-			sql:  "explain analyze update t2 set id=id+2 where id >1",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist.*",
+			sql: "explain analyze update t2 set id=id+2 where id >1",
+			plan: "Update_.* 0 root  time:.*, loops:1.*" +
+				"├─TableReader_.*" +
+				"│ └─TableRangeScan.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
-			sql:  "explain analyze delete from t1 where id>1",
-			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:4 foreign_key:fk, on_delete:CASCADE.*",
+			sql: "explain analyze delete from t1 where id>1",
+			plan: "Delete_.*" +
+				"├─TableReader_.*" +
+				"│ └─TableRangeScan_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:4 foreign_key:fk, on_delete:CASCADE N/A N/A.*" +
+				"  └─Delete_.*" +
+				"    └─Batch_Point_Get_.*",
 		},
 		{
-			sql:  "explain analyze update t1 set id=id+1 where id = 1",
-			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
+			sql: "explain analyze update t1 set id=id+1 where id = 1",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─Batch_Point_Get_.*" +
+				"    └─Foreign_Key_Check_.*",
 		},
 		{
-			sql:  "explain analyze insert into t1 values (1) on duplicate key update id = 100",
-			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE.*",
+			sql: "explain analyze insert into t1 values (1) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE N/A N/A",
 		},
 		{
-			sql:  "explain analyze insert into t1 values (2) on duplicate key update id = 100",
-			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE.*",
+			sql: "explain analyze insert into t1 values (2) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─Batch_Point_Get_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
 		},
 		// Test foreign key use index.
 		{
 			prepare: []string{
 				"insert into t3 values (1),(2),(3),(4),(5)",
 			},
-			sql:  "explain analyze insert into t4 values (1),(2),(3);",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist.*",
+			sql: "explain analyze insert into t4 values (1),(2),(3);",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
-			sql:  "explain analyze update t4 set id=id+2 where id >1",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist.*",
+			sql: "explain analyze update t4 set id=id+2 where id >1",
+			plan: "Update_.*" +
+				"├─IndexReader_.*" +
+				"│ └─IndexRangeScan_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
-			sql:  "explain analyze delete from t3 where id in (2,3)",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist",
+			sql: "explain analyze delete from t3 where id in (2,3)",
+			plan: "Delete_.*├─Batch_Point_Get_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
 		},
 		{
 			prepare: []string{
 				"insert into t3 values (2)",
 			},
-			sql:  "explain analyze update t3 set id=id+1 where id = 2",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist.*",
+			sql: "explain analyze update t3 set id=id+1 where id = 2",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
 		},
 
 		{
-			sql:  "explain analyze insert into t3 values (2) on duplicate key update id = 100",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist.*",
+			sql: "explain analyze insert into t3 values (2) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist N/A N/A",
 		},
 		{
-			sql:  "explain analyze insert into t3 values (3) on duplicate key update id = 100",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist.*",
+			sql: "explain analyze insert into t3 values (3) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
 		},
 		// Test multi-foreign keys in on table.
 		{
@@ -2170,39 +2198,84 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"insert into t5 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
 			},
 			sql: "explain analyze insert into t6 values (1,1,1)",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist.*" +
-				".*Foreign_Key_Check.* 0.00 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist.*" +
-				".*Foreign_Key_Check.* 0.00 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist.*",
+			plan: "Insert_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
 		},
 		{
 			sql: "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist.*" +
-				"Foreign_Key_Check.* 0.00 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist.*",
+			plan: "Update_.*" +
+				"├─IndexLookUp_.*" +
+				"│ ├─IndexRangeScan_.*" +
+				"│ └─TableRowIDScan_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
 		},
 		{
 			sql: "explain analyze delete from t5 where id in (4,5)",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:idx_id2 total:.*, check:.*, foreign_keys:2 foreign_key:fk_2, check_not_exist.*" +
-				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:2 foreign_key:fk_1, on_delete:SET NULL.*" +
-				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:fk_3 total:.*, foreign_keys:2 foreign_key:fk_3, on_delete:CASCADE.*",
+			plan: "Delete_.*" +
+				"├─Batch_Point_Get_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:idx_id2 total:.*, check:.*, foreign_keys:2 foreign_key:fk_2, check_not_exist N/A N/A.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:2 foreign_key:fk_1, on_delete:SET NULL N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:fk_3 total:.*, foreign_keys:2 foreign_key:fk_3, on_delete:CASCADE N/A N/A.*" +
+				"  └─Delete_.*" +
+				"    └─IndexLookUp_.*" +
+				"      ├─IndexRangeScan_.*" +
+				"      └─TableRowIDScan_.*",
 		},
 		{
 			sql: "explain analyze update t5 set id=id+1, id2=id2+1 where id = 3",
-			plan: ".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*" +
-				"Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE.*",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   ├─IndexLookUp_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
 		},
 		{
 			prepare: []string{
 				"insert into t5 values (10,10,10)",
 			},
 			sql: "explain analyze update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 10",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*" +
-				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*" +
-				".*Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE.*",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:.*, check_not_exist N/A N/A.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   ├─IndexLookUp_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
 		},
 		{
 			sql: "explain analyze insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
-			plan: ".*Foreign_Key_Check.* 0.00 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist.*" +
-				"Foreign_Key_Cascade.* 0.00 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE.*",
+			plan: "Insert_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
 		},
 	}
 	for _, ca := range cases {
@@ -2213,4 +2286,16 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		explain := getExplainResult(res)
 		require.Regexp(t, ca.plan, explain)
 	}
+}
+
+func TestExplainAnalyzeDMLWithFKInfo2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
+	tk.MustQuery("explain analyze delete from t1 where id>0;").Check(testkit.Rows(""))
 }

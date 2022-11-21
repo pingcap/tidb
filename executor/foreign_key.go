@@ -72,6 +72,7 @@ type FKCheckRuntimeStats struct {
 // FKCascadeExec uses to execute foreign key cascade behaviour.
 type FKCascadeExec struct {
 	*fkValueHelper
+	plan       *plannercore.FKCascade
 	b          *executorBuilder
 	tp         plannercore.FKCascadeType
 	referredFK *model.ReferredFKInfo
@@ -630,6 +631,7 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 	e := &FKCascadeExec{
 		b:                  b,
 		fkValueHelper:      helper,
+		plan:               fkCascade,
 		tp:                 fkCascade.Tp,
 		referredFK:         fkCascade.ReferredFK,
 		childTable:         fkCascade.ChildTable.Meta(),
@@ -687,6 +689,7 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	if err != nil || p == nil {
 		return nil, err
 	}
+	fkc.plan.CascadePlans = append(fkc.plan.CascadePlans, p)
 	e := fkc.b.build(p)
 	return e, fkc.b.err
 }
