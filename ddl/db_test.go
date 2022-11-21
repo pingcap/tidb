@@ -20,7 +20,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -1739,21 +1738,26 @@ func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
 }
 
 func TestDDLBlockedCreateView(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
+	hook := &ddl.TestDDLCallback{Do: dom}
+	first := true
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		if !first {
+			return
+		}
+		first = false
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
-		time.Sleep(20 * time.Millisecond)
 		tk2.MustExec("create view v as select * from t")
-		wg.Done()
-	}()
+	}
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
-	wg.Wait()
 }
