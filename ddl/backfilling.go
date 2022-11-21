@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -167,8 +166,8 @@ func (r *reorgBackfillTask) excludedEndKey() kv.Key {
 
 func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
-	startKey := tryDecodeToHandleString(r.startKey)
-	endKey := tryDecodeToHandleString(r.endKey)
+	startKey := hex.EncodeToString(r.startKey)
+	endKey := hex.EncodeToString(r.endKey)
 	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
 	if r.endInclude {
 		return rangeStr + "]"
@@ -277,10 +276,10 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
 			logutil.BgLogger().Info("[ddl] backfill worker back fill index",
-				zap.Int("workerID", w.id),
-				zap.Int("addedCount", result.addedCount),
-				zap.Int("scanCount", result.scanCount),
-				zap.String("nextHandle", tryDecodeToHandleString(taskCtx.nextKey)),
+				zap.Int("worker ID", w.id),
+				zap.Int("added count", result.addedCount),
+				zap.Int("scan count", result.scanCount),
+				zap.String("next key", hex.EncodeToString(taskCtx.nextKey)),
 				zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
 		}
@@ -292,12 +291,12 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker finish task",
 		zap.Stringer("type", w.tp),
-		zap.Int("workerID", w.id),
+		zap.Int("worker ID", w.id),
 		zap.String("task", task.String()),
-		zap.Int("addedCount", result.addedCount),
-		zap.Int("scanCount", result.scanCount),
-		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
-		zap.String("takeTime", time.Since(startTime).String()))
+		zap.Int("added count", result.addedCount),
+		zap.Int("scan count", result.scanCount),
+		zap.String("next key", hex.EncodeToString(result.nextKey)),
+		zap.String("take time", time.Since(startTime).String()))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
@@ -363,8 +362,8 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
 	logutil.BgLogger().Info("[ddl] split table range from PD",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
-		zap.String("startHandle", tryDecodeToHandleString(startKey)),
-		zap.String("endHandle", tryDecodeToHandleString(endKey)))
+		zap.String("start key", hex.EncodeToString(startKey)),
+		zap.String("end key", hex.EncodeToString(endKey)))
 	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -456,14 +455,14 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.Int64("totalAddedCount", *totalAddedCount),
-			zap.String("startHandle", tryDecodeToHandleString(startKey)),
-			zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
-			zap.Int64("batchAddedCount", taskAddedCount),
-			zap.String("taskFailedError", err.Error()),
-			zap.String("takeTime", elapsedTime.String()),
+			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
+			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.Int64("total added count", *totalAddedCount),
+			zap.String("start key", hex.EncodeToString(startKey)),
+			zap.String("next key", hex.EncodeToString(nextKey)),
+			zap.Int64("batch added count", taskAddedCount),
+			zap.String("task failed error", err.Error()),
+			zap.String("take time", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
 		return errors.Trace(err)
 	}
@@ -472,41 +471,14 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	dc.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
-		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-		zap.Int64("elementID", reorgInfo.currElement.ID),
-		zap.Int64("totalAddedCount", *totalAddedCount),
-		zap.String("startHandle", tryDecodeToHandleString(startKey)),
-		zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
-		zap.Int64("batchAddedCount", taskAddedCount),
-		zap.String("takeTime", elapsedTime.String()))
+		zap.ByteString("element type", reorgInfo.currElement.TypeKey),
+		zap.Int64("element ID", reorgInfo.currElement.ID),
+		zap.Int64("total added count", *totalAddedCount),
+		zap.String("start key", hex.EncodeToString(startKey)),
+		zap.String("next key", hex.EncodeToString(nextKey)),
+		zap.Int64("batch added count", taskAddedCount),
+		zap.String("take time", elapsedTime.String()))
 	return nil
-}
-
-func tryDecodeToHandleString(key kv.Key) string {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Warn("tryDecodeToHandleString panic",
-				zap.Any("recover()", r),
-				zap.Binary("key", key))
-		}
-	}()
-	handle, err := tablecodec.DecodeRowKey(key)
-	if err != nil {
-		recordPrefixIdx := bytes.Index(key, []byte("_r"))
-		if recordPrefixIdx == -1 {
-			return fmt.Sprintf("key: %x", key)
-		}
-		handleBytes := key[recordPrefixIdx+2:]
-		terminatedWithZero := len(handleBytes) > 0 && handleBytes[len(handleBytes)-1] == 0
-		if terminatedWithZero {
-			handle, err := tablecodec.DecodeRowKey(key[:len(key)-1])
-			if err == nil {
-				return handle.String() + ".next"
-			}
-		}
-		return fmt.Sprintf("%x", handleBytes)
-	}
-	return handle.String()
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.

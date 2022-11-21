@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/bits"
 	"strings"
@@ -1116,11 +1117,11 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
-			zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
-			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
+			zap.Int64("job ID", reorgInfo.Job.ID),
+			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
+			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {
 			return errors.Trace(err)
 		}

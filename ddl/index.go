@@ -1845,10 +1845,10 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
-	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
-		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] job update reorg info", zap.Int64("jobID", reorg.Job.ID),
+		zap.ByteString("element type", reorg.currElement.TypeKey), zap.Int64("element ID", reorg.currElement.ID),
+		zap.Int64("partition table ID", pid), zap.String("start key", hex.EncodeToString(start)),
+		zap.String("end key", hex.EncodeToString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 
