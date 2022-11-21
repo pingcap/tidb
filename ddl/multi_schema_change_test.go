@@ -141,6 +141,9 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization
 	})
@@ -221,6 +224,9 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
@@ -236,6 +242,9 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in public.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
@@ -258,6 +267,9 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
@@ -358,6 +370,9 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -427,6 +442,9 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -496,6 +514,9 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -555,6 +576,9 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3);")
 	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't2' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 4)
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
@@ -574,6 +598,9 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3);")
 	cancelHook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't1' is in public.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 4)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
@@ -623,6 +650,9 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteOnly
 	})
@@ -638,6 +668,9 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
@@ -733,6 +766,9 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -881,6 +917,9 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index i1(a), unique index i2(b), index i3(a, b));")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
@@ -1262,7 +1301,6 @@ func putTheSameDDLJobTwice(t *testing.T, fn func()) {
 }
 
 func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
-	assert.Equal(t, model.ActionMultiSchemaChange, job.Type, job)
 	assert.NotNil(t, job.MultiSchemaInfo, job)
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }
