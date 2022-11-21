@@ -399,10 +399,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	g.Record("BackupTS", backupTS)
+	safePointID := client.GetSafePointID()
 	sp := utils.BRServiceSafePoint{
 		BackupTS: backupTS,
 		TTL:      client.GetGCTTL(),
-		ID:       utils.MakeSafePointID(),
+		ID:       safePointID,
 	}
 	// use lastBackupTS as safePoint if exists
 	if cfg.LastBackupTS > 0 {
@@ -410,7 +411,26 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	log.Info("current backup safePoint job", zap.Object("safePoint", sp))
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	gcSafePointKeeperRemovable := false
+	defer func() {
+		// don't reset the gc-safe-point if checkpoint mode is used and backup is not finished
+		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
+			return
+		}
+		log.Info("start to remove gc-safepoint.")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint.")
+	}()
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -561,7 +581,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, progressCallBack); err != nil {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -604,6 +624,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Since backupmeta is flushed on the external storage,
+	// we can remove the gc safepoint keeper
+	gcSafePointKeeperRemovable = true
 
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()

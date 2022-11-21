@@ -168,10 +168,14 @@ func logKeyFor(key string) string {
 }
 
 func (tc *logCollector) NowDureTime() time.Duration {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
 	return time.Since(tc.startTime)
 }
 
 func (tc *logCollector) AdjustStartTimeToEarlierTime(t time.Duration) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
 	tc.startTime = tc.startTime.Add(-t)
 }
 

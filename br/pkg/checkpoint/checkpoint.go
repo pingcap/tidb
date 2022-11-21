@@ -485,9 +485,10 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 }
 
 type CheckpointMetadata struct {
-	ConfigHash []byte        `json:"config-hash"`
-	BackupTS   uint64        `json:"backup-ts"`
-	Ranges     []rtree.Range `json:"ranges"`
+	GCServiceId string        `json:"gc-service-id"`
+	ConfigHash  []byte        `json:"config-hash"`
+	BackupTS    uint64        `json:"backup-ts"`
+	Ranges      []rtree.Range `json:"ranges"`
 
 	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
 	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`

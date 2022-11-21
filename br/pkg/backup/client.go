@@ -181,6 +181,15 @@ func (bc *Client) SetLockFile(ctx context.Context) error {
 			"This file exists to remind other backup jobs won't use this path"))
 }
 
+// GetSafePointID get the gc-safe-point's service-id from either checkpoint or immediate generation
+func (bc *Client) GetSafePointID() string {
+	if bc.checkpointMeta != nil {
+		log.Info("reuse the checkpoint gc-safepoint service id", zap.String("service-id", bc.checkpointMeta.GCServiceId))
+		return bc.checkpointMeta.GCServiceId
+	}
+	return utils.MakeSafePointID()
+}
+
 // SetGCTTL set gcTTL for client.
 func (bc *Client) SetGCTTL(ttl int64) {
 	if ttl <= 0 {
@@ -273,12 +282,20 @@ func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
 // 1. saves the initial status into the external storage;
 // 2. load the checkpoint data from external storage
 // 3. start checkpoint runner
-func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range, progressCallBack func(ProgressUnit)) (err error) {
+func (bc *Client) StartCheckpointRunner(
+	ctx context.Context,
+	cfgHash []byte,
+	backupTS uint64,
+	ranges []rtree.Range,
+	safePointID string,
+	progressCallBack func(ProgressUnit),
+) (err error) {
 	if bc.checkpointMeta == nil {
 		bc.checkpointMeta = &checkpoint.CheckpointMetadata{
-			ConfigHash: cfgHash,
-			BackupTS:   backupTS,
-			Ranges:     ranges,
+			GCServiceId: safePointID,
+			ConfigHash:  cfgHash,
+			BackupTS:    backupTS,
+			Ranges:      ranges,
 		}
 
 		// sync the checkpoint meta to the external storage at first
@@ -350,6 +367,7 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 	})
 
 	// we should adjust start-time of the summary to `pastDureTime` earlier
+	log.Info("past cost time", zap.Duration("cost", pastDureTime))
 	summary.AdjustStartTimeToEarlierTime(pastDureTime)
 
 	return rangeDataMap, errors.Trace(err)
