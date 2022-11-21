@@ -10,6 +10,7 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/rtree",
         "//br/pkg/storage",
+        "//br/pkg/summary",
         "//br/pkg/utils",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
