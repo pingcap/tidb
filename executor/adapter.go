@@ -462,12 +462,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
 		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
-		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TiDBAutoBuildStatsConcurrency)
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBAutoBuildStatsConcurrency)
 		terror.Log(err1)
 		if err1 == nil {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
 		}
-		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TiDBSysProcScanConcurrency)
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBSysProcScanConcurrency)
 		terror.Log(err2)
 		if err2 == nil {
 			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
