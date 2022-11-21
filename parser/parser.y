@@ -12955,6 +12955,32 @@ PasswordOrLockOption:
 			Count: $4.(int64),
 		}
 	}
+|	"FAILED_LOGIN_ATTEMPTS" NUM
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.FailedLoginAttempts,
+			Count: $3.(int64),
+		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support FAILED_LOGIN_ATTEMPTS EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
+	}
+	"PASSWORD_LOCK_TIME" NUM
+		{
+			$$ = &ast.PasswordOrLockOption{
+				Type:  ast.PasswordLockTime,
+				Count: $3.(int64),
+			}
+			yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
+			parser.lastErrorAsWarn()
+		}
+|	"PASSWORD_LOCK_TIME" "UNBOUNDED"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.PasswordLockTimeDefault,
+		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
+	}
 |	PasswordExpire
 	{
 		$$ = &ast.PasswordOrLockOption{
@@ -12988,32 +13014,7 @@ PasswordOrLockOption:
 		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
 		parser.lastErrorAsWarn()
 	}
-|	"FAILED_LOGIN_ATTEMPTS" Int64Num
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type:  ast.FailedLoginAttempts,
-			Count: $3.(int64),
-		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support FAILED_LOGIN_ATTEMPTS EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
-	"PASSWORD_LOCK_TIME" Int64Num
-    	{
-    		$$ = &ast.PasswordOrLockOption{
-    			Type:  ast.PasswordLockTime,
-    			Count: $3.(int64),
-    		}
-    		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
-    		parser.lastErrorAsWarn()
-    	}
-|	"PASSWORD_LOCK_TIME" "UNBOUNDED" "DEFAULT"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type:  ast.PasswordLockTimeDefault,
-		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
+
 
 PasswordExpire:
 	"PASSWORD" "EXPIRE" ClearPasswordExpireOptions

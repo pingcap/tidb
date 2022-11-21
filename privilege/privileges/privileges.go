@@ -355,6 +355,88 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+//func (p *UserPrivileges) GetUserAttributes(authUser, authHost string) *privilege.UserAttributes {
+//	mysqlPriv := p.Handle.Get()
+//	record := mysqlPriv.connectionVerification(authUser, authHost)
+//	userAttr := &privilege.UserAttributes{FailedLoginCount: record.FailedLoginCount, PasswordLockTimeDays: record.PasswordLockTime, AutoAccountLocked: record.AutoAccountLocked,
+//		AutoLockedLastChanged: record.AutoLockedLastChanged, FailedLoginAttempts: record.FailedLoginAttempts}
+//	return userAttr
+//}
+
+func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		return "", nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchUser(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", user), zap.String("authHost", host))
+		return "", ErrAccessDenied.FastGenByArgs(user, host)
+	}
+	autoLock := record.AutoAccountLocked
+	if autoLock {
+		lockTime := record.PasswordLockTime
+		lastChanged := record.AutoLockedLastChanged
+		d := time.Now().Sub(time.Unix(lastChanged, 0))
+		if d.Microseconds() > lockTime*24*60*60*1000 {
+			return p.BuildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0), nil
+		}
+		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
+		return "", ErrAccessDenied.FastGenByArgs(user, host)
+	}
+	return "", nil
+}
+
+func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		return false
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchUser(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", user), zap.String("authHost", host))
+		ErrAccessDenied.FastGenByArgs(user, host)
+		return false
+	}
+	failedLoginAttempts := record.FailedLoginAttempts
+	if failedLoginAttempts == 0 {
+		return false
+	}
+	failedLoginCount := record.FailedLoginCount
+	if failedLoginCount == 0 {
+		return false
+	}
+	return true
+}
+
+func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
+	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
+	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount)
+}
+
+func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount)
+}
+
+func buildPasswordLockingJson(failedLoginAttempts int64,
+	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
+	lock := 'Y'
+	if !autoAccountLocked {
+		lock = 'N'
+	}
+	newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": \"%d\",\"password_lock_time_days\": \"%d\",\"auto_account_locked\": \"%s\",\"failed_login_count\": \"%d\",\"auto_locked_last_changed\": \"%s\"}}",
+		failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, time.Now().Format(time.UnixDate))
+	return newAttributesStr
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
 	hasPassword := "YES"
