@@ -39,19 +39,12 @@ type PoolContainer struct {
 	Component Component
 }
 
-// TaskPriority is the priority of the task.
-type TaskPriority int
-
-const (
-	HighPriority TaskPriority = iota
-	NormalPriority
-	LowPriority
-)
-
 // Component is ID for difference component
 type Component int
 
 const (
-	UNKNOWN Component = iota // it is only for test
+	// UNKNOWN is for unknown component. It is only for test
+	UNKNOWN Component = iota
+	// DDL is for ddl component
 	DDL
 )
