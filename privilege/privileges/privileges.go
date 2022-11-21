@@ -357,6 +357,7 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+// CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
 	disconnectOnPwdExpiredStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword)
 	if err != nil {
