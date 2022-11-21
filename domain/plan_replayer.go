@@ -370,6 +370,28 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 	return true, nil
 }
 
+// CheckPlanReplayerTaskExists checks whether plan replayer capture task exists already
+func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest string) (bool, error) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
+		sqlDigest, planDigest))
+	if err != nil {
+		return false, err
+	}
+	if rs == nil {
+		return false, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(rows) > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 // PlanReplayerStatusRecord indicates record in mysql.plan_replayer_status
 type PlanReplayerStatusRecord struct {
 	SQLDigest    string

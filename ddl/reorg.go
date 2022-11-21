@@ -273,11 +273,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
-			zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", currentElement.TypeKey),
-			zap.Int64("elementID", currentElement.ID),
-			zap.Int64("totalAddedRowCount", rowCount),
-			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
+			zap.Duration("wait time", waitTimeout),
+			zap.ByteString("element type", currentElement.TypeKey),
+			zap.Int64("element ID", currentElement.ID),
+			zap.Int64("total added row count", rowCount),
+			zap.String("done key", hex.EncodeToString(doneKey)),
 			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
@@ -559,10 +559,12 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
+		logutil.BgLogger().Info("[ddl] get noop table range",
+			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
-			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
+			zap.String("start key", hex.EncodeToString(startHandleKey)),
+			zap.String("end key", hex.EncodeToString(endHandleKey)),
+			zap.Bool("is empty table", isEmptyTable))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -706,9 +708,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
-			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", tryDecodeToHandleString(start)),
-			zap.String("endHandle", tryDecodeToHandleString(end)))
+			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
+			zap.String("start key", hex.EncodeToString(start)),
+			zap.String("end key", hex.EncodeToString(end)))
 
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
