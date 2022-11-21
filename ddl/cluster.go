@@ -68,6 +68,7 @@ const (
 	autoAnalyzeOffset
 	readOnlyOffset
 	totalLockedRegionsOffset
+	startTSOffset
 	commitTSOffset
 )
 
@@ -280,6 +281,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 func SendPrepareFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
+	flashbackTS, startTS uint64,
 	r tikvstore.KeyRange,
 ) (rangetask.TaskStat, error) {
 	startKey, rangeEndKey := r.StartKey, r.EndKey
@@ -314,6 +316,8 @@ func SendPrepareFlashbackToVersionRPC(
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
+			StartTs:  startTS,
+			Version:  flashbackTS,
 		})
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
@@ -481,11 +485,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -533,6 +537,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
+		startTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[startTSOffset] = startTS
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
@@ -552,7 +563,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
+					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
@@ -587,8 +598,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					// Use commitTS - 1 as startTS, make sure it less than commitTS.
-					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
+					// Use same startTS as prepare phase to simulate 1PC txn.
+					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
 					logutil.BgLogger().Info("[ddl] flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
@@ -615,12 +626,12 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
