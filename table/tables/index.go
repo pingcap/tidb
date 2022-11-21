@@ -122,15 +122,15 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 
 	var (
-		tempKey        []byte
-		keyVer         byte
-		keyIsRewritten bool
+		tempKey         []byte
+		keyVer          byte
+		keyIsTempIdxKey bool
 	)
 	if !opt.FromBackFill {
 		key, tempKey, keyVer = genTempIdxKeyByState(c.idxInfo, key)
 		if keyVer == TempIndexKeyTypeBackfill {
 			key, tempKey = tempKey, nil
-			keyIsRewritten = true
+			keyIsTempIdxKey = true
 		}
 	}
 
@@ -176,7 +176,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
-		if keyIsRewritten {
+		if keyIsTempIdxKey && !opt.Untouched { // Untouched key-values never occur in the storage.
 			idxVal = append(idxVal, keyVer)
 		}
 		err = txn.GetMemBuffer().Set(key, idxVal)
@@ -184,7 +184,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			return nil, err
 		}
 		if len(tempKey) > 0 {
-			idxVal = append(idxVal, keyVer)
+			if !opt.Untouched { // Untouched key-values never occur in the storage.
+				idxVal = append(idxVal, keyVer)
+			}
 			err = txn.GetMemBuffer().Set(tempKey, idxVal)
 			if err != nil {
 				return nil, err
@@ -224,7 +226,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
-		if keyIsRewritten {
+		if keyIsTempIdxKey {
 			idxVal = append(idxVal, keyVer)
 		}
 		if lazyCheck {
