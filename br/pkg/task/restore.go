@@ -174,8 +174,8 @@ type RestoreConfig struct {
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
-	pitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
-	pitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -239,10 +239,10 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
 
-	if cfg.pitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
+	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.pitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
+	if cfg.PitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

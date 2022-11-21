@@ -404,9 +404,9 @@ func TestImportKVFiles(t *testing.T) {
 			},
 		},
 		nil,
-		uint64(shiftStartTS),
-		uint64(startTS),
-		uint64(restoreTS),
+		shiftStartTS,
+		startTS,
+		restoreTS,
 		false,
 	)
 	require.True(t, berrors.ErrInvalidArgument.Equal(err))
