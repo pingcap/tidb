@@ -24,9 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/cpu"
 )
 
-// GlobalReourceManage is a global resource manage
-var GlobalReourceManage ResourceManage = NewResourceMange()
-
 // ResourceManage is a resource manage
 type ResourceManage struct {
 	poolMap map[string]*util.PoolContainer
@@ -38,12 +35,12 @@ type ResourceManage struct {
 }
 
 // NewResourceMange is to create a new resource manage
-func NewResourceMange() ResourceManage {
+func NewResourceMange() *ResourceManage {
 	li := make([]limiter.Limiter, 0, 1)
 	li = append(li, limiter.NewBBRLimiter(80))
 	sc := make([]scheduler.Scheduler, 0, 1)
 	sc = append(sc, scheduler.NewGradient2Scheduler())
-	return ResourceManage{
+	return &ResourceManage{
 		poolMap:   make(map[string]*util.PoolContainer),
 		limiter:   li,
 		scheduler: sc,

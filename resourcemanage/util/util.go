@@ -34,7 +34,7 @@ const (
 	LowPriority
 )
 
-// Component is ID for difference Component
+// Component is ID for difference component
 type Component int
 
 const (

@@ -29,7 +29,7 @@ func NewGradient2Scheduler() *Gradient2Scheduler {
 
 func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool) SchedulerCommand {
 	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
-		return NoIdea
+		return Hold
 	}
 	usage := cpu.GetCPUUsage()
 	if usage > 0.8 && component == util.DDL {

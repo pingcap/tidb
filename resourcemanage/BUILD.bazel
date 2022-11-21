@@ -7,6 +7,7 @@ go_library(
         "schedule.go",
         "schedule_rule.go",
         "scheduler.go",
+        "util.go",
     ],
     importpath = "github.com/pingcap/tidb/resourcemanage",
     visibility = ["//visibility:public"],

@@ -33,11 +33,9 @@ func (r *ResourceManage) schedulePool(pool *util.PoolContainer) {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
 		case scheduler.Overclock:
-			cap := pool.Pool.Cap()
-			pool.Pool.Tune(cap + 1)
+			overclock(pool)
 		case scheduler.Downclock:
-			cap := pool.Pool.Cap()
-			pool.Pool.Tune(cap - 1)
+			downclock(pool)
 		case scheduler.Hold:
 			continue
 		}
