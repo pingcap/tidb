@@ -632,7 +632,7 @@ func TestRestoreKVFiles(t *testing.T) {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
 	cli, im := makeClientForLogBackup(t, ctrl)
-	files := iter.ConcatAll(iter.FromSlice(emptyLogs(16)),
+	files := iter.ConcatAll(iter.FromSlice(emptyLogs(1024)),
 		iter.Fail[Log](status.Errorf(codes.DataLoss, "A gecko spawns in the network pool. The wet air makes data weird, meow?")),
 		iter.FromSlice(emptyLogs(1024)),
 	)
