@@ -9464,8 +9464,39 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	tk.MustQuery("SELECT '1' = (case when 0 <=> 1 then a else a end) from t;").Check(testkit.Rows("1"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestTimestampAddWithFractionalSecond(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a date)")
+	tk.MustExec("insert into t values ('2021-08-20');")
+	tk.MustQuery("select timestampadd(microsecond, 1, a) from t").Check(testkit.Rows("2021-08-20 00:00:00.000001"))
+	tk.MustQuery("select timestampadd(second, 6/4, a) from t").Check(testkit.Rows("2021-08-20 00:00:01.500000"))
+	tk.MustQuery("select timestampadd(second, 9.9999e2, a) from t").Check(testkit.Rows("2021-08-20 00:16:39.990000"))
+	tk.MustQuery("select timestampadd(second, 1, '2021-08-20 00:00:01.0001')").Check(testkit.Rows("2021-08-20 00:00:02.000100"))
+	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00')").Check(testkit.Rows("2021-08-20 00:02:00"))
+	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001')").Check(testkit.Rows("2021-08-20 00:02:00.000100"))
+	// overflow
+	tk.MustQuery("SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result").Check(testkit.Rows("<nil>"))
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	for _, warning := range warnings {
+		require.EqualError(t, warning.Err, "[types:1441]Datetime function: datetime field overflow")
+	}
+}
+
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = 'CET'")
+>>>>>>> 028c5eb835 (types: Fix `TIMESTAMPADD` lost fractional digits (#38003))
 	tk.MustExec("use test")
 	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
 	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
