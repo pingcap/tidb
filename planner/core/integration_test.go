@@ -1329,7 +1329,8 @@ func TestViewHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("drop view if exists v, v1")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop view if exists v, v1, v2")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
@@ -1363,6 +1364,44 @@ func TestViewHintScope(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop view if exists v, v1, v2, v3")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.b from t join (select /*+ stream_agg() */ count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestViewHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
@@ -1372,6 +1411,67 @@ func TestViewHintScope(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+
+	tk.MustExec("select * from v2")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;")
+	tk.MustExec("select * from v2")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from `test` . `v2`")
+	require.Equal(t, res[0][1], "SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `test`.`v2`")
+
+	tk.MustExec("drop global binding for select * from v2")
+	tk.MustExec("select * from v2")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
+}
+
+func TestAllViewHintType(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash, tikv'")
+	tk.MustExec("drop view if exists v, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12")
+	tk.MustExec("drop table if exists t, t1, t2, t4, t3, t5")
+	tk.MustExec("create table t(a int not null, b int, index idx_a(a));")
+	tk.MustExec("create table t1(a int not null, b int, index idx_a(a));")
+	tk.MustExec("create table t2(a int, b int, index idx_a(a));")
+	tk.MustExec("create table t3(a int, b int, index idx_a(a));")
+	tk.MustExec("create table t4(a int, b int, index idx_a(a));")
+	tk.MustExec("create table t5(a int, b int, index idx_a(a), index idx_b(b));")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join t1 on t.a = t1.a;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select t2.a, t2.b from t2 join t3 join v where t2.b = t3.b and t3.a = v.a;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v3 as select * from t5 where a > 1 and b < 2;")
+	tk.MustExec("create definer='root'@'localhost' view v4 as select * from t5 where a > 1 or b < 2;")
+	tk.MustExec("create definer='root'@'localhost' view v5 as SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t1 WHERE t1.b = t.b);")
+	tk.MustExec("create definer='root'@'localhost' view v6 as select * from t1 where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);")
+	tk.MustExec("create definer='root'@'localhost' view v7 as WITH CTE AS (SELECT * FROM t WHERE t.a < 60) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;")
+	tk.MustExec("create definer='root'@'localhost' view v8 as WITH CTE1 AS (SELECT b FROM t1), CTE2 AS (WITH CTE3 AS (SELECT a FROM t2), CTE4 AS (SELECT a FROM t3) SELECT CTE3.a FROM CTE3, CTE4) SELECT b FROM CTE1, CTE2 union select * from CTE1;")
+	tk.MustExec("create definer='root'@'localhost' view v9 as select sum(a) from t;")
+	tk.MustExec("create definer='root'@'localhost' view v10 as SELECT * FROM t WHERE a > 10 ORDER BY b LIMIT 1;")
+	tk.MustExec("create definer='root'@'localhost' view v11 as select a, sum(b) from t group by a")
+	tk.MustExec("create definer='root'@'localhost' view v12 as select t.a, t.b from t join t t1 on t.a = t1.a;")
 
 	var input []string
 	var output []struct {
@@ -2620,6 +2720,7 @@ func TestSelectLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(1),(2)")
@@ -2644,9 +2745,9 @@ func TestSelectLimit(t *testing.T) {
 	result = tk.MustQuery("select (select * from t limit 1) s") // limit write in subquery, has no effect.
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where t.a in (select * from t) limit 3") // select_limit will not effect subquery
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 	result = tk.MustQuery("select * from (select * from t) s limit 3") // select_limit will not effect subquery
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 
 	// test for union
 	result = tk.MustQuery("select * from t union all select * from t limit 2") // limit outside subquery
@@ -2674,14 +2775,14 @@ func TestSelectLimit(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@session.sql_select_limit=default")
 	result = tk.MustQuery("select * from s")
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 
 	// test for DML
 	tk.MustExec("set @@session.sql_select_limit=1")
 	tk.MustExec("create table b (a int)")
 	tk.MustExec("insert into b select * from t") // all values are inserted
 	result = tk.MustQuery("select * from b limit 3")
-	result.Check(testkit.Rows("1", "1", "2"))
+	result.Sort().Check(testkit.Rows("1", "1", "2"))
 	tk.MustExec("update b set a = 2 where a = 1") // all values are updated
 	result = tk.MustQuery("select * from b limit 3")
 	result.Check(testkit.Rows("2", "2", "2"))
@@ -3272,6 +3373,10 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "ascii(cast(test.t.e, var_string(2)))"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "eq(json_valid(test.t.c), 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where json_valid(c)=1;").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "json_contains(cast(test.t.c, json BINARY), cast(\"1\", json BINARY))"
