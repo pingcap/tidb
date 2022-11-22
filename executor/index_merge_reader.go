@@ -795,8 +795,9 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 }
 
 type intersectionProcessWorker struct {
+	workerID int
 	// key: parTblIdx, val: HandleMap
-	handleMaps map[int]*kv.HandleMap
+	handleMapsPerWorker map[int]*kv.HandleMap
 	workerCh   chan *indexMergeTableTask
 	indexMerge *IndexMergeReaderExecutor
 	wg         *sync.WaitGroup
@@ -805,7 +806,11 @@ type intersectionProcessWorker struct {
 
 func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 	for task := range w.workerCh {
-		hMap := w.handleMaps[task.parTblIdx]
+		var ok bool
+		var hMap *kv.HandleMap
+		if hMap, ok = w.handleMapsPerWorker[task.parTblIdx]; !ok {
+			panic(fmt.Sprintf("cannot find parTblIdx(%d) for worker(id: %d)", task.parTblIdx, w.workerID))
+		}
 		oriCnt := hMap.Len()
 		for _, h := range task.handles {
 			if cntPtr, ok := hMap.Get(h); ok {
@@ -840,10 +845,10 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	partCnt := 1
 	workerCnt := 1
 	partCntPerWorker := 1
-	// Use one goroutine to handle multiple partitions.
-	// Max number of partition number is 8192, we use 64 to avoid too many goroutines.
-	const maxWorkerCnt int = 64
-	const maxChannelSize int = 1024
+	// One goroutine may handle one or multiple partitions.
+	// Max number of partition number is 8192, we use ExecutorConcurrency to avoid too many goroutines.
+	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().ExecutorConcurrency
+	maxChannelSize := 1024
 	if w.indexMerge.partitionTableMode {
 		partCnt = len(w.indexMerge.prunedPartitions)
 		workerCnt = partCnt
@@ -867,7 +872,8 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			handleMapsPerWorker[parTblIdx] = hMap
 		}
 		workers = append(workers, &intersectionProcessWorker{
-			handleMaps: handleMapsPerWorker,
+			workerID: i,
+			handleMapsPerWorker: handleMapsPerWorker,
 			workerCh:   make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge: w.indexMerge,
 			wg:         &wg,
@@ -877,14 +883,14 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		wg.Add(1)
 	}
 	for task := range fetchCh {
-		workers[task.parTblIdx%maxWorkerCnt].workerCh <- task
+		workers[task.parTblIdx/partCntPerWorker].workerCh <- task
 	}
 	for _, w := range workers {
 		close(w.workerCh)
 	}
 	wg.Wait()
 
-	intersected := make([][]kv.Handle, 0, partCnt)
+	intersected := make([][]kv.Handle, partCnt)
 	for parTblIdx, hMap := range handleMaps {
 		hMap.Range(func(h kv.Handle, val interface{}) bool {
 			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
