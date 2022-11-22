@@ -3050,6 +3050,30 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test partition table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
+	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	hexKey = tablecodec.EncodeTablePrefix(tbl.Meta().Partition.Definitions[0].ID).String()
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	data = []types.Datum{types.NewIntDatum(100)}
+	hexKey = buildIndexKeyFromData(tbl.Meta().Partition.Definitions[0].ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
 func TestTwoDecimalTruncate(t *testing.T) {

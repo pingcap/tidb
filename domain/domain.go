@@ -17,7 +17,9 @@ package domain
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1106,8 +1108,12 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 	}
 }
 
+// Periodically check and update the replica-read status when `tidb_replica_read` is set to "closest-adaptive"
+// We disable "closest-adaptive" in following conditions to ensure the read traffic is evenly distributed across
+// all AZs:
+// - There are no TiKV servers in the AZ of this tidb instance
+// - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
 func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
-	// fast path
 	do.sysVarCache.RLock()
 	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
 	do.sysVarCache.RUnlock()
@@ -1116,6 +1122,24 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
 		return nil
 	}
+
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	zone := ""
+	for k, v := range serverInfo.Labels {
+		if k == placement.DCLabelKey && v != "" {
+			zone = v
+			break
+		}
+	}
+	if zone == "" {
+		logutil.BgLogger().Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
 	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return err
@@ -1135,30 +1159,46 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 	}
 
-	enabled := false
-	// if stores don't have zone labels or are distribued in 1 zone, just disable cloeset replica read.
-	if len(storeZones) > 1 {
-		enabled = true
-		servers, err := infosync.GetAllServerInfo(ctx)
-		if err != nil {
-			return err
-		}
-		for _, s := range servers {
-			if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
-				if _, ok := storeZones[v]; !ok {
-					enabled = false
-					break
-				}
+	// no stores in this AZ
+	if _, ok := storeZones[zone]; !ok {
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return err
+	}
+	svrIdsInThisZone := make([]string, 0)
+	for _, s := range servers {
+		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+			if _, ok := storeZones[v]; ok {
 				storeZones[v] += 1
-			}
-		}
-		if enabled {
-			for _, count := range storeZones {
-				if count == 0 {
-					enabled = false
-					break
+				if v == zone {
+					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
 				}
 			}
+		}
+	}
+	enabledCount := math.MaxInt
+	for _, count := range storeZones {
+		if count < enabledCount {
+			enabledCount = count
+		}
+	}
+	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
+	// because ID is unchangeable, so this is a simple and stable algorithm to select
+	// some instances across all tidb servers.
+	if enabledCount < len(svrIdsInThisZone) {
+		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
+			return strings.Compare(svrIdsInThisZone[i], svrIdsInThisZone[j]) < 0
+		})
+	}
+	enabled := true
+	for _, s := range svrIdsInThisZone[enabledCount:] {
+		if s == serverInfo.ID {
+			enabled = false
+			break
 		}
 	}
 
