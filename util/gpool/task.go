@@ -143,6 +143,7 @@ func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
 	return false
 }
 
+// Task is a task that can be executed.
 type Task[T any] struct {
 	Task T
 	Done DoneFunc

@@ -12,6 +12,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//resourcemanage",
+        "//resourcemanage/util",
+        "//resourcemanager:resourcemanage",
         "//resourcemanager/pooltask",
         "//util/gpool",
         "//util/logutil",

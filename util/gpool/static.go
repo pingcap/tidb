@@ -34,24 +34,24 @@ type counterCache struct {
 	val  uint64
 }
 
+// Statistic is the statistic of the pool.
 type Statistic struct {
-	// stat is the statistic of the task complete count.
+	// taskCntStat is the statistic of the task complete count.
 	taskCntStat window.RollingCounter[uint64]
 	// rtStat is the statistic of the task complete time.
-	rtStat window.RollingCounter[uint64]
-
+	rtStat       window.RollingCounter[uint64]
 	maxPASSCache atomic.Pointer[counterCache]
 	minRtCache   atomic.Pointer[counterCache]
+	longRTT      *mathutil.ExponentialAverageMeasurement
 	queueSize    atomic.Int64
 	shortRTT     atomic.Uint64
-	longRTT      *mathutil.ExponentialAverageMeasurement
-
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
 	maxTaskCntCache atomic.Uint64
 	bucketPerSecond uint64
 }
 
+// NewStatistic returns a new statistic.
 func NewStatistic() Statistic {
 	opts := window.RollingCounterOpts{
 		Size:           bucketSize,
@@ -66,22 +66,27 @@ func NewStatistic() Statistic {
 	}
 }
 
+// GetQueueSize returns the queue size.
 func (s *Statistic) GetQueueSize() int64 {
 	return s.queueSize.Load()
 }
 
+// InQueue is called when the task is in the queue.
 func (s *Statistic) InQueue() {
 	s.queueSize.Add(1)
 }
 
+// OutQueue is called when the task is out of the queue.
 func (s *Statistic) OutQueue() {
 	s.queueSize.Add(-1)
 }
 
+// MaxInFlight returns the maxInFlight.
 func (s *Statistic) MaxInFlight() int64 {
 	return int64(math.Floor(float64(s.MaxPASS()*s.MinRT()*s.bucketPerSecond)/1000.0) + 0.5)
 }
 
+// MinRT is the minimum processing time.
 func (s *Statistic) MinRT() uint64 {
 	rc := s.minRtCache.Load()
 	if rc != nil {
@@ -115,6 +120,7 @@ func (s *Statistic) MinRT() uint64 {
 	return rawMinRT
 }
 
+// MaxPASS is the maximum processing count per unit time.
 func (s *Statistic) MaxPASS() uint64 {
 	ps := s.maxPASSCache.Load()
 	if ps != nil {
@@ -126,7 +132,7 @@ func (s *Statistic) MaxPASS() uint64 {
 		var result uint64 = 1
 		for i := 1; iterator.Next() && i < bucketSize; i++ {
 			bucket := iterator.Bucket()
-			var count uint64 = 0.0
+			var count uint64
 			for _, p := range bucket.Points {
 				count += p
 			}
@@ -141,7 +147,7 @@ func (s *Statistic) MaxPASS() uint64 {
 	return rawMaxPass
 }
 
-func (s *Statistic) timespan(lastTime time.Time) int {
+func (*Statistic) timespan(lastTime time.Time) int {
 	v := int(time.Since(lastTime) / win)
 	if v > -1 {
 		return v
@@ -149,18 +155,22 @@ func (s *Statistic) timespan(lastTime time.Time) int {
 	return bucketSize
 }
 
+// Inflight returns the inflight.
 func (s *Statistic) Inflight() int64 {
 	return s.inFlight.Load()
 }
 
+// LongRTT returns the longRTT.
 func (s *Statistic) LongRTT() float64 {
 	return s.longRTT.Get()
 }
 
+// ShortRTT returns the shortRTT.
 func (s *Statistic) ShortRTT() uint64 {
 	return s.shortRTT.Load()
 }
 
+// Static is to static the job.
 func (s *Statistic) Static() (DoneFunc, error) {
 	s.inFlight.Add(1)
 	start := time.Now().UnixNano()

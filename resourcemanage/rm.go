@@ -68,10 +68,9 @@ func (r *ResourceManage) Stop() {
 }
 
 // Register is to register pool into resource manage
-func (r *ResourceManage) Register(pool util.GorotinuePool, name string, _ util.TaskPriority, component util.Component) error {
+func (r *ResourceManage) Register(pool util.GorotinuePool, name string, component util.Component) error {
 	p := util.PoolContainer{Pool: pool, Component: component}
 	return r.registerPool(name, &p)
-
 }
 
 func (r *ResourceManage) registerPool(name string, pool *util.PoolContainer) error {
