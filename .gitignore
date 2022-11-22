@@ -35,3 +35,4 @@ bazel-out
 bazel-testlogs
 bazel-tidb
 .ijwb/
+/oom_record/
