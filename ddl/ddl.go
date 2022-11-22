@@ -1198,6 +1198,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 		})
 	}
 
+	if variable.EnableMDL.Load() && !toConcurrentDDL {
+		return errors.New("can not disable concurrent ddl when metadata lock is enabled")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	d.waiting.Store(true)
