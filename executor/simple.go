@@ -1301,7 +1301,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	return nil
 }
 
-func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) (returnErr error) {
+func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
@@ -1330,6 +1330,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
+	needRollback := false
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("could not load privilege checker")
@@ -1571,6 +1572,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
+				needRollback = true
 				continue
 			}
 		}
@@ -1581,20 +1583,28 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
+				needRollback = true
 			}
 		}
 	}
 	if len(failedUsers) > 0 {
 		// compatible mysql8.0
-		if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
-			return err
-		}
-		if !s.IfExists {
+		if !s.IfExists || needRollback {
+			if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
+				return err
+			}
 			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
 		for _, user := range failedUsers {
 			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		}
+		if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
+			return err
 		}
 	} else {
 		if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
@@ -1665,7 +1675,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 }
 
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
-func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (returnErr error) {
+func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	var failedUser string
 	sysSession, err := e.getSysSession()
@@ -2036,7 +2046,7 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 	return authplugin, nil
 }
 
-func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (returnErr error) {
+func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(ctx, sysSession)

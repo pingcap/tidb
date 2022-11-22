@@ -348,3 +348,18 @@ func TestUserReuseRename(t *testing.T) {
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse1'`).Check(testkit.Rows(`4`))
 }
+
+func TestUserAlterUser(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	rootTK := testkit.NewTestKit(t, store)
+	rootTK.MustExec(`CREATE USER test1 IDENTIFIED WITH 'mysql_native_password' BY '1234'`)
+	alterUserSQL := `ALTER USER 'test1' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
+	rootTK.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
+	result := rootTK.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="%"`)
+	result.Check(testkit.Rows(auth.EncodePassword("1234")))
+	alterUserSQL = `ALTER USER IF EXISTS 'test1' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
+	rootTK.MustExec(alterUserSQL)
+	rootTK.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
+	result = rootTK.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="%"`)
+	result.Check(testkit.Rows(auth.EncodePassword("222")))
+}
