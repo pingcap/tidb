@@ -799,10 +799,12 @@ type processWorker struct {
 	workerCh   chan *indexMergeTableTask
 	indexMerge *IndexMergeReaderExecutor
 	wg         *sync.WaitGroup
+	memTracker *memory.Tracker
 }
 
 func (w *processWorker) doIntersectionPerPartition() {
 	for task := range w.workerCh {
+		oriCnt := w.handleMap.Len()
 		for _, h := range task.handles {
 			if cntPtr, ok := w.handleMap.Get(h); ok {
 				(*cntPtr.(*int))++
@@ -810,6 +812,10 @@ func (w *processWorker) doIntersectionPerPartition() {
 				cnt := 1
 				w.handleMap.Set(h, &cnt)
 			}
+		}
+		newCnt := w.handleMap.Len()
+		if newCnt > oriCnt {
+			w.memTracker.Consume(int64(newCnt-oriCnt) * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
 		}
 	}
 	w.wg.Done()
@@ -829,6 +835,8 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}()
 	}
 
+	// mapLen == len(workers) == len(prunedPartitions)
+	// Max number of partition number is 8192. So there will be at most 8192 processWorkers.
 	mapLen := 1
 	if w.indexMerge.partitionTableMode {
 		mapLen = len(w.indexMerge.prunedPartitions)
@@ -840,9 +848,10 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		handleMaps = append(handleMaps, kv.NewHandleMap())
 		workers = append(workers, &processWorker{
 			handleMap:  handleMaps[i],
-			workerCh:   make(chan *indexMergeTableTask, 10000),
+			workerCh:   make(chan *indexMergeTableTask, 1024),
 			indexMerge: w.indexMerge,
 			wg:         &wg,
+			memTracker: w.indexMerge.memTracker,
 		})
 		go workers[i].doIntersectionPerPartition()
 		wg.Add(1)
@@ -855,9 +864,6 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		close(w.workerCh)
 	}
 	wg.Wait()
-	for _, w := range workers {
-		w.indexMerge.memTracker.Consume(int64(w.handleMap.Len()) * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
-	}
 
 	intersected := make([][]kv.Handle, len(handleMaps))
 	for parTblIdx, m := range handleMaps {
