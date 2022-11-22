@@ -15,188 +15,155 @@
 package ttl
 
 import (
-	"fmt"
-	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
+type rowKey []types.Datum
+
+type scanQueryGenerator struct {
+	tbl       *ttlTable
+	scanRange []rowKey
+	expire    time.Time
+}
+
+func newScanQueryGenerator(tbl *ttlTable, expire time.Time, scanRange []rowKey) *scanQueryGenerator {
+	return &scanQueryGenerator{
+		tbl:       tbl,
+		scanRange: scanRange,
+		expire:    expire,
+	}
+}
+
+func (g *scanQueryGenerator) NextQuery(limit int, continueFrom rowKey, exhausted bool) (string, error) {
+	if exhausted {
+		return "", nil
+	}
+
+	b := newSQLBuilder(g.tbl)
+	if err := b.WriteSelect(); err != nil {
+		return "", err
+	}
+
+	left := continueFrom
+	if left == nil && len(g.scanRange) > 0 {
+		left = g.scanRange[0]
+	}
+
+	if left != nil {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns, ">", continueFrom); err != nil {
+			return "", err
+		}
+	}
+
+	if len(g.scanRange) > 1 {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<=", g.scanRange[1]); err != nil {
+			return "", err
+		}
+	}
+
+	if err := b.WriteExpireCondition(g.expire); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteOrderBy(g.tbl.KeyColumns, false); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteLimit(limit); err != nil {
+		return "", err
+	}
+
+	return b.Build()
+}
+
 type ttlTable struct {
 	*model.TableInfo
-	Schema model.CIStr
-}
-
-func newTTLTable(schema model.CIStr, tblInfo *model.TableInfo) (ttlTable, error) {
-	if !isTTLTable(tblInfo) {
-		return ttlTable{}, errors.New("table is not ttl table")
-	}
-
-	return ttlTable{
-		Schema:    schema,
-		TableInfo: tblInfo,
-	}, nil
-}
-
-func (t *ttlTable) FormatQuerySQL(rangeStart, rangeEnd []types.Datum, expire types.Datum, limit int) (string, error) {
-	handleColumns := t.GetHandleColumns()
-	handleColumnNameText := formatColumnName(handleColumns...)
-	operandHandleColumnNameText := formatOperandColumnName(handleColumns...)
-
-	conditions := make([]string, 0, 2)
-	if len(rangeStart) > 0 {
-		text, err := formatDatums(rangeStart, handleColumns)
-		if err != nil {
-			return "", err
-		}
-		conditions = append(conditions, fmt.Sprintf("%s > %s", operandHandleColumnNameText, text))
-	}
-
-	if len(rangeEnd) > 0 {
-		text, err := formatDatums(rangeEnd, handleColumns)
-		if err != nil {
-			return "", err
-		}
-		conditions = append(conditions, fmt.Sprintf("%s < %s", operandHandleColumnNameText, text))
-	}
-
-	ttlColumn := t.GetTTLColumn()
-	expireText, err := formatDatum(expire, ttlColumn)
-	if err != nil {
-		return "", err
-	}
-	conditions = append(conditions, fmt.Sprintf("%s < %s", formatOperandColumnName(ttlColumn), expireText))
-
-	querySQL := fmt.Sprintf(
-		"SELECT LOW_PRIORITY %s FROM `%s`.`%s` WHERE %s ORDER BY %s ASC",
-		handleColumnNameText,
-		t.Schema.O,
-		t.Name.O,
-		strings.Join(conditions, " AND "),
-		handleColumnNameText,
-	)
-
-	if limit > 0 {
-		querySQL = querySQL + fmt.Sprintf(" LIMIT %d", limit)
-	}
-	return querySQL, nil
-}
-
-func (t *ttlTable) FormatDeleteSQL(keys [][]types.Datum, expire types.Datum) (string, error) {
-	handleColumns := t.GetHandleColumns()
-	keyTexts := make([]string, 0, len(keys))
-	for _, datums := range keys {
-		text, err := formatDatums(datums, handleColumns)
-		if err != nil {
-			return "", err
-		}
-		keyTexts = append(keyTexts, text)
-	}
-
-	ttlColumn := t.GetTTLColumn()
-	ttlText, err := formatDatum(expire, ttlColumn)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(
-		"DELETE LOW_PRIORITY FROM `%s`.`%s` WHERE %s IN (%s) AND %s < %s",
-		t.Schema.O,
-		t.Name.O,
-		formatOperandColumnName(handleColumns...),
-		strings.Join(keyTexts, ", "),
-		formatOperandColumnName(ttlColumn),
-		ttlText,
-	), nil
-}
-
-func (t *ttlTable) GetTTLColumn() *model.ColumnInfo {
-	for _, column := range t.Columns {
-		if column.Name.L == "expire" {
-			return column
-		}
-	}
-	return nil
-}
-
-func (t *ttlTable) GetHandleColumns() []*model.ColumnInfo {
-	if t.PKIsHandle {
-		for i, col := range t.Columns {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				return []*model.ColumnInfo{t.Columns[i]}
-			}
-		}
-	}
-
-	if t.IsCommonHandle {
-		idxInfo := tables.FindPrimaryIndex(t.TableInfo)
-		columns := make([]*model.ColumnInfo, len(idxInfo.Columns))
-		for i, idxCol := range idxInfo.Columns {
-			columns[i] = t.Columns[idxCol.Offset]
-		}
-		return columns
-	}
-
-	return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
-}
-
-func formatDatum(datum types.Datum, column *model.ColumnInfo) (string, error) {
-	expr := ast.NewValueExpr(datum.GetValue(), column.FieldType.GetCharset(), column.FieldType.GetCollate())
-
-	var res strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
-	if err := expr.Restore(ctx); err != nil {
-		return "", err
-	}
-	return res.String(), nil
-}
-
-func formatDatums(datums []types.Datum, columns []*model.ColumnInfo) (string, error) {
-	datumTexts := make([]string, 0, len(datums))
-	for i, datum := range datums {
-		text, err := formatDatum(datum, columns[i])
-		if err != nil {
-			return "", err
-		}
-		datumTexts = append(datumTexts, text)
-	}
-	text := strings.Join(datumTexts, ", ")
-	if len(datums) > 1 {
-		text = fmt.Sprintf("(%s)", text)
-	}
-	return text, nil
-}
-
-func formatColumnName(columns ...*model.ColumnInfo) string {
-	names := make([]string, 0, len(columns))
-	for _, col := range columns {
-		names = append(names, fmt.Sprintf("`%s`", col.Name.O))
-	}
-	return strings.Join(names, ", ")
-}
-
-func formatOperandColumnName(columns ...*model.ColumnInfo) string {
-	text := formatColumnName(columns...)
-	if len(columns) > 1 {
-		text = fmt.Sprintf("(%s)", text)
-	}
-	return text
+	Par           *model.PartitionDefinition
+	Schema        model.CIStr
+	KeyColumns    []*model.ColumnInfo
+	KeyFieldTypes []*types.FieldType
+	TimeColumn    *model.ColumnInfo
 }
 
 func isTTLTable(tbl *model.TableInfo) bool {
 	for _, column := range tbl.Columns {
 		if column.Name.L == "expire" {
-			switch column.GetType() {
-			case mysql.TypeDatetime, mysql.TypeTimestamp:
-				return true
-			}
+			return true
 		}
 	}
+
 	return false
+}
+
+func newTTLTable(schema model.CIStr, tbl *model.TableInfo, par *model.PartitionDefinition) (*ttlTable, error) {
+	if !isTTLTable(tbl) {
+		return nil, errors.Errorf("table '%s.%s' is not a TTL table", schema, tbl.Name)
+	}
+
+	ttlTbl := &ttlTable{
+		TableInfo: tbl,
+		Par:       par,
+		Schema:    schema,
+	}
+
+	for _, column := range tbl.Columns {
+		if column.Name.L == "expire" {
+			ttlTbl.TimeColumn = column
+			break
+		}
+	}
+
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				ttlTbl.KeyColumns = []*model.ColumnInfo{tbl.Columns[i]}
+				ttlTbl.KeyFieldTypes = []*types.FieldType{&tbl.Columns[i].FieldType}
+			}
+		}
+	} else if tbl.IsCommonHandle {
+		idxInfo := tables.FindPrimaryIndex(tbl)
+		columns := make([]*model.ColumnInfo, len(idxInfo.Columns))
+		fieldTypes := make([]*types.FieldType, len(idxInfo.Columns))
+		for i, idxCol := range idxInfo.Columns {
+			columns[i] = tbl.Columns[idxCol.Offset]
+			fieldTypes[i] = &tbl.Columns[idxCol.Offset].FieldType
+		}
+		ttlTbl.KeyColumns = columns
+		ttlTbl.KeyFieldTypes = fieldTypes
+	} else {
+		ttlTbl.KeyColumns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+		ttlTbl.KeyFieldTypes = []*types.FieldType{&ttlTbl.KeyColumns[0].FieldType}
+	}
+	return ttlTbl, nil
+}
+
+func (t *ttlTable) GetPhysicalTableID() int64 {
+	if t.Par != nil {
+		return t.Par.ID
+	}
+	return t.ID
+}
+
+func (t *ttlTable) FormatDeleteQuery(keys []rowKey, expire time.Time) (string, error) {
+	b := newSQLBuilder(t)
+
+	if err := b.WriteDelete(); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteInCondition(t.KeyColumns, keys); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteExpireCondition(expire); err != nil {
+		return "", err
+	}
+
+	return b.Build()
 }

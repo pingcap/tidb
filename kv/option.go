@@ -165,4 +165,6 @@ const (
 	InternalTxnBR = InternalTxnTools
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
+	// InternalTxnTTL handles the TTL jobs
+	InternalTxnTTL = "TTL"
 )

@@ -16,119 +16,147 @@ package ttl
 
 import (
 	"context"
-	"time"
+	"sync"
 
-	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type Worker struct {
-	ctx              context.Context
-	ctxFactory       func() (pools.Resource, error)
-	scanDispatchChan chan interface{}
-	delDispatchChan  chan interface{}
-	workers          []*taskWorker
-	cancel           func()
+type workerStatus int
+
+const (
+	workerStatusCreated workerStatus = iota
+	workerStatusRunning
+	workerStatusStopping
+	workerStatusStopped
+)
+
+type session struct {
+	pool sessionPool
+	sessionctx.Context
+	sqlexec.SQLExecutor
 }
 
-func NewTTLWorker(ctxFactory func() (pools.Resource, error)) *Worker {
-	return &Worker{
-		ctx:              context.Background(),
-		ctxFactory:       ctxFactory,
-		scanDispatchChan: make(chan interface{}, 8),
-		delDispatchChan:  make(chan interface{}, 8),
-	}
-}
-
-func (w *Worker) Start() error {
-	scanWorkerCnt := 2
-	delWorkerCnt := 4
-	taskWorkers := make([]*taskWorker, 0, scanWorkerCnt+delWorkerCnt)
-
-	for i := 0; i < scanWorkerCnt; i++ {
-		worker, err := w.createWorker(i, w.scanDispatchChan)
-		if err != nil {
-			return err
-		}
-		taskWorkers = append(taskWorkers, worker)
-	}
-
-	for i := 0; i < delWorkerCnt; i++ {
-		worker, err := w.createWorker(i, w.delDispatchChan)
-		if err != nil {
-			return err
-		}
-		taskWorkers = append(taskWorkers, worker)
-	}
-
-	sctx, err := w.ctxFactory()
-	if err != nil {
-		return err
-	}
-
-	w.ctx, w.cancel = context.WithCancel(context.Background())
-	w.workers = taskWorkers
-
-	go w.loop(sctx.(sessionctx.Context))
-	for _, worker := range taskWorkers {
-		go worker.loop()
-	}
-	return nil
-}
-
-func (w *Worker) Stop() {
-	if w.cancel != nil {
-		w.cancel()
-		w.cancel = nil
-	}
-
-	for _, worker := range w.workers {
-		worker.stop()
-	}
-
-	w.workers = nil
-}
-
-func (w *Worker) loop(sctx sessionctx.Context) {
-	for {
-		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		for _, db := range is.AllSchemas() {
-			for _, tb := range is.SchemaTables(db.Name) {
-				if !isTTLTable(tb.Meta()) {
-					continue
-				}
-
-				select {
-				case w.scanDispatchChan <- &scanTask{
-					ident:     ast.Ident{Schema: db.Name, Name: tb.Meta().Name},
-					delTaskCh: w.delDispatchChan,
-				}:
-				case <-w.ctx.Done():
-					return
-				}
-			}
-		}
-		time.Sleep(time.Second * 5)
-	}
-
-}
-
-func (w *Worker) createWorker(idx int, ch chan interface{}) (*taskWorker, error) {
-	sctx, err := w.ctxFactory()
+func getWorkerSession(pool sessionPool) (*session, error) {
+	resource, err := pool.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(w.ctx)
-	return &taskWorker{
-		idx:  idx,
-		ctx:  ctx,
-		sctx: sctx.(sessionctx.Context),
-		recv: ch,
-		stop: func() {
-			cancel()
-		},
-	}, nil
+	sctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
+	}
+
+	exec, ok := resource.(sqlexec.SQLExecutor)
+	if !ok {
+		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
+	}
+
+	se := &session{
+		pool:        pool,
+		Context:     sctx,
+		SQLExecutor: exec,
+	}
+
+	if _, err = executeSQL(context.Background(), se, "commit"); err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	if _, err = executeSQL(context.Background(), se, "set @@time_zone=(select @@global.time_zone)"); err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	return se, nil
+}
+
+func (s *session) Close() {
+	s.pool.Put(s)
+	s.Context = nil
+	s.SQLExecutor = nil
+}
+
+type worker interface {
+	Start()
+	Stop()
+	Status() workerStatus
+	Error() error
+	Send() chan<- interface{}
+}
+
+type baseWorker struct {
+	sync.Mutex
+	ctx      context.Context
+	cancel   func()
+	ch       chan interface{}
+	loopFunc func() error
+
+	err    error
+	status workerStatus
+}
+
+func (w *baseWorker) init(loop func() error) {
+	w.ctx, w.cancel = context.WithCancel(context.Background())
+	w.status = workerStatusCreated
+	w.loopFunc = loop
+	w.ch = make(chan interface{})
+}
+
+func (w *baseWorker) Start() {
+	w.Lock()
+	defer w.Unlock()
+	if w.status != workerStatusCreated {
+		return
+	}
+
+	go w.loop()
+	w.status = workerStatusRunning
+}
+
+func (w *baseWorker) Stop() {
+	w.Lock()
+	defer w.Unlock()
+	switch w.status {
+	case workerStatusCreated:
+		w.cancel()
+		w.toStopped(nil)
+	case workerStatusRunning:
+		w.cancel()
+		w.status = workerStatusStopping
+	}
+}
+
+func (w *baseWorker) Status() workerStatus {
+	w.Lock()
+	defer w.Unlock()
+	return w.status
+}
+
+func (w *baseWorker) Error() error {
+	w.Lock()
+	defer w.Unlock()
+	return w.err
+}
+
+func (w *baseWorker) Send() chan<- interface{} {
+	return w.ch
+}
+
+func (w *baseWorker) loop() {
+	var err error
+	defer func() {
+		w.Lock()
+		defer w.Unlock()
+		w.toStopped(err)
+	}()
+	err = w.loopFunc()
+}
+
+func (w *baseWorker) toStopped(err error) {
+	w.status = workerStatusStopped
+	w.err = err
+	close(w.ch)
 }
