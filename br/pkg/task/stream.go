@@ -1129,7 +1129,7 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	currentTS, err := client.GetTS(ctx)
+	currentTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
