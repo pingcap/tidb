@@ -2016,16 +2016,13 @@ func (rc *Client) RestoreKVFiles(
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
-					log.Info("import files done", zap.Int("batch-count", len(files)),
-						zap.Uint64("batch-size", size), zap.Duration("take", time.Since(fileStart)),
-						zap.Strings("filepath", func() []string {
-							filenames := make([]string, 0, len(files))
-							for _, f := range files {
-								filenames = append(filenames, f.Path+"; ")
-							}
-							return filenames
-						}()),
-					)
+
+					filenames := make([]string, 0, len(files))
+					for _, f := range files {
+						filenames = append(filenames, f.Path+", ")
+					}
+					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
 
 				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
