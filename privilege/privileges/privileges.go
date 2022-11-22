@@ -364,11 +364,6 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 //}
 
 func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
-	if SkipWithGrant {
-		p.user = user
-		p.host = host
-		return "", nil
-	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
