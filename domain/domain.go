@@ -1551,21 +1551,26 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
 }
 
-var planReplayerHandleLease = 10 * time.Second
+var planReplayerHandleLease atomic.Uint64
+
+func init() {
+	planReplayerHandleLease.Store(uint64(10 * time.Second))
+}
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
-	planReplayerHandleLease = 0
+	planReplayerHandleLease.Store(0)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
 func (do *Domain) StartPlanReplayerHandle() {
-	if planReplayerHandleLease < 1 {
+	lease := planReplayerHandleLease.Load()
+	if lease < 1 {
 		return
 	}
 	do.wg.Add(2)
 	go func() {
-		tikcer := time.NewTicker(planReplayerHandleLease)
+		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
