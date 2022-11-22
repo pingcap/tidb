@@ -177,6 +177,9 @@ func (e *HashJoinExec) Close() error {
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
 	}
+	if e.stats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
@@ -210,7 +213,6 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.concurrency),
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return nil
 }

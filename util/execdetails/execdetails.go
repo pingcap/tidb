@@ -532,57 +532,18 @@ func (*BasicRuntimeStats) Tp() int {
 
 // RootRuntimeStats is the executor runtime stats that combine with multiple runtime stats.
 type RootRuntimeStats struct {
-	basics   []*BasicRuntimeStats
-	groupRss [][]RuntimeStats
+	basic    *BasicRuntimeStats
+	groupRss []RuntimeStats
 }
 
 // GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
-	num := int64(0)
-	for _, basic := range e.basics {
-		num += basic.GetActRows()
-	}
-	return num
-}
-
-// MergeBasicStats merges BasicRuntimeStats in the RootRuntimeStats into single one.
-func (e *RootRuntimeStats) MergeBasicStats() *BasicRuntimeStats {
-	if len(e.basics) == 0 {
-		return nil
-	}
-	basic := e.basics[0].Clone().(*BasicRuntimeStats)
-	for i := 1; i < len(e.basics); i++ {
-		basic.Merge(e.basics[i])
-	}
-	return basic
-}
-
-// MergeGroupStats merges every slice in e.groupRss into single RuntimeStats.
-func (e *RootRuntimeStats) MergeGroupStats() (res []RuntimeStats) {
-	if len(e.groupRss) == 0 {
-		return nil
-	}
-	for _, rss := range e.groupRss {
-		if len(rss) == 0 {
-			continue
-		} else if len(rss) == 1 {
-			res = append(res, rss[0])
-			continue
-		}
-		rs := rss[0].Clone()
-		for i := 1; i < len(rss); i++ {
-			rs.Merge(rss[i])
-		}
-		res = append(res, rs)
-	}
-	return
+	return e.basic.rows
 }
 
 // MergeStats merges stats in the RootRuntimeStats and return the stats suitable for display directly.
 func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []RuntimeStats) {
-	basic = e.MergeBasicStats()
-	groups = e.MergeGroupStats()
-	return
+	return e.basic, e.groupRss
 }
 
 // String implements the RuntimeStats interface.
@@ -667,26 +628,34 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 		stats = &RootRuntimeStats{}
 		e.rootStats[planID] = stats
 	}
-	if basic, ok := info.(*BasicRuntimeStats); ok {
-		stats.basics = append(stats.basics, basic)
-	} else {
-		tp := info.Tp()
-		found := false
-		for i, rss := range stats.groupRss {
-			if len(rss) == 0 {
-				continue
-			}
-			if rss[0].Tp() == tp {
-				stats.groupRss[i] = append(stats.groupRss[i], info)
-				found = true
-				break
-			}
-		}
-		if !found {
-			stats.groupRss = append(stats.groupRss, []RuntimeStats{info})
+	tp := info.Tp()
+	found := false
+	for _, rss := range stats.groupRss {
+		if rss.Tp() == tp {
+			rss.Merge(info)
+			found = true
+			break
 		}
 	}
+	if !found {
+		stats.groupRss = append(stats.groupRss, info.Clone())
+	}
 	e.mu.Unlock()
+}
+
+// GetBasicRuntimeStats gets basicRuntimeStats for a executor.
+func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	stats, ok := e.rootStats[planID]
+	if !ok {
+		stats = &RootRuntimeStats{}
+		e.rootStats[planID] = stats
+	}
+	if stats.basic == nil {
+		stats.basic = &BasicRuntimeStats{}
+	}
+	return stats.basic
 }
 
 // GetRootStats gets execStat for a executor.

@@ -173,7 +173,6 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	if e.runtimeStats != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
@@ -715,6 +714,9 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
+	if e.runtimeStats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.runtimeStats)
+	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 		e.cancelFunc = nil
