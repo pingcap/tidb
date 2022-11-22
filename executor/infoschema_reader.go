@@ -2607,10 +2607,10 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 						row = append(row, types.NewDatum(nil))
 					}
 				} else {
-					if c.Name.O == txninfo.MemBufferBytesStr {
-						// `MemBufferBytesStr` is not stored in TxnInfo
+					switch c.Name.O {
+					case txninfo.MemBufferBytesStr:
 						row = append(row, types.NewDatum(sctx.GetSessionVars().MemDBFootprint.BytesConsumed()))
-					} else {
+					default:
 						row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
 					}
 				}
