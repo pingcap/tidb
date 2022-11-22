@@ -174,6 +174,73 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	require.Equal(t, []byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, iter.Value())
 }
 
+func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec(`create table t (
+    	id int not null auto_increment,
+		k int not null default '0',
+		c char(120) not null default '',
+		pad char(60) not null default '',
+		primary key (id) clustered,
+		key k_1(k));`)
+	tk.MustExec("insert into t values (1, 1, 'a', 'a')")
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+
+	var checkErrs []error
+	var runInsert bool
+	var runUpdate bool
+	originHook := dom.DDL().GetHook()
+	callback := &ddl.TestDDLCallback{
+		Do: dom,
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		idx := findIdxInfo(dom, "test", "t", "idx")
+		if idx == nil {
+			return
+		}
+		if !runInsert {
+			if idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
+				return
+			}
+			runInsert = true
+			_, err := tk2.Exec("insert into t values (100, 1, 'a', 'a');")
+			checkErrs = append(checkErrs, err)
+		}
+		if !runUpdate {
+			if idx.BackfillState != model.BackfillStateReadyToMerge {
+				return
+			}
+			runUpdate = true
+			_, err := tk2.Exec("begin;")
+			checkErrs = append(checkErrs, err)
+			_, err = tk2.Exec("update t set k=k+1 where id = 100;")
+			checkErrs = append(checkErrs, err)
+			_, err = tk2.Exec("commit;")
+			checkErrs = append(checkErrs, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
+	tk.MustExec("alter table t add index idx(c);")
+	dom.DDL().SetHook(originHook)
+	require.True(t, runUpdate)
+	for _, err := range checkErrs {
+		require.NoError(t, err)
+	}
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1 1 a a", "100 2 a a"))
+	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1 1 a a", "100 2 a a"))
+}
+
 func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
