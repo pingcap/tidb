@@ -458,6 +458,26 @@ const (
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
+
+	// CreateTTLTableStatus is a table about TTL task schedule
+	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
+		table_id bigint(64) PRIMARY KEY,
+        parent_table_id bigint(64),
+        table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+        last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+  		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -685,6 +705,8 @@ const (
 	version103 = 103
 	// version104 add `sql_digest` and `plan_digest` to `bind_info`
 	version104 = 104
+	// version105 adds the table tidb_ttl_table_status
+	version105 = 105
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -2092,6 +2114,13 @@ func upgradeToVer104(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
 
+func upgradeToVer105(s Session, ver int64) {
+	if ver >= version105 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTableStatus)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2194,6 +2223,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreatePlanReplayerTaskTable)
 	// Create stats_meta_table_locked table
 	mustExecute(s, CreateStatsTableLocked)
+	// Create tidb_ttl_table_status table
+	mustExecute(s, CreateTTLTableStatus)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
