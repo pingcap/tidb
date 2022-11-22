@@ -2609,7 +2609,12 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 				} else {
 					switch c.Name.O {
 					case txninfo.MemBufferBytesStr:
-						row = append(row, types.NewDatum(sctx.GetSessionVars().MemDBFootprint.BytesConsumed()))
+						memDBFootprint := sctx.GetSessionVars().MemDBFootprint
+						var bytesConsumed int64
+						if memDBFootprint != nil {
+							bytesConsumed = memDBFootprint.BytesConsumed()
+						}
+						row = append(row, types.NewDatum(bytesConsumed))
 					default:
 						row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
 					}

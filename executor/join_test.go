@@ -2314,7 +2314,7 @@ func TestIssue18070(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;","Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 }
 
 func TestIssue18564(t *testing.T) {
