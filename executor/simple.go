@@ -1301,7 +1301,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	return nil
 }
 
-func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) (err error) {
+func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) (returnErr error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
@@ -1348,25 +1348,25 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.getSysSession()
-	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
-		return err
-	}
-
 	defer func() error {
-		if err != nil {
+		if returnErr != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			e.releaseSysSession(ctx, sysSession)
 			if errRollback != nil {
 				return errRollback
 			}
-			return err
+			return returnErr
 		}
-		return nil
+		e.releaseSysSession(ctx, sysSession)
+		return returnErr
 	}()
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		return err
+	}
 
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
@@ -1628,31 +1628,31 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 }
 
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
-func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (err error) {
+func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (returnErr error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	var failedUser string
 	sysSession, err := e.getSysSession()
-	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
-		return err
-	}
-
 	defer func() error {
-		if err != nil {
+		if returnErr != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			e.releaseSysSession(ctx, sysSession)
 			if errRollback != nil {
 				return errRollback
 			}
-			return err
+			return returnErr
 		}
-		return nil
+		e.releaseSysSession(ctx, sysSession)
+		return returnErr
 	}()
 
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		return err
+	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
 		if len(newUser.Username) > auth.UserNameMaxLength {
@@ -1991,28 +1991,30 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 	return authplugin, nil
 }
 
-func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (err error) {
+func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (returnErr error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
-	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
-		return err
-	}
 
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	defer func() error {
-		if err != nil {
+		if returnErr != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			e.releaseSysSession(ctx, sysSession)
 			if errRollback != nil {
 				return errRollback
 			}
-			return err
+			return returnErr
 		}
-		return nil
+		e.releaseSysSession(ctx, sysSession)
+		return returnErr
 	}()
+
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		return err
+	}
 
 	var u, h string
 	if s.User == nil || s.User.CurrentUser {
