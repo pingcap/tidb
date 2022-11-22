@@ -165,3 +165,5 @@ Delete	N/A	root		N/A
   └─TableReader(Probe)	3333.33	root		data:TableRangeScan
     └─TableRangeScan	3333.33	cop[tikv]	table:t_1	range:(0,+inf], keep order:true, stats:pseudo
 drop table if exists t_1,t_2,t_3,t_4;
+set @@global.tidb_enable_foreign_key=0;
+set @@foreign_key_checks=0;

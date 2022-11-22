@@ -2287,15 +2287,3 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		require.Regexp(t, ca.plan, explain)
 	}
 }
-
-func TestExplainAnalyzeDMLWithFKInfo2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk.MustQuery("explain analyze delete from t1 where id>0;").Check(testkit.Rows(""))
-}
