@@ -57,8 +57,8 @@
   "editable": true,
   "gnetId": null,
   "graphTooltip": 1,
-  "id": 26,
-  "iteration": 1668763131596,
+  "id": 31,
+  "iteration": 1669018858346,
   "links": [],
   "panels": [
     {
@@ -1061,12 +1061,12 @@
     },
     {
       "aliasColors": {},
-      "bars": false,
+      "bars": true,
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "TiDB current connection counts",
+      "description": "kv request time by  command source",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -1079,7 +1079,7 @@
         "y": 15
       },
       "hiddenSeries": false,
-      "id": 188,
+      "id": 23763571995,
       "legend": {
         "alignAsTable": true,
         "avg": true,
@@ -1095,7 +1095,7 @@
         "total": false,
         "values": true
       },
-      "lines": true,
+      "lines": false,
       "linewidth": 1,
       "links": [],
       "nullPointMode": "null as zero",
@@ -1107,57 +1107,49 @@
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
-      "seriesOverrides": [],
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:243",
+          "alias": "kv request total time",
+          "bars": false,
+          "color": "#FADE2A",
+          "lines": true,
+          "stack": false
+        }
+      ],
       "spaceLength": 10,
-      "stack": false,
+      "stack": true,
       "steppedLine": false,
       "targets": [
         {
           "exemplar": true,
-          "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}",
+          "expr": "sum(rate(tidb_tikvclient_request_time_counter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type, source)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{type}}-{{source}}",
           "refId": "A",
           "step": 30
         },
         {
           "exemplar": true,
-          "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
+          "expr": "sum(rate(tidb_tikvclient_request_time_counter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
           "hide": false,
           "interval": "",
-          "intervalFactor": 2,
-          "legendFormat": "total",
+          "legendFormat": "kv request total time",
           "refId": "B"
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "active connections",
-          "refId": "D"
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (instance)",
-          "hide": true,
-          "interval": "",
-          "legendFormat": "ac-{{instance}}",
-          "refId": "E"
         }
       ],
       "thresholds": [],
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "Connection Count",
+      "title": "KV Request Time By Source",
       "tooltip": {
         "msResolution": false,
         "shared": true,
         "sort": 0,
-        "value_type": "individual"
+        "value_type": "cumulative"
       },
       "type": "graph",
       "xaxis": {
@@ -1169,9 +1161,9 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:3472",
+          "$$hashKey": "object:178",
           "decimals": 0,
-          "format": "short",
+          "format": "s",
           "label": null,
           "logBase": 1,
           "max": null,
@@ -1179,7 +1171,7 @@
           "show": true
         },
         {
-          "$$hashKey": "object:3473",
+          "$$hashKey": "object:179",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1493,8 +1485,8 @@
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
-        "h": 7,
-        "w": 12,
+        "h": 6,
+        "w": 8,
         "x": 0,
         "y": 29
       },
@@ -1614,9 +1606,9 @@
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
+        "h": 6,
+        "w": 8,
+        "x": 8,
         "y": 29
       },
       "hiddenSeries": false,
@@ -1740,6 +1732,148 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
+      "description": "TiDB current connection counts",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "hiddenSeries": false,
+      "id": 188,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sort": "avg",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:113",
+          "alias": "disconnection/s",
+          "color": "#C4162A",
+          "linewidth": 2,
+          "yaxis": 2
+        }
+      ],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{instance}}",
+          "refId": "A",
+          "step": 30
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "total",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "active connections",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_disconnection_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", result=\"ok\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "disconnection/s",
+          "refId": "E"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Connection Count",
+      "tooltip": {
+        "msResolution": false,
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:3472",
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3473",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "decimals": null,
       "description": "The time cost of parsing SQL to AST",
       "editable": true,
       "error": false,
@@ -1750,7 +1884,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 36
+        "y": 35
       },
       "hiddenSeries": false,
       "id": 156,
@@ -1874,7 +2008,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 36
+        "y": 35
       },
       "hiddenSeries": false,
       "id": 170,
@@ -1985,7 +2119,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 36
+        "y": 35
       },
       "hiddenSeries": false,
       "id": 169,
@@ -2110,7 +2244,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 172,
@@ -2218,7 +2352,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 173,
@@ -2325,7 +2459,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 77,
@@ -2472,7 +2606,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 52
+        "y": 51
       },
       "hiddenSeries": false,
       "id": 185,
@@ -2586,7 +2720,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 52
+        "y": 51
       },
       "hiddenSeries": false,
       "id": 183,
@@ -2702,7 +2836,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 52
+        "y": 51
       },
       "hiddenSeries": false,
       "id": 174,
@@ -2818,7 +2952,7 @@
         "h": 9,
         "w": 8,
         "x": 0,
-        "y": 60
+        "y": 59
       },
       "hiddenSeries": false,
       "id": 176,
@@ -2934,7 +3068,7 @@
         "h": 9,
         "w": 8,
         "x": 8,
-        "y": 60
+        "y": 59
       },
       "hiddenSeries": false,
       "id": 177,
@@ -3050,7 +3184,7 @@
         "h": 9,
         "w": 8,
         "x": 16,
-        "y": 60
+        "y": 59
       },
       "hiddenSeries": false,
       "id": 186,
@@ -3156,7 +3290,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 69
+        "y": 68
       },
       "id": 159,
       "panels": [
@@ -4768,7 +4902,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 69
       },
       "id": 515,
       "panels": [
