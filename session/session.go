@@ -2711,6 +2711,14 @@ func attributesBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) 
 	return false, nil
 }
 
+func failedLoginTrackingCommit(s *session) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "COMMIT")
+	if err != nil {
+		return
+	}
+}
+
 func getFailedLoginCount(s *session, user string, host string) privilege.UserAttributes {
 	userAttr := privilege.UserAttributes{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
@@ -2719,18 +2727,6 @@ func getFailedLoginCount(s *session, user string, host string) privilege.UserAtt
 		return userAttr
 	}
 	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
-	defer func() {
-		if err != nil {
-			_, err1 := s.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-		_, err = s.ExecuteInternal(ctx, "COMMIT")
-		if err != nil {
-			return
-		}
-		terror.Call(rs.Close)
-	}()
 	if err != nil {
 		return userAttr
 	}
@@ -2792,6 +2788,7 @@ func userAutoAccountLocked(s *session, user string, host string, failedLoginCoun
 func failedLogin(s *session, user string, host string) bool {
 	userAttr := getFailedLoginCount(s, user, host)
 	lockState := userAutoAccountLocked(s, user, host, userAttr.FailedLoginCount+1, userAttr.FailedLoginAttempts, userAttr.PasswordLockTimeDays)
+	failedLoginTrackingCommit(s)
 	return lockState
 }
 

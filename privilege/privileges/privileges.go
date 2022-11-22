@@ -423,6 +423,9 @@ func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host stri
 		ErrAccessDenied.FastGenByArgs(user, host)
 		return ""
 	}
+	if record.FailedLoginCount == 0 {
+		return ""
+	}
 	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount)
 }
 
