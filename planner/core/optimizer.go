@@ -72,6 +72,7 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
+	flagCountStarRewriter
 )
 
 var optRuleList = []logicalOptRule{

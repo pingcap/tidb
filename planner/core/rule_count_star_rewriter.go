@@ -39,34 +39,40 @@ type countStarRewriter struct {
 }
 
 func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	return c.countStarRewriter(p, opt)
+}
+
+func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
-	agg, ok := p.(*LogicalAggregation)
-	if !ok {
-		return p, nil
-	}
-	if len(agg.children) > 1 {
-		return p, nil
-	}
-	// todo if all kinds of data source could be matched ?
-	dataSource, ok := agg.Children()[0].(*DataSource)
-	if !ok {
-		return p, nil
-	}
-	for _, aggFunc := range agg.AggFuncs {
-		if aggFunc.Name == "count" && len(aggFunc.Args) == 1 {
-			if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
-				if constExpr.Value.GetInt64() == 1 {
-					// case 1: pick not null column already exists in the datasource
-					if len(dataSource.Columns) > 0 {
-						rewriteCount1ToCountColumn(dataSource, agg, aggFunc)
-						continue
+	if agg, ok := p.(*LogicalAggregation); ok {
+		// todo if all kinds of data source could be matched ?
+		if dataSource, ok := agg.Children()[0].(*DataSource); ok {
+			for _, aggFunc := range agg.AggFuncs {
+				if aggFunc.Name == "count" && len(aggFunc.Args) == 1 {
+					if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
+						if constExpr.Value.GetInt64() == 1 {
+							// case 1: pick not null column already exists in the datasource
+							if len(dataSource.Columns) > 0 {
+								rewriteCount1ToCountColumn(dataSource, aggFunc)
+								continue
+							}
+							// case 2: pick not null column from table
+							// pickNotNullColumnFromTable(dataSource, agg, aggFunc)
+						}
 					}
-					// case 2: pick not null column from table
-					// pickNotNullColumnFromTable(dataSource, agg, aggFunc)
 				}
 			}
 		}
 	}
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChild, err := c.countStarRewriter(child, opt)
+		if err != nil {
+			return nil, err
+		}
+		newChildren = append(newChildren, newChild)
+	}
+	p.SetChildren(newChildren...)
 	return p, nil
 }
 
@@ -98,14 +104,14 @@ func pickNotNullColumnFromTable(dataSource *DataSource, logicalAgg *LogicalAggre
 
 // Pick the shortest and not null column from Data Source
 // If there is no not null column in Data Source, the count(1) will not be rewritten.
-func rewriteCount1ToCountColumn(dataSource *DataSource, logicalAgg *LogicalAggregation, aggFunc *aggregation.AggFuncDesc) {
-	var newAggColumn *model.ColumnInfo
-	for _, columnExistsInDataSource := range dataSource.Columns {
-		if columnExistsInDataSource.Hidden {
+func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.AggFuncDesc) {
+	var newAggColumn *expression.Column
+	for _, columnExistsInDataSource := range dataSource.schema.Columns {
+		if columnExistsInDataSource.IsHidden {
 			continue
 		}
-		if mysql.HasNotNullFlag(columnExistsInDataSource.GetFlag()) {
-			if newAggColumn == nil || columnExistsInDataSource.GetFlen() < newAggColumn.GetFlen() {
+		if mysql.HasNotNullFlag(columnExistsInDataSource.GetType().GetFlag()) {
+			if newAggColumn == nil || columnExistsInDataSource.GetType().GetFlen() < newAggColumn.GetType().GetFlen() {
 				newAggColumn = columnExistsInDataSource
 			}
 		}
@@ -113,8 +119,8 @@ func rewriteCount1ToCountColumn(dataSource *DataSource, logicalAgg *LogicalAggre
 	if newAggColumn != nil {
 		// update count(1) -> count(newAggColumn)
 		aggFunc.Args[0] = &expression.Column{
-			RetType:  &newAggColumn.FieldType,
-			UniqueID: logicalAgg.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newAggColumn.GetType(),
+			UniqueID: newAggColumn.UniqueID,
 			ID:       newAggColumn.ID}
 	}
 }

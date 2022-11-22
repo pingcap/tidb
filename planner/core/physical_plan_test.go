@@ -2114,15 +2114,6 @@ func TestIssue30965(t *testing.T) {
 			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
 }
 
-func TestCountStar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int(11) not null, b bool not null)")
-	tk.MustExec("insert into t values(1, true)")
-	tk.MustQuery("select count(*) from t where a=1")
-}
-
 func TestSkewDistinctAgg(t *testing.T) {
 	var (
 		input  []string
@@ -2467,5 +2458,26 @@ func TestNoDecorrelateHint(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
+func TestCountStar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int(11) not null, b bool not null)")
+	SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("insert into t values(1, true)")
+
+	rows := tk.MustQuery("explain select count(*) from t").Rows()
+	for _, line := range rows {
+		fmt.Println(line)
+	}
+
+	rows = tk.MustQuery("explain select count(*) from t where a=1").Rows()
+	for _, line := range rows {
+		fmt.Println(line)
 	}
 }
