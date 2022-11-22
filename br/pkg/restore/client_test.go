@@ -1403,8 +1403,8 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 			{"log2"},
 			{"log5", "log6"},
 			{"log3"},
-			{"log1"},
 			{"log4"},
+			{"log1"},
 		},
 	)
 }
@@ -1483,9 +1483,9 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 		logs,
 		[][]string{
 			{"log2", "log4"},
-			{"log1"},
 			{"log5"},
 			{"log3"},
+			{"log1"},
 		},
 	)
 }
