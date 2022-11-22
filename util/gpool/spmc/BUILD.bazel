@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spmc",
+    srcs = [
+        "option.go",
+        "spmcpool.go",
+        "worker.go",
+        "worker_func.go",
+        "worker_loop_queue.go",
+        "worker_stack.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/gpool/spmc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/gpool",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "spmc_test",
+    srcs = [
+        "main_test.go",
+        "spmcpool_benchmark_test.go",
+        "spmcpool_test.go",
+    ],
+    embed = [":spmc"],
+    deps = [
+        "//testkit/testsetup",
+        "//util",
+        "//util/gpool",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

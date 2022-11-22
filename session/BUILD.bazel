@@ -25,6 +25,7 @@ go_library(
         "//errno",
         "//executor",
         "//expression",
+        "//extension",
         "//extension/extensionimpl",
         "//infoschema",
         "//kv",

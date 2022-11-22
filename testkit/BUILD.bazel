@@ -20,6 +20,7 @@ go_library(
         "//kv",
         "//parser/ast",
         "//parser/terror",
+        "//planner/core",
         "//session",
         "//session/txninfo",
         "//sessionctx/variable",
