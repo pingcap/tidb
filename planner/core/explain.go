@@ -287,9 +287,9 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	if p.IsIntersectionType {
-		return "Type: intersection"
+		return "type: intersection"
 	}
-	return "Type: union"
+	return "type: union"
 }
 
 // ExplainInfo implements Plan interface.
