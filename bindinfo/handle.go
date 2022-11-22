@@ -423,6 +423,59 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (d
 	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
 
+// DropBindRecordByDigest drop BindRecord to the storage and BindRecord int the cache.
+func (h *BindHandle) DropBindRecordByDigest(hash string) (deletedRows uint64, err error) {
+	oldRecord, err := h.GetBindRecordBySQLDigest(hash)
+	if err != nil {
+		return 0, err
+	}
+
+	db := strings.ToLower(oldRecord.Db)
+	originalSQL := oldRecord.OriginalSQL
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
+		if err != nil || deletedRows == 0 {
+			return
+		}
+
+		record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+		h.removeBindRecord(parser.DigestNormalized(originalSQL).String(), record)
+	}()
+
+	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return 0, err
+	}
+
+	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
+
+	_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+		deleted, updateTs, originalSQL, updateTs, deleted)
+	if err != nil {
+		return 0, err
+	}
+
+	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
+}
+
 // SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
 func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
 	h.bindInfo.Lock()
@@ -642,6 +695,11 @@ func (h *BindHandle) Size() int {
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
 func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return h.bindInfo.Load().(*bindCache).GetBindRecord(hash, normdOrigSQL, db)
+}
+
+// GetBindRecordBySQLDigest returns the BindRecord of the sql digest.
+func (h *BindHandle) GetBindRecordBySQLDigest(hash string) (*BindRecord, error) {
+	return h.bindInfo.Load().(*bindCache).GetBindRecordBySQLDigest(hash)
 }
 
 // GetAllBindRecord returns all bind records in cache.

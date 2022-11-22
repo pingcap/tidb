@@ -98,9 +98,37 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	return nil
 }
 
+// DropBindRecordByDigest drop BindRecord in the cache.
+func (h *SessionHandle) DropBindRecordByDigest(hash string) error {
+	oldRecord, err := h.GetBindRecordBySQLDigest(hash)
+	if err != nil {
+		return err
+	}
+
+	var newRecord *BindRecord
+	record := &BindRecord{OriginalSQL: oldRecord.OriginalSQL, Db: strings.ToLower(oldRecord.Db)}
+	if oldRecord != nil {
+		newRecord = oldRecord.remove(record)
+	} else {
+		newRecord = record
+	}
+	err = h.ch.SetBindRecord(hash, newRecord)
+	if err != nil {
+		// Should never reach here, just return an error for safety
+		return err
+	}
+	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
+	return nil
+}
+
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
+}
+
+// GetBindRecordBySQLDigest return all BindMeta corresponding to hash.
+func (h *SessionHandle) GetBindRecordBySQLDigest(hash string) (*BindRecord, error) {
+	return h.ch.GetBindRecordBySQLDigest(hash)
 }
 
 // GetAllBindRecord return all session bind info.
