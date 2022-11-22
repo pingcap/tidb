@@ -29,6 +29,16 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
+type UserAttributes struct {
+	User                  string
+	Host                  string
+	FailedLoginCount      int64
+	PasswordLockTimeDays  int64
+	AutoAccountLocked     bool
+	AutoLockedLastChanged int64
+	FailedLoginAttempts   int64
+}
+
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
@@ -57,6 +67,15 @@ type Manager interface {
 
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
+
+	VerificationAccountAutoLock(user string, host string) (string, error)
+
+	IsEnableAccountAutoLock(user string, host string) bool
+
+	BuildPasswordLockingJson(failedLoginAttempts int64,
+		passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string
+
+	BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.

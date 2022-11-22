@@ -85,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2598,14 +2599,200 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		return err
+	enableAutoLock := pm.IsEnableAccountAutoLock(authUser.Username, authUser.Hostname)
+	if enableAutoLock {
+		attributesJson, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
+		if verErr != nil {
+			return verErr
+		}
+		if attributesJson != "" {
+			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, attributesJson); lockErr != nil {
+				return lockErr
+			}
+		}
 	}
+
+	connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
+	if connVerifErr != nil {
+		if enableAutoLock {
+			if strings.Index(connVerifErr.Error(), "decode") != -1 || strings.Index(connVerifErr.Error(), "caching_sha2_password") != -1 || strings.Index(connVerifErr.Error(), "socket") != -1 || strings.Index(connVerifErr.Error(), "Access denied") != -1 {
+				failedLogin(s, authUser.Username, authUser.Hostname)
+			}
+		}
+		return connVerifErr
+	} else {
+		if enableAutoLock {
+			passwordLockingJson := pm.BuildPasswordLockingJsonByRecord(authUser.Username, authUser.Hostname, false, 0)
+			if passwordLockingJson != "" {
+				if lockingErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJson); lockingErr != nil {
+					return lockingErr
+				}
+			}
+		}
+	}
+
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
 	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 	return nil
+}
+
+func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
+	type alterField struct {
+		expr  string
+		value string
+	}
+	var fields []alterField
+	fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+	if len(fields) > 0 {
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+		for i, f := range fields {
+			sqlexec.MustFormatSQL(sql, f.expr, f.value)
+			if i < len(fields)-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+		_, err := s.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return err
+		}
+		domain.GetDomain(s).NotifyUpdatePrivilege()
+	}
+	return nil
+}
+
+func attributesInt64Parser(userAttributesJson types.BinaryJSON, pathExpr string) int64 {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return -1
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		return BJ.GetInt64()
+	}
+	return -1
+}
+
+func attributesTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr string) int64 {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return -1
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, BJErr := BJ.Unquote()
+		if BJErr != nil {
+			return -1
+		}
+		t, _ := time.ParseInLocation(time.UnixDate, value, time.Local)
+		return t.Unix()
+	}
+	return -1
+}
+
+func attributesBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) (bool, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return false, err
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, BJErr := BJ.Unquote()
+		if BJErr != nil {
+			return false, err
+		}
+		if value == "Y" {
+			return true, nil
+		} else {
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
+func getFailedLoginCount(s *session, user string, host string) privilege.UserAttributes {
+	userAttr := privilege.UserAttributes{}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return userAttr
+	}
+	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
+	defer func() {
+		if err != nil {
+			_, err1 := s.ExecuteInternal(ctx, "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+		_, err = s.ExecuteInternal(ctx, "COMMIT")
+		if err != nil {
+			return
+		}
+		terror.Call(rs.Close)
+	}()
+	if err != nil {
+		return userAttr
+	}
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		rsErr := rs.Next(ctx, req)
+		if rsErr != nil {
+			return userAttr
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			userAttr.User = user
+			userAttr.Host = host
+			userAttributesJson := row.GetJSON(0)
+			failedLoginAttempts := attributesInt64Parser(userAttributesJson, "$.Password_locking.failed_login_attempts")
+			if failedLoginAttempts != -1 {
+				userAttr.FailedLoginAttempts = failedLoginAttempts
+			}
+			lockTime := attributesInt64Parser(userAttributesJson, "$.Password_locking.password_lock_time_days")
+			if lockTime != -1 {
+				userAttr.PasswordLockTimeDays = lockTime
+			}
+			failedLoginCount := attributesInt64Parser(userAttributesJson, "$.Password_locking.failed_login_count")
+			if lockTime != -1 {
+				userAttr.FailedLoginCount = failedLoginCount
+			}
+			autoLockedLastChanged := attributesTimeUnixParser(userAttributesJson, "$.Password_locking.auto_locked_last_changed")
+			if lockTime != -1 {
+				userAttr.AutoLockedLastChanged = autoLockedLastChanged
+			}
+			autoAccountLock, parserErr := attributesBoolParser(userAttributesJson, "$.Password_locking.auto_account_locked")
+			if parserErr == nil {
+				userAttr.AutoAccountLocked = autoAccountLock
+			}
+		}
+	}
+	return userAttr
+}
+
+func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) bool {
+	autoAccountLocked := false
+	if failedLoginCount < userFailedLoginAttempts {
+		autoAccountLocked = false
+	} else if failedLoginCount >= userFailedLoginAttempts {
+		autoAccountLocked = true
+	}
+	pm := privilege.GetPrivilegeManager(s)
+	newAttributesStr := pm.BuildPasswordLockingJson(userFailedLoginAttempts,
+		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
+	if err := s.passwordLocking(user, host, newAttributesStr); err != nil {
+		return false
+	}
+	return true
+}
+
+func failedLogin(s *session, user string, host string) bool {
+	userAttr := getFailedLoginCount(s, user, host)
+	lockState := userAutoAccountLocked(s, user, host, userAttr.FailedLoginCount+1, userAttr.FailedLoginAttempts, userAttr.PasswordLockTimeDays)
+	return lockState
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
