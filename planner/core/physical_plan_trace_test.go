@@ -38,7 +38,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
 	tk.MustExec("SET session tidb_enable_index_merge = ON;")
-	tk.MustExec("set tidb_cost_model_version=2")
 	testcases := []struct {
 		sql          string
 		physicalList []string
@@ -62,7 +61,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Limit_20",
 				"IndexReader_21",
 				"Limit_14",
-				"StreamAgg_10",
+				"HashAgg_9",
 				"Projection_8",
 			},
 		},
@@ -95,6 +94,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)

@@ -307,10 +307,7 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		mgr: mgr,
 	}
 	if isStreamStart {
-		client, err := backup.NewBackupClient(ctx, mgr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		client := backup.NewBackupClient(ctx, mgr)
 
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
@@ -1132,7 +1129,7 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	currentTS, err := client.GetTS(ctx)
+	currentTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -144,10 +144,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	}
 	defer mgr.Close()
 
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client := backup.NewBackupClient(ctx, mgr)
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,

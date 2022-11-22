@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -843,7 +844,6 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	var (
-		//mb  uint64 = 1 << 20
 		err error
 		val string
 	)
@@ -949,6 +949,91 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 	require.Error(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "a700MB")
 	require.Error(t, err)
+}
+
+func TestTiDBServerMemoryLimitSessMinSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemroyLimitSessMinSize.Value, strconv.FormatInt(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123456")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123456))
+	require.Equal(t, "123456", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "100")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(128))
+	require.Equal(t, "128", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123<<20))
+	require.Equal(t, "128974848", val)
+}
+
+func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitGCTrigger := GetSysVar(TiDBServerMemoryLimitGCTrigger)
+	// Check default value
+	require.Equal(t, serverMemroyLimitGCTrigger.Value, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+	defer func() {
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+		require.NoError(t, err)
+	}()
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "0.8")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.8)
+	require.Equal(t, "0.8", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "90%")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.9)
+	require.Equal(t, "0.9", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "100%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "101%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "99%")
+	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerThreshold, "0.4")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "49%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
+	require.NoError(t, err)
 }
 
 func TestSetAggPushDownGlobally(t *testing.T) {

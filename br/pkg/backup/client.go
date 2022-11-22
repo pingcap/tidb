@@ -101,7 +101,7 @@ type Client struct {
 }
 
 // NewBackupClient returns a new backup client.
-func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
+func NewBackupClient(ctx context.Context, mgr ClientMgr) *Client {
 	log.Info("new backup client")
 	pdClient := mgr.GetPDClient()
 	clusterID := pdClient.GetClusterID(ctx)
@@ -112,7 +112,7 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
 		cipher:           nil,
 		checkpointMeta:   nil,
 		checkpointRunner: nil,
-	}, nil
+	}
 }
 
 // SetCipher for checkpoint to encrypt sst file's metadata

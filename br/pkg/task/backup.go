@@ -362,10 +362,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client := backup.NewBackupClient(ctx, mgr)
 
 	// set cipher only for checkpoint
 	client.SetCipher(&cfg.CipherInfo)
@@ -405,8 +402,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		TTL:      client.GetGCTTL(),
 		ID:       safePointID,
 	}
+
 	// use lastBackupTS as safePoint if exists
-	if cfg.LastBackupTS > 0 {
+	isIncrementalBackup := cfg.LastBackupTS > 0
+	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
 
@@ -434,8 +433,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	isIncrementalBackup := cfg.LastBackupTS > 0
 
 	if cfg.RemoveSchedulers {
 		log.Debug("removing some PD schedulers")
@@ -498,7 +495,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// nothing to backup
-	if ranges == nil || len(ranges) <= 0 {
+	if len(ranges) == 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
