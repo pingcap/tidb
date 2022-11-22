@@ -43,6 +43,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
+        "//br/pkg/version",
         "//config",
         "//ddl",
         "//ddl/util",

@@ -791,14 +791,19 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return memory.ServerMemoryLimitSessMinSize.String(), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
-				return "", err
+				bt, str := parseByteSize(normalizedValue)
+				if str != "" {
+					intVal = bt
+				} else {
+					return "", err
+				}
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
@@ -815,17 +820,22 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
-				return "", err
+				perc, str := parsePercentage(normalizedValue)
+				if len(str) != 0 {
+					floatValue = float64(perc) / 100
+				} else {
+					return "", err
+				}
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
-			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
+			if floatValue < 0.51 || floatValue > 1 { // 51% ~ 100%
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
 			// gogcTunerThreshold must not be 0. it will be 0 when tidb_gogc_tuner_threshold is not set during startup.
