@@ -435,7 +435,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 	})
 
-	failpoint.Inject("printMetrics", func() {
+	failpoint.Inject("PrintMetrics", func() {
 		defer func() {
 			bytesRestored := metric.ReadCounter(l.metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
 			imported := l.status.FinishedFileSize.Load()
