@@ -17,6 +17,10 @@ package executor
 import (
 	"bytes"
 	"context"
+	"strconv"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -33,9 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"strconv"
-	"sync/atomic"
-	"time"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
