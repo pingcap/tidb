@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
@@ -1094,4 +1095,396 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+}
+
+func TestApplyKVFilesWithSingelMethod(t *testing.T) {
+	var (
+		totalKVCount int64  = 0
+		totalSize    uint64 = 0
+		logs                = make([]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+		},
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		totalKVCount += kvCount
+		totalSize += size
+		for _, f := range files {
+			logs = append(logs, f.GetPath())
+		}
+	}
+
+	restore.ApplyKVFilesWithSingelMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		applyFunc,
+	)
+
+	require.Equal(t, totalKVCount, int64(15))
+	require.Equal(t, totalSize, uint64(300))
+	require.Equal(t, logs, []string{"log1", "log2", "log3"})
+}
+
+func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 3
+		batchSize    uint64 = 1000
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+		{
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 3)
+	require.Equal(t, totalKVCount, int64(25))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log1", "log2"},
+			{"log3", "log4"},
+			{"log5"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+		{
+			Path:            "log6",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 4)
+	require.Equal(t, totalKVCount, int64(30))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2", "log3"},
+			{"log5", "log6"},
+			{"log4"},
+			{"log1"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        2,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        3,
+		},
+		{
+			Path:            "log6",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        3,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 5)
+	require.Equal(t, totalKVCount, int64(30))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2"},
+			{"log5", "log6"},
+			{"log3"},
+			{"log4"},
+			{"log1"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			TableId:         1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 4)
+	require.Equal(t, totalKVCount, int64(25))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2", "log4"},
+			{"log5"},
+			{"log3"},
+			{"log1"},
+		},
+	)
 }
