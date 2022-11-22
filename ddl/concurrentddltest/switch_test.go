@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -136,6 +137,9 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 }
 
 func TestConcurrentDDLSwitchWithMDL(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip test if concurrent DDL is disabled")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("set global tidb_enable_concurrent_ddl=off", "can not disable concurrent ddl when metadata lock is enabled")
