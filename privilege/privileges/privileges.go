@@ -370,6 +370,9 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 	autoLock := record.AutoAccountLocked
 	if autoLock {
 		lockTime := record.PasswordLockTime
+		if lockTime == -1 {
+			return "", nil
+		}
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
 		if d > lockTime*24*60*60 {
