@@ -37,6 +37,7 @@ func TestIndexChange(t *testing.T) {
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
 
