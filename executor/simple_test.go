@@ -314,6 +314,10 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`2`))
 	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 0`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 2 PASSWORD REUSE INTERVAL 1 DAY`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 2 PASSWORD REUSE INTERVAL 0 DAY`)
 }
 
 func TestUserReuseMultiuser(t *testing.T) {

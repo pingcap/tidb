@@ -102,6 +102,13 @@ type passwordReuseInfo struct {
 	passwordReuseInterval int64
 }
 
+type userInfo struct {
+	host string
+	user string
+	pLI  *passwordLockInfo
+	pwd  string
+}
+
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
@@ -1128,7 +1135,7 @@ func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) str
 // The deleted password must meet the following conditions at the same time
 // 1. Exceeded the maximum number of saves
 // 2. The password has exceeded the prohibition time
-func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, maxDelRows int64, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) error {
+func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, maxDelRows int64, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) error {
 	if (passwordReuse.passwordReuseInterval > math.MaxInt32) || maxDelRows == 0 {
 		//never times out or no row need delete
 		return nil
@@ -1139,7 +1146,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %?  order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
 		sqlexec.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
-			name, strings.ToLower(host))
+			userDetail.user, strings.ToLower(userDetail.host))
 		_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return err
@@ -1151,7 +1158,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
-			name, strings.ToLower(host), beforeDate)
+			userDetail.user, strings.ToLower(userDetail.host), beforeDate)
 		_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return err
@@ -1160,12 +1167,12 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return nil
 }
 
-func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, passwordReuse *passwordReuseInfo, pwd string) error {
+func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo) error {
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return nil
 	}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(host), name, pwd)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(userDetail.host), userDetail.user, userDetail.pwd)
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -1173,9 +1180,9 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, nam
 	return nil
 }
 
-func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, passwordReuse *passwordReuseInfo, pwd string, sctx sessionctx.Context) (bool, int64, error) {
+func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) (bool, int64, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host))
+	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return false, 0, err
@@ -1204,7 +1211,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		// The maximum number of saves has not been exceeded
 		if passwordNum <= passwordReuse.passwordHistory {
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+			sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 			recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return false, 0, err
@@ -1223,7 +1230,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
 		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
 		checkRows = checkRows + ` ) as t where t.Password = %? `
-		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, 0, err
@@ -1241,7 +1248,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		//There are too many retention days, and it is impossible to time out in one's lifetime
 		if passwordReuse.passwordReuseInterval > math.MaxInt32 {
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd)
+			sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 			recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return false, 0, err
@@ -1258,7 +1265,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 
 		beforeDate := getValidTime(sctx, passwordReuse)
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, name, strings.ToLower(host), pwd, beforeDate)
+		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, 0, err
@@ -1270,31 +1277,32 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if rows[0].GetInt64(0) == 0 {
 			return true, canDeleteNum, nil
 		}
+		return false, canDeleteNum, nil
 	}
-	return false, canDeleteNum, nil
+	return true, canDeleteNum, nil
 }
 
-func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, Username string, Hostname string, passwdlockinfo *passwordLockInfo, pwd string, sctx sessionctx.Context) error {
+func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context) error {
 	// read password reuse info from mysql.user and global variables
-	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, Username, Hostname, passwdlockinfo)
+	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
 		return err
 	}
 	// check whether password can be used
-	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, Username, Hostname, passwdReuseInfo, pwd, sctx)
+	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx)
 	if err != nil {
 		return err
 	}
 	if !res {
-		return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(Username, Hostname))
+		return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host))
 	}
 	// delete useless password logging
-	err = deleteHistoricalData(ctx, sqlExecutor, Username, Hostname, maxDelNum, passwdReuseInfo, sctx)
+	err = deleteHistoricalData(ctx, sqlExecutor, userDetail, maxDelNum, passwdReuseInfo, sctx)
 	if err != nil {
 		return err
 	}
 	// insert password logging
-	err = addHistoricalData(ctx, sqlExecutor, Username, Hostname, passwdReuseInfo, pwd)
+	err = addHistoricalData(ctx, sqlExecutor, userDetail, passwdReuseInfo)
 	if err != nil {
 		return err
 	}
@@ -1492,7 +1500,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			// for Support Password Reuse Policy
 			if len(pwd) != 0 {
-				err := checkPasswordReusePolicy(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, passwdlockinfo, pwd, e.ctx)
+				userDetail := &userInfo{spec.User.Hostname, spec.User.Username, passwdlockinfo, pwd}
+				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
 				if err != nil {
 					if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 						return err
@@ -2126,7 +2135,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
 			passwordReuseIntervalFlag: false}
 	if len(pwd) != 0 {
-		err := checkPasswordReusePolicy(ctx, sqlExecutor, u, h, passwdlockinfo, pwd, e.ctx)
+		userDetail := &userInfo{h, u, passwdlockinfo, pwd}
+		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
 		if err != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 			if errRollback != nil {
