@@ -181,9 +181,7 @@ func (b *ttlSQLBuilder) WriteLimit(n int) error {
 func (b *ttlSQLBuilder) writeTblName() {
 	b.sb.WriteRune('`')
 	b.sb.WriteString(b.tbl.Schema.O)
-	b.sb.WriteRune('`')
-	b.sb.WriteRune('.')
-	b.sb.WriteRune('`')
+	b.sb.WriteString("`.`")
 	b.sb.WriteString(b.tbl.Name.O)
 	b.sb.WriteRune('`')
 }
