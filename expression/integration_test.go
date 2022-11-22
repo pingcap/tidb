@@ -3062,9 +3062,17 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
 	hexKey = tablecodec.EncodeTablePrefix(tbl.Meta().Partition.Definitions[0].ID).String()
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	data = []types.Datum{types.NewIntDatum(100)}
+	hexKey = buildIndexKeyFromData(tbl.Meta().Partition.Definitions[0].ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
