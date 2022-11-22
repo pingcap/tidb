@@ -332,18 +332,17 @@ type fakePDClient struct {
 	pd.Client
 	stores []*metapb.Store
 
-	notLeader bool
+	notLeader  bool
+	retryTimes *int
 }
-
-var retryTimes int
 
 func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
 func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
-	retryTimes++
-	if retryTimes >= 3 { // the mock PD leader switched successfully
+	(*fpdc.retryTimes)++
+	if *fpdc.retryTimes >= 3 { // the mock PD leader switched successfully
 		fpdc.notLeader = false
 	}
 
@@ -355,24 +354,24 @@ func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 
 func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
-		retryTimes = -1000
-		pDClient := fakePDClient{notLeader: false}
+		retryTimes := -1000
+		pDClient := fakePDClient{notLeader: false, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
 
 	t.Run("PD leader failure:", func(t *testing.T) {
-		retryTimes = -1000
-		pDClient := fakePDClient{notLeader: true}
+		retryTimes := -1000
+		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.Error(t, err)
 	})
 
 	t.Run("PD leader switch successfully", func(t *testing.T) {
-		retryTimes = 0
-		pDClient := fakePDClient{notLeader: true}
+		retryTimes := 0
+		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
