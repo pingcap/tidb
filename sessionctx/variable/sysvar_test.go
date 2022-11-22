@@ -1002,6 +1002,10 @@ func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
 	serverMemroyLimitGCTrigger := GetSysVar(TiDBServerMemoryLimitGCTrigger)
 	// Check default value
 	require.Equal(t, serverMemroyLimitGCTrigger.Value, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+	defer func() {
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+		require.NoError(t, err)
+	}()
 
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "0.8")
 	require.NoError(t, err)
