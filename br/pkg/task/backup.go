@@ -345,8 +345,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		TTL:      client.GetGCTTL(),
 		ID:       utils.MakeSafePointID(),
 	}
+
 	// use lastBackupTS as safePoint if exists
-	if cfg.LastBackupTS > 0 {
+	isIncrementalBackup := cfg.LastBackupTS > 0
+	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
 
@@ -355,8 +357,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	isIncrementalBackup := cfg.LastBackupTS > 0
 
 	if cfg.RemoveSchedulers {
 		log.Debug("removing some PD schedulers")
