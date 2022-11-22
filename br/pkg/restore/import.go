@@ -421,11 +421,10 @@ func (importer *FileImporter) ImportKVFiles(
 	supportBatch bool,
 ) error {
 	var (
-		startTime = time.Now()
-		startKey  []byte
-		endKey    []byte
-		ranges    = make([]kv.KeyRange, len(files))
-		err       error
+		startKey []byte
+		endKey   []byte
+		ranges   = make([]kv.KeyRange, len(files))
+		err      error
 	)
 
 	if !supportBatch && len(files) > 1 {
@@ -464,13 +463,6 @@ func (importer *FileImporter) ImportKVFiles(
 		}
 		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
 	})
-
-	take := time.Since(startTime)
-	for _, file := range files {
-		log.Info("import file done",
-			zap.String("file", file.Path), zap.Stringer("take", take),
-			logutil.Key("fileStart", file.StartKey), logutil.Key("fileEnd", file.EndKey))
-	}
 	return errors.Trace(err)
 }
 
