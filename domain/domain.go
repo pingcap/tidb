@@ -1551,21 +1551,26 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
 }
 
-var planReplayerHandleLease = 10 * time.Second
+var planReplayerHandleLease atomic.Uint64
+
+func init() {
+	planReplayerHandleLease.Store(uint64(10 * time.Second))
+}
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
-	planReplayerHandleLease = 0
+	planReplayerHandleLease.Store(0)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
 func (do *Domain) StartPlanReplayerHandle() {
-	if planReplayerHandleLease < 1 {
+	lease := planReplayerHandleLease.Load()
+	if lease < 1 {
 		return
 	}
 	do.wg.Add(2)
 	go func() {
-		tikcer := time.NewTicker(planReplayerHandleLease)
+		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
@@ -1777,7 +1782,7 @@ func (do *Domain) loadStatsWorker() {
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
+		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
@@ -1863,7 +1868,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Debug("handle ddl event failed", zap.Error(err))
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
