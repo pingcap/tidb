@@ -555,6 +555,9 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	if err != nil {
 		return zeroCostVer2, err
 	}
+	buildTaskCost := newCostVer2(option, cpuFactor,
+		buildRows*10*cpuFactor.Value,
+		"cpu(%v*10*%v)", buildRows, cpuFactor)
 
 	probeFilterCost := filterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
 	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
@@ -579,7 +582,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	batchRatio := 8.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
 
-	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
