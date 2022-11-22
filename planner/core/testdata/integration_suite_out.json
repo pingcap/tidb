@@ -6045,7 +6045,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(t5@qb_v4, idx_a, idx_b) */ * from v4;",
         "Plan": [
-          "IndexMerge 5548.89 root  ",
+          "IndexMerge 5548.89 root  Type: union",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 5548.89 cop[tikv] table:t5 keep order:false, stats:pseudo"
@@ -6055,7 +6055,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(@qb_v4 t5, idx_b, idx_a) */ * from v4;",
         "Plan": [
-          "IndexMerge 5548.89 root  ",
+          "IndexMerge 5548.89 root  Type: union",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 5548.89 cop[tikv] table:t5 keep order:false, stats:pseudo"
