@@ -1348,23 +1348,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.getSysSession()
+	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	defer func() error {
-		if returnErr != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			e.releaseSysSession(ctx, sysSession)
-			if errRollback != nil {
-				return errRollback
-			}
-			return returnErr
-		}
-		e.releaseSysSession(ctx, sysSession)
-		return returnErr
-	}()
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+		if errRollback != nil {
+			return errRollback
+		}
 		return err
 	}
 
@@ -1391,18 +1385,38 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
 
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
+				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+				if errRollback != nil {
+					return errRollback
+				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+				if errRollback != nil {
+					return errRollback
+				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
 			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+				if errRollback != nil {
+					return errRollback
+				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
 		exists, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		}
 
@@ -1424,6 +1438,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
 		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
@@ -1438,6 +1457,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin == "" {
 				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
+					_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+					if errRollback != nil {
+						return errRollback
+					}
 					return err
 				}
 				spec.AuthOpt.AuthPlugin = authplugin
@@ -1450,10 +1474,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
+				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+				if errRollback != nil {
+					return errRollback
+				}
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
+				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+
+				if errRollback != nil {
+					return errRollback
+				}
 				return errors.Trace(ErrPasswordFormat)
 			}
 			// for Support Password Reuse Policy
@@ -1565,6 +1598,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	} else {
 		if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		}
 	}
@@ -1632,37 +1669,41 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (returnErr error) 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	var failedUser string
 	sysSession, err := e.getSysSession()
+	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
-	defer func() error {
-		if returnErr != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			e.releaseSysSession(ctx, sysSession)
-			if errRollback != nil {
-				return errRollback
-			}
-			return returnErr
-		}
-		e.releaseSysSession(ctx, sysSession)
-		return returnErr
-	}()
-
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+		if errRollback != nil {
+			return errRollback
+		}
 		return err
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
 		if len(newUser.Username) > auth.UserNameMaxLength {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
 		exists, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		}
 		if !exists {
@@ -1672,6 +1713,10 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (returnErr error) 
 
 		exists, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		}
 		if exists {
@@ -1994,31 +2039,27 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (returnErr error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
+	defer e.releaseSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	defer func() error {
-		if returnErr != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			e.releaseSysSession(ctx, sysSession)
-			if errRollback != nil {
-				return errRollback
-			}
-			return returnErr
-		}
-		e.releaseSysSession(ctx, sysSession)
-		return returnErr
-	}()
-
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+		if errRollback != nil {
+			return errRollback
+		}
 		return err
 	}
 
 	var u, h string
 	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return errors.New("Session error is empty")
 		}
 		u = e.ctx.GetSessionVars().User.AuthUsername
@@ -2027,12 +2068,22 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (retu
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
 		u = s.User.Username
 		h = s.User.Hostname
 	}
 	exists, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	if err != nil || !exists {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+		if errRollback != nil {
+			return errRollback
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -2042,6 +2093,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (retu
 
 	authplugin, err := e.userAuthPlugin(u, h)
 	if err != nil {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+		if errRollback != nil {
+			return errRollback
+		}
 		return err
 	}
 	var pwd string
@@ -2063,6 +2118,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (retu
 	if len(pwd) != 0 {
 		err := checkPasswordReusePolicy(ctx, sqlExecutor, u, h, passwdlockinfo, pwd, e.ctx)
 		if err != nil {
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
 			return err
 		}
 	}
@@ -2077,6 +2136,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (retu
 		return err
 	}
 	if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "commit"); rollbackErr != nil {
+		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+		if errRollback != nil {
+			return errRollback
+		}
 		return rollbackErr
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
