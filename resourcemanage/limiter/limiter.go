@@ -18,12 +18,12 @@ import (
 	"github.com/pingcap/tidb/resourcemanage/util"
 )
 
-type SchedulerCommand int
-
+// Limiter is a limiter interface
 type Limiter interface {
 	Limit(component util.Component, p util.GorotinuePool) bool
 }
 
+// NewLimiter is to create a default collection of limiter.
 func NewLimiter() []Limiter {
 	return []Limiter{
 		NewBBRLimiter(80),

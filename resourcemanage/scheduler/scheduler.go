@@ -21,18 +21,22 @@ import (
 )
 
 const (
-	DefaultHighCPULoad      float64 = 0.6
-	minCPUSchedulerInterval         = time.Duration(800) * time.Millisecond
+	minCPUSchedulerInterval = time.Duration(800) * time.Millisecond
 )
 
-type SchedulerCommand int
+// Command is the command for scheduler
+type Command int
 
 const (
-	Downclock SchedulerCommand = iota
+	// Downclock is to reduce the number of concurrency.
+	Downclock Command = iota
+	// Hold is to hold the number of concurrency.
 	Hold
+	// Overclock is to increase the number of concurrency.
 	Overclock
 )
 
+// Scheduler is a scheduler interface
 type Scheduler interface {
-	Tune(component util.Component, p util.GorotinuePool) SchedulerCommand
+	Tune(component util.Component, p util.GorotinuePool) Command
 }

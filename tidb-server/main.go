@@ -214,7 +214,11 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+<<<<<<< HEAD
 	resourcemanager.GlobalResourceManager.Start()
+=======
+	resourcemanage.GlobalResourceManage.Start()
+>>>>>>> 24f4111732 (fix linter)
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -228,7 +232,11 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
+<<<<<<< HEAD
 		resourcemanager.GlobalResourceManager.Stop()
+=======
+		resourcemanage.GlobalResourceManage.Stop()
+>>>>>>> 24f4111732 (fix linter)
 		close(exited)
 	})
 	topsql.SetupTopSQL()

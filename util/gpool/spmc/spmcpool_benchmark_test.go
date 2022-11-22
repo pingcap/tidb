@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage"
+	rmutl "github.com/pingcap/tidb/resourcemanage/util"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
@@ -30,7 +30,7 @@ const (
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", 10, resourcemanage.HighPriority, resourcemanage.UNKNOWN)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", 10, rmutl.UNKNOWN)
 	if err != nil {
 		b.Fatal(err)
 	}

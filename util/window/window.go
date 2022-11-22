@@ -46,15 +46,15 @@ func (b *Bucket[T]) Next() *Bucket[T] {
 	return b.next
 }
 
+// Options contains the arguments for creating Window.
+type Options struct {
+	Size int
+}
+
 // Window contains multiple buckets.
 type Window[T constraints.Integer | constraints.Float] struct {
 	buckets []Bucket[T]
 	size    int
-}
-
-// Options contains the arguments for creating Window.
-type Options struct {
-	Size int
 }
 
 // NewWindow creates a new Window based on WindowOpts.

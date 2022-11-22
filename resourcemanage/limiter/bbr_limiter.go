@@ -21,17 +21,20 @@ import (
 	"github.com/pingcap/tidb/util/cpu"
 )
 
+// BBRLimiter is a limiter based on cpu usage.
 type BBRLimiter struct {
 	cpuThreshold int64
 }
 
+// NewBBRLimiter is to create a bbr limiter.
 func NewBBRLimiter(cpuThreshold int64) Limiter {
 	return &BBRLimiter{
 		cpuThreshold: cpuThreshold,
 	}
 }
 
-func (b *BBRLimiter) Limit(component util.Component, p util.GorotinuePool) bool {
+// Limit is to limit the goroutine pool.
+func (b *BBRLimiter) Limit(_ util.Component, p util.GorotinuePool) bool {
 	usage := cpu.GetCPUUsage() * 100
 	if usage < float64(b.cpuThreshold) {
 		// current cpu payload below the threshold

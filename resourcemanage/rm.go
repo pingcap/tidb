@@ -21,8 +21,12 @@ import (
 	"github.com/pingcap/tidb/resourcemanage/limiter"
 	"github.com/pingcap/tidb/resourcemanage/scheduler"
 	"github.com/pingcap/tidb/resourcemanage/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
+
+// GlobalResourceManage is a global resource manage
+var GlobalResourceManage = NewResourceMange()
 
 // ResourceManage is a resource manage
 type ResourceManage struct {
@@ -30,8 +34,9 @@ type ResourceManage struct {
 
 	limiter     []limiter.Limiter
 	scheduler   []scheduler.Scheduler
-	cpuObserver cpu.Observer
+	cpuObserver *cpu.Observer
 	exitCh      chan struct{}
+	wg          tidbutil.WaitGroupWrapper
 }
 
 // NewResourceMange is to create a new resource manage
@@ -41,30 +46,35 @@ func NewResourceMange() *ResourceManage {
 	sc := make([]scheduler.Scheduler, 0, 1)
 	sc = append(sc, scheduler.NewGradient2Scheduler())
 	return &ResourceManage{
-		poolMap:   make(map[string]*util.PoolContainer),
-		limiter:   li,
-		scheduler: sc,
+		poolMap:     make(map[string]*util.PoolContainer),
+		cpuObserver: cpu.NewCPUObserver(),
+		limiter:     li,
+		scheduler:   sc,
 	}
 }
 
+// Start is to start resource manage
 func (r *ResourceManage) Start() {
-	go r.cpuObserver.Start()
-
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-tick.C:
-			r.schedule()
-		case <-r.exitCh:
-			return
+	r.wg.Run(r.cpuObserver.Start)
+	r.wg.Run(func() {
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				r.schedule()
+			case <-r.exitCh:
+				return
+			}
 		}
-	}
+	})
 }
 
+// Stop is to stop resource manage
 func (r *ResourceManage) Stop() {
 	r.cpuObserver.Stop()
 	close(r.exitCh)
+	r.wg.Done()
 }
 
 // Register is to register pool into resource manage

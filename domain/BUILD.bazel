@@ -42,7 +42,6 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//privilege/privileges",
-        "//resourcemanage",
         "//sessionctx",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",

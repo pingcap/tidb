@@ -15,6 +15,7 @@ go_library(
         "//resourcemanage/limiter",
         "//resourcemanage/scheduler",
         "//resourcemanage/util",
+        "//util",
         "//util/cpu",
         "@com_github_pingcap_errors//:errors",
     ],

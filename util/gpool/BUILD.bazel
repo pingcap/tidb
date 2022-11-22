@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "gpool",
     srcs = [
-        "command.go",
         "gpool.go",
         "spinlock.go",
         "static.go",
@@ -16,5 +15,6 @@ go_library(
         "//util/mathutil",
         "//util/window",
         "@org_golang_x_sys//cpu",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

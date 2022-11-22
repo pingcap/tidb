@@ -47,7 +47,6 @@ type Statistic struct {
 	shortRTT     atomic.Uint64
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
-	maxTaskCntCache atomic.Uint64
 	bucketPerSecond uint64
 }
 
@@ -155,8 +154,8 @@ func (*Statistic) timespan(lastTime time.Time) int {
 	return bucketSize
 }
 
-// Inflight returns the inflight.
-func (s *Statistic) Inflight() int64 {
+// InFlight returns the inflight.
+func (s *Statistic) InFlight() int64 {
 	return s.inFlight.Load()
 }
 

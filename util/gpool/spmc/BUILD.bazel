@@ -37,6 +37,7 @@ go_test(
     deps = [
         "//resourcemanage",
         "//resourcemanager/pooltask",
+        "//resourcemanage/util",
         "//testkit/testsetup",
         "//util",
         "//util/gpool",

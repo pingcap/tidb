@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/resourcemanage"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -115,7 +114,6 @@ type Domain struct {
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
-	resourcemanger          *resourcemanage.ResourceManage
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
 	cancel                  context.CancelFunc
@@ -881,7 +879,6 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
-	do.resourcemanger.Stop()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -893,7 +890,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do := &Domain{
 		store:               store,
 		exit:                make(chan struct{}),
-		resourcemanger:      resourcemanage.NewResourceMange(),
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
 		infoCache:           infoschema.NewCache(16),
@@ -928,7 +924,6 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	do.resourcemanger.Start()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error

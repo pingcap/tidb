@@ -29,11 +29,13 @@ const (
 	defaultOverloadConcurrencyDelta int = 2 // minimum concurrency = user setting concurrency - delta
 )
 
+// Gradient2Scheduler is a scheduler that uses the gradient of the queue length
 type Gradient2Scheduler struct {
 	smoothing      float64
 	estimatedLimit int16
 }
 
+// NewGradient2Scheduler is to create a new Gradient2Scheduler
 func NewGradient2Scheduler() *Gradient2Scheduler {
 	return &Gradient2Scheduler{
 		smoothing:      defaultSmoothing,
@@ -41,7 +43,8 @@ func NewGradient2Scheduler() *Gradient2Scheduler {
 	}
 }
 
-func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool) SchedulerCommand {
+// Tune is to tune the concurrency of the component
+func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool) Command {
 	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
 		return Hold
 	}
@@ -54,10 +57,6 @@ func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool
 		return Hold
 	}
 
-	// Rtt could be higher than rtt_noload because of smoothing rtt noload updates
-	// so set to 1.0 to indicate no queuing.  Otherwise calculate the slope and don't
-	// allow it to be reduced by more than half to avoid aggressive load-shedding due to
-	// outliers.
 	gradient := mathutil.Max(0.5, mathutil.Min(1.0, p.LongRTT()/float64(p.ShortRTT())))
 	newLimit := float64(p.Running())*gradient + float64(p.GetQueueSize())
 	newLimit = float64(p.Running())*(1-b.smoothing) + newLimit*b.smoothing

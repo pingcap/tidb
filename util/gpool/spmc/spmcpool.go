@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/resourcemanage"
 	"github.com/pingcap/tidb/resourcemanage/util"
-	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
@@ -56,7 +56,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
 	limiter       atomic.Bool
-	limiterTTL    atomicutil.Time
+	limiterTTL    atomicutil.Time   // it is relation with limiter
 	waitingTask   atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
 
@@ -74,9 +74,10 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
 		name:        name,
-		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](size),
+		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](),
 		options:     opts,
 	}
+
 	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))
 	result.workerCache.New = func() interface{} {
@@ -88,7 +89,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
 	// Start a goroutine to clean up expired workers periodically.
-	err := resourcemanager.GlobalResourceManager.Register(result, name, priority, component)
+	err := resourcemanage.GlobalResourceManage.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +155,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	}
 }
 
+// LastTunerTs returns the last time when the pool was tuned.
 func (p *Pool[T, U, C, CT, TF]) LastTunerTs() time.Time {
 	return *p.lastTuneTs.Load()
 }
@@ -195,6 +197,7 @@ func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 	p.waiting.Add(int32(delta))
 }
 
+// Limit is to limit the pool to create the job in a period of time.
 func (p *Pool[T, U, C, CT, TF]) Limit(duration time.Duration) {
 	p.limiter.Store(true)
 	p.limiterTTL.Store(time.Now().Add(duration))
@@ -262,12 +265,12 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 	p.consumerFunc = consumerFunc
 }
 
-func (p *Pool[T, U, C, CT, TF]) addNewTask(taskid uint64) {
-	p.taskManager.CreatTask(taskid)
+func (p *Pool[T, U, C, CT, TF]) addNewTask(tid uint64) {
+	p.taskManager.CreatTask(tid)
 }
 
-func (p *Pool[T, U, C, CT, TF]) addNewTaskMeta(taskid uint64, task *pooltask.TaskBox[T, U, C, CT, TF]) {
-	p.taskManager.AddTask(taskid, task)
+func (p *Pool[T, U, C, CT, TF]) addNewTaskMeta(tid uint64, task *pooltask.TaskBox[T, U, C, CT, TF]) {
+	p.taskManager.AddSubTask(tid, task)
 }
 
 // AddProduceBySlice is to add Produce by a slice.
@@ -484,18 +487,37 @@ func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	p.taskManager.DeleteTask(id)
 }
 
+// MaxInFlight is to get max in flight.
 func (p *Pool[T, U, C, CT, TF]) MaxInFlight() int64 {
 	return p.statistic.MaxInFlight()
 }
 
+// GetQueueSize is to get queue size.
 func (p *Pool[T, U, C, CT, TF]) GetQueueSize() int64 {
 	return p.statistic.GetQueueSize()
 }
 
+// MaxPASS is to get max pass.
 func (p *Pool[T, U, C, CT, TF]) MaxPASS() uint64 {
 	return p.statistic.MaxPASS()
 }
 
+// MinRT is to get min rt.
 func (p *Pool[T, U, C, CT, TF]) MinRT() uint64 {
 	return p.statistic.MinRT()
+}
+
+// InFlight is to get in flight.
+func (p *Pool[T, U, C, CT, TF]) InFlight() int64 {
+	return p.statistic.InFlight()
+}
+
+// LongRTT is to get long rtt.
+func (p *Pool[T, U, C, CT, TF]) LongRTT() float64 {
+	return p.statistic.LongRTT()
+}
+
+// ShortRTT is to get short rtt.
+func (p *Pool[T, U, C, CT, TF]) ShortRTT() uint64 {
+	return p.statistic.ShortRTT()
 }

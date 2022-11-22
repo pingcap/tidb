@@ -65,6 +65,7 @@ var defaultRules = []lint.Rule{
 	&rule.TimeNamingRule{},
 	//&rule.ContextKeysType{},
 	&rule.ContextAsArgumentRule{},
+	&rule.ReceiverNamingRule{},
 }
 
 var allRules = append([]lint.Rule{
@@ -118,6 +119,7 @@ var allRules = append([]lint.Rule{
 	&rule.TimeEqualRule{},
 	//&rule.BannedCharsRule{},
 	&rule.OptimizeOperandsOrderRule{},
+	&rule.ReceiverNamingRule{},
 }, defaultRules...)
 
 func run(pass *analysis.Pass) (any, error) {
