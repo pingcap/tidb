@@ -255,4 +255,4 @@ replace (
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
 
-replace github.com/pingcap/tipb => github.com/hongyunyan/tipb v0.0.0-20221121051916-a5b808f2438a
+replace github.com/pingcap/tipb => github.com/hongyunyan/tipb v0.0.0-20221122080927-439f8cc5720e

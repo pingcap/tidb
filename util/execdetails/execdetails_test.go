@@ -223,15 +223,15 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time: 15ms, dmfile_read_time: 202ms, create_snapshot_time: 40ms}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dmfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rough_set_index_load_time: 15ms, total_dmfile_read_time: 202ms}, create_snapshot_time: 40ms}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, table_scan_info:{scan_pack_counts:1, skip_pack_counts:0, scan_rows_counts:8192, skip_rows_count:0, rough_set_index_load_time: 15ms, dmfile_read_time: 200ms, create_snapshot_time: 40ms}", copStats[0].String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, table_scan_info:{scan_pack_counts:3, skip_pack_counts:11, scan_rows_counts:20192, skip_rows_count:86000, rough_set_index_load_time: 100ms, dmfile_read_time: 3000ms, create_snapshot_time: 50ms}"
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dmfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rough_set_index_load_time: 15ms, total_dmfile_read_time: 200ms}, create_snapshot_time: 40ms}", copStats[0].String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dmfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rough_set_index_load_time: 100ms, total_dmfile_read_time: 3000ms}, create_snapshot_time: 50ms}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -385,8 +385,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
-	basic1 := &BasicRuntimeStats{tableScanContext: &TableScanContext{}}
-	basic2 := &BasicRuntimeStats{tableScanContext: &TableScanContext{}}
+	basic1 := &BasicRuntimeStats{tiflashScanContext: &TiFlashScanContext{}}
+	basic2 := &BasicRuntimeStats{tiflashScanContext: &TiFlashScanContext{}}
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
 	pid := 1
