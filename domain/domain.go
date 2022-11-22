@@ -116,6 +116,7 @@ type Domain struct {
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 
@@ -1570,6 +1571,86 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	do.planReplayerHandle = &planReplayerHandle{}
+	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
+		ctx:  ctx,
+		sctx: collectorSctx,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
+		ctx:    ctx,
+		sctx:   dumperSctx,
+		taskCH: make(chan *PlanReplayerDumpTask, 16),
+	}
+}
+
+// SetupDumpFileGCChecker setup sctx
+func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
+	do.dumpFileGcChecker.setupSctx(ctx)
+}
+
+var planReplayerHandleLease atomic.Uint64
+
+func init() {
+	planReplayerHandleLease.Store(uint64(10 * time.Second))
+}
+
+// DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
+func DisablePlanReplayerBackgroundJob4Test() {
+	planReplayerHandleLease.Store(0)
+}
+
+// StartPlanReplayerHandle start plan replayer handle job
+func (do *Domain) StartPlanReplayerHandle() {
+	lease := planReplayerHandleLease.Load()
+	if lease < 1 {
+		return
+	}
+	do.wg.Add(2)
+	go func() {
+		tikcer := time.NewTicker(time.Duration(lease))
+		defer func() {
+			tikcer.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-tikcer.C:
+				err := do.planReplayerHandle.CollectPlanReplayerTask()
+				if err != nil {
+					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
+				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
+			}
+		}
+	}()
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
@@ -1741,7 +1822,7 @@ func (do *Domain) loadStatsWorker() {
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
+		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
@@ -1803,6 +1884,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
@@ -1826,7 +1908,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Debug("handle ddl event failed", zap.Error(err))
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
@@ -1842,6 +1924,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
+			}
+		case <-loadLockedTablesTicker.C:
+			err := statsHandle.LoadLockedTables()
+			if err != nil {
+				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
 			err := statsHandle.DumpStatsFeedbackToKV()

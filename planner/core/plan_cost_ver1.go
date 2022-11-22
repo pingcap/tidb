@@ -852,7 +852,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
+	rowSize := getAvgRowSize(build.statsInfo(), build.Schema().Columns)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
 	cpuFactor := sessVars.GetCPUFactor()
@@ -1049,7 +1049,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	rowSize := getAvgRowSize(p.statsInfo(), schema)
+	rowSize := getAvgRowSize(p.statsInfo(), schema.Columns)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
 	diskCost := count * sessVars.GetDiskFactor() * rowSize
 	if !spill {
@@ -1272,7 +1272,12 @@ func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
 		actualProbeCnt := operator.getActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
 		return getOperatorActRows(operator) / float64(actualProbeCnt)
 	}
-	return operator.StatsCount()
+	rows := operator.StatsCount()
+	if rows == 0 && operator.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+		// 0 est-row can lead to 0 operator cost which makes plan choice unstable.
+		rows = 1
+	}
+	return rows
 }
 
 // estimateNetSeekCost calculates the net seek cost for the plan.

@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/slice"
 	"go.uber.org/zap"
@@ -70,6 +71,22 @@ const (
 	// CompressionSnappy is the compression type that uses Snappy algorithm.
 	CompressionSnappy
 )
+
+// ToStorageCompressType converts Compression to storage.CompressType.
+func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+	switch compression {
+	case CompressionGZ:
+		return storage.Gzip, nil
+	case CompressionSnappy:
+		return storage.Snappy, nil
+	case CompressionZStd:
+		return storage.Zstd, nil
+	case CompressionNone:
+		return storage.NoCompression, nil
+	default:
+		return storage.NoCompression, errors.Errorf("compression %d doesn't have related storage compressType", compression)
+	}
+}
 
 func parseSourceType(t string) (SourceType, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {

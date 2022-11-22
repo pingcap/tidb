@@ -2738,6 +2738,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowStatsLocked
 	ShowHistogramsInFlight
 	ShowColumnStatsUsage
 	ShowPlugins
@@ -2909,6 +2910,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ShowStatsMeta:
 		ctx.WriteKeyWord("STATS_META")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsLocked:
+		ctx.WriteKeyWord("STATS_LOCKED")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}

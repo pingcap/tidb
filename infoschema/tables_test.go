@@ -676,8 +676,14 @@ func TestSelectHiddenColumn(t *testing.T) {
 
 func TestFormatVersion(t *testing.T) {
 	// Test for defaultVersions.
-	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	defaultVersions := []string{
+		"5.7.25-TiDB-None",
+		"5.7.25-TiDB-8.0.18",
+		"5.7.25-TiDB-8.0.18-beta.1",
+		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
+		"5.7.25-TiDB-",
+		"5.7.25-TiDB-v4.0.0-TiDB-446"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
 	for i, v := range defaultVersions {
 		version := infoschema.FormatTiDBVersion(v, true)
 		require.Equal(t, defaultRes[i], version)
@@ -1512,6 +1518,10 @@ func TestVariablesInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip test when concurrent DDL is disabled")
+	}
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
