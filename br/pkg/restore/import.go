@@ -465,9 +465,10 @@ func (importer *FileImporter) ImportKVFiles(
 		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
 	})
 
+	take := time.Since(startTime)
 	for _, file := range files {
-		log.Debug("download and apply file done",
-			zap.String("file", file.Path), zap.Stringer("take", time.Since(startTime)),
+		log.Info("import file done",
+			zap.String("file", file.Path), zap.Stringer("take", take),
 			logutil.Key("fileStart", file.StartKey), logutil.Key("fileEnd", file.EndKey))
 	}
 	return errors.Trace(err)

@@ -1828,7 +1828,7 @@ func ApplyKVFilesWithBatchMethod(
 	iter LogIter,
 	batchCount int,
 	batchSize uint64,
-	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
 ) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
@@ -1904,11 +1904,16 @@ func ApplyKVFilesWithBatchMethod(
 			if len(fs.writeFiles) > 0 {
 				applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
 			}
+		}
+	}
 
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
 			for _, d := range fs.deleteFiles {
 				tmpFiles = append(tmpFiles, d)
 				tmpSize += d.GetLength()
 				tmpKVCount += d.GetNumberOfEntries()
+
 				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
 					applyFunc(tmpFiles, tmpKVCount, tmpSize)
 					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
@@ -1960,7 +1965,7 @@ func ApplyKVFilesWithSingelMethod(
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files LogIter,
+	iter LogIter,
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
@@ -1988,41 +1993,42 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	applyFunc := func(file []*backuppb.DataFileInfo, kvCount int64, size uint64) {
-		if len(file) == 0 {
+	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
+		if len(files) == 0 {
 			return
 		}
-		// get rewrite rule from table id
-		rule, ok := rules[file[0].TableId]
+		// get rewrite rule from table id.
+		// because the tableID of files is the same.
+		rule, ok := rules[files[0].TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress(int64(len(file)))
-			summary.CollectInt("FileSkip", len(file))
-			log.Debug("skip file due to table id not matched", zap.Int64("tableId", file[0].TableId))
-			skipFile += len(file)
+			onProgress(int64(len(files)))
+			summary.CollectInt("FileSkip", len(files))
+			log.Debug("skip file due to table id not matched", zap.Int64("tableId", files[0].TableId))
+			skipFile += len(files)
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				fileStart := time.Now()
 				defer func() {
-					onProgress(int64(len(file)))
+					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
-					summary.CollectInt("File", len(file))
-					log.Info("import files done", zap.Int("batch count", len(file)), zap.Uint64("batch bytes", size),
+					summary.CollectInt("File", len(files))
+					log.Info("import files done", zap.Int("batch count", len(files)), zap.Uint64("batch bytes", size),
 						zap.Duration("take", time.Since(fileStart)))
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
 			})
 		}
 	}
 
 	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ctx, files, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		err = ApplyKVFilesWithBatchMethod(ctx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 	} else {
-		err = ApplyKVFilesWithSingelMethod(ctx, files, applyFunc)
+		err = ApplyKVFilesWithSingelMethod(ctx, iter, applyFunc)
 	}
 	if err != nil {
 		return errors.Trace(err)
