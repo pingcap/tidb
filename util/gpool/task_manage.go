@@ -41,8 +41,7 @@ type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 
 // TaskManager is a manager that can control or watch the pool.
 type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
-	task         []TaskStatusContainer[T, U, C, CT, TF]
-	conncurrency int32
+	task []TaskStatusContainer[T, U, C, CT, TF]
 }
 
 // NewTaskManager create a new task manager.
@@ -54,8 +53,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](con int32) Task
 		}
 	}
 	return TaskManager[T, U, C, CT, TF]{
-		task:         task,
-		conncurrency: con,
+		task: task,
 	}
 }
 

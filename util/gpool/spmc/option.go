@@ -53,13 +53,6 @@ type Options struct {
 	Nonblocking bool
 }
 
-// WithOptions accepts the whole options config.
-func WithOptions(options Options) Option {
-	return func(opts *Options) {
-		*opts = options
-	}
-}
-
 // WithExpiryDuration sets up the interval time of cleaning up goroutines.
 func WithExpiryDuration(expiryDuration time.Duration) Option {
 	return func(opts *Options) {

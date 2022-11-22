@@ -45,7 +45,7 @@ type Pool[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
-func NewSPMCPool[T any, U any, C any, CT any, TF gpool.Context[CT]](name string, size int32, options ...Option) (*Pool[T, U, C, CT, TF], error) {
+func NewSPMCPool[T any, U any, C any, CT any, TF gpool.Context[CT]](name string, size int32, options ...Option) *Pool[T, U, C, CT, TF] {
 	opts := loadOptions(options...)
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
@@ -73,7 +73,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF gpool.Context[CT]](name string,
 	}
 	result.cond = sync.NewCond(result.lock)
 	go result.purgePeriodically()
-	return result, nil
+	return result
 }
 
 // purgePeriodically clears expired workers periodically which runs in an individual goroutine, as a scavenger.
