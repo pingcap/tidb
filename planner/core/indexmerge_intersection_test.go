@@ -15,12 +15,12 @@
 package core_test
 
 import (
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"regexp"
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
