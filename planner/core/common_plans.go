@@ -660,11 +660,8 @@ type ExplainInfoForEncode struct {
 	OperatorInfo        string `json:"operatorInfo"`
 	EstCost             string `json:"estCost,omitempty"`
 	CostFormula         string `json:"costFormula,omitempty"`
-	Idx                 int    `json:"idx,omitempty"`
-	ChildrenIdx         []int  `json:"childrenIdx,omitempty"`
-	ChildrenEndIdx      int    `json:"childrenEndIdx,omitempty"`
-	IsRoot              bool   `json:"isRoot,omitempty"`
-	IsLastChildren      bool   `json:"isLastChildren,omitempty"`
+	Idx                 int    `json:"idx"`
+	ChildrenIdx         []int  `json:"childrenIdx"`
 	MemoryInfo          string `json:"memoryInfo,omitempty"`
 	DiskInfo            string `json:"diskInfo,omitempty"`
 	TotalMemoryConsumed string `json:"totalMemoryConsumed,omitempty"`
@@ -851,7 +848,7 @@ func (e *Explain) RenderResult() error {
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		if str, err := e.JSON.ToString(); err != nil {
+		if str, err := e.JSON.ToString(); err == nil {
 			e.Rows = append(e.Rows, []string{str})
 		} else {
 			return err
@@ -880,17 +877,25 @@ func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
+	i := 0
 	for _, flatOp := range flat.Main {
-		e.explainFlatOpInJSONFormat(flatOp)
+		e.explainFlatOpInJSONFormat(i, flatOp.ChildrenIdx, flatOp)
+		i++
 	}
 	for _, cte := range flat.CTEs {
+		cteBegin := i
 		for _, flatOp := range cte {
-			e.explainFlatOpInJSONFormat(flatOp)
+			children := make([]int, len(flatOp.ChildrenIdx))
+			for j, child := range flatOp.ChildrenIdx {
+				children[j] = child + cteBegin
+			}
+			e.explainFlatOpInJSONFormat(i, children, flatOp)
+			i++
 		}
 	}
 }
 
-func (e *Explain) explainFlatOpInJSONFormat(flatOp *FlatOperator) {
+func (e *Explain) explainFlatOpInJSONFormat(i int, childrenIdx []int, flatOp *FlatOperator) {
 	taskTp := ""
 	if flatOp.IsRoot {
 		taskTp = "root"
@@ -898,10 +903,8 @@ func (e *Explain) explainFlatOpInJSONFormat(flatOp *FlatOperator) {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
 	explainID := flatOp.Origin.ExplainID().String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID+flatOp.Label.String(),
-		flatOp.TextTreeIndent,
-		flatOp.IsLastChild)
-	e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	textTreeExplainID := texttree.PrettyIdentifier(explainID+flatOp.Label.String(), flatOp.TextTreeIndent, flatOp.IsLastChild)
+	e.prepareOperatorInfoForJSONFormat(i, childrenIdx, flatOp.Origin, taskTp, textTreeExplainID, explainID)
 	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
 		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
@@ -1011,7 +1014,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, explainID string) {
+func (e *Explain) prepareOperatorInfoForJSONFormat(idx int, childrenIdx []int, p Plan, taskType, id string, explainID string) {
 	if p.ExplainID().String() == "_0" {
 		return
 	}
@@ -1023,6 +1026,8 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
+		Idx:          idx,
+		ChildrenIdx:  childrenIdx,
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
