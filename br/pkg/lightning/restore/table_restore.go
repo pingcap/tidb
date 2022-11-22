@@ -398,6 +398,7 @@ func (tr *TableRestore) restoreEngine(
 	defer cancel()
 	// all data has finished written, we can close the engine directly.
 	if cp.Status >= checkpoints.CheckpointStatusAllWritten {
+		// here?
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
@@ -475,6 +476,7 @@ func (tr *TableRestore) restoreEngine(
 
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
+		// add offset?
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
 			continue
 		}
