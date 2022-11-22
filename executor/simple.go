@@ -826,13 +826,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
 				failedLoginAttempts = s.PasswordOrLockOptions[i].Count
-				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
 				passwordLockTime = s.PasswordOrLockOptions[i].Count
-				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
 				passwordLockTime = -1
-				break
 			}
 		}
 	}
@@ -841,7 +838,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	var userAttributes any = nil
-	if passwordLockTime > 0 {
+	if passwordLockTime != 0 {
 		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}", failedLoginAttempts, passwordLockTime)
 	}
 	if s.CommentOrAttributeOption != nil {
@@ -996,13 +993,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
 				failedLoginAttempts = s.PasswordOrLockOptions[i].Count
-				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
 				passwordLockTime = s.PasswordOrLockOptions[i].Count
-				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
 				passwordLockTime = -1
-				break
 			}
 		}
 	}
@@ -1139,7 +1133,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				failedLoginAttempts, passwordLockTime, lock, 0, time.Now().Format(time.UnixDate))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 		if s.CommentOrAttributeOption != nil {
 			newAttributesStr := ""
