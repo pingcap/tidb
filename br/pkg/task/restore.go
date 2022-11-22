@@ -23,7 +23,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/kv"
+=======
+	"github.com/pingcap/tidb/util"
+>>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -330,6 +334,7 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
@@ -367,6 +372,8 @@ func CheckNewCollationEnable(
 	return nil
 }
 
+=======
+>>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
@@ -439,7 +446,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 

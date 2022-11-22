@@ -88,7 +88,11 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
+<<<<<<< HEAD
 	tidbNewCollationEnabled = "new_collation_enabled"
+=======
+	flagFullBackupType = "type"
+>>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
 )
 
 // TLSConfig is the common configuration for TLS connection.

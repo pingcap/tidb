@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -2016,3 +2017,102 @@ func (rc *Client) SaveSchemas(
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+// InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
+func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
+	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+
+	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+
+	if rc.fullClusterRestore {
+		// have to skip grant table, in order to NotifyUpdatePrivilege
+		config.GetGlobalConfig().Security.SkipGrantTable = true
+	}
+}
+
+func (rc *Client) IsFullClusterRestore() bool {
+	return rc.fullClusterRestore
+}
+
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
+}
+
+// MockClient create a fake client used to test.
+func MockClient(dbs map[string]*utils.Database) *Client {
+	return &Client{databases: dbs}
+}
+
+// TidyOldSchemas produces schemas information.
+func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
+	var schemaIsEmpty bool
+	schemas := backup.NewBackupSchemas()
+
+	for _, dr := range sr.DbMap {
+		if dr.OldDBInfo == nil {
+			continue
+		}
+
+		schemaIsEmpty = true
+		for _, tr := range dr.TableMap {
+			if tr.OldTableInfo == nil {
+				continue
+			}
+			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+			schemaIsEmpty = false
+		}
+
+		// backup this empty schema if it has nothing table.
+		if schemaIsEmpty {
+			schemas.AddSchema(dr.OldDBInfo, nil)
+		}
+	}
+	return schemas
+}
+
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) error {
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
+		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return errors.Annotatef(berrors.ErrUnknown,
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+
+	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
+	// so we need to modify this value according to the config of the cluster
+	// before using the collate package.
+	enabled := newCollationEnable == "True"
+	// modify collate.newCollationEnabled according to the config of the cluster
+	collate.SetNewCollationEnabledForTest(enabled)
+	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
+	return nil
+}
+>>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
