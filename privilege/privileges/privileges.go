@@ -355,15 +355,11 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
-//func (p *UserPrivileges) GetUserAttributes(authUser, authHost string) *privilege.UserAttributes {
-//	mysqlPriv := p.Handle.Get()
-//	record := mysqlPriv.connectionVerification(authUser, authHost)
-//	userAttr := &privilege.UserAttributes{FailedLoginCount: record.FailedLoginCount, PasswordLockTimeDays: record.PasswordLockTime, AutoAccountLocked: record.AutoAccountLocked,
-//		AutoLockedLastChanged: record.AutoLockedLastChanged, FailedLoginAttempts: record.FailedLoginAttempts}
-//	return userAttr
-//}
-
 func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -389,7 +385,6 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
-		return false
 	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
@@ -400,11 +395,8 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 		return false
 	}
 	failedLoginAttempts := record.FailedLoginAttempts
-	if failedLoginAttempts == 0 {
-		return false
-	}
-	failedLoginCount := record.FailedLoginCount
-	if failedLoginCount == 0 {
+	passwordLockTime := record.PasswordLockTime
+	if failedLoginAttempts == 0 && passwordLockTime == 0 {
 		return false
 	}
 	return true
@@ -416,6 +408,10 @@ func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
 }
 
 func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -534,9 +530,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
 		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
-
-	p.user = authUser
-	p.host = record.Host
 	return nil
 }
 

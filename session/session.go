@@ -2599,29 +2599,36 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	attributesJson, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
-	if verErr != nil {
-		return verErr
-	}
-	if attributesJson != "" {
-		if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, attributesJson); lockErr != nil {
-			return lockErr
-		}
-	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		if strings.Index(err.Error(), "decode") != -1 || strings.Index(err.Error(), "caching_sha2_password") != -1 || strings.Index(err.Error(), "socket") != -1 || strings.Index(err.Error(), "Access denied") != -1 {
-			failedLogin(s, authUser.Username, authUser.Hostname)
-		}
-		return err
-	}
 	enableAutoLock := pm.IsEnableAccountAutoLock(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
-		passwordLockingJson := pm.BuildPasswordLockingJsonByRecord(authUser.Username, authUser.Hostname, false, 0)
-		if passwordLockingJson != "" {
-			if lockingErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJson); lockingErr != nil {
-				return lockingErr
+		attributesJson, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
+		if verErr != nil {
+			return verErr
+		}
+		if attributesJson != "" {
+			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, attributesJson); lockErr != nil {
+				return lockErr
 			}
-			domain.GetDomain(s).NotifyUpdatePrivilege()
+		}
+	}
+
+	connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
+	if connVerifErr != nil {
+		if enableAutoLock {
+			if strings.Index(connVerifErr.Error(), "decode") != -1 || strings.Index(connVerifErr.Error(), "caching_sha2_password") != -1 || strings.Index(connVerifErr.Error(), "socket") != -1 || strings.Index(connVerifErr.Error(), "Access denied") != -1 {
+				failedLogin(s, authUser.Username, authUser.Hostname)
+			}
+		}
+		return connVerifErr
+	} else {
+		if enableAutoLock {
+			passwordLockingJson := pm.BuildPasswordLockingJsonByRecord(authUser.Username, authUser.Hostname, false, 0)
+			if passwordLockingJson != "" {
+				if lockingErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJson); lockingErr != nil {
+					return lockingErr
+				}
+				domain.GetDomain(s).NotifyUpdatePrivilege()
+			}
 		}
 	}
 
@@ -2722,8 +2729,23 @@ func attributesBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) 
 func getFailedLoginCount(s *session, user string, host string) privilege.UserAttributes {
 	userAttr := privilege.UserAttributes{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return userAttr
+	}
 	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
-	defer terror.Call(rs.Close)
+	defer func() {
+		if err != nil {
+			_, err1 := s.ExecuteInternal(ctx, "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+		_, err = s.ExecuteInternal(ctx, "COMMIT")
+		if err != nil {
+			return
+		}
+		terror.Call(rs.Close)
+	}()
 	if err != nil {
 		return userAttr
 	}
