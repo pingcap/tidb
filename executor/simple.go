@@ -1357,11 +1357,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 
-	defer func() {
+	defer func() error {
 		if err != nil {
-			sqlExecutor.ExecuteInternal(ctx, "rollback")
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
+			return err
 		}
+		return nil
 	}()
+
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
@@ -1636,10 +1642,15 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) (err error) {
 		return err
 	}
 
-	defer func() {
+	defer func() error {
 		if err != nil {
-			sqlExecutor.ExecuteInternal(ctx, "rollback")
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
+			return err
 		}
+		return nil
 	}()
 
 	for _, userToUser := range s.UserToUsers {
@@ -1991,11 +2002,18 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) (err 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
 		return err
 	}
-	defer func() {
+
+	defer func() error {
 		if err != nil {
-			sqlExecutor.ExecuteInternal(ctx, "rollback")
+			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
+			if errRollback != nil {
+				return errRollback
+			}
+			return err
 		}
+		return nil
 	}()
+
 	var u, h string
 	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
