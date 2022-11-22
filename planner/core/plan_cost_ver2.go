@@ -116,7 +116,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := math.Max(getAvgRowSize(p.stats, p.schema.Columns), 2.0) // consider all index columns
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.planCostInit = true
@@ -139,7 +139,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 		rowSize = getAvgRowSize(p.stats, p.schema.Columns)
 	}
 	rowSize = math.Max(rowSize, 2.0)
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
@@ -205,8 +205,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	p.planCostInit = true
 
 	// consider tidb_enforce_mpp
-	_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
-	if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() &&
+	if p.StoreType == kv.TiFlash && p.ctx.GetSessionVars().IsMPPEnforced() &&
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 		p.planCostVer2 = divCostVer2(p.planCostVer2, 1000000000)
 	}
@@ -440,10 +439,6 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
 
-	if inputRows < 2000 { // prefer to use StreamAgg if no much data to process
-		inputRows = 2000
-	}
-
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, p.GroupByItems, cpuFactor, memFactor)
@@ -572,9 +567,10 @@ func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
 	// TODO: remove this empirical value.
-	batchRatio := 1024.0
+	batchRatio := 1800.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
-	doubleReadCost := doubleReadCostVer2(option, buildRows/batchRatio, requestFactor)
+	numTasks := math.Max(buildRows/batchRatio, 0.001)
+	doubleReadCost := doubleReadCostVer2(option, numTasks, requestFactor)
 
 	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, doubleReadCost), probeConcurrency))
 	p.planCostInit = true
@@ -879,9 +875,12 @@ func getTaskMemFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Fa
 	}
 }
 
-func getTaskScanFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+func getTaskScanFactorVer2(p PhysicalPlan, storeType kv.StoreType, taskType property.TaskType) costVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
+	}
+	if storeType == kv.TiFlash {
+		return defaultVer2Factors.TiFlashScan
 	}
 	switch taskType {
 	case property.MppTaskType: // TiFlash

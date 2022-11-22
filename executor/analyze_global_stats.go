@@ -73,26 +73,36 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
+					logutil.BgLogger().Error("merge global stats failed", zap.String("info", job.JobInfo), zap.Error(err))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						return nil
 					}
 					return err
 				}
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 					// fms for global stats doesn't need to dump to kv.
-					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
+					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
+						globalStats.Count,
+						globalStats.ModifyCount,
+						info.isIndex,
+						hg,
+						cms,
+						topN,
+						info.statsVersion,
+						1,
+						true,
+					)
 					if err != nil {
-						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err))
 					}
 					// Dump stats to historical storage.
-					if err := recordHistoricalStats(e.ctx, globalStatsID.tableID); err != nil {
-						logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {
+						logutil.BgLogger().Error("record historical stats failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err1))
 					}
 				}
-				return nil
+				return err
 			}()
 			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
 		}
