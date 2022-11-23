@@ -557,7 +557,6 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
 	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
 	*model.ColumnInfo, *ast.TableName, error) {
-
 	var indexed bool
 	var shardColumnInfo *model.ColumnInfo
 	var selectedTableName *ast.TableName
@@ -651,7 +650,7 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 		}
 		tableSources = append(tableSources, x)
 	default:
-		return nil, errors.New(fmt.Sprintf("Non-transactional DML, unknown type %T in table refs", node))
+		return nil, errors.Errorf("Non-transactional DML, unknown type %T in table refs", node)
 	}
 	return tableSources, nil
 }
@@ -661,7 +660,6 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 func selectShardColumnFromTheOnlyTable(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName,
 	tableAsName model.CIStr, tbl table.Table) (
 	indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
-
 	if stmt.ShardColumn == nil {
 		return selectShardColumnAutomatically(stmt, tbl, tableName, tableAsName)
 	}
