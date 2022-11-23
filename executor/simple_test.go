@@ -208,5 +208,7 @@ func TestValidatePassword(t *testing.T) {
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY ''")
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY 'abcd'")
 
+	// CREATE ROLE is not affected by password validation
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustExec("CREATE ROLE role1")
 }

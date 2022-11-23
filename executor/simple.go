@@ -899,7 +899,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
-		if e.enableValidatePassword() {
+		if e.enableValidatePassword() && !s.IsCreateRole {
 			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
 				return variable.ErrNotValidPassword.GenWithStackByArgs()
 			}
