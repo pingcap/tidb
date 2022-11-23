@@ -2455,15 +2455,13 @@ func (cr *chunkRestore) deliverLoop(
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
-		})
-		failpoint.Inject("FailAfterWriteRows", func() {
 			finished := rc.status.FinishedFileSize.Load()
 			total := rc.status.TotalFileSize.Load()
 			deliverLogger.Warn("PrintStatus Failpoint",
 				zap.Int64("finished", finished),
 				zap.Int64("total", total))
-			panic("FailAfterWriteRows")
 		})
+		failpoint.Inject("FailAfterWriteRows", nil)
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after written
 		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
