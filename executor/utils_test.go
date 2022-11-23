@@ -15,11 +15,9 @@
 package executor
 
 import (
-	"math/rand"
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
 
