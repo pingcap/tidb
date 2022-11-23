@@ -1597,7 +1597,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 	if len(failedUsers) > 0 {
-		// compatible mysql8.0
+		// compatible mysql8.0, Alter user realizes atomic operation
 		if !s.IfExists || needRollback {
 			if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 				return err
@@ -2017,7 +2017,6 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
-	// prevent parallel operation
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
