@@ -163,6 +163,7 @@ func TestValidatePassword(t *testing.T) {
 		tk.MustExec("SET GLOBAL validate_password.check_user_name = 1")
 
 		// LOW: Length
+		tk.MustExec("SET GLOBAL validate_password.length = 8")
 		tk.MustQuery("SELECT @@global.validate_password.length").Check(testkit.Rows("8"))
 		tk.MustContainErrMsg("ALTER USER testuser IDENTIFIED BY '1234567'", "Require Password Length: 8")
 		tk.MustExec("SET GLOBAL validate_password.length = 12")
@@ -180,7 +181,8 @@ func TestValidatePassword(t *testing.T) {
 		tk.MustExec("SET GLOBAL validate_password.special_char_count = 0")
 		tk.MustExec("ALTER USER testuser IDENTIFIED BY 'Abc1234567'")
 		tk.MustExec("SET GLOBAL validate_password.special_char_count = 1")
-		tk.MustContainErrMsg("SET GLOBAL validate_password.length = 3", "Variable 'validate_password.length' can't be set to the value of '3'")
+		tk.MustExec("SET GLOBAL validate_password.length = 3")
+		tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("4"))
 
 		// STRONG: Length; numeric, lowercase/uppercase, and special characters; dictionary file
 		tk.MustExec("SET GLOBAL validate_password.policy = 'STRONG'")

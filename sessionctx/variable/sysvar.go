@@ -489,35 +489,71 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ValidatePasswordEnable, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: ValidatePasswordPolicy, Value: "MEDIUM", Type: TypeEnum, PossibleValues: []string{"LOW", "MEDIUM", "STRONG"}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: On, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
+	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			var numberCount, specialCharCount, mixedCaseCount int64
-			if numberCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
-				return "", err
-			} else if numberCount, err = strconv.ParseInt(numberCountStr, 10, 64); err != nil {
-				return "", err
-			}
-			if specialCharCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
-				return "", err
-			} else if specialCharCount, err = strconv.ParseInt(specialCharCountStr, 10, 64); err != nil {
-				return "", err
-			}
-			if mixedCaseCountStr, err := vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
-				return "", err
-			} else if mixedCaseCount, err = strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
+			_, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			if err != nil {
 				return "", err
 			}
 			if length, err := strconv.ParseInt(normalizedValue, 10, 64); err != nil {
 				return "", err
-			} else if length < numberCount+specialCharCount+2*mixedCaseCount {
-				return "", ErrWrongValueForVar.GenWithStackByArgs(ValidatePasswordLength, normalizedValue)
+			} else if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
+				return strconv.FormatInt(minLength, 10), nil
 			}
 			return normalizedValue, nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			if err != nil {
+				return "", err
+			}
+			if mixedCaseCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+				return "", err
+			}
+			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
+				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
+				if err != nil {
+					return "", err
+				}
+			}
+			return normalizedValue, nil
+		}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			if err != nil {
+				return "", err
+			}
+			if numberCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+				return "", err
+			}
+			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
+				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
+				if err != nil {
+					return "", err
+				}
+			}
+			return normalizedValue, nil
+		}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			if err != nil {
+				return "", err
+			}
+			if specialCharCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+				return "", err
+			}
+			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
+				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
+				if err != nil {
+					return "", err
+				}
+			}
+			return normalizedValue, nil
+		}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 
 	/* TiDB specific variables */

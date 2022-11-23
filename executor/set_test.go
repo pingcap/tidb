@@ -853,6 +853,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
+
+	// test for password validation
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("8"))
+	tk.MustExec("SET GLOBAL validate_password.length = 3")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("4"))
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 2")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("6"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
