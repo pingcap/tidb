@@ -12997,8 +12997,6 @@ PasswordOrLockOption:
 			Type:  ast.FailedLoginAttempts,
 			Count: $2.(int64),
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support FAILED_LOGIN_ATTEMPTS EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 |	"PASSWORD_LOCK_TIME" Int64Num
 	{
@@ -13006,16 +13004,12 @@ PasswordOrLockOption:
 			Type:  ast.PasswordLockTime,
 			Count: $2.(int64),
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 |	"PASSWORD_LOCK_TIME" "UNBOUNDED"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordLockTimeDefault,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD_LOCK_TIME EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 
 PasswordExpire:
