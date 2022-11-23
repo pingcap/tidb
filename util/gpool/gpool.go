@@ -46,6 +46,7 @@ var (
 type BasePool struct {
 	name      string
 	generator atomic.Uint64
+	statistic *Statistic
 }
 
 // NewBasePool is to create a new BasePool.
@@ -66,4 +67,49 @@ func (p *BasePool) Name() string {
 // NewTaskID is to get a new task ID.
 func (p *BasePool) NewTaskID() uint64 {
 	return p.generator.Add(1)
+}
+
+// SetStatistic is to set Statistic
+func (p *BasePool) SetStatistic(statistic *Statistic) {
+	p.statistic = statistic
+}
+
+// GetStatistic is to get Statistic
+func (p *BasePool) GetStatistic() *Statistic {
+	return p.statistic
+}
+
+// MaxInFlight is to get max in flight.
+func (p *BasePool) MaxInFlight() int64 {
+	return p.statistic.MaxInFlight()
+}
+
+// GetQueueSize is to get queue size.
+func (p *BasePool) GetQueueSize() int64 {
+	return p.statistic.GetQueueSize()
+}
+
+// MaxPASS is to get max pass.
+func (p *BasePool) MaxPASS() uint64 {
+	return p.statistic.MaxPASS()
+}
+
+// MinRT is to get min rt.
+func (p *BasePool) MinRT() uint64 {
+	return p.statistic.MinRT()
+}
+
+// InFlight is to get in flight.
+func (p *BasePool) InFlight() int64 {
+	return p.statistic.InFlight()
+}
+
+// LongRTT is to get long rtt.
+func (p *BasePool) LongRTT() float64 {
+	return p.statistic.LongRTT()
+}
+
+// ShortRTT is to get short rtt.
+func (p *BasePool) ShortRTT() uint64 {
+	return p.statistic.ShortRTT()
 }

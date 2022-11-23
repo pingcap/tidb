@@ -152,11 +152,6 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	}
 }
 
-// LastTunerTs returns the last time when the pool was tuned.
-func (p *Pool[T, U, C, CT, TF]) LastTunerTs() time.Time {
-	return *p.lastTuneTs.Load()
-}
-
 // Running returns the number of workers currently running.
 func (p *Pool[T, U, C, CT, TF]) Running() int {
 	return int(p.running.Load())
