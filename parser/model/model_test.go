@@ -514,9 +514,9 @@ func TestPlacementSettingsString(t *testing.T) {
 		Voters:      3,
 		Followers:   2,
 		Learners:    1,
-		Constraints: "{+us-east-1:1,+us-east-2:1}",
+		Constraints: "{\"+us-east-1\":1,+us-east-2:1}",
 	}
-	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
+	require.Equal(t, "CONSTRAINTS=\"{\\\"+us-east-1\\\":1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
 
 func TestPlacementSettingsClone(t *testing.T) {

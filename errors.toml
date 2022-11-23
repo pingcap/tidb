@@ -501,6 +501,11 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
+'''
+
 ["Lightning:Restore:ErrRestoreTable"]
 error = '''
 restore table %s failed
@@ -1389,6 +1394,11 @@ Dynamic privilege '%s' is not registered with the server.
 ["executor:8003"]
 error = '''
 TiDB admin check table failed.
+'''
+
+["executor:8067"]
+error = '''
+Load data: unmatched columns
 '''
 
 ["executor:8114"]

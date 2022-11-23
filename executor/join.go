@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"runtime/trace"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +66,8 @@ type HashJoinExec struct {
 
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
+	worker       util.WaitGroupWrapper
+	waiter       util.WaitGroupWrapper
 	joinType     plannercore.JoinType
 	requiredRows int64
 
@@ -89,9 +90,7 @@ type HashJoinExec struct {
 	prepared    bool
 	isOuterJoin bool
 
-	// joinWorkerWaitGroup is for sync multiple join workers.
-	joinWorkerWaitGroup sync.WaitGroup
-	finished            atomic.Value
+	finished atomic.Value
 
 	stats *hashJoinRuntimeStats
 }
@@ -146,6 +145,7 @@ func (e *HashJoinExec) Close() error {
 		e.probeChkResourceCh = nil
 		e.joinChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
+		e.waiter.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
@@ -159,6 +159,8 @@ func (e *HashJoinExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
+		e.closeCh = nil
+		e.prepared = false
 		return err
 	}
 	e.prepared = false
@@ -168,9 +170,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
+	e.worker = util.WaitGroupWrapper{}
+	e.waiter = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
-	e.joinWorkerWaitGroup = sync.WaitGroup{}
 
 	if e.probeTypes == nil {
 		e.probeTypes = retTypes(e.probeSideExec)
@@ -264,13 +267,13 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
+func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
-			e.buildFinished <- errors.Trace(err)
+			errCh <- errors.Trace(err)
 			return
 		}
 	})
@@ -281,7 +284,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 		err = Next(ctx, e.buildSideExec, chk)
 		if err != nil {
-			e.buildFinished <- errors.Trace(err)
+			errCh <- errors.Trace(err)
 			return
 		}
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
@@ -332,8 +335,7 @@ func (e *HashJoinExec) initializeForProbe() {
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
-	e.joinWorkerWaitGroup.Add(1)
-	go util.WithRecovery(func() {
+	e.worker.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 		e.fetchProbeSideChunks(ctx)
 	}, e.handleProbeSideFetcherPanic)
@@ -344,14 +346,13 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	}
 
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joinWorkerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(func() {
+		e.worker.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
 			e.runJoinWorker(workID, probeKeyColIdx)
 		}, e.handleJoinWorkerPanic)
 	}
-	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
+	e.waiter.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
 }
 
 func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
@@ -361,14 +362,12 @@ func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.joinWorkerWaitGroup.Done()
 }
 
 func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.joinWorkerWaitGroup.Done()
 }
 
 // Concurrently handling unmatched rows from the hash table
@@ -408,15 +407,14 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 }
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
-	e.joinWorkerWaitGroup.Wait()
+	e.worker.Wait()
 	if e.useOuterToBuild {
 		// Concurrently handling unmatched rows from the hash table at the tail
 		for i := uint(0); i < e.concurrency; i++ {
 			var workerID = i
-			e.joinWorkerWaitGroup.Add(1)
-			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
+			e.worker.RunWithRecover(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
-		e.joinWorkerWaitGroup.Wait()
+		e.worker.Wait()
 	}
 	close(e.joinResultCh)
 }
@@ -682,7 +680,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
 			}
 		}
-		go util.WithRecovery(func() {
+		e.worker.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
 		}, e.handleFetchAndBuildHashTablePanic)
@@ -725,10 +723,10 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	fetchBuildSideRowsOk := make(chan error, 1)
-	go util.WithRecovery(
+	e.worker.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh)
+			e.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r interface{}) {
 			if r != nil {
