@@ -20,7 +20,6 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -86,7 +85,7 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 // br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
+		builder.Request.NewKeyRanges = kv.NewNonParitionedRequestRange(TableRangesToKVRanges(tid, tableRanges, fb))
 	}
 	return builder
 }
@@ -95,7 +94,7 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.R
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
+		builder.Request.NewKeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	}
 	return builder
 }
@@ -104,7 +103,7 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges, nil)
+		builder.Request.NewKeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges, nil)
 	}
 	return builder
 }
@@ -119,7 +118,7 @@ func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid
 // "ranges" to "KeyRanges" firstly for multiple tables.
 func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges, fb)
+		builder.Request.NewKeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges, fb)
 	}
 	return builder
 }
@@ -127,14 +126,17 @@ func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementCon
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *RequestBuilder {
-	builder.Request.KeyRanges, builder.FixedRowCountHint = TableHandlesToKVRanges(tid, handles)
+	var keyRanges []kv.KeyRange
+	keyRanges, builder.FixedRowCountHint = TableHandlesToKVRanges(tid, handles)
+	builder.Request.NewKeyRanges = kv.NewNonParitionedRequestRange(keyRanges)
 	return builder
 }
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
-	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
+	keyRanges := PartitionHandlesToKVRanges(handles)
+	builder.Request.NewKeyRanges = kv.NewNonParitionedRequestRange(keyRanges)
 	return builder
 }
 
@@ -183,13 +185,18 @@ func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest
 
 // SetKeyRanges sets "KeyRanges" for "kv.Request".
 func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBuilder {
-	builder.Request.KeyRanges = keyRanges
+	builder.Request.NewKeyRanges = kv.NewNonParitionedRequestRange(keyRanges)
+	return builder
+}
+
+func (builder *RequestBuilder) SetNewKeyRanges(keyRanges *kv.RequestRange) *RequestBuilder {
+	builder.Request.NewKeyRanges = keyRanges
 	return builder
 }
 
 // SetPartitionKeyRanges sets the "KeyRangesWithPartition" for "kv.Request".
 func (builder *RequestBuilder) SetPartitionKeyRanges(keyRanges [][]kv.KeyRange) *RequestBuilder {
-	builder.Request.KeyRangesWithPartition = keyRanges
+	builder.Request.NewKeyRanges = kv.NewPartitionedRequestRange(keyRanges)
 	return builder
 }
 
@@ -324,23 +331,12 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
-	for _, keyRange := range builder.Request.KeyRanges {
-		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
-		if tableID > 0 {
-			visitPhysicalTableID[tableID] = struct{}{}
-		} else {
-			return errors.New("requestBuilder can't decode tableID from keyRange")
-		}
+	tids, err := tablecodec.VerifyTableIDForRanges(builder.Request.NewKeyRanges)
+	if err != nil {
+		return err
 	}
-	for _, partKeyRanges := range builder.Request.KeyRangesWithPartition {
-		for _, keyRange := range partKeyRanges {
-			tableID := tablecodec.DecodeTableID(keyRange.StartKey)
-			if tableID > 0 {
-				visitPhysicalTableID[tableID] = struct{}{}
-			} else {
-				return errors.New("requestBuilder can't decode tableID from keyRange")
-			}
-		}
+	for _, tid := range tids {
+		visitPhysicalTableID[tid] = struct{}{}
 	}
 
 	for phyTableID := range visitPhysicalTableID {
@@ -392,7 +388,7 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
-func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) (*kv.RequestRange, error) {
 	if !isCommonHandle {
 		return tablesRangesToKVRanges(tid, ranges, fb), nil
 	}
@@ -403,14 +399,18 @@ func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCo
 // Note this function should not be exported, but currently
 // br refers to it, so have to keep it.
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	return tablesRangesToKVRanges([]int64{tid}, ranges, fb)
+	if len(ranges) == 0 {
+		return []kv.KeyRange{}
+	}
+	return tablesRangesToKVRanges([]int64{tid}, ranges, fb).FirstPartitionRange()
 }
 
 // tablesRangesToKVRanges converts table ranges to "KeyRange".
-func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) *kv.RequestRange {
 	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tids, ranges)
 	}
+	// The following codes are deprecated since the feedback is deprecated.
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
@@ -436,20 +436,23 @@ func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics
 		}
 	}
 	fb.StoreRanges(feedbackRanges)
-	return krs
+	return kv.NewNonParitionedRequestRange(krs)
 }
 
-func tableRangesToKVRangesWithoutSplit(tids []int64, ranges []*ranger.Range) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(ranges)*len(tids))
+func tableRangesToKVRangesWithoutSplit(tids []int64, ranges []*ranger.Range) *kv.RequestRange {
+	krs := make([][]kv.KeyRange, len(tids))
+	for i := range krs {
+		krs[i] = make([]kv.KeyRange, 0, len(ranges))
+	}
 	for _, ran := range ranges {
 		low, high := encodeHandleKey(ran)
-		for _, tid := range tids {
+		for i, tid := range tids {
 			startKey := tablecodec.EncodeRowKey(tid, low)
 			endKey := tablecodec.EncodeRowKey(tid, high)
-			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+			krs[i] = append(krs[i], kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 	}
-	return krs
+	return kv.NewPartitionedRequestRange(krs)
 }
 
 func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
@@ -603,27 +606,33 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) (*kv.RequestRange, error) {
 	return IndexRangesToKVRangesWithInterruptSignal(sc, tid, idxID, ranges, fb, nil, nil)
 }
 
 // IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
-	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, []int64{tid}, idxID, ranges, fb, memTracker, interruptSignal)
+func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.RequestRange, error) {
+	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(sc, []int64{tid}, idxID, ranges, fb, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
+	}
+	err = keyRanges.SetToNonPartitioned()
+	return keyRanges, err
 }
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
-func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) (*kv.RequestRange, error) {
 	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, tids, idxID, ranges, fb, nil, nil)
 }
 
 // IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
+func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.RequestRange, error) {
 	if fb == nil || fb.Hist == nil {
 		return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges, memTracker, interruptSignal)
 	}
+	// The following code is non maintained since the feedback deprecated.
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := EncodeIndexKey(sc, ran)
@@ -658,11 +667,11 @@ func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementCont
 		}
 	}
 	fb.StoreRanges(feedbackRanges)
-	return krs, nil
+	return kv.NewNonParitionedRequestRange(krs), nil
 }
 
 // CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
-func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) (*kv.RequestRange, error) {
 	rans := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := EncodeIndexKey(sc, ran)
@@ -672,20 +681,23 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 		rans = append(rans, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
 	}
-	krs := make([]kv.KeyRange, 0, len(rans))
+	krs := make([][]kv.KeyRange, len(tids))
+	for i := range krs {
+		krs[i] = make([]kv.KeyRange, 0, len(ranges))
+	}
 	for _, ran := range rans {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 		if ran.LowExclude {
 			low = kv.Key(low).PrefixNext()
 		}
 		ran.LowVal[0].SetBytes(low)
-		for _, tid := range tids {
+		for i, tid := range tids {
 			startKey := tablecodec.EncodeRowKey(tid, low)
 			endKey := tablecodec.EncodeRowKey(tid, high)
-			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+			krs[i] = append(krs[i], kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 	}
-	return krs, nil
+	return kv.NewPartitionedRequestRange(krs), nil
 }
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
@@ -707,8 +719,12 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	return true
 }
 
-func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
-	krs := make([]kv.KeyRange, 0, len(ranges))
+func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.RequestRange, error) {
+	krs := make([][]kv.KeyRange, len(tids))
+	for i := range krs {
+		krs[i] = make([]kv.KeyRange, 0, len(ranges))
+	}
+
 	const checkSignalStep = 8
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
@@ -721,13 +737,13 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 		if i == 0 {
 			estimatedMemUsage += int64(cap(low) + cap(high))
 		}
-		for _, tid := range tids {
+		for j, tid := range tids {
 			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
 			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
 			if i == 0 {
 				estimatedMemUsage += int64(cap(startKey)) + int64(cap(endKey))
 			}
-			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+			krs[j] = append(krs[j], kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 		if i%checkSignalStep == 0 {
 			if i == 0 && memTracker != nil {
@@ -739,7 +755,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 			}
 		}
 	}
-	return krs, nil
+	return kv.NewPartitionedRequestRange(krs), nil
 }
 
 // EncodeIndexKey gets encoded keys containing low and high

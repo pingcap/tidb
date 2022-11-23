@@ -1613,3 +1613,29 @@ func IndexKVIsUnique(value []byte) bool {
 	segs := SplitIndexValue(value)
 	return segs.IntHandle != nil || segs.CommonHandle != nil
 }
+
+func VerifyTableIDForRanges(keyRanges *kv.RequestRange) ([]int64, error) {
+	tids := make([]int64, 0, keyRanges.PartitionNum())
+	collectFunc := func(ranges []kv.KeyRange) error {
+		if len(ranges) == 0 {
+			return nil
+		}
+		tid := DecodeTableID(ranges[0].StartKey)
+		if tid <= 0 {
+			return errors.New("Incorrect keyRange is constrcuted")
+		}
+		tids = append(tids, tid)
+		for i := 1; i < len(ranges); i++ {
+			tmpTID := DecodeTableID(ranges[i].StartKey)
+			if tmpTID <= 0 {
+				return errors.New("Incorrect keyRange is constrcuted")
+			}
+			if tid != tmpTID {
+				return errors.Errorf("Using multi partition's ranges as single table's")
+			}
+		}
+		return nil
+	}
+	err := keyRanges.ForEachPartitionWithErr(collectFunc)
+	return tids, err
+}

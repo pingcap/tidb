@@ -15,7 +15,6 @@
 package copr
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -53,7 +52,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -121,10 +119,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
-			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
-			})
-			if !isSorted {
+			if !req.NewKeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
@@ -142,23 +137,23 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		tasks []*copTask
 		err   error
 	)
-	if len(req.KeyRangesWithPartition) > 0 {
-		// Here we build the task by partition, not directly by region.
-		// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
-		// Keep it split by partition would be more safe.
-		for _, kvRanges := range req.KeyRangesWithPartition {
-			ranges := NewKeyRanges(kvRanges)
-			var tasksInPartition []*copTask
-			tasksInPartition, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
-			if err != nil {
-				break
-			}
-			tasks = append(tasks, tasksInPartition...)
+	buildTaskFunc := func(ranges []kv.KeyRange) error {
+		keyRanges := NewKeyRanges(ranges)
+		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		if err != nil {
+			return err
 		}
-	} else {
-		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+		if len(tasks) == 0 {
+			tasks = tasksFromRanges
+			return nil
+		}
+		tasks = append(tasks, tasksFromRanges...)
+		return nil
 	}
+	// Here we build the task by partition, not directly by region.
+	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+	// Keep it split by partition would be more safe.
+	err = req.NewKeyRanges.ForEachPartitionWithErr(buildTaskFunc)
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"

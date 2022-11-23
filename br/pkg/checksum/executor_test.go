@@ -104,7 +104,7 @@ func TestChecksum(t *testing.T) {
 			first = false
 			ranges, err := backup.BuildTableRanges(tableInfo3)
 			require.NoError(t, err)
-			require.Equalf(t, ranges[:1], req.KeyRanges, "%v", req.KeyRanges)
+			require.Equalf(t, ranges[:1], req.NewKeyRanges.FirstPartitionRange(), "%v", req.NewKeyRanges.FirstPartitionRange())
 		}
 		return nil
 	}))
