@@ -29,6 +29,7 @@ echo "INSERT INTO tbl (j, i) VALUES (3, 1),(4, 2);" > "$DBPATH/cp_tsr.tbl.sql"
 # Set the failpoint to kill the lightning instance as soon as one row is written
 PKG="github.com/pingcap/tidb/br/pkg/lightning/restore"
 export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/PrintStatus=return()"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cp_tsr'
@@ -39,6 +40,8 @@ run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e
 run_sql 'SELECT count(*) FROM `cp_tsr`.tbl'
 check_contains "count(*): 1"
+
+read -p 123
 
 # restart lightning from checkpoint, the second line should be written successfully
 export GO_FAILPOINTS=

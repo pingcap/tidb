@@ -435,16 +435,15 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 	})
 
-	failpoint.Inject("PrintMetrics", func() {
+	failpoint.Inject("PrintStatus", func() {
 		defer func() {
-			bytesRestored := metric.ReadCounter(l.metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
-			imported := l.status.FinishedFileSize.Load()
-			o.logger.Warn("printMetrics Failpoint",
-				zap.Float64("bytesRestored", bytesRestored),
-				zap.Int64("imported", imported))
-			if int64(bytesRestored) != imported {
-				o.logger.Error("printMetrics Failpoint is failed")
+			if r := recover(); r != nil {
+				o.logger.Error("panic", zap.Any("r", r))
 			}
+			finished, total := l.Status()
+			o.logger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total))
 		}()
 	})
 
