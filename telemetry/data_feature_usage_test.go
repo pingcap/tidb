@@ -498,7 +498,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.NoError(t, err)
 
 	allow := ddl.IsEnableFastReorg()
-	require.Equal(t, false, allow)
+	require.Equal(t, true, allow)
 	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
@@ -507,7 +507,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	tk.MustExec("alter table tele_t add index idx_org(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
@@ -516,11 +516,11 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(2), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
