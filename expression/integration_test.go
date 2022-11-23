@@ -7434,4 +7434,5 @@ func TestIssue39146(t *testing.T) {
 	tk.MustExec("insert into sun values('20231020');")
 	tk.MustExec("set @@sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
 	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
+	tk.MustQuery(`select str_to_date("202310",'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
 }
