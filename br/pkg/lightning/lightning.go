@@ -515,8 +515,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	var procedure *restore.Controller
-
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
@@ -527,6 +525,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		CheckpointName:    o.checkpointName,
 	}
 
+	var procedure *restore.Controller
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))

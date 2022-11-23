@@ -232,7 +232,15 @@ type Controller struct {
 	precheckItemBuilder *PrecheckItemBuilder
 }
 
+// LightningStatus provides the finished bytes and total bytes of the current task.
+// It should keep the value after restart from checkpoint.
+// When it is tidb backend, FinishedFileSize can be counted after chunk data is
+// restored to tidb. When it is local backend it's counted after whole engine is
+// imported.
+// TotalFileSize may be an estimated value, so when the task is finished, it may
+// not equal to FinishedFileSize.
 type LightningStatus struct {
+	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
 }
@@ -353,6 +361,7 @@ func NewRestoreControllerWithPauser(
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
+	p.Status.backend = cfg.TikvImporter.Backend
 
 	var metaBuilder metaMgrBuilder
 	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal

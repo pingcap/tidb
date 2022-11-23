@@ -327,7 +327,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
-						if rc.status != nil {
+						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 							}
@@ -398,7 +398,6 @@ func (tr *TableRestore) restoreEngine(
 	defer cancel()
 	// all data has finished written, we can close the engine directly.
 	if cp.Status >= checkpoints.CheckpointStatusAllWritten {
-		// here?
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
@@ -406,6 +405,11 @@ func (tr *TableRestore) restoreEngine(
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			return closedEngine, errors.Trace(err)
+		}
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			for _, chunk := range cp.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset)
+			}
 		}
 		return closedEngine, nil
 	}
@@ -476,7 +480,9 @@ func (tr *TableRestore) restoreEngine(
 
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
-		// add offset?
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset)
+		}
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
 			continue
 		}
