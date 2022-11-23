@@ -42,7 +42,8 @@ set -e
 run_sql 'SELECT count(*) FROM `cp_tsr`.tbl'
 check_contains "count(*): 1"
 
-read -p 123
+# After FailAfterWriteRows, the finished bytes is 36 as the first row size
+grep "PrintStatus Failpoint" "$TEST_DIR/lightning.log" | grep -q "finished=36"
 
 # restart lightning from checkpoint, the second line should be written successfully
 # also check after restart from checkpoint, final finished equals to total
@@ -53,3 +54,4 @@ set -e
 
 run_sql 'SELECT j FROM `cp_tsr`.tbl WHERE i = 2;'
 check_contains "j: 4"
+grep "PrintStatus Failpoint" "$TEST_DIR/lightning.log" | grep -q "equal=true"
