@@ -99,8 +99,20 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
-	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
-		mb.buf = mb.availableBufs[0]
+	var (
+		existingBuf    *bytesBuf
+		existingBufIdx int
+	)
+	for i, buf := range mb.availableBufs {
+		if buf.cap >= size {
+			existingBuf = buf
+			existingBufIdx = i
+			break
+		}
+	}
+	if existingBuf != nil {
+		mb.buf = existingBuf
+		mb.availableBufs[existingBufIdx] = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
 	} else {
 		mb.buf = newBytesBuf(size)
