@@ -436,14 +436,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	})
 
 	failpoint.Inject("PrintStatus", func() {
+		// copy to FailAfterWriteRows
 		defer func() {
-			if r := recover(); r != nil {
-				o.logger.Error("panic", zap.Any("r", r))
-			}
 			finished, total := l.Status()
 			o.logger.Warn("PrintStatus Failpoint",
 				zap.Int64("finished", finished),
-				zap.Int64("total", total))
+				zap.Int64("total", total),
+				zap.Bool("equal", finished == total))
 		}()
 	})
 
