@@ -436,7 +436,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	})
 
 	failpoint.Inject("PrintStatus", func() {
-		// copy to FailAfterWriteRows
 		defer func() {
 			finished, total := l.Status()
 			o.logger.Warn("PrintStatus Failpoint",
