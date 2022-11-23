@@ -798,10 +798,10 @@ type intersectionProcessWorker struct {
 	workerID int
 	// key: parTblIdx, val: HandleMap
 	handleMapsPerWorker map[int]*kv.HandleMap
-	workerCh   chan *indexMergeTableTask
-	indexMerge *IndexMergeReaderExecutor
-	wg         *sync.WaitGroup
-	memTracker *memory.Tracker
+	workerCh            chan *indexMergeTableTask
+	indexMerge          *IndexMergeReaderExecutor
+	wg                  *sync.WaitGroup
+	memTracker          *memory.Tracker
 }
 
 func (w *intersectionProcessWorker) doIntersectionPerPartition() {
@@ -872,12 +872,12 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			handleMapsPerWorker[parTblIdx] = hMap
 		}
 		workers = append(workers, &intersectionProcessWorker{
-			workerID: i,
+			workerID:            i,
 			handleMapsPerWorker: handleMapsPerWorker,
-			workerCh:   make(chan *indexMergeTableTask, maxChannelSize),
-			indexMerge: w.indexMerge,
-			wg:         &wg,
-			memTracker: w.indexMerge.memTracker,
+			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
+			indexMerge:          w.indexMerge,
+			wg:                  &wg,
+			memTracker:          w.indexMerge.memTracker,
 		})
 		go workers[i].doIntersectionPerPartition()
 		wg.Add(1)
