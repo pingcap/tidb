@@ -81,6 +81,8 @@ type Manager interface {
 	// Requires exact match on user name and host name.
 	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) error
 
+	AuthSuccess(authUser, authHost string) error
+
 	// GetAuthWithoutVerification uses to get auth name without verification.
 	// Requires exact match on user name and host name.
 	GetAuthWithoutVerification(user, host string) bool

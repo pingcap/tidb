@@ -536,9 +536,12 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
 		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
+	return nil
+}
 
+func (p *UserPrivileges) AuthSuccess(authUser, authHost string) error {
 	p.user = authUser
-	p.host = record.Host
+	p.host = authHost
 	return nil
 }
 

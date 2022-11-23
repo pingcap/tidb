@@ -2601,17 +2601,16 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	}
 	enableAutoLock := pm.IsEnableAccountAutoLock(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
-		attributesJson, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
+		passwordLockingJson, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
 		if verErr != nil {
 			return verErr
 		}
-		if attributesJson != "" {
-			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, attributesJson); lockErr != nil {
+		if passwordLockingJson != "" {
+			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJson); lockErr != nil {
 				return lockErr
 			}
 		}
 	}
-
 	connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if connVerifErr != nil {
 		if enableAutoLock {
@@ -2630,7 +2629,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			}
 		}
 	}
-
+	if authErr := pm.AuthSuccess(authUser.Username, authUser.Hostname); authErr != nil {
+		return authErr
+	}
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
@@ -2644,7 +2645,7 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 		value string
 	}
 	var fields []alterField
-	fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+	fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 	if len(fields) > 0 {
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
@@ -2660,8 +2661,8 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 		if err != nil {
 			return err
 		}
-		domain.GetDomain(s).NotifyUpdatePrivilege()
 	}
+	domain.GetDomain(s).NotifyUpdatePrivilege()
 	return nil
 }
 
