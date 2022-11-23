@@ -844,7 +844,7 @@ func TestFlashBackDatabaseRestore(t *testing.T) {
 func TestTableOptionTTLRestore(t *testing.T) {
 	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
 	sourceSQL2 := "alter table t ttl_enable = 'OFF'"
-	sourceSQL3 := "alter table t no_ttl"
+	sourceSQL3 := "alter table t remove ttl"
 	cases := []struct {
 		sourceSQL string
 		flags     format.RestoreFlags
@@ -854,8 +854,8 @@ func TestTableOptionTTLRestore(t *testing.T) {
 		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "CREATE TABLE `t` (`created_at` DATETIME) /*T![ttl] TTL = `created_at` + INTERVAL 1 YEAR */"},
 		{sourceSQL2, format.DefaultRestoreFlags, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
 		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER TABLE `t` /*T![ttl] TTL_ENABLE = 'OFF' */"},
-		{sourceSQL3, format.DefaultRestoreFlags, "ALTER TABLE `t` NO_TTL"},
-		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER TABLE `t` /*T![ttl] NO_TTL */"},
+		{sourceSQL3, format.DefaultRestoreFlags, "ALTER TABLE `t` REMOVE TTL"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER TABLE `t` /*T![ttl] REMOVE TTL */"},
 	}
 
 	extractNodeFunc := func(node Node) Node {
