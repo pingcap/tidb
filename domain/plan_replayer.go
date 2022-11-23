@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -49,9 +50,10 @@ import (
 // For now it is used by `plan replayer` and `trace plan` statement
 type dumpFileGcChecker struct {
 	sync.Mutex
-	gcLease time.Duration
-	paths   []string
-	sctx    sessionctx.Context
+	gcLease                time.Duration
+	paths                  []string
+	sctx                   sessionctx.Context
+	planReplayerTaskStatus *planReplayerDumpTaskStatus
 }
 
 // GetPlanReplayerDirName returns plan replayer directory path.
@@ -119,6 +121,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer && p.sctx != nil {
 				deletePlanReplayerStatus(context.Background(), p.sctx, fileName)
+				p.planReplayerTaskStatus.clearFinishedTask()
 			}
 		}
 	}
@@ -130,12 +133,8 @@ type planReplayerHandle struct {
 }
 
 // HandlePlanReplayerDumpTask handle dump task
-func (h *planReplayerHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) bool {
-	success := h.dumpPlanReplayerDumpTask(task)
-	if success {
-		h.removeTask(task.PlanReplayerTaskKey)
-	}
-	return success
+func (h *planReplayerHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
+	h.sender.sendTask(task)
 }
 
 type planReplayerTaskCollectorHandle struct {
@@ -270,21 +269,111 @@ func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context
 	return allKeys, nil
 }
 
-type planReplayerTaskDumpHandle struct {
-	ctx    context.Context
-	sctx   sessionctx.Context
+type planReplayerTaskDumpSender struct {
 	taskCH chan *PlanReplayerDumpTask
 }
 
-// DrainTask drain a task for unit test
-func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
-	return <-h.taskCH
+func (s *planReplayerTaskDumpSender) sendTask(task *PlanReplayerDumpTask) {
+	s.taskCH <- task
 }
 
-// HandlePlanReplayerDumpTask handled the task
-func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayerDumpTask) (success bool) {
+type planReplayerDumpTaskStatus struct {
+	runningTaskMu struct {
+		sync.RWMutex
+		runningTasks map[PlanReplayerTaskKey]struct{}
+	}
+
+	finishedTaskMu struct {
+		sync.RWMutex
+		finishedTask map[PlanReplayerTaskKey]struct{}
+	}
+}
+
+// GetRunningTaskStatusLen used for unit test
+func (r *planReplayerDumpTaskStatus) GetRunningTaskStatusLen() int {
+	r.runningTaskMu.RLock()
+	defer r.runningTaskMu.RUnlock()
+	return len(r.runningTaskMu.runningTasks)
+}
+
+// GetFinishedTaskStatusLen used for unit test
+func (r *planReplayerDumpTaskStatus) GetFinishedTaskStatusLen() int {
+	r.finishedTaskMu.RLock()
+	defer r.finishedTaskMu.RUnlock()
+	return len(r.finishedTaskMu.finishedTask)
+}
+
+func (r *planReplayerDumpTaskStatus) occupyRunningTaskKey(task *PlanReplayerDumpTask) bool {
+	r.runningTaskMu.Lock()
+	defer r.runningTaskMu.Unlock()
+	_, ok := r.runningTaskMu.runningTasks[task.PlanReplayerTaskKey]
+	if ok {
+		return false
+	}
+	r.runningTaskMu.runningTasks[task.PlanReplayerTaskKey] = struct{}{}
+	return true
+}
+
+func (r *planReplayerDumpTaskStatus) releaseRunningTaskKey(task *PlanReplayerDumpTask) {
+	r.runningTaskMu.Lock()
+	defer r.runningTaskMu.Unlock()
+	delete(r.runningTaskMu.runningTasks, task.PlanReplayerTaskKey)
+}
+
+func (r *planReplayerDumpTaskStatus) checkTaskKeyFinishedBefore(task *PlanReplayerDumpTask) bool {
+	r.finishedTaskMu.RLock()
+	defer r.finishedTaskMu.RUnlock()
+	_, ok := r.finishedTaskMu.finishedTask[task.PlanReplayerTaskKey]
+	return ok
+}
+
+func (r *planReplayerDumpTaskStatus) setTaskFinished(task *PlanReplayerDumpTask) {
+	r.finishedTaskMu.Lock()
+	defer r.finishedTaskMu.Unlock()
+	r.finishedTaskMu.finishedTask[task.PlanReplayerTaskKey] = struct{}{}
+}
+
+func (r *planReplayerDumpTaskStatus) clearFinishedTask() {
+	r.finishedTaskMu.Lock()
+	defer r.finishedTaskMu.Unlock()
+	r.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+}
+
+type planReplayerTaskDumpWorker struct {
+	ctx        context.Context
+	sctx       sessionctx.Context
+	taskCH     <-chan *PlanReplayerDumpTask
+	status     *planReplayerDumpTaskStatus
+	taskHandle *planReplayerTaskCollectorHandle
+	finished   *atomic.Bool
+}
+
+func (w *planReplayerTaskDumpWorker) run() {
+	for task := range w.taskCH {
+		if w.status.checkTaskKeyFinishedBefore(task) {
+			continue
+		}
+		if !w.status.occupyRunningTaskKey(task) {
+			continue
+		}
+		w.HandleTask(task)
+		w.status.releaseRunningTaskKey(task)
+		if w.finished.Load() {
+			return
+		}
+	}
+}
+
+// HandleTask handled task
+func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (success bool) {
+	defer func() {
+		if success {
+			w.taskHandle.removeTask(task.PlanReplayerTaskKey)
+			w.status.setTaskFinished(task)
+		}
+	}()
 	taskKey := task.PlanReplayerTaskKey
-	unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, taskKey)
+	unhandled, err := checkUnHandledReplayerTask(w.ctx, w.sctx, taskKey)
 	if err != nil {
 		logutil.BgLogger().Warn("check plan replayer capture task failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -303,13 +392,13 @@ func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayer
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
-		return
+		return false
 	}
 	task.Zf = file
 	task.FileName = fileName
 	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
 	jsStats := make(map[int64]*handle.JSONTable)
-	is := GetDomain(h.sctx).InfoSchema()
+	is := GetDomain(w.sctx).InfoSchema()
 	for tblID, stat := range task.TblStats {
 		tbl, ok := is.TableByID(tblID)
 		if !ok {
@@ -329,7 +418,7 @@ func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayer
 		}
 		jsStats[tblID] = r
 	}
-	err = DumpPlanReplayerInfo(h.ctx, h.sctx, task)
+	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("dump plan replayer capture task result failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -338,6 +427,35 @@ func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayer
 		return false
 	}
 	return true
+}
+
+type planReplayerTaskDumpHandle struct {
+	taskCH   chan *PlanReplayerDumpTask
+	finished *atomic.Bool
+	status   *planReplayerDumpTaskStatus
+
+	sender  *planReplayerTaskDumpSender
+	workers []*planReplayerTaskDumpWorker
+}
+
+// GetTaskStatus used for test
+func (h *planReplayerTaskDumpHandle) GetTaskStatus() *planReplayerDumpTaskStatus {
+	return h.status
+}
+
+// GetWorker used for test
+func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
+	return h.workers[0]
+}
+
+// Finish make finished flag ture
+func (h *planReplayerTaskDumpHandle) Finish() {
+	h.finished.Store(true)
+}
+
+// DrainTask drain a task for unit test
+func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
+	return <-h.taskCH
 }
 
 // SendTask send dumpTask in background task handler

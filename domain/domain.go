@@ -1572,23 +1572,46 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
 		sctx: collectorSctx,
 	}
+	taskCH := make(chan *PlanReplayerDumpTask, 16)
+	finished := &atomic.Bool{}
+	taskStatus := &planReplayerDumpTaskStatus{}
+	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
-		ctx:    ctx,
-		sctx:   dumperSctx,
-		taskCH: make(chan *PlanReplayerDumpTask, 16),
+		taskCH:   taskCH,
+		status:   taskStatus,
+		finished: finished,
+	}
+	senderTaskCH := make(chan *PlanReplayerDumpTask, len(workersSctxs))
+	do.planReplayerHandle.planReplayerTaskDumpHandle.sender = &planReplayerTaskDumpSender{
+		taskCH: senderTaskCH,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
+	for i := 0; i < len(workersSctxs); i++ {
+		worker := &planReplayerTaskDumpWorker{
+			ctx:        ctx,
+			sctx:       workersSctxs[i],
+			taskCH:     senderTaskCH,
+			status:     taskStatus,
+			taskHandle: do.planReplayerHandle.planReplayerTaskCollectorHandle,
+			finished:   finished,
+		}
+		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
 }
 
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
+	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
 var planReplayerHandleLease atomic.Uint64
@@ -1635,9 +1658,13 @@ func (do *Domain) StartPlanReplayerHandle() {
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 		}()
+		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
+			go worker.run()
+		}
 		for {
 			select {
 			case <-do.exit:
+				do.planReplayerHandle.planReplayerTaskDumpHandle.Finish()
 				return
 			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
 				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
