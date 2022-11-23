@@ -327,7 +327,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
-						if rc.status != nil {
+						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 							}
@@ -406,6 +406,11 @@ func (tr *TableRestore) restoreEngine(
 		if err != nil {
 			return closedEngine, errors.Trace(err)
 		}
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			for _, chunk := range cp.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+			}
+		}
 		return closedEngine, nil
 	}
 
@@ -475,6 +480,9 @@ func (tr *TableRestore) restoreEngine(
 
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
+		}
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
 			continue
 		}
