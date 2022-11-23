@@ -1079,7 +1079,7 @@ const (
 	DefTiDBForeignKeyChecks                      = false
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 1
+	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
 	DefTiDBMergePartitionStatsConcurrency        = 1
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
