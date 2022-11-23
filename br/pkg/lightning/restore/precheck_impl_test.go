@@ -604,8 +604,8 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
 	s.Require().Equal(Critical, result.Severity)
-	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
+	s.Require().Equal("no CDC or PiTR task found", result.Message)
 
 	cli := testEtcdCluster.RandClient()
 	brCli := streamhelper.NewMetaDataClient(cli)
@@ -636,7 +636,6 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
-	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 	s.Require().Equal("found PiTR log streaming task(s): [br_name], local backend is not compatible with them\n"+
 		"found CDC capture(s): clusterID: default captureID(s): [3ecd5c98-0148-4086-adfd-17641995e71f] local backend is not compatible with them",
@@ -645,7 +644,6 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	checker.cfg.TikvImporter.Backend = config.BackendTiDB
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
-	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
 }
