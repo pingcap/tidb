@@ -168,7 +168,7 @@ func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := hex.EncodeToString(r.startKey)
 	endKey := hex.EncodeToString(r.endKey)
-	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	rangeStr := "taskID_" + strconv.Itoa(r.id) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
 	if r.endInclude {
 		return rangeStr + "]"
 	}
@@ -273,7 +273,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
-		if num := result.scanCount - lastLogCount; num >= 30000 {
+		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
 			logutil.BgLogger().Info("[ddl] backfill worker back fill index",
 				zap.Int("worker ID", w.id),
@@ -439,6 +439,9 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	batchTasks []*reorgBackfillTask) error {
 	reorgInfo := scheduler.reorgInfo
 	for _, task := range batchTasks {
+		if scheduler.copReqSenderPool != nil {
+			scheduler.copReqSenderPool.sendTask(task)
+		}
 		scheduler.taskCh <- task
 	}
 
@@ -605,6 +608,8 @@ type backfillScheduler struct {
 
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
+
+	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
 
 const backfillTaskChanSize = 1024
@@ -658,6 +663,7 @@ func (b *backfillScheduler) workerSize() int {
 }
 
 func (b *backfillScheduler) adjustWorkerSize() error {
+	b.initCopReqSenderPool()
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
@@ -665,7 +671,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 	}
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	if b.copReqSenderPool != nil {
+		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
+	} else {
+		workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	}
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
 		sessCtx, err := b.newSessCtx()
@@ -680,8 +690,12 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeAddIndexWorker:
 			idxWorker, err := newAddIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc, job)
 			if err != nil {
-				return b.handleCreateBackfillWorkerErr(err)
+				if b.canSkipError(err) {
+					continue
+				}
+				return err
 			}
+			idxWorker.copReqSenderPool = b.copReqSenderPool
 			worker, runner = idxWorker, idxWorker.backfillWorker
 		case typeAddIndexMergeTmpWorker:
 			tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, b.tbl, reorgInfo, jc)
@@ -708,20 +722,56 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		b.workers = b.workers[:workerCnt]
 		closeBackfillWorkers(workers)
 	}
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.adjustSize(len(b.workers))
+	}
 	return injectCheckBackfillWorkerNum(len(b.workers))
 }
 
-func (b *backfillScheduler) handleCreateBackfillWorkerErr(err error) error {
-	if len(b.workers) == 0 {
-		return errors.Trace(err)
+func (b *backfillScheduler) initCopReqSenderPool() {
+	if b.tp != typeAddIndexWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
+		b.copReqSenderPool != nil || len(b.workers) > 0 {
+		return
+	}
+	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
+	if indexInfo == nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
+			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
+		return
+	}
+	sessCtx, err := b.newSessCtx()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		return
+	}
+	copCtx := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	if copCtx == nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender")
+		return
+	}
+	ver, err := sessCtx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
+		return
+	}
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, ver.Ver)
+}
+
+func (b *backfillScheduler) canSkipError(err error) bool {
+	if len(b.workers) > 0 {
+		// The error can be skipped because the rest workers can handle the tasks.
+		return true
 	}
 	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
 		zap.Int("current worker count", len(b.workers)),
 		zap.Int64("job ID", b.reorgInfo.ID), zap.Error(err))
-	return nil
+	return false
 }
 
 func (b *backfillScheduler) Close() {
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.close()
+	}
 	closeBackfillWorkers(b.workers)
 	close(b.taskCh)
 	close(b.resultCh)
