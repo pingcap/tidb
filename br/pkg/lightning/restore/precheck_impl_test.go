@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/suite"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
@@ -606,6 +608,44 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().True(result.Passed)
 
 	cli := testEtcdCluster.RandClient()
-	// TODO: what's real data?
-	_, err = cli.Put(ctx, "/tidb/cdc/pitr/changefeed/info/1", "test")
+	brCli := streamhelper.NewMetaDataClient(cli)
+	backend, _ := storage.ParseBackend("noop://", nil)
+	taskInfo, err := streamhelper.NewTaskInfo("br_name").
+		FromTS(1).
+		UntilTS(1000).
+		WithTableFilter("*.*", "!mysql").
+		ToStorage(backend).
+		Check()
+	s.Require().NoError(err)
+	err = brCli.PutTask(ctx, *taskInfo)
+	s.Require().NoError(err)
+	checkEtcdPut := func(key string) {
+		_, err := cli.Put(ctx, key, "")
+		s.Require().NoError(err)
+	}
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/info/test")
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/info/test-1")
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test")
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
+	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
+	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
+
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().False(result.Passed)
+	s.Require().Equal("found PiTR log streaming task(s): [br_name], local backend is not compatible with them\n"+
+		"found CDC capture(s): clusterID: default captureID(s): [3ecd5c98-0148-4086-adfd-17641995e71f] local backend is not compatible with them",
+		result.Message)
+
+	checker.cfg.TikvImporter.Backend = config.BackendTiDB
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().True(result.Passed)
+	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
 }

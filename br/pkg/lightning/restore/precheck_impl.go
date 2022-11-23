@@ -16,7 +16,6 @@ package restore
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -698,15 +697,11 @@ func (ci *cdcPITRCheckItem) GetCheckItemID() CheckItemID {
 }
 
 func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
-	var (
-		tlsConfig *tls.Config
-	)
-
-	if cfg2, err2 := cfg.ToTLS(); err2 != nil {
-		return nil, err2
-	} else {
-		tlsConfig = cfg2.TLSConfig()
+	cfg2, err := cfg.ToTLS()
+	if err != nil {
+		return nil, err
 	}
+	tlsConfig := cfg2.TLSConfig()
 
 	return clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
@@ -791,7 +786,7 @@ func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 			captureMsgBuf.WriteString(" captureID(s): ")
 			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
 		}
-		captureMsgBuf.WriteString("local backend is not compatible with them")
+		captureMsgBuf.WriteString(" local backend is not compatible with them")
 		errorMsg = append(errorMsg, captureMsgBuf.String())
 	}
 
