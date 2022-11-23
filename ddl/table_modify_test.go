@@ -163,6 +163,7 @@ func TestLockTableReadOnly(t *testing.T) {
 	tk1.MustExec("admin cleanup table lock t1")
 	tk2.MustExec("insert into t1 set a=1, b=2")
 
+	tk1.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
