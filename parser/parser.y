@@ -480,6 +480,7 @@ import (
 	nominvalue            "NOMINVALUE"
 	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
+	nottl                 "NO_TTL"
 	nowait                "NOWAIT"
 	nvarcharType          "NVARCHAR"
 	nulls                 "NULLS"
@@ -613,6 +614,8 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	ttl                   "TTL"
+	ttlEnable             "TTL_ENABLE"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -6391,6 +6394,9 @@ UnReservedKeyword:
 |	"NONCLUSTERED"
 |	"PRESERVE"
 |	"TOKEN_ISSUER"
+|	"TTL"
+|	"TTL_ENABLE"
+|	"NO_TTL"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11760,6 +11766,31 @@ TableOption:
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+	}
+|	"TTL" EqOpt Identifier '+' "INTERVAL" Expression TimeUnit
+	{
+		$$ = &ast.TableOption{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
+			Expression:    $6,
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $7.(ast.TimeUnitType)},
+		}
+	}
+|	"TTL_ENABLE" EqOpt stringLit
+	{
+		onOrOff := strings.ToLower($3)
+		if onOrOff == "on" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
+		} else if onOrOff == "off" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: false}
+		} else {
+			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
+			return 1
+		}
+	}
+|	"NO_TTL"
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionNoTTL}
 	}
 
 ForceOpt:
