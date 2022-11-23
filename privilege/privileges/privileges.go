@@ -376,7 +376,7 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
 		if d > lockTime*24*60*60 {
-			return p.BuildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0), nil
+			return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0, time.Now().Format(time.UnixDate)), nil
 		}
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
 		return "", ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host, lockTime, lockTime, lockTime)
@@ -399,7 +399,7 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 	}
 	failedLoginAttempts := record.FailedLoginAttempts
 	passwordLockTime := record.PasswordLockTime
-	if failedLoginAttempts == 0 && passwordLockTime == 0 {
+	if failedLoginAttempts == 0 || passwordLockTime == 0 {
 		return false
 	}
 	return true
@@ -407,7 +407,7 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 
 func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
 	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
-	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount)
+	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
 }
 
 func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
@@ -426,18 +426,25 @@ func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host stri
 	if record.FailedLoginCount == 0 {
 		return ""
 	}
-	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount)
+	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount, time.Now().Format(time.UnixDate))
 }
 
 func buildPasswordLockingJson(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
+	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64, auto_locked_last_changed string) string {
 	lock := "Y"
 	if !autoAccountLocked {
 		lock = "N"
 	}
-	newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-		failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, time.Now().Format(time.UnixDate))
-	return newAttributesStr
+	if auto_locked_last_changed == "" {
+		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d}}",
+			failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount)
+		return newAttributesStr
+	} else {
+		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+			failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, auto_locked_last_changed)
+		return newAttributesStr
+	}
+
 }
 
 // ConnectionVerification implements the Manager interface.
@@ -539,10 +546,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	return nil
 }
 
-func (p *UserPrivileges) AuthSuccess(authUser, authHost string) error {
+func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.user = authUser
 	p.host = authHost
-	return nil
 }
 
 type checkResult int

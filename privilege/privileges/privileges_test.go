@@ -2982,7 +2982,7 @@ type passwordLocking struct {
 	AutoLockedLastChanged string `json:"auto_locked_last_changed"`
 }
 
-func TestIssue38938(t *testing.T) {
+func TestFailedLoginTracking(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 

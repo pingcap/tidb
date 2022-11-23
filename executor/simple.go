@@ -1126,6 +1126,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
+		if failedLoginAttempts > 32767 || failedLoginAttempts < 0 || passwordLockTime > 32767 || passwordLockTime < -1 {
+			return errors.New("FAILED_LOGIN_ATTEMPTS PASSWORD_LOCK_TIME not in the range from 0 to 32767")
+		}
 		if failedLoginAttempts != 0 && passwordLockTime != 0 {
 			lock := "N"
 			if lockAccount == "Y" {
@@ -1151,6 +1154,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				failedLoginAttempts, lock, 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
+
 		if s.CommentOrAttributeOption != nil {
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
