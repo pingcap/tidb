@@ -581,6 +581,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
+		defer func() {
+			if !gcSafePointKeeperRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint()
+			}
+		}()
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), metawriter, progressCallBack)
@@ -616,7 +622,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	client.WaitForFinishCheckpoint()
 	err = metawriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)

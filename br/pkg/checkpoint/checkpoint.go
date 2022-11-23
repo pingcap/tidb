@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/zap"
 )
 
 const (
@@ -87,13 +87,13 @@ type CheckpointData struct {
 
 // A Checkpoint Checksum File is like this:
 //
-//   ChecksumInfo         ChecksumItem
-// +--------------+     +--------------+
-// | ChecksumItem-+---> |   TableID    |
-// | ChecksumItem |     |   Crc64xor   |
-// |     ...      |     |   TotalKvs   |
-// | ChecksumItem |     |  TotalBytes  |
-// +--------------+     +--------------+
+//  ChecksumInfo       ChecksumItems         ChecksumItem
+// +-------------+   +--------------+     +--------------+
+// |   Content---+-> | ChecksumItem-+---> |   TableID    |
+// |  Checksum   |   | ChecksumItem |     |   Crc64xor   |
+// +-------------+   |     ...      |     |   TotalKvs   |
+//                   | ChecksumItem |     |  TotalBytes  |
+//                   +--------------+     +--------------+
 
 type ChecksumItem struct {
 	TableID    int64  `json:"table-id"`
@@ -102,14 +102,19 @@ type ChecksumItem struct {
 	TotalBytes uint64 `json:"total-bytes"`
 }
 
+type ChecksumItems struct {
+	Items []*ChecksumItem `json:"checksum-items"`
+}
+
 type ChecksumInfo struct {
-	ChecksumItems []*ChecksumItem `json:"checksum-items"`
+	Content  []byte `json:"content"`
+	Checksum []byte `json:"checksum"`
 }
 
 type ChecksumRunner struct {
 	sync.Mutex
 
-	checksumInfo ChecksumInfo
+	checksumItems ChecksumItems
 
 	// when the total time cost is large than the threshold,
 	// begin to flush checksum
@@ -122,7 +127,7 @@ type ChecksumRunner struct {
 
 func NewChecksumRunner() *ChecksumRunner {
 	return &ChecksumRunner{
-		workerPool: *utils.NewWorkerPool(2, "checksum flush worker"),
+		workerPool: *utils.NewWorkerPool(4, "checksum flush worker"),
 	}
 }
 
@@ -143,30 +148,30 @@ func (cr *ChecksumRunner) FlushChecksum(
 		TotalKvs:   totalKvs,
 		TotalBytes: totalBytes,
 	}
-	var toBeFlushedChecksumInfo *ChecksumInfo = nil
+	var toBeFlushedChecksumItems *ChecksumItems = nil
 	cr.Lock()
 	if cr.err != nil {
 		err := cr.err
 		cr.Unlock()
 		return err
 	}
-	if cr.checksumInfo.ChecksumItems == nil {
+	if cr.checksumItems.Items == nil {
 		// reset the checksumInfo
 		cr.totalCost = 0
-		cr.checksumInfo.ChecksumItems = make([]*ChecksumItem, 0)
+		cr.checksumItems.Items = make([]*ChecksumItem, 0)
 	}
 	cr.totalCost += timeCost
-	cr.checksumInfo.ChecksumItems = append(cr.checksumInfo.ChecksumItems, checksumItem)
+	cr.checksumItems.Items = append(cr.checksumItems.Items, checksumItem)
 	if cr.totalCost > MaxChecksumTotalCost {
-		toBeFlushedChecksumInfo = &ChecksumInfo{
-			ChecksumItems: cr.checksumInfo.ChecksumItems,
+		toBeFlushedChecksumItems = &ChecksumItems{
+			Items: cr.checksumItems.Items,
 		}
-		cr.checksumInfo.ChecksumItems = nil
+		cr.checksumItems.Items = nil
 	}
 	cr.Unlock()
 
 	// now lock is free
-	if toBeFlushedChecksumInfo == nil {
+	if toBeFlushedChecksumItems == nil {
 		return nil
 	}
 
@@ -180,11 +185,24 @@ func (cr *ChecksumRunner) FlushChecksum(
 			cr.Unlock()
 		}
 
-		data, err := json.Marshal(toBeFlushedChecksumInfo)
+		content, err := json.Marshal(toBeFlushedChecksumItems)
 		if err != nil {
 			recordErr(err)
 			return
 		}
+
+		checksum := sha256.Sum256(content)
+		checksumInfo := &ChecksumInfo{
+			Content:  content,
+			Checksum: checksum[:],
+		}
+
+		data, err := json.Marshal(checksumInfo)
+		if err != nil {
+			recordErr(err)
+			return
+		}
+
 		fname := fmt.Sprintf("%s/t%d_and__", CheckpointChecksumDir, tableID)
 		err = s.WriteFile(ctx, fname, data)
 		if err != nil {
@@ -387,7 +405,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		RangeGroupMetas: make([]*RangeGroupData, 0, len(meta)),
 	}
 
-	var fname string
+	var fname []byte = nil
 
 	for _, group := range meta {
 		if len(group.Groups) == 0 {
@@ -396,7 +414,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 
 		// use the first item's group-key and sub-range-key as the filename
 		if len(fname) == 0 {
-			fname = fmt.Sprintf("%s..%s", group.GroupKey, group.Groups[0].StartKey)
+			fname = append([]byte(group.GroupKey+".."), group.Groups[0].StartKey...)
 		}
 
 		// Flush the metaFile to storage
@@ -426,7 +444,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 			return errors.Trace(err)
 		}
 
-		checksum := sha256.Sum256([]byte(fname))
+		checksum := sha256.Sum256(fname)
 		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
 		path := fmt.Sprintf("%s/%s_%d.cpt", CheckpointDataDir, checksumEncoded, rand.Uint64())
 		if err := r.storage.WriteFile(ctx, path, data); err != nil {
@@ -464,8 +482,11 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 
 				checksum := sha256.Sum256(decryptContent)
 				if !bytes.Equal(meta.Checksum, checksum[:]) {
-					return errors.Annotatef(berrors.ErrInvalidMetaFile,
-						"checksum mismatch expect %x, got %x", meta.Checksum, checksum[:])
+					log.Error("checkpoint checksum info's checksum mismatch, skip it",
+						zap.ByteString("expect", meta.Checksum),
+						zap.ByteString("got", checksum[:]),
+					)
+					continue
 				}
 
 				group := &RangeGroups{}
@@ -523,7 +544,23 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, c := range info.ChecksumItems {
+
+		checksum := sha256.Sum256(info.Content)
+		if !bytes.Equal(info.Checksum, checksum[:]) {
+			log.Error("checkpoint checksum info's checksum mismatch, skip it",
+				zap.ByteString("expect", info.Checksum),
+				zap.ByteString("got", checksum[:]),
+			)
+			return nil
+		}
+
+		items := &ChecksumItems{}
+		err = json.Unmarshal(info.Content, items)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, c := range items.Items {
 			checkpointChecksum[c.TableID] = c
 		}
 		return nil
