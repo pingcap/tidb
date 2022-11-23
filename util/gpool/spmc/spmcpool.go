@@ -48,7 +48,6 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
 	taskManager   gpool.TaskManager[T, U, C, CT, TF]
-	name          string
 	generator     atomic.Uint64
 	capacity      atomic.Int32
 	running       atomic.Int32
@@ -67,18 +66,16 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
 	}
-
 	result := &Pool[T, U, C, CT, TF]{
 		BasePool:    gpool.NewBasePool(),
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
-		name:        name,
 		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](),
 		options:     opts,
 	}
-
 	result.SetName(name)
+	result.SetStatistic(gpool.NewStatistic())
 	result.state.Store(int32(gpool.OPENED))
 	result.workerCache.New = func() interface{} {
 		return &goWorker[T, U, C, CT, TF]{
@@ -313,7 +310,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			}
 			for _, task := range tasks {
 				wg.Add(1)
-				doneFunc, err := p.statistic.Static()
+				doneFunc, err := p.GetStatistic().Static()
 				if err != nil {
 					log.Fatal("fail to static", zap.Error(err))
 				}
@@ -321,7 +318,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 					Task: task,
 					Done: doneFunc,
 				}
-				p.statistic.InQueue()
+				p.GetStatistic().InQueue()
 				inputCh <- task
 			}
 		}
@@ -368,7 +365,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				return
 			}
 			wg.Add(1)
-			doneFunc, err := p.statistic.Static()
+			doneFunc, err := p.GetStatistic().Static()
 			if err != nil {
 				log.Fatal("fail to static", zap.Error(err))
 			}
@@ -376,7 +373,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				Task: task,
 				Done: doneFunc,
 			}
-			p.statistic.InQueue()
+			p.GetStatistic().InQueue()
 			inputCh <- t
 		}
 	}()
@@ -485,39 +482,4 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 // DeleteTask is to delete task.
 func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	p.taskManager.DeleteTask(id)
-}
-
-// MaxInFlight is to get max in flight.
-func (p *Pool[T, U, C, CT, TF]) MaxInFlight() int64 {
-	return p.statistic.MaxInFlight()
-}
-
-// GetQueueSize is to get queue size.
-func (p *Pool[T, U, C, CT, TF]) GetQueueSize() int64 {
-	return p.statistic.GetQueueSize()
-}
-
-// MaxPASS is to get max pass.
-func (p *Pool[T, U, C, CT, TF]) MaxPASS() uint64 {
-	return p.statistic.MaxPASS()
-}
-
-// MinRT is to get min rt.
-func (p *Pool[T, U, C, CT, TF]) MinRT() uint64 {
-	return p.statistic.MinRT()
-}
-
-// InFlight is to get in flight.
-func (p *Pool[T, U, C, CT, TF]) InFlight() int64 {
-	return p.statistic.InFlight()
-}
-
-// LongRTT is to get long rtt.
-func (p *Pool[T, U, C, CT, TF]) LongRTT() float64 {
-	return p.statistic.LongRTT()
-}
-
-// ShortRTT is to get short rtt.
-func (p *Pool[T, U, C, CT, TF]) ShortRTT() uint64 {
-	return p.statistic.ShortRTT()
 }

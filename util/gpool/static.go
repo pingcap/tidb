@@ -51,13 +51,13 @@ type Statistic struct {
 }
 
 // NewStatistic returns a new statistic.
-func NewStatistic() Statistic {
+func NewStatistic() *Statistic {
 	opts := window.RollingCounterOpts{
 		Size:           bucketSize,
 		BucketDuration: win / bucketSize,
 	}
 	bucketDuration := win / opts.BucketDuration
-	return Statistic{
+	return &Statistic{
 		taskCntStat:     window.NewRollingCounter[uint64](opts),
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),

@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "gpool",
     srcs = [
+        "basepool.go",
         "gpool.go",
         "spinlock.go",
         "static.go",
