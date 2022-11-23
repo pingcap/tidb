@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -127,7 +128,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		keyIsTempIdxKey bool
 	)
 	if !opt.FromBackFill {
-		key, tempKey, keyVer = genTempIdxKeyByState(c.idxInfo, key)
+		key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
 		if keyVer == TempIndexKeyTypeBackfill {
 			key, tempKey = tempKey, nil
 			keyIsTempIdxKey = true
@@ -230,7 +231,19 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			idxVal = append(idxVal, keyVer)
 		}
 		if lazyCheck {
-			flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+			var (
+				needPresumeKey bool
+				flags          []kv.FlagsOp
+			)
+			if !opt.FromBackFill {
+				needPresumeKey, err = KeyExistInTempIndex(txn, key, h, c.tblInfo.IsCommonHandle)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if !needPresumeKey {
+				flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+			}
 			if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
 				!vars.InRestrictedSQL && vars.ConnectionID > 0 {
 				flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
@@ -285,7 +298,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		return err
 	}
 
-	key, tempKey, tempKeyVer := genTempIdxKeyByState(c.idxInfo, key)
+	key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
 
 	if distinct {
 		if len(key) > 0 {
@@ -336,9 +349,9 @@ const (
 	TempIndexKeyTypeMerge byte = 'm'
 )
 
-// genTempIdxKeyByState is used to get the key version and the temporary key.
+// GenTempIdxKeyByState is used to get the key version and the temporary key.
 // The tempKeyVer means the temp index key/value version.
-func genTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tempKey kv.Key, tempKeyVer byte) {
+func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tempKey kv.Key, tempKeyVer byte) {
 	if indexInfo.State != model.StatePublic {
 		switch indexInfo.BackfillState {
 		case model.BackfillStateInapplicable:
@@ -364,6 +377,14 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 		return false, nil, err
 	}
 
+	var (
+		tempKey kv.Key
+		keyVer  byte
+	)
+	key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
+	if keyVer == TempIndexKeyTypeBackfill {
+		key, tempKey = tempKey, nil
+	}
 	value, err := txn.Get(context.TODO(), key)
 	if kv.IsErrNotFound(err) {
 		return false, nil, nil
@@ -462,4 +483,32 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 		}
 	}
 	return colInfo
+}
+
+// KeyExistInTempIndex is used to check if there is unique key is marked delete in temp index.
+func KeyExistInTempIndex(txn kv.Transaction, key kv.Key, h kv.Handle, IsCommonHandle bool) (bool, error) {
+	value, err := txn.Get(context.TODO(), key)
+	if kv.IsErrNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	length := len(value)
+	value = value[:length-1]
+	if bytes.Equal(value, DeleteMarkerUnique) {
+		return true, nil
+	}
+	// Check if handle equal?
+	var handle kv.Handle
+	handle, err = tablecodec.DecodeHandleInUniqueIndexValue(value, IsCommonHandle)
+	if err != nil {
+		return false, err
+	}
+	if !handle.Equal(h) {
+		return false, kv.ErrKeyExists
+	}
+
+	return true, nil
 }

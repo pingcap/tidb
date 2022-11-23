@@ -15,9 +15,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"runtime/trace"
 	"time"
 
@@ -263,6 +265,10 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 					continue
 				}
 				return err
+			}
+			rowVal := val[:len(val)-1]
+			if bytes.Equal(rowVal, tables.DeleteMarkerUnique) {
+				continue
 			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
