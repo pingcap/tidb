@@ -95,37 +95,3 @@ func TestBatchRetrieverHelper(t *testing.T) {
 	require.Equal(t, rangeStarts, []int{0})
 	require.Equal(t, rangeEnds, []int{10})
 }
-
-func TestIntersectionMaps(t *testing.T) {
-	workerHandleMaps := make(map[int]*kv.HandleMap)
-	var handleOff int
-	workerNum := 10
-	for i := 0; i < workerNum; i++ {
-		m := kv.NewHandleMap()
-		workerHandleMaps[i] = m
-		for j := 0; j < 100; j++ {
-			m.Set(kv.IntHandle(handleOff), true)
-			handleOff++
-		}
-	}
-	res := IntersectHandleMaps(workerHandleMaps)
-	require.Equal(t, 0, len(res))
-
-	for _, m := range workerHandleMaps {
-		m.Set(kv.IntHandle(handleOff), true)
-	}
-	res = IntersectHandleMaps(workerHandleMaps)
-	require.Equal(t, 1, len(res))
-	hitHandleOff := handleOff
-	res[0].Equal(kv.IntHandle(handleOff))
-	handleOff++
-
-	// Pick 3 map to put new handle.
-	for i := 0; i < 3; i++ {
-		m := workerHandleMaps[rand.Intn(workerNum)]
-		m.Set(kv.IntHandle(handleOff), true)
-	}
-	res = IntersectHandleMaps(workerHandleMaps)
-	require.Equal(t, 1, len(res))
-	res[0].Equal(kv.IntHandle(hitHandleOff))
-}

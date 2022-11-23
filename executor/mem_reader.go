@@ -679,7 +679,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		kvRanges = append(kvRanges, m.indexMergeReader.keyRanges)
 	}
 	if len(kvRanges) != len(tbls) {
-		return nil, errors.Errorf("unexpected length of tbls(size: %d) should be equals to kvRanges(size: %d)", len(tbls), len(kvRanges))
+		return nil, errors.Errorf("length of tbls(size: %d) should be equals to length of kvRanges(size: %d)", len(tbls), len(kvRanges))
 	}
 
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
@@ -758,7 +758,7 @@ func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange) (finalHandl
 	return finalHandles, nil
 }
 
-// Intersect all handles of all partial paths.
+// Intersect handles of each partial paths.
 func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (finalHandles []kv.Handle, err error) {
 	if len(m.memReaders) != len(kvRanges) {
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memReaders)")
