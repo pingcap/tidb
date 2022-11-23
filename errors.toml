@@ -2731,6 +2731,11 @@ error = '''
 Datetime function: %-.32s field overflow
 '''
 
+["types:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
+'''
+
 ["types:1690"]
 error = '''
 %s value is out of range in '%s'
