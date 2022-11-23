@@ -135,18 +135,18 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 		NumIterations: &NumIterations, XXX_unrecognized: nil}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, ScanPacksCount, ScanRowsCount, SkipPacksCount, SkipRowsCount, roughSetIndexLoadTimeInNs, dmfileReadTimeInNs, createSnapshotTimeInNs uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
-	tableScanContext := tipb.TableScanContext{
-		ScanPacksCount:            &ScanPacksCount,
-		ScanRowsCount:             &ScanRowsCount,
-		SkipPacksCount:            &SkipPacksCount,
-		SkipRowsCount:             &SkipRowsCount,
-		RoughSetIndexLoadTimeInNs: &roughSetIndexLoadTimeInNs,
-		DmfileReadTimeInNs:        &dmfileReadTimeInNs,
-		CreateSnapshotTimeInNs:    &createSnapshotTimeInNs,
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, totalScannedPacksInDmfile, totalSkippedPacksInDmfile, totalScannedRowsInDmfile, totalSkippedRowsInDmfile, totalRoughSetIndexLoadTimeInNs, totalDmfileReadTimeInNs, totalCreateSnapshotTimeInNs uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+	tiflashScanContext := tipb.TiFlashScanContext{
+		TotalScannedPacksInDmfile:      &totalScannedPacksInDmfile,
+		TotalSkippedPacksInDmfile:      &totalSkippedPacksInDmfile,
+		TotalScannedRowsInDmfile:       &totalSkippedRowsInDmfile,
+		TotalSkippedRowsInDmfile:       &totalSkippedRowsInDmfile,
+		TotalRoughSetIndexLoadTimeInNs: &totalRoughSetIndexLoadTimeInNs,
+		TotalDmfileReadTimeInNs:        &totalDmfileReadTimeInNs,
+		TotalCreateSnapshotTimeInNs:    &totalCreateSnapshotTimeInNs,
 	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TableScanContext{TableScanContext: &tableScanContext}, XXX_unrecognized: nil}
+		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, XXX_unrecognized: nil}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
