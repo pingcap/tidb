@@ -14,13 +14,16 @@
 package restore
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -32,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -40,9 +44,12 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type clusterResourceCheckItem struct {
@@ -670,6 +677,133 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		}
 	}
 	return msgs, nil
+}
+
+type cdcPITRCheckItem struct {
+	cfg *config.Config
+	// used in test
+	etcdCli *clientv3.Client
+}
+
+// NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
+func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
+	return &cdcPITRCheckItem{
+		cfg: cfg,
+	}
+}
+
+// GetCheckItemID implements PrecheckItem interface.
+func (ci *cdcPITRCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetUsingCDCPITR
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
+	var (
+		tlsConfig *tls.Config
+	)
+
+	if cfg2, err2 := cfg.ToTLS(); err2 != nil {
+		return nil, err2
+	} else {
+		tlsConfig = cfg2.TLSConfig()
+	}
+
+	return clientv3.New(clientv3.Config{
+		TLS:              tlsConfig,
+		Endpoints:        []string{cfg.TiDB.PdAddr},
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                10 * time.Second,
+				Timeout:             3 * time.Second,
+				PermitWithoutStream: false,
+			}),
+			grpc.WithBlock(),
+			grpc.WithReturnConnectionError(),
+		},
+		Context: ctx,
+	})
+}
+
+// Check implements PrecheckItem interface.
+func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+	theResult := &CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: Critical,
+	}
+
+	if ci.cfg.TikvImporter.Backend != config.BackendLocal {
+		theResult.Passed = true
+		theResult.Message = "TiDB Lightning is not using local backend, skip this check"
+		return theResult, nil
+	}
+
+	if ci.etcdCli == nil {
+		var err error
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	errorMsg := make([]string, 0, 2)
+
+	pitrCli := streamhelper.NewMetaDataClient(ci.etcdCli)
+	tasks, err := pitrCli.GetAllTasks(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(tasks) > 0 {
+		names := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			names = append(names, task.Info.GetName())
+		}
+		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v, local backend is not compatible with them", names))
+	}
+
+	cdcPrefix := "/tidb/cdc/"
+	capturePath := []byte("/__cdc_meta__/capture/")
+	nameSet := make(map[string][]string, 1)
+	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, kv := range resp.Kvs {
+		// example: /tidb/cdc/<clusterID>/__cdc_meta__/capture/<captureID>
+		k := kv.Key[len(cdcPrefix):]
+		clusterID, captureID, found := bytes.Cut(k, capturePath)
+		if found {
+			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
+		}
+	}
+	if len(nameSet) > 0 {
+		var captureMsgBuf strings.Builder
+		captureMsgBuf.WriteString("found CDC capture(s): ")
+		isFirst := true
+		for clusterID, captureIDs := range nameSet {
+			if !isFirst {
+				captureMsgBuf.WriteString(", ")
+			}
+			isFirst = false
+			captureMsgBuf.WriteString("clusterID: ")
+			captureMsgBuf.WriteString(clusterID)
+			captureMsgBuf.WriteString(" captureID(s): ")
+			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
+		}
+		captureMsgBuf.WriteString("local backend is not compatible with them")
+		errorMsg = append(errorMsg, captureMsgBuf.String())
+	}
+
+	if len(errorMsg) > 0 {
+		theResult.Passed = false
+		theResult.Message = strings.Join(errorMsg, "\n")
+	} else {
+		theResult.Passed = true
+		theResult.Message = "no CDC or PiTR task found"
+	}
+
+	return theResult, nil
 }
 
 type schemaCheckItem struct {

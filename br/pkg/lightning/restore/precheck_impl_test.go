@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/stretchr/testify/suite"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type precheckImplSuite struct {
@@ -580,4 +581,31 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
+}
+
+func (s *precheckImplSuite) TestCDCPITRCheckItem() {
+	integration.BeforeTestExternal(s.T())
+	testEtcdCluster := integration.NewClusterV3(s.T(), &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(s.T())
+
+	ctx := context.Background()
+	cfg := &config.Config{
+		TikvImporter: config.TikvImporter{
+			Backend: config.BackendLocal,
+		},
+	}
+	ci := NewCDCPITRCheckItem(cfg)
+	checker := ci.(*cdcPITRCheckItem)
+	checker.etcdCli = testEtcdCluster.RandClient()
+	result, err := ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().True(result.Passed)
+
+	cli := testEtcdCluster.RandClient()
+	// TODO: what's real data?
+	_, err = cli.Put(ctx, "/tidb/cdc/pitr/changefeed/info/1", "test")
 }

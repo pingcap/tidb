@@ -98,14 +98,14 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-// CheckLogBackupTaskExist increases the count of log backup task.
+// LogBackupTaskCountInc increases the count of log backup task.
 func LogBackupTaskCountInc() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount++
 	LogBackupTaskMutex.Unlock()
 }
 
-// CheckLogBackupTaskExist decreases the count of log backup task.
+// LogBackupTaskCountDec decreases the count of log backup task.
 func LogBackupTaskCountDec() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount--
@@ -122,6 +122,7 @@ func IsLogBackupInUse(ctx sessionctx.Context) bool {
 	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
 }
 
+// GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.
 func GetTidbNewCollationEnabled() string {
 	return tidbNewCollationEnabled
 }
