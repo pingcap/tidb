@@ -33,7 +33,8 @@ var (
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
 
-	checkpointSupportError error = nil
+	checkpointSupportError  error = nil
+	pitrSupportBatchKVFiles bool  = true
 )
 
 // NextMajorVersion returns the next major version.
@@ -136,6 +137,10 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
 			s.Address, tikvVersion)
 	}
+	// If tikv version < 6.5, PITR do not support restoring batch kv files.
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		pitrSupportBatchKVFiles = false
+	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
 	if BRVersion.Major == 6 && BRVersion.Minor == 1 {
@@ -150,7 +155,6 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
 	}
-
 	return nil
 }
 
@@ -318,6 +322,10 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 
 func CheckCheckpointSupport() error {
 	return checkpointSupportError
+}
+
+func CheckPITRSupportBatchKVFiles() bool {
+	return pitrSupportBatchKVFiles
 }
 
 type ServerType int

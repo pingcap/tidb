@@ -83,6 +83,29 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
+		pitrSupportBatchKVFiles = true
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.4.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
+		pitrSupportBatchKVFiles = true
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.5.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), true)
 	}
 
 	{
