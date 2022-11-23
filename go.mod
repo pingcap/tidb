@@ -72,7 +72,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20221110065318-21a4942860b3
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20221020071514-cd933387bcb5
+	github.com/pingcap/tipb v0.0.0-20221123024159-8765d4977a48
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.13.0
 	github.com/prometheus/client_model v0.2.0
@@ -254,5 +254,3 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
-
-replace github.com/pingcap/tipb => github.com/hongyunyan/tipb v0.0.0-20221122080927-439f8cc5720e
