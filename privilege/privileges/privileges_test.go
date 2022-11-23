@@ -3004,3 +3004,41 @@ func TestCheckPasswordExpired(t *testing.T) {
 	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
 	require.NoError(t, err)
 }
+
+func TestPasswordExpire(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+
+	// PASSWORD EXPIRE
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
+	tk := testkit.NewTestKit(t, store)
+	err := tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+
+	// PASSWORD EXPIRE NEVER
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+
+	// PASSWORD EXPIRE INTERVAL N DAY
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	time.Sleep(2 * time.Second)
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+
+	// PASSWORD EXPIRE DEFAULT
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+}

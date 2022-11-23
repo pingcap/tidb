@@ -1022,6 +1022,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				passwordExpireInterval = 0
 				break Loop2
 			case ast.PasswordExpireInterval:
+				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count >= 65536 {
+					return types.ErrWrongValue.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
+				}
 				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
 				break Loop2
 			}
@@ -1678,7 +1681,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
-	if e.ctx.InSandBoxMode() && (e.ctx.GetSessionVars().User.Username == s.User.Username || s.User.CurrentUser) {
+	if e.ctx.InSandBoxMode() &&
+		(s.User == nil || s.User.CurrentUser || e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
 		e.ctx.DisableSandBoxMode()
 	}
 	// update mysql.user

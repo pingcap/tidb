@@ -683,7 +683,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 		case f.ColumnAsName.L == "password_last_changed":
 			t := row.GetTime(i)
-			gotime, err := t.GoTime(time.UTC)
+			gotime, err := t.GoTime(time.Local)
 			if err != nil {
 				return err
 			}

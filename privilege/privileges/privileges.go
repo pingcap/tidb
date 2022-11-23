@@ -382,6 +382,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 				return false, err
 			}
 		}
+		logutil.BgLogger().Info("TestPasswordExpire", zap.Time("expire time", record.PasswordLastChanged.AddDate(0, 0, int(lifeTime))), zap.Time("now", time.Now()))
 		if lifeTime > 0 && record.PasswordLastChanged.AddDate(0, 0, int(lifeTime)).Before(time.Now()) {
 			if disconnectOnPwdExpired {
 				return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
