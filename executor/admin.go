@@ -269,7 +269,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	builder.NewKeyRanges = kv.NewNonParitionedRequestRange(keyRanges)
+	builder.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
@@ -744,7 +744,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 	keyRanges.SetToNonPartitioned()
 	keyRanges.FirstPartitionRange()[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
-	kvReq, err := builder.SetNewKeyRanges(keyRanges).
+	kvReq, err := builder.SetWrappedKeyRanges(keyRanges).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).

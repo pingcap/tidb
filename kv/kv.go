@@ -333,25 +333,25 @@ func (t StoreType) Name() string {
 	return "unspecified"
 }
 
-// RequestRange wrap the ranges for partitioned table cases.
+// KeyRanges wrap the ranges for partitioned table cases.
 // We might send ranges from different in the one request.
-type RequestRange struct {
+type KeyRanges struct {
 	ranges [][]KeyRange
 
 	isPartitioned bool
 }
 
-// NewPartitionedRequestRange constructs a new RequestRange for partitioned table.
-func NewPartitionedRequestRange(ranges [][]KeyRange) *RequestRange {
-	return &RequestRange{
+// NewPartitionedKeyRanges constructs a new RequestRange for partitioned table.
+func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
+	return &KeyRanges{
 		ranges:        ranges,
 		isPartitioned: true,
 	}
 }
 
 // NewNonPartitionedRequestRange constructs a new RequestRange for a non partitioned table.
-func NewNonParitionedRequestRange(ranges []KeyRange) *RequestRange {
-	return &RequestRange{
+func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+	return &KeyRanges{
 		ranges:        [][]KeyRange{ranges},
 		isPartitioned: true,
 	}
@@ -360,7 +360,7 @@ func NewNonParitionedRequestRange(ranges []KeyRange) *RequestRange {
 // FirstPartitionRange returns the the result of first range.
 // We may use some func to generate ranges for both partitioned table and non partitioned table.
 // This method provides a way to fallback to non-partitioned ranges.
-func (rr *RequestRange) FirstPartitionRange() []KeyRange {
+func (rr *KeyRanges) FirstPartitionRange() []KeyRange {
 	if len(rr.ranges) == 0 {
 		return []KeyRange{}
 	}
@@ -368,7 +368,7 @@ func (rr *RequestRange) FirstPartitionRange() []KeyRange {
 }
 
 // SetToNonPartitioned set the status to non-partitioned.
-func (rr *RequestRange) SetToNonPartitioned() error {
+func (rr *KeyRanges) SetToNonPartitioned() error {
 	if len(rr.ranges) > 1 {
 		return errors.Errorf("You want to change the partitioned ranges to non-partitioned ranges.")
 	}
@@ -377,7 +377,7 @@ func (rr *RequestRange) SetToNonPartitioned() error {
 }
 
 // AppendSelfTo appends itself to another slice.
-func (rr *RequestRange) AppendSelfTo(ranges []KeyRange) []KeyRange {
+func (rr *KeyRanges) AppendSelfTo(ranges []KeyRange) []KeyRange {
 	for _, r := range rr.ranges {
 		ranges = append(ranges, r...)
 	}
@@ -386,7 +386,7 @@ func (rr *RequestRange) AppendSelfTo(ranges []KeyRange) []KeyRange {
 
 // SortByFunc sorts each partition's ranges.
 // Since the ranges are sorted in most cases, we check it first.
-func (rr *RequestRange) SortByFunc(sortFunc func(i, j KeyRange) bool) {
+func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
 	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
@@ -411,18 +411,8 @@ func (rr *RequestRange) SortByFunc(sortFunc func(i, j KeyRange) bool) {
 	}
 }
 
-// AppendMultiRanges appends the new ranges.
-// It serves just appending. You need to first declare the ReqeustRange struct to determine whether it's from partitioned table.
-func (rr *RequestRange) AppendMultiRanges(ranges []KeyRange) {
-	if rr.isPartitioned {
-		rr.ranges = append(rr.ranges, ranges)
-		return
-	}
-	rr.ranges[0] = append(rr.ranges[0], ranges...)
-}
-
 // ForEachPartitionWithErr runs the func for each partition with an error check.
-func (rr *RequestRange) ForEachPartitionWithErr(theFunc func([]KeyRange) error) (err error) {
+func (rr *KeyRanges) ForEachPartitionWithErr(theFunc func([]KeyRange) error) (err error) {
 	for i := range rr.ranges {
 		err = theFunc(rr.ranges[i])
 		if err != nil {
@@ -433,24 +423,19 @@ func (rr *RequestRange) ForEachPartitionWithErr(theFunc func([]KeyRange) error) 
 }
 
 // ForEachPartition runs the func for each partition without error check.
-func (rr *RequestRange) ForEachPartition(theFunc func([]KeyRange)) {
+func (rr *KeyRanges) ForEachPartition(theFunc func([]KeyRange)) {
 	for i := range rr.ranges {
 		theFunc(rr.ranges[i])
 	}
 }
 
 // PartitionNum returns how many partition is involved in the ranges.
-func (rr *RequestRange) PartitionNum() int {
+func (rr *KeyRanges) PartitionNum() int {
 	return len(rr.ranges)
 }
 
-// IsEmpty checks whether the ranges is empty.
-func (rr *RequestRange) IsEmpty() bool {
-	return len(rr.ranges) == 0
-}
-
 // IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
-func (rr *RequestRange) IsFullySorted() bool {
+func (rr *KeyRanges) IsFullySorted() bool {
 	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
@@ -472,7 +457,7 @@ func (rr *RequestRange) IsFullySorted() bool {
 }
 
 // TotalRangeNum returns how many ranges there are.
-func (rr *RequestRange) TotalRangeNum() int {
+func (rr *KeyRanges) TotalRangeNum() int {
 	ret := 0
 	for _, r := range rr.ranges {
 		ret += len(r)
@@ -489,7 +474,7 @@ type Request struct {
 
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.
-	NewKeyRanges *RequestRange
+	KeyRanges *KeyRanges
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges

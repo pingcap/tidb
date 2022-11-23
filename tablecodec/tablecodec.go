@@ -1614,7 +1614,7 @@ func IndexKVIsUnique(value []byte) bool {
 	return segs.IntHandle != nil || segs.CommonHandle != nil
 }
 
-func VerifyTableIDForRanges(keyRanges *kv.RequestRange) ([]int64, error) {
+func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
 	tids := make([]int64, 0, keyRanges.PartitionNum())
 	collectFunc := func(ranges []kv.KeyRange) error {
 		if len(ranges) == 0 {

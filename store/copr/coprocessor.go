@@ -119,7 +119,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
-			if !req.NewKeyRanges.IsFullySorted() {
+			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
@@ -153,7 +153,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	// Here we build the task by partition, not directly by region.
 	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
 	// Keep it split by partition would be more safe.
-	err = req.NewKeyRanges.ForEachPartitionWithErr(buildTaskFunc)
+	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"

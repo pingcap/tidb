@@ -4328,7 +4328,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	e.kvRanges = kvReq.NewKeyRanges.AppendSelfTo(e.kvRanges)
+	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
@@ -4554,7 +4554,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		}
 		if cwc == nil {
 			// Index id is -1 means it's a common handle.
-			var tmpKvRanges *kv.RequestRange
+			var tmpKvRanges *kv.KeyRanges
 			var err error
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{tableID}, ranges)

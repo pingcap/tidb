@@ -211,7 +211,7 @@ func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
 }
 
 // tableHandleKeyRanges returns all key ranges associated with the tableInfo.
-func tableHandleKeyRanges(tableInfo *model.TableInfo) (*tidbkv.RequestRange, error) {
+func tableHandleKeyRanges(tableInfo *model.TableInfo) (*tidbkv.KeyRanges, error) {
 	ranges := ranger.FullIntRange(false)
 	if tableInfo.IsCommonHandle {
 		ranges = ranger.FullRange()
@@ -221,7 +221,7 @@ func tableHandleKeyRanges(tableInfo *model.TableInfo) (*tidbkv.RequestRange, err
 }
 
 // tableIndexKeyRanges returns all key ranges associated with the tableInfo and indexInfo.
-func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) (*tidbkv.RequestRange, error) {
+func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) (*tidbkv.KeyRanges, error) {
 	tableIDs := physicalTableIDs(tableInfo)
 	return distsql.IndexRangesToKVRangesForTables(nil, tableIDs, indexInfo.ID, ranger.FullRange(), nil)
 }

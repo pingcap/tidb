@@ -205,13 +205,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.kvRanges = kvReq.NewKeyRanges.AppendSelfTo(e.kvRanges)
+		e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		if len(secondPartRanges) != 0 {
 			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
 				return err
 			}
-			e.kvRanges = kvReq.NewKeyRanges.AppendSelfTo(e.kvRanges)
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
 		return nil
 	}
@@ -314,10 +314,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	kvReq.NewKeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
+	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	e.kvRanges = kvReq.NewKeyRanges.AppendSelfTo(e.kvRanges)
+	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
