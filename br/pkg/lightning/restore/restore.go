@@ -2436,8 +2436,13 @@ func (cr *chunkRestore) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-			if currOffset >= startOffset {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+
+			delta := currOffset - startOffset
+			if delta >= 0 {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if rc.status != nil && rc.status.backend == config.BackendTiDB {
+					rc.status.FinishedFileSize.Add(delta)
+				}
 			} else {
 				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
 					zap.Int64("start", startOffset))
