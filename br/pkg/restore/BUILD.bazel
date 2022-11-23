@@ -58,6 +58,7 @@ go_library(
         "//tablecodec",
         "//util",
         "//util/codec",
+        "//util/collate",
         "//util/hack",
         "//util/mathutil",
         "//util/table-filter",
