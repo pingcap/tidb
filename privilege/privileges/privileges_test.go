@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -2962,4 +2963,101 @@ func TestIssue37488(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
+
+func selectSql(user string) string {
+	userAttributesSql := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
+	return strings.Replace(userAttributesSql, "REUSER", user, -1)
+}
+
+type userAttributes struct {
+	Password_locking passwordLocking
+}
+
+type passwordLocking struct {
+	FailedLoginAttempts   int64  `json:"failed_login_attempts"`
+	PasswordLockTimeDays  int64  `json:"password_lock_time_days"`
+	AutoAccountLocked     string `json:"auto_account_locked"`
+	FailedLoginCount      int64  `json:"failed_login_count"`
+	AutoLockedLastChanged string `json:"auto_locked_last_changed"`
+}
+
+func TestIssue38938(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("CREATE USER 'u1'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;")
+	userAtrr := "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}"
+	userAttributesSql := selectSql("u1")
+	tk.MustQuery(userAttributesSql).Check(testkit.Rows(userAtrr))
+
+	tk.MustExec("CREATE USER 'u2'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;")
+	userAtrr = "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": -1}}"
+	userAttributesSql = selectSql("u2")
+	tk.MustQuery(userAttributesSql).Check(testkit.Rows(userAtrr))
+
+	tk.MustExec("CREATE USER 'u3'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3;")
+	userAtrr = "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}"
+	userAttributesSql = selectSql("u3")
+	tk.MustQuery(userAttributesSql).Check(testkit.Rows(userAtrr))
+
+	tk.MustExec("CREATE USER 'u4'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME 3;")
+	userAtrr = "{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": 3}}"
+	userAttributesSql = selectSql("u4")
+	tk.MustQuery(userAttributesSql).Check(testkit.Rows(userAtrr))
+
+	tk.MustExec("CREATE USER 'u5'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED;")
+	userAtrr = "{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}"
+	userAttributesSql = selectSql("u5")
+	tk.MustQuery(userAttributesSql).Check(testkit.Rows(userAtrr))
+
+	tk.MustExec("ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;")
+	userAttributesSql = selectSql("u1")
+	resBuff := bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	checkUser(t, resBuff.String(), 4, 6)
+
+	tk.MustExec("ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;")
+	userAttributesSql = selectSql("u2")
+	resBuff = bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	checkUser(t, resBuff.String(), 4, -1)
+
+	tk.MustExec("ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;")
+	userAttributesSql = selectSql("u3")
+	resBuff = bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	checkUser(t, resBuff.String(), 3, 6)
+
+	tk.MustExec("ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;")
+	userAttributesSql = selectSql("u4")
+	resBuff = bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	checkUser(t, resBuff.String(), 4, 3)
+
+	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;")
+	userAttributesSql = selectSql("u4")
+	resBuff = bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	checkUser(t, resBuff.String(), 4, -1)
+}
+
+func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockTimeDays int64) {
+	var ua []userAttributes
+	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
+		require.True(t, ua[0].Password_locking.FailedLoginAttempts == failedLoginAttempts)
+		require.True(t, ua[0].Password_locking.PasswordLockTimeDays == passwordLockTimeDays)
+	} else {
+		fmt.Println(err)
+	}
 }
