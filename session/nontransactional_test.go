@@ -722,9 +722,7 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("batch limit 1 insert into t select 1, 1")
 	require.EqualError(t, err, "table reference is nil")
 	err = tk.ExecToErr("batch limit 1 insert into t select * from (select 1, 2) tmp")
-	require.EqualError(t, err, "Non-transaction insert must have s source table")
-	err = tk.ExecToErr("batch limit 1 insert into t select * from t")
-	require.EqualError(t, err, "Non-transactional insert doesn't support self-insert")
+	require.EqualError(t, err, "Non-transactional DML, table name not found in join")
 }
 
 func TestNonTransactionalWithOptimizerHints(t *testing.T) {
