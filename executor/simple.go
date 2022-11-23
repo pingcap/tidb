@@ -839,6 +839,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	var userAttributes any = nil
 	if passwordLockTime != 0 || failedLoginAttempts != 0 {
+		if failedLoginAttempts > 32767 {
+			failedLoginAttempts = 32767
+		}
+		if failedLoginAttempts < 0 {
+			failedLoginAttempts = 0
+		}
+		if passwordLockTime > 32767 {
+			passwordLockTime = 32767
+		}
+		if passwordLockTime < -1 {
+			failedLoginAttempts = -1
+		}
 		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}", failedLoginAttempts, passwordLockTime)
 	}
 	if s.CommentOrAttributeOption != nil {
@@ -1126,13 +1138,23 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
-		if failedLoginAttempts > 32767 || failedLoginAttempts < 0 || passwordLockTime > 32767 || passwordLockTime < -1 {
-			return errors.New("FAILED_LOGIN_ATTEMPTS PASSWORD_LOCK_TIME not in the range from 0 to 32767")
-		}
+
 		if failedLoginAttempts != 0 && passwordLockTime != 0 {
 			lock := "N"
 			if lockAccount == "Y" {
 				lock = "Y"
+			}
+			if failedLoginAttempts > 32767 {
+				failedLoginAttempts = 32767
+			}
+			if failedLoginAttempts < 0 {
+				failedLoginAttempts = 0
+			}
+			if passwordLockTime > 32767 {
+				passwordLockTime = 32767
+			}
+			if passwordLockTime < -1 {
+				failedLoginAttempts = -1
 			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				failedLoginAttempts, passwordLockTime, lock, 0, time.Now().Format(time.UnixDate))

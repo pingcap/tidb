@@ -866,3 +866,104 @@ func init() {
 	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
 	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
 }
+
+type PasswordLocking struct {
+	FailedLoginCount      int64
+	PasswordLockTimeDays  int64
+	AutoAccountLocked     bool
+	AutoLockedLastChanged int64
+	FailedLoginAttempts   int64
+}
+
+func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJson types.BinaryJSON) error {
+	failedLoginAttempts, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_attempts")
+	if parserErr != nil {
+		return parserErr
+	} else {
+		if failedLoginAttempts > 32767 {
+			passwordLocking.FailedLoginAttempts = 32767
+		} else if failedLoginAttempts < 0 {
+			passwordLocking.FailedLoginAttempts = 0
+		} else {
+			passwordLocking.FailedLoginAttempts = failedLoginAttempts
+		}
+
+	}
+	lockTime, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.password_lock_time_days")
+	if parserErr != nil {
+		return parserErr
+	} else {
+		if lockTime > 32767 {
+			passwordLocking.PasswordLockTimeDays = 32767
+		} else if lockTime < -1 {
+			passwordLocking.PasswordLockTimeDays = -1
+		} else {
+			passwordLocking.PasswordLockTimeDays = lockTime
+		}
+	}
+	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_count")
+	if parserErr != nil {
+		return parserErr
+	} else {
+		passwordLocking.FailedLoginCount = failedLoginCount
+	}
+	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJson, "$.Password_locking.auto_locked_last_changed")
+	if parserErr != nil {
+		return parserErr
+	} else {
+		passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
+	}
+	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJson, "$.Password_locking.auto_account_locked")
+	if parserErr != nil {
+		return parserErr
+	} else {
+		passwordLocking.AutoAccountLocked = autoAccountLock
+	}
+	return nil
+}
+
+func PasswordLockingInt64Parser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return -1, err
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		return BJ.GetInt64(), nil
+	}
+	return -1, err
+}
+
+func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return -1, err
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, BJErr := BJ.Unquote()
+		if BJErr != nil {
+			return -1, err
+		}
+		t, _ := time.ParseInLocation(time.UnixDate, value, time.Local)
+		return t.Unix(), nil
+	}
+	return -1, err
+}
+
+func PasswordLockingBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) (bool, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return false, err
+	}
+	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, BJErr := BJ.Unquote()
+		if BJErr != nil {
+			return false, err
+		}
+		if value == "Y" {
+			return true, nil
+		} else {
+			return false, nil
+		}
+	}
+	return false, nil
+}

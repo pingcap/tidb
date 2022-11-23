@@ -85,7 +85,6 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2666,123 +2665,48 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 	return nil
 }
 
-func attributesInt64Parser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
-	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
-	if err != nil {
-		return -1, err
-	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
-		return BJ.GetInt64(), nil
-	}
-	return -1, err
-}
-
-func attributesTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
-	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
-	if err != nil {
-		return -1, err
-	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
-		value, BJErr := BJ.Unquote()
-		if BJErr != nil {
-			return -1, err
-		}
-		t, _ := time.ParseInLocation(time.UnixDate, value, time.Local)
-		return t.Unix(), nil
-	}
-	return -1, err
-}
-
-func attributesBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) (bool, error) {
-	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
-	if err != nil {
-		return false, err
-	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
-		value, BJErr := BJ.Unquote()
-		if BJErr != nil {
-			return false, err
-		}
-		if value == "Y" {
-			return true, nil
-		} else {
-			return false, nil
-		}
-	}
-	return false, nil
-}
-
 func failedLoginTrackingCommit(s *session) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
 	if err != nil {
-		_, err = s.ExecuteInternal(ctx, "ROLLBACK")
-		if err != nil {
-			return err
+		_, rollBackErr := s.ExecuteInternal(ctx, "ROLLBACK")
+		if rollBackErr != nil {
+			return rollBackErr
 		}
 		return err
 	}
 	return nil
 }
 
-func getFailedLoginCount(s *session, user string, host string) (privilege.UserAttributes, error) {
-	userAttr := privilege.UserAttributes{}
+func getFailedLoginCount(s *session, user string, host string) (privileges.PasswordLocking, error) {
+	passwordLocking := privileges.PasswordLocking{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
-		return userAttr, err
+		return passwordLocking, err
 	}
 	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
 	if err != nil {
-		return userAttr, err
+		return passwordLocking, err
 	}
 	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		rsErr := rs.Next(ctx, req)
 		if rsErr != nil {
-			return userAttr, rsErr
+			return passwordLocking, rsErr
 		}
 		if req.NumRows() == 0 {
-			break
+			return passwordLocking, rsErr
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			userAttr.User = user
-			userAttr.Host = host
-			userAttributesJson := row.GetJSON(0)
-			failedLoginAttempts, parserErr := attributesInt64Parser(userAttributesJson, "$.Password_locking.failed_login_attempts")
-			if parserErr != nil {
-				return userAttr, parserErr
-			} else {
-				userAttr.FailedLoginAttempts = failedLoginAttempts
-			}
-			lockTime, parserErr := attributesInt64Parser(userAttributesJson, "$.Password_locking.password_lock_time_days")
-			if parserErr != nil {
-				return userAttr, parserErr
-			} else {
-				userAttr.PasswordLockTimeDays = lockTime
-			}
-			failedLoginCount, parserErr := attributesInt64Parser(userAttributesJson, "$.Password_locking.failed_login_count")
-			if parserErr != nil {
-				return userAttr, parserErr
-			} else {
-				userAttr.FailedLoginCount = failedLoginCount
-			}
-			autoLockedLastChanged, parserErr := attributesTimeUnixParser(userAttributesJson, "$.Password_locking.auto_locked_last_changed")
-			if parserErr != nil {
-				return userAttr, parserErr
-			} else {
-				userAttr.AutoLockedLastChanged = autoLockedLastChanged
-			}
-			autoAccountLock, parserErr := attributesBoolParser(userAttributesJson, "$.Password_locking.auto_account_locked")
-			if parserErr != nil {
-				return userAttr, parserErr
-			} else {
-				userAttr.AutoAccountLocked = autoAccountLock
+			passwordLockingJson := row.GetJSON(0)
+			if err := passwordLocking.PasswordLockingParser(passwordLockingJson); err != nil {
+				return passwordLocking, err
 			}
 		}
 	}
-	return userAttr, nil
+	return passwordLocking, nil
 }
 
 func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
@@ -2802,11 +2726,11 @@ func userAutoAccountLocked(s *session, user string, host string, failedLoginCoun
 }
 
 func failedLogin(s *session, user string, host string) error {
-	userAttr, getErr := getFailedLoginCount(s, user, host)
+	passwordLocking, getErr := getFailedLoginCount(s, user, host)
 	if getErr != nil {
 		return getErr
 	}
-	if err := userAutoAccountLocked(s, user, host, userAttr.FailedLoginCount+1, userAttr.FailedLoginAttempts, userAttr.PasswordLockTimeDays); err != nil {
+	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1, passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
 		return err
 	}
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {

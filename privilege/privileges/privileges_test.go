@@ -3050,6 +3050,8 @@ func TestFailedLoginTracking(t *testing.T) {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	checkUser(t, resBuff.String(), 4, -1)
+
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
 }
 
 func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockTimeDays int64) {

@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-	"strconv"
 )
 
 var (
@@ -236,12 +235,6 @@ type defaultRoleRecord struct {
 // roleGraphEdgesTable is used to cache relationship between and role.
 type roleGraphEdgesTable struct {
 	roleList map[string]*auth.RoleIdentity
-}
-
-type failedLoginRecord struct {
-	Host        string // max length 60, primary key
-	User        string // max length 32, primary key
-	failedCount int64
 }
 
 // Find method is used to find role from table
@@ -695,78 +688,15 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				}
 				value.Email = email
 			}
-			failedloginPathExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_attempts")
-			if err != nil {
+			passwordLocking := PasswordLocking{}
+			if err := passwordLocking.PasswordLockingParser(bj); err != nil {
 				return err
 			}
-			if failedLoginAttemptsBJ, found := bj.Extract([]types.JSONPathExpression{failedloginPathExpr}); found {
-				failedLoginAttempts, err := failedLoginAttemptsBJ.Unquote()
-				if err != nil {
-					return err
-				}
-				value.FailedLoginAttempts, err = strconv.ParseInt(failedLoginAttempts, 10, 64)
-				if err != nil {
-					return err
-				}
-			}
-			lockTimePathExpr, err := types.ParseJSONPathExpr("$.Password_locking.password_lock_time_days")
-			if err != nil {
-				return err
-			}
-			if lockTimeBJ, found := bj.Extract([]types.JSONPathExpression{lockTimePathExpr}); found {
-				lockTime, err := lockTimeBJ.Unquote()
-				if err != nil {
-					return err
-				}
-				value.PasswordLockTime, err = strconv.ParseInt(lockTime, 10, 64)
-				if err != nil {
-					return err
-				}
-			}
-
-			autoAccountLockedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_account_locked")
-			if err != nil {
-				return err
-			}
-			if autoAccountLockedBJ, found := bj.Extract([]types.JSONPathExpression{autoAccountLockedExpr}); found {
-				autoAccountLock, err := autoAccountLockedBJ.Unquote()
-				if err != nil {
-					return err
-				}
-				if autoAccountLock == "Y" {
-					value.AutoAccountLocked = true
-				} else {
-					value.AutoAccountLocked = false
-				}
-			}
-
-			failedLoginCountExpr, err := types.ParseJSONPathExpr("$.Password_locking.failed_login_count")
-			if err != nil {
-				return err
-			}
-			if failedLoginCountBJ, found := bj.Extract([]types.JSONPathExpression{failedLoginCountExpr}); found {
-				failedLoginCount, err := failedLoginCountBJ.Unquote()
-				if err != nil {
-					return err
-				}
-				value.FailedLoginCount, err = strconv.ParseInt(failedLoginCount, 10, 64)
-				if err != nil {
-					return err
-				}
-			}
-
-			autoLockedLastChangedExpr, err := types.ParseJSONPathExpr("$.Password_locking.auto_locked_last_changed")
-			if err != nil {
-				return err
-			}
-			if autoLockedLastChangedBJ, found := bj.Extract([]types.JSONPathExpression{autoLockedLastChangedExpr}); found {
-				autoLockedLastChangedTime, err := autoLockedLastChangedBJ.Unquote()
-				if err != nil {
-					return err
-				}
-				t, _ := time.ParseInLocation(time.UnixDate, autoLockedLastChangedTime, time.Local)
-				value.AutoLockedLastChanged = t.Unix()
-			}
+			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
+			value.PasswordLockTime = passwordLocking.PasswordLockTimeDays
+			value.FailedLoginCount = passwordLocking.FailedLoginCount
+			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
+			value.AutoAccountLocked = passwordLocking.AutoAccountLocked
 		default:
 			value.assignUserOrHost(row, i, f)
 		}
