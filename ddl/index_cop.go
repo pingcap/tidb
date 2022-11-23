@@ -250,15 +250,19 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 			handleIDs = append(handleIDs, col.ID)
 		}
 		usedColumnIDs, err = fillUsedColumns(usedColumnIDs, primaryIdx, tblInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Only collect the columns that are used by the index.
 	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
 	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
-	for _, c := range tblInfo.Columns {
-		if _, found := usedColumnIDs[c.ID]; found {
-			colInfos = append(colInfos, c)
-			fieldTps = append(fieldTps, &c.FieldType)
+	for i := range tblInfo.Columns {
+		col := tblInfo.Columns[i]
+		if _, found := usedColumnIDs[col.ID]; found {
+			colInfos = append(colInfos, col)
+			fieldTps = append(fieldTps, &col.FieldType)
 		}
 	}
 
@@ -272,6 +276,9 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 
 	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx,
 		model.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	idxOffsets := resolveIndicesForIndex(expColInfos, idxInfo, tblInfo)
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
