@@ -205,9 +205,6 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 			if fkc.stats.Total == 0 {
 				fkc.stats.Total = time.Since(start)
 			}
-			if fkc.stats.Check == 0 {
-				fkc.stats.Check = fkc.stats.Total
-			}
 		}()
 	}
 	txn, err := fkc.ctx.Txn(false)
@@ -872,6 +869,7 @@ func genWhereConditionAstForMultiColumn(cols []*model.ColumnInfo, fkValues [][]t
 	}
 }
 
+// String implements the RuntimeStats interface.
 func (s *FKCheckRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("total:")
@@ -919,6 +917,7 @@ func (s *FKCheckRuntimeStats) Tp() int {
 	return execdetails.TpFKCheckRuntimeStats
 }
 
+// String implements the RuntimeStats interface.
 func (s *FKCascadeRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("total:")

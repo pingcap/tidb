@@ -2098,6 +2098,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE SET NULL, " +
 		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
 		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+	tk.MustExec("create table t7(id int primary key, pid int, index(pid), foreign key(pid) references t7(id) on delete cascade);")
 
 	cases := []struct {
 		prepare []string
@@ -2276,6 +2277,90 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    │ ├─IndexRangeScan_.*" +
 				"    │ └─TableRowIDScan_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
+		},
+		{
+			prepare: []string{
+				"insert into t7 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13);",
+			},
+			sql: "explain analyze delete from t7 where id = 0;",
+			plan: "Delete_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"  └─Delete_.*" +
+				"    ├─UnionScan_.*" +
+				"    │ └─IndexReader_.*" +
+				"    │   └─IndexRangeScan_.*" +
+				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:2 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"      └─Delete_.*" +
+				"        ├─UnionScan_.*" +
+				"        │ └─IndexReader_.*" +
+				"        │   └─IndexRangeScan_.*" +
+				"        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"          └─Delete_.*" +
+				"            ├─UnionScan_.*" +
+				"            │ └─IndexReader_.*" +
+				"            │   └─IndexRangeScan_.*" +
+				"            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"              └─Delete_.*" +
+				"                ├─UnionScan_.*" +
+				"                │ └─IndexReader_.*" +
+				"                │   └─IndexRangeScan_.*" +
+				"                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                  └─Delete_.*" +
+				"                    ├─UnionScan_.*" +
+				"                    │ └─IndexReader_.*" +
+				"                    │   └─IndexRangeScan_.*" +
+				"                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                      └─Delete_.*" +
+				"                        ├─UnionScan_.*" +
+				"                        │ └─IndexReader_.*" +
+				"                        │   └─IndexRangeScan_.*" +
+				"                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                          └─Delete_.*" +
+				"                            ├─UnionScan_.*" +
+				"                            │ └─IndexReader_.*" +
+				"                            │   └─IndexRangeScan_.*" +
+				"                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                              └─Delete_.*" +
+				"                                ├─UnionScan_.*" +
+				"                                │ └─IndexReader_.*" +
+				"                                │   └─IndexRangeScan_.*" +
+				"                                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                  └─Delete_.*" +
+				"                                    ├─UnionScan_.*" +
+				"                                    │ └─IndexReader_.*" +
+				"                                    │   └─IndexRangeScan_.*" +
+				"                                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                      └─Delete_.*" +
+				"                                        ├─UnionScan_.*" +
+				"                                        │ └─IndexReader_.*" +
+				"                                        │   └─IndexRangeScan_.*" +
+				"                                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                          └─Delete_.*" +
+				"                                            ├─UnionScan_.*" +
+				"                                            │ └─IndexReader_.*" +
+				"                                            │   └─IndexRangeScan_.*" +
+				"                                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                              └─Delete_.*" +
+				"                                                ├─UnionScan_.*" +
+				"                                                │ └─IndexReader_.*" +
+				"                                                │   └─IndexRangeScan_.*" +
+				"                                                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                  └─Delete_.*" +
+				"                                                    ├─UnionScan_.*" +
+				"                                                    │ └─IndexReader_.*" +
+				"                                                    │   └─IndexRangeScan_.*" +
+				"                                                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                      └─Delete_.*" +
+				"                                                        ├─UnionScan_.*" +
+				"                                                        │ └─IndexReader_.*" +
+				"                                                        │   └─IndexRangeScan_.*" +
+				"                                                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                          └─Delete_.*" +
+				"                                                            ├─UnionScan_.*" +
+				"                                                            │ └─IndexReader_.*" +
+				"                                                            │   └─IndexRangeScan_.*" +
+				"                                                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:0s foreign_key:fk_1, on_delete:CASCADE.*",
 		},
 	}
 	for _, ca := range cases {
