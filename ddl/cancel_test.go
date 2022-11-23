@@ -232,6 +232,7 @@ func TestCancel(t *testing.T) {
 
 	// Prepare schema.
 	tk.MustExec("use test")
+	// ToDo: will check why tidb_ddl_enable_fast_reorg could not be default on in another pr.
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("drop table if exists t_partition;")
 	tk.MustExec(`create table t_partition (
