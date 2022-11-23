@@ -505,11 +505,12 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			length, numberCount, specialCharCount, _, err := getPasswordValidationLength(vars)
 			if err != nil {
 				return "", err
 			}
-			if mixedCaseCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+			mixedCaseCount, err := strconv.ParseInt(normalizedValue, 10, 64)
+			if err != nil {
 				return "", err
 			}
 			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
@@ -522,11 +523,12 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			length, _, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
 			if err != nil {
 				return "", err
 			}
-			if numberCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+			numberCount, err := strconv.ParseInt(normalizedValue, 10, 64)
+			if err != nil {
 				return "", err
 			}
 			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
@@ -539,11 +541,12 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			length, numberCount, _, mixedCaseCount, err := getPasswordValidationLength(vars)
 			if err != nil {
 				return "", err
 			}
-			if specialCharCount, err = strconv.ParseInt(normalizedValue, 10, 64); err != nil {
+			specialCharCount, err := strconv.ParseInt(normalizedValue, 10, 64)
+			if err != nil {
 				return "", err
 			}
 			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
