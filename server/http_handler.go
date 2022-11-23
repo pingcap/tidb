@@ -72,21 +72,22 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName             = "db"
+	pHexKey             = "hexKey"
+	pIndexName          = "index"
+	pHandle             = "handle"
+	pRegionID           = "regionID"
+	pStartTS            = "startTS"
+	pTableName          = "table"
+	pTableID            = "tableID"
+	pColumnID           = "colID"
+	pColumnTp           = "colTp"
+	pColumnFlag         = "colFlag"
+	pColumnLen          = "colLen"
+	pRowBin             = "rowBin"
+	pSnapshot           = "snapshot"
+	pFileName           = "filename"
+	pDumpPartitionStats = "dumpPartitionStats"
 )
 
 // For query string
@@ -799,14 +800,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -975,8 +984,8 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		tableInfo.ID = status.ID
 		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		progress := types.TruncateFloatToString(float64(status.FlashRegionCount)/float64(status.RegionCount), 2)
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, progress)
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
+		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)

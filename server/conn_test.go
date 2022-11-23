@@ -584,6 +584,33 @@ func TestDispatchClientProtocol41(t *testing.T) {
 	testDispatch(t, inputs, mysql.ClientProtocol41)
 }
 
+func TestQueryEndWithZero(t *testing.T) {
+	inputs := []dispatchInput{
+		{
+			com: mysql.ComStmtPrepare,
+			in:  append([]byte("select 1"), 0x0),
+			err: nil,
+			out: []byte{
+				0xc, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
+				0x0, 0x0, 0x1, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x2, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComQuery,
+			in:  append([]byte("select 1"), 0x0),
+			err: nil,
+			out: []byte{
+				0x1, 0x0, 0x0, 0x3, 0x1, 0x18, 0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x0, 0x1, 0x0, 0x0, 0x5, 0xfe, 0x2, 0x0, 0x0, 0x6, 0x1, 0x31, 0x1, 0x0, 0x0, 0x7, 0xfe,
+			},
+		},
+	}
+
+	testDispatch(t, inputs, 0)
+}
+
 func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	store := testkit.CreateMockStore(t)
 
@@ -729,6 +756,11 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
 	require.NoError(t, err)
+
+	tk.MustExec("set @@max_execution_time = 500;")
+
+	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
+	require.NoError(t, err)
 }
 
 func TestShutDown(t *testing.T) {
@@ -853,6 +885,7 @@ func TestTiFlashFallback(t *testing.T) {
 	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
@@ -1360,6 +1393,56 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 }
 
+func TestChangeUserAuth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user user1")
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   defaultCapability,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "root",
+	}
+	ctx := context.Background()
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.setCtx(tc)
+
+	data := []byte{}
+	data = append(data, "user1"...)
+	data = append(data, 0)
+	data = append(data, 1)
+	data = append(data, 0)
+	data = append(data, "test"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	data = append(data, "unknown"...)
+	data = append(data, 0)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch", fmt.Sprintf("return(\"%s\")", t.Name())))
+	err = cc.handleChangeUser(ctx, data)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch"))
+	require.EqualError(t, err, t.Name())
+}
+
 func TestAuthPlugin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1658,7 +1741,10 @@ func TestExtensionChangeUser(t *testing.T) {
 		outBuffer.Reset()
 	}
 
-	expectedConnInfo := extension.ConnEventInfo(*cc.connectInfo())
+	expectedConnInfo := extension.ConnEventInfo{
+		ConnectionInfo: cc.connectInfo(),
+		ActiveRoles:    []*auth.RoleIdentity{},
+	}
 	expectedConnInfo.User = "user1"
 	expectedConnInfo.DB = "db1"
 
@@ -1674,7 +1760,9 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 
 	logged = false
 	logTp = 0
@@ -1692,7 +1780,9 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 
 	logged = false
 	logTp = 0
@@ -1705,5 +1795,7 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }

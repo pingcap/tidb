@@ -5,7 +5,6 @@ package restore
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -137,24 +138,13 @@ type Client struct {
 
 	supportPolicy bool
 
-	// startTS and restoreTS are used for kv file restore.
-	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
-	startTS   uint64
-	restoreTS uint64
-
-	// If the commitTS of txn-entry belong to [startTS, restoreTS],
-	// the startTS of txn-entry may be smaller than startTS.
-	// We need maintain and restore more entries in default cf
-	// (the startTS in these entries belong to [shiftStartTS, startTS]).
-	shiftStartTS uint64
-
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
 
-	storage storage.ExternalStorage
+	*logFileManager
 
-	helper *stream.MetadataHelper
+	storage storage.ExternalStorage
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -338,14 +328,6 @@ func (rc *Client) Close() {
 	log.Info("Restore client closed")
 }
 
-func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
-	rc.startTS = startTs
-	rc.restoreTS = restoreTS
-	rc.shiftStartTS = shiftStartTS
-	log.Info("set restore range ts", zap.Uint64("shift-start-ts", shiftStartTS),
-		zap.Uint64("start-ts", startTs), zap.Uint64("restored-ts", restoreTS))
-}
-
 func (rc *Client) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
 }
@@ -408,10 +390,6 @@ func (rc *Client) IsRawKvMode() bool {
 	return rc.backupMeta.IsRawKv
 }
 
-func (rc *Client) InitMetadataHelper() {
-	rc.helper = stream.NewMetadataHelper()
-}
-
 // GetFilesInRawRange gets all files that are in the given range or intersects with the given range.
 func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) ([]*backuppb.File, error) {
 	if !rc.IsRawKvMode() {
@@ -470,7 +448,7 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Debug("new worker pool", zap.Uint("currency-count", c))
+	log.Info("new worker pool", zap.Uint("currency-count", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -492,6 +470,35 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 	}
 	restoreTS := oracle.ComposeTS(p, l)
 	return restoreTS, nil
+}
+
+// GetTSWithRetry gets a new timestamp with retry from PD.
+func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
+	var (
+		startTS  uint64
+		getTSErr error
+		retry    uint
+	)
+
+	err := utils.WithRetry(ctx, func() error {
+		startTS, getTSErr = rc.GetTS(ctx)
+		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+			if val.(bool) && retry < 3 {
+				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+			}
+		})
+
+		retry++
+		if getTSErr != nil {
+			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
+		}
+		return getTSErr
+	}, utils.NewPDReqBackoffer())
+
+	if err != nil {
+		log.Error("failed to get TS", zap.Error(err))
+	}
+	return startTS, errors.Trace(err)
 }
 
 // ResetTS resets the timestamp of PD to a bigger value.
@@ -1374,7 +1381,7 @@ func (rc *Client) execChecksum(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	startTS, err := rc.GetTS(ctx)
+	startTS, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1422,7 +1429,7 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 			}
 
 			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTS(ctx)
+			restoreTS, err := rc.GetTSWithRetry(ctx)
 			if err != nil {
 				log.Error("getTS failed", zap.Error(err))
 			} else {
@@ -1729,109 +1736,18 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
-	shiftTS := struct {
-		sync.Mutex
-		value  uint64
-		exists bool
-	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
-		m, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		shiftTS.Lock()
-		defer shiftTS.Unlock()
-
-		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		return nil
-	})
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+	init := LogFileManagerInit{
+		StartTS:   startTS,
+		RestoreTS: restoreTS,
+		Storage:   rc.storage,
+	}
+	var err error
+	rc.logFileManager, err = CreateLogFileManager(ctx, init)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if !shiftTS.exists {
-		return startTS, nil
-	}
-	return shiftTS.value, nil
-}
-
-// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := struct {
-		sync.Mutex
-		metas []*backuppb.Metadata
-	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
-
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
-		metadata, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		streamBackupMetaFiles.Lock()
-		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
-			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
-		}
-		streamBackupMetaFiles.Unlock()
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return streamBackupMetaFiles.metas, nil
-}
-
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFiles, metaFiles []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
-		if !exists {
-			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
-		}
-		for _, ds := range m.FileGroups {
-			metaRef := 0
-			for _, d := range ds.DataFilesInfo {
-				if d.MinTs > rc.restoreTS {
-					continue
-				} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-					continue
-				} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-					continue
-				}
-
-				// If ds.Path is empty, it is MetadataV1.
-				// Try to be compatible with newer metadata version
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = ds.Path
-				}
-
-				if d.IsMeta {
-					mFiles = append(mFiles, d)
-					metaRef += 1
-				} else {
-					dFiles = append(dFiles, d)
-				}
-				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
-			}
-			// metadatav1 doesn't use cache
-			// Try to be compatible with newer metadata version
-			if m.MetaVersion > backuppb.MetaVersion_V1 {
-				rc.helper.InitCacheEntry(ds.Path, metaRef)
-			}
-		}
-	}
-
-	return dFiles, mFiles, nil
+	return nil
 }
 
 // FixIndex tries to fix a single index.
@@ -1893,24 +1809,183 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
+type FilesInRegion struct {
+	defaultSize    uint64
+	defaultKVCount int64
+	writeSize      uint64
+	writeKVCount   int64
+
+	defaultFiles []*backuppb.DataFileInfo
+	writeFiles   []*backuppb.DataFileInfo
+	deleteFiles  []*backuppb.DataFileInfo
+}
+
+type FilesInTable struct {
+	regionMapFiles map[int64]*FilesInRegion
+}
+
+func ApplyKVFilesWithBatchMethod(
+	ctx context.Context,
+	iter LogIter,
+	batchCount int,
+	batchSize uint64,
+	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
+) error {
+	var (
+		tableMapFiles        = make(map[int64]*FilesInTable)
+		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
+		tmpSize       uint64 = 0
+		tmpKVCount    int64  = 0
+	)
+	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
+		f := r.Item
+		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
+			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+			continue
+		}
+
+		fit, exist := tableMapFiles[f.TableId]
+		if !exist {
+			fit = &FilesInTable{
+				regionMapFiles: make(map[int64]*FilesInRegion),
+			}
+			tableMapFiles[f.TableId] = fit
+		}
+		fs, exist := fit.regionMapFiles[f.RegionId]
+		if !exist {
+			fs = &FilesInRegion{}
+			fit.regionMapFiles[f.RegionId] = fs
+		}
+
+		if f.GetType() == backuppb.FileType_Delete {
+			if fs.defaultFiles == nil {
+				fs.deleteFiles = make([]*backuppb.DataFileInfo, 0)
+			}
+			fs.deleteFiles = append(fs.deleteFiles, f)
+		} else {
+			if f.GetCf() == stream.DefaultCF {
+				if fs.defaultFiles == nil {
+					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.defaultFiles = append(fs.defaultFiles, f)
+				fs.defaultSize += f.Length
+				fs.defaultKVCount += f.GetNumberOfEntries()
+				if len(fs.defaultFiles) >= batchCount || fs.defaultSize >= batchSize {
+					applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+					fs.defaultFiles = nil
+					fs.defaultSize = 0
+					fs.defaultKVCount = 0
+				}
+			} else {
+				if fs.writeFiles == nil {
+					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.writeFiles = append(fs.writeFiles, f)
+				fs.writeSize += f.GetLength()
+				fs.writeKVCount += f.GetNumberOfEntries()
+				if len(fs.writeFiles) >= batchCount || fs.writeSize >= batchSize {
+					applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+					fs.writeFiles = nil
+					fs.writeSize = 0
+					fs.writeKVCount = 0
+				}
+			}
+		}
+	}
+
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
+			if len(fs.defaultFiles) > 0 {
+				applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+			}
+			if len(fs.writeFiles) > 0 {
+				applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+			}
+		}
+	}
+
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
+			for _, d := range fs.deleteFiles {
+				tmpFiles = append(tmpFiles, d)
+				tmpSize += d.GetLength()
+				tmpKVCount += d.GetNumberOfEntries()
+
+				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
+					applyFunc(tmpFiles, tmpKVCount, tmpSize)
+					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					tmpSize = 0
+					tmpKVCount = 0
+				}
+			}
+			if len(tmpFiles) > 0 {
+				applyFunc(tmpFiles, tmpKVCount, tmpSize)
+				tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				tmpSize = 0
+				tmpKVCount = 0
+			}
+		}
+	}
+
+	return nil
+}
+
+func ApplyKVFilesWithSingelMethod(
+	ctx context.Context,
+	files LogIter,
+	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+) error {
+	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
+
+	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
+		f := r.Item
+		if f.GetType() == backuppb.FileType_Delete {
+			deleteKVFiles = append(deleteKVFiles, f)
+			continue
+		}
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+	}
+
+	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
+	for _, file := range deleteKVFiles {
+		f := file
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+	}
+
+	return nil
+}
+
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files []*backuppb.DataFileInfo,
+	iter LogIter,
+	pitrBatchCount uint32,
+	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
-	onProgress func(),
+	onProgress func(cnt int64),
 ) error {
-	var err error
-	start := time.Now()
+	var (
+		err          error
+		fileCount    = 0
+		start        = time.Now()
+		supportBatch = version.CheckPITRSupportBatchKVFiles()
+		skipFile     = 0
+	)
 	defer func() {
-		elapsed := time.Since(start)
 		if err == nil {
+			elapsed := time.Since(start)
 			log.Info("Restore KV files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", len(files), elapsed)
+			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
-
-	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
@@ -1919,54 +1994,52 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	skipFile := 0
-	deleteFiles := make([]*backuppb.DataFileInfo, 0)
-
-	applyFunc := func(file *backuppb.DataFileInfo) {
-		// get rewrite rule from table id
-		rule, ok := rules[file.TableId]
+	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
+		if len(files) == 0 {
+			return
+		}
+		// get rewrite rule from table id.
+		// because the tableID of files is the same.
+		rule, ok := rules[files[0].TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress()
-			summary.CollectInt("FileSkip", 1)
-			log.Debug("skip file due to table id not matched", zap.String("file", file.Path), zap.Int64("tableId", file.TableId))
-			skipFile++
+			onProgress(int64(len(files)))
+			summary.CollectInt("FileSkip", len(files))
+			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
+			skipFile += len(files)
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				fileStart := time.Now()
 				defer func() {
-					onProgress()
-					updateStats(uint64(file.NumberOfEntries), file.Length)
-					summary.CollectInt("File", 1)
-					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+					onProgress(int64(len(files)))
+					updateStats(uint64(kvCount), size)
+					summary.CollectInt("File", len(files))
+
+					filenames := make([]string, 0, len(files))
+					for _, f := range files {
+						filenames = append(filenames, f.Path+", ")
+					}
+					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
-				startTS := rc.startTS
-				if file.Cf == stream.DefaultCF {
-					startTS = rc.shiftStartTS
-				}
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
+
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
 			})
 		}
 	}
-	for _, file := range files {
-		if file.Type == backuppb.FileType_Delete {
-			// collect delete type file and apply it later.
-			deleteFiles = append(deleteFiles, file)
-			continue
-		}
-		fileReplica := file
-		applyFunc(fileReplica)
+
+	if supportBatch {
+		err = ApplyKVFilesWithBatchMethod(ctx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+	} else {
+		err = ApplyKVFilesWithSingelMethod(ctx, iter, applyFunc)
 	}
-	if len(deleteFiles) > 0 {
-		log.Info("restore delete files", zap.Int("count", len(deleteFiles)))
+	if err != nil {
+		return errors.Trace(err)
 	}
-	for _, file := range deleteFiles {
-		fileReplica := file
-		applyFunc(fileReplica)
-	}
+
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
 		log.Debug("table id in full backup storage", zap.Any("tables", rules))
@@ -1974,13 +2047,9 @@ func (rc *Client) RestoreKVFiles(
 
 	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
+		log.Error("restore files failed", zap.Error(err))
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (rc *Client) CleanUpKVFiles(
@@ -2245,7 +2314,7 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 
 	// read all of entries from files.
 	for _, f := range files {
-		es, nextEs, err := rc.readAllEntries(ctx, f, filterTS)
+		es, nextEs, err := rc.ReadAllEntries(ctx, f, filterTS)
 		if err != nil {
 			return nextKvEntries, errors.Trace(err)
 		}
@@ -2270,72 +2339,6 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 		progressInc()
 	}
 	return nextKvEntries, nil
-}
-
-func (rc *Client) readAllEntries(
-	ctx context.Context,
-	file *backuppb.DataFileInfo,
-	filterTS uint64,
-) ([]*KvEntryWithTS, []*KvEntryWithTS, error) {
-	kvEntries := make([]*KvEntryWithTS, 0)
-	nextKvEntries := make([]*KvEntryWithTS, 0)
-
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType, rc.storage)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return nil, nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
-	}
-
-	iter := stream.NewEventIterator(buff)
-	for iter.Valid() {
-		iter.Next()
-		if iter.GetError() != nil {
-			return nil, nil, errors.Trace(iter.GetError())
-		}
-
-		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
-
-		if !stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
-			// only restore mDB and mDDLHistory
-			continue
-		}
-
-		ts, err := GetKeyTS(txnEntry.Key)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		// The commitTs in write CF need be limited on [startTs, restoreTs].
-		// We can restore more key-value in default CF.
-		if ts > rc.restoreTS {
-			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
-			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
-			continue
-		}
-
-		if len(txnEntry.Value) == 0 {
-			// we might record duplicated prewrite keys in some conor cases.
-			// the first prewrite key has the value but the second don't.
-			// so we can ignore the empty value key.
-			// see details at https://github.com/pingcap/tiflow/issues/5468.
-			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
-			continue
-		}
-
-		if ts < filterTS {
-			kvEntries = append(kvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
-		} else {
-			nextKvEntries = append(nextKvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
-		}
-	}
-
-	return kvEntries, nextKvEntries, nil
 }
 
 func (rc *Client) restoreMetaKvEntries(
@@ -2546,7 +2549,7 @@ func (rc *Client) RunGCRowsLoader(ctx context.Context) {
 func (rc *Client) InsertGCRows(ctx context.Context) error {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
-	ts, err := rc.GetTS(ctx)
+	ts, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2641,4 +2644,48 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) error {
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
+		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return errors.Annotatef(berrors.ErrUnknown,
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+
+	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
+	// so we need to modify this value according to the config of the cluster
+	// before using the collate package.
+	enabled := newCollationEnable == "True"
+	// modify collate.newCollationEnabled according to the config of the cluster
+	collate.SetNewCollationEnabledForTest(enabled)
+	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
+	return nil
 }

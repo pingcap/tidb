@@ -443,6 +443,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
@@ -979,6 +980,7 @@ func TestSetOperations4PlanCache(t *testing.T) {
 func TestSPM4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
@@ -989,8 +991,8 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustExec("admin reload bindings;")
 
 	res := tk.MustQuery("explain format = 'brief' select * from t;")
-	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
-	require.Regexp(t, ".*TableFullScan.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[1][0])
 
 	tk.MustExec("prepare stmt from 'select * from t;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
@@ -999,8 +1001,8 @@ func TestSPM4PlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
-	require.Regexp(t, ".*TableFullScan.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[1][0])
 
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a);")
 

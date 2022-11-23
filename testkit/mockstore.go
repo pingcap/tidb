@@ -69,12 +69,17 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		view.Stop()
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
 	return schematracker.UnwrapStorage(store), dom
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 

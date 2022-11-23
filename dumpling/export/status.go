@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
@@ -17,6 +18,11 @@ const logProgressTick = 2 * time.Minute
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	logProgressTicker := time.NewTicker(logProgressTick)
+	failpoint.Inject("EnableLogProgress", func() {
+		logProgressTicker.Stop()
+		logProgressTicker = time.NewTicker(time.Duration(1) * time.Second)
+		tctx.L().Debug("EnableLogProgress")
+	})
 	lastCheckpoint := time.Now()
 	lastBytes := float64(0)
 	defer logProgressTicker.Stop()
@@ -34,6 +40,8 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 				zap.String("estimate total rows", fmt.Sprintf("%.0f", s.EstimateTotalRows)),
 				zap.String("finished size", units.HumanSize(s.FinishedBytes)),
 				zap.Float64("average speed(MiB/s)", (s.FinishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
+				zap.Float64("recent speed bps", s.CurrentSpeedBPS),
+				zap.String("chunks progress", s.Progress),
 			)
 
 			lastCheckpoint = time.Now()
@@ -49,7 +57,8 @@ type DumpStatus struct {
 	FinishedRows      float64
 	EstimateTotalRows float64
 	TotalTables       int64
-	CurrentSpeedBPS   int64
+	CurrentSpeedBPS   float64
+	Progress          string
 }
 
 // GetStatus returns the status of dumping by reading metrics.
@@ -60,7 +69,21 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
-	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(int64(ret.FinishedBytes))
+	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(ret.FinishedBytes)
+	if d.metrics.progressReady.Load() {
+		// chunks will be zero when upstream has no data
+		if d.metrics.totalChunks.Load() == 0 {
+			ret.Progress = "100 %"
+			return ret
+		}
+		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
+		if progress > 1 {
+			ret.Progress = "100 %"
+			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.metrics.completedChunks.Load()), zap.Int64("totalChunks", d.metrics.totalChunks.Load()))
+		} else {
+			ret.Progress = fmt.Sprintf("%5.2f %%", progress*100)
+		}
+	}
 	return ret
 }
 
@@ -79,9 +102,9 @@ func calculateTableCount(m DatabaseTables) int {
 // SpeedRecorder record the finished bytes and calculate its speed.
 type SpeedRecorder struct {
 	mu             sync.Mutex
-	lastFinished   int64
+	lastFinished   float64
 	lastUpdateTime time.Time
-	speedBPS       int64
+	speedBPS       float64
 }
 
 // NewSpeedRecorder new a SpeedRecorder.
@@ -92,7 +115,7 @@ func NewSpeedRecorder() *SpeedRecorder {
 }
 
 // GetSpeed calculate status speed.
-func (s *SpeedRecorder) GetSpeed(finished int64) int64 {
+func (s *SpeedRecorder) GetSpeed(finished float64) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -103,9 +126,10 @@ func (s *SpeedRecorder) GetSpeed(finished int64) int64 {
 	}
 
 	now := time.Now()
-	elapsed := int64(now.Sub(s.lastUpdateTime).Seconds())
+	elapsed := now.Sub(s.lastUpdateTime).Seconds()
 	if elapsed == 0 {
-		elapsed = 1
+		// if time is short, return last speed
+		return s.speedBPS
 	}
 	currentSpeed := (finished - s.lastFinished) / elapsed
 	if currentSpeed == 0 {
