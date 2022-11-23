@@ -408,7 +408,7 @@ func (tr *TableRestore) restoreEngine(
 		}
 		if rc.status != nil && rc.status.backend == config.BackendTiDB {
 			for _, chunk := range cp.Chunks {
-				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset)
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 			}
 		}
 		return closedEngine, nil
@@ -481,7 +481,7 @@ func (tr *TableRestore) restoreEngine(
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if rc.status != nil && rc.status.backend == config.BackendTiDB {
-			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset)
+			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
 		}
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
 			continue
