@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -115,7 +114,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
+	// nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -658,8 +657,7 @@ func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
 	for _, columnInfo := range dataSource.tableInfo.Columns {
-		// todo remove varchar
-		if columnInfo.Hidden {
+		if columnInfo.Hidden || columnInfo.FieldType.IsVarLengthType() {
 			continue
 		}
 		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
@@ -669,7 +667,7 @@ func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *
 					UniqueID: dataSource.ctx.GetSessionVars().AllocPlanColumnID(),
 					ID:       resultColumnInfo.ID,
 					RetType:  resultColumnInfo.FieldType.Clone(),
-					OrigName: resultColumnInfo.Name.String(),
+					OrigName: fmt.Sprintf("%s.%s.%s", dataSource.DBName.L, dataSource.tableInfo.Name.L, resultColumnInfo.Name),
 					IsHidden: resultColumnInfo.Hidden,
 				}
 			}

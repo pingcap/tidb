@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
@@ -76,38 +75,12 @@ func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimiz
 	return p, nil
 }
 
-func pickNotNullColumnFromTable(dataSource *DataSource, logicalAgg *LogicalAggregation, aggFunc *aggregation.AggFuncDesc) {
-	var newAggColumn *model.ColumnInfo
-	for _, column := range dataSource.tableInfo.Columns {
-		// remove varchar
-		if column.Hidden {
-			continue
-		}
-		if mysql.HasNotNullFlag(column.GetFlag()) {
-			if newAggColumn == nil || column.GetFlen() < newAggColumn.GetFlen() {
-				newAggColumn = column
-			}
-		}
-	}
-	if newAggColumn != nil {
-		// update count(1) -> count(newAggColumn)
-		aggArgs := &expression.Column{
-			RetType:  &newAggColumn.FieldType,
-			UniqueID: logicalAgg.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       newAggColumn.ID}
-		aggFunc.Args[0] = aggArgs
-		// update datasource columns
-		dataSource.Columns = append(dataSource.Columns, newAggColumn)
-		dataSource.schema.Columns = append(dataSource.schema.Columns, aggArgs)
-	}
-}
-
 // Pick the shortest and not null column from Data Source
 // If there is no not null column in Data Source, the count(1) will not be rewritten.
 func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.AggFuncDesc) {
 	var newAggColumn *expression.Column
 	for _, columnExistsInDataSource := range dataSource.schema.Columns {
-		if columnExistsInDataSource.IsHidden {
+		if columnExistsInDataSource.IsHidden || columnExistsInDataSource.GetType().IsVarLengthType() {
 			continue
 		}
 		if mysql.HasNotNullFlag(columnExistsInDataSource.GetType().GetFlag()) {
@@ -118,10 +91,7 @@ func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.Agg
 	}
 	if newAggColumn != nil {
 		// update count(1) -> count(newAggColumn)
-		aggFunc.Args[0] = &expression.Column{
-			RetType:  newAggColumn.GetType(),
-			UniqueID: newAggColumn.UniqueID,
-			ID:       newAggColumn.ID}
+		aggFunc.Args[0] = newAggColumn
 	}
 }
 

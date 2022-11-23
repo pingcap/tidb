@@ -2467,16 +2467,15 @@ func TestCountStar(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int(11) not null, b bool not null)")
-	SetTiFlashReplica(t, dom, "test", "t")
-	tk.MustExec("insert into t values(1, true)")
+	tk.MustExec("create table t_without_not_null (a int(11), b varchar not null)")
+	SetTiFlashReplica(t, dom, "test", "t_without_not_null")
 
-	rows := tk.MustQuery("explain select count(*) from t").Rows()
+	rows := tk.MustQuery("explain format = 'brief' select count(*) from t_without_not_null").Rows()
 	for _, line := range rows {
 		fmt.Println(line)
 	}
 
-	rows = tk.MustQuery("explain select count(*) from t where a=1").Rows()
+	rows = tk.MustQuery("explain format = 'brief' select count(*) from t where a=1").Rows()
 	for _, line := range rows {
 		fmt.Println(line)
 	}
