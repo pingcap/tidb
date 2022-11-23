@@ -52,7 +52,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	tblInfo, err := testTableInfo(store, "t", 2)
 	require.NoError(t, err)
 	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	// ToDo: will check why tidb_ddl_enable_fast_reorg could not be default on in another pr.
+	// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)

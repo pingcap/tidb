@@ -320,7 +320,7 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
 	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
 		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-		// ToDo: will check why tidb_ddl_enable_fast_reorg could not be default on in another pr.
+		// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
 		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	})
@@ -330,7 +330,7 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
 	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		// ToDo: will check why tidb_ddl_enable_fast_reorg could not be default on in another pr.
+		// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
 		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	})

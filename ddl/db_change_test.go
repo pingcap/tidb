@@ -1719,7 +1719,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// ToDo: will check why tidb_ddl_enable_fast_reorg could not be default on in another pr.
+	// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.pr.
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
