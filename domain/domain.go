@@ -1653,13 +1653,8 @@ func (do *Domain) StartPlanReplayerHandle() {
 		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
 			go worker.run()
 		}
-		for {
-			select {
-			case <-do.exit:
-				do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
-				return
-			}
-		}
+		<-do.exit
+		do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
 	}()
 }
 
