@@ -235,10 +235,12 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	// data-engines that need to be restore or import. Otherwise, all data-engines should
 	// be finished already.
 
+	handleDataEngineThisRun := false
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
+		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
@@ -368,6 +370,15 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
+	}
+
+	// if data engine is handled in previous run and we continue importing from checkpoint
+	if !handleDataEngineThisRun {
+		for _, engine := range cp.Engines {
+			for _, chunk := range engine.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+			}
+		}
 	}
 
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
