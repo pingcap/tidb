@@ -333,8 +333,9 @@ func (e *basicCopRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
+	tiflashScanContextClone := e.tiflashScanContext.Clone()
 	return &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, tiflashScanContext: e.tiflashScanContext},
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, tiflashScanContext: &tiflashScanContextClone},
 		threads:           e.threads,
 		storeType:         e.storeType,
 	}
@@ -518,6 +519,18 @@ type TiFlashScanContext struct {
 	totalCreateSnapshotTimeMs          uint64
 }
 
+// Clone implements the deep copy of * TiFlashshScanContext
+func (context *TiFlashScanContext) Clone() TiFlashScanContext {
+	return TiFlashScanContext{
+		totalDmfileScannedPacks:            context.totalDmfileScannedPacks,
+		totalDmfileScannedRows:             context.totalDmfileScannedRows,
+		totalDmfileSkippedPacks:            context.totalDmfileSkippedPacks,
+		totalDmfileSkippedRows:             context.totalDmfileSkippedRows,
+		totalDmfileRoughSetIndexLoadTimeMs: context.totalDmfileRoughSetIndexLoadTimeMs,
+		totalDmfileReadTimeMs:              context.totalDmfileReadTimeMs,
+		totalCreateSnapshotTimeMs:          context.totalCreateSnapshotTimeMs,
+	}
+}
 func (context *TiFlashScanContext) String() string {
 	return fmt.Sprintf("tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs)
 }
@@ -558,11 +571,12 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
+	tiflashScanContextClone := e.tiflashScanContext.Clone()
 	return &BasicRuntimeStats{
 		loop:               e.loop,
 		consume:            e.consume,
 		rows:               e.rows,
-		tiflashScanContext: e.tiflashScanContext,
+		tiflashScanContext: &tiflashScanContextClone,
 	}
 }
 
