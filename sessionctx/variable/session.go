@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"math/rand"
 	"net"
@@ -1389,16 +1388,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	if sc == s.StmtCtx {
 		sc = &s.cachedStmtCtx[1]
 	}
-	isFirst := sc == &s.cachedStmtCtx[0]
 	if s.RefCountOfStmtCtx.TryFreeze() {
 		*sc = stmtctx.StatementContext{}
 		s.RefCountOfStmtCtx.UnFreeze()
 	} else {
 		sc = &stmtctx.StatementContext{}
-	}
-	if isFirst && !sc.InRestrictedSQL && s.ConnectionID != 0 {
-		logutil.BgLogger().Error("InitStatementContext[0] sleep")
-		time.Sleep(15 * time.Second)
 	}
 	return sc
 }

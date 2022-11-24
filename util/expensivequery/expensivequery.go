@@ -62,7 +62,6 @@ func (eqh *Handle) Run() {
 				}
 
 				costTime := time.Since(info.Time)
-				threshold = uint64(2)
 				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info, "expensive_query")
 					info.ExceedExpensiveTimeThresh = true
