@@ -34,9 +34,12 @@ go_test(
     embed = [":addindextest"],
     deps = [
         "//config",
+        "//ddl",
         "//ddl/ingest",
+        "//ddl/testutil",
         "//testkit",
         "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

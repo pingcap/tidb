@@ -1305,6 +1305,9 @@ type SessionVars struct {
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
+
+	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
+	EnablePlanReplayerCapture bool
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

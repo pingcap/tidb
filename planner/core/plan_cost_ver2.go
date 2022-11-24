@@ -116,7 +116,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := math.Max(getAvgRowSize(p.stats, p.schema.Columns), 2.0) // consider all index columns
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.planCostInit = true
@@ -139,7 +139,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 		rowSize = getAvgRowSize(p.stats, p.schema.Columns)
 	}
 	rowSize = math.Max(rowSize, 2.0)
-	scanFactor := getTaskScanFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
@@ -161,7 +161,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.indexPlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.indexPlan.Stats(), p.indexPlan.Schema().Columns)
+	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -186,7 +186,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.tablePlan.Stats(), p.tablePlan.Schema().Columns)
+	rowSize := getAvgRowSize(p.stats, p.schema.Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -205,8 +205,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	p.planCostInit = true
 
 	// consider tidb_enforce_mpp
-	_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
-	if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() &&
+	if p.StoreType == kv.TiFlash && p.ctx.GetSessionVars().IsMPPEnforced() &&
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 		p.planCostVer2 = divCostVer2(p.planCostVer2, 1000000000)
 	}
@@ -440,10 +439,6 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
 
-	if inputRows < 2000 { // prefer to use StreamAgg if no much data to process
-		inputRows = 2000
-	}
-
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, p.GroupByItems, cpuFactor, memFactor)
@@ -539,56 +534,73 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	return p.planCostVer2.label(p), nil
 }
 
-// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = build-child-cost + build-filter-cost +
-// (probe-cost + probe-filter-cost) / concurrency
-// probe-cost = probe-child-cost * build-rows / batchRatio
-func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, option *PlanCostOption, indexJoinType int) (costVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
 	}
 
 	build, probe := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
+	buildRowSize := getAvgRowSize(build.Stats(), build.Schema().Columns)
 	probeRowsOne := getCardinality(probe, option.CostFlag)
 	probeRowsTot := probeRowsOne * buildRows
+	probeRowSize := getAvgRowSize(probe.Stats(), probe.Schema().Columns)
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
 	probeConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	requestFactor := getTaskRequestFactorVer2(p, taskType)
+	memFactor := getTaskMemFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
+	buildTaskCost := newCostVer2(option, cpuFactor,
+		buildRows*10*cpuFactor.Value,
+		"cpu(%v*10*%v)", buildRows, cpuFactor)
 
 	probeFilterCost := filterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
 	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
+
+	var hashTableCost costVer2
+	switch indexJoinType {
+	case 1: // IndexHashJoin
+		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, cols2Exprs(p.RightJoinKeys), cpuFactor, memFactor)
+	case 2: // IndexMergeJoin
+		hashTableCost = newZeroCostVer2(traceCost(option))
+	default: // IndexJoin
+		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, cols2Exprs(p.LeftJoinKeys), cpuFactor, memFactor)
+	}
+
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
 	// TODO: remove this empirical value.
-	batchRatio := 1024.0
+	batchRatio := 6.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
-	doubleReadCost := doubleReadCostVer2(option, buildRows/batchRatio, requestFactor)
 
-	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, doubleReadCost), probeConcurrency))
+	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost +
+// (probe-cost + probe-filter-cost) / concurrency
+// probe-cost = probe-child-cost * build-rows / batchRatio
+func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	return p.getIndexJoinCostVer2(taskType, option, 0)
+}
+
 func (p *PhysicalIndexHashJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	// TODO: distinguish IndexHashJoin with IndexJoin
-	return p.PhysicalIndexJoin.getPlanCostVer2(taskType, option)
+	return p.getIndexJoinCostVer2(taskType, option, 1)
 }
 
 func (p *PhysicalIndexMergeJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	// TODO: distinguish IndexMergeJoin with IndexJoin
-	return p.PhysicalIndexJoin.getPlanCostVer2(taskType, option)
+	return p.getIndexJoinCostVer2(taskType, option, 2)
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -879,9 +891,12 @@ func getTaskMemFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Fa
 	}
 }
 
-func getTaskScanFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+func getTaskScanFactorVer2(p PhysicalPlan, storeType kv.StoreType, taskType property.TaskType) costVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
+	}
+	if storeType == kv.TiFlash {
+		return defaultVer2Factors.TiFlashScan
 	}
 	switch taskType {
 	case property.MppTaskType: // TiFlash

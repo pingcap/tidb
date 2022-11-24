@@ -94,14 +94,14 @@ type Client struct {
 }
 
 // NewBackupClient returns a new backup client.
-func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
+func NewBackupClient(ctx context.Context, mgr ClientMgr) *Client {
 	log.Info("new backup client")
 	pdClient := mgr.GetPDClient()
 	clusterID := pdClient.GetClusterID(ctx)
 	return &Client{
 		clusterID: clusterID,
 		mgr:       mgr,
-	}, nil
+	}
 }
 
 // GetTS gets a new timestamp from PD.
