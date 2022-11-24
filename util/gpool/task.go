@@ -103,7 +103,7 @@ func (t *TaskBox[T, U, C, CT, TF]) Done() {
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 	Release()
 
-	Tune(size int)
+	Tune(size int, isLimit bool)
 
 	DeleteTask(id uint64)
 }

@@ -15,35 +15,53 @@
 package resourcemanage
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/resourcemanage/scheduler"
 	"github.com/pingcap/tidb/resourcemanage/util"
 )
 
 func (r *ResourceManage) schedule() {
 	for _, pool := range r.poolMap {
-		r.schedulePool(pool)
-	}
-	for _, pool := range r.poolMap {
-		r.limitPool(pool)
+		cmd := r.schedulePool(pool)
+		isLimit := r.limitPool(pool)
+		r.exec(pool, cmd, isLimit)
 	}
 }
 
-func (r *ResourceManage) schedulePool(pool *util.PoolContainer) {
+func (r *ResourceManage) schedulePool(pool *util.PoolContainer) scheduler.Command {
 	for _, sch := range r.scheduler {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
-		case scheduler.Overclock:
-			overclock(pool)
-		case scheduler.Downclock:
-			downclock(pool)
 		case scheduler.Hold:
 			continue
+		default:
+			return cmd
 		}
 	}
+	return scheduler.Hold
 }
 
-func (r *ResourceManage) limitPool(pool *util.PoolContainer) {
+func (r *ResourceManage) limitPool(pool *util.PoolContainer) bool {
 	for _, lim := range r.limiter {
-		lim.Limit(pool.Component, pool.Pool)
+		if lim.Limit(pool.Component, pool.Pool) {
+			return true
+		}
+	}
+	return false
+}
+
+func (*ResourceManage) exec(pool *util.PoolContainer, cmd scheduler.Command, isLimit bool) {
+	if cmd == scheduler.Hold && !isLimit {
+		return
+	}
+	if time.Since(pool.Pool.LastTunerTs()) > 200*time.Millisecond {
+		con := pool.Pool.Cap()
+		switch cmd {
+		case scheduler.Downclock:
+			pool.Pool.Tune(con-1, isLimit)
+		case scheduler.Overclock:
+			pool.Pool.Tune(con+1, isLimit)
+		}
 	}
 }

@@ -26,6 +26,9 @@ func loadOptions(options ...Option) *Options {
 	for _, option := range options {
 		option(opts)
 	}
+	if opts.LimitDuration == 0 {
+		opts.LimitDuration = 200 * time.Millisecond
+	}
 	return opts
 }
 
