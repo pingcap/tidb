@@ -202,9 +202,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if fkc.stats != nil {
 		defer func() {
 			fkc.stats.Keys = len(fkc.toBeCheckedKeys) + len(fkc.toBeCheckedPrefixKeys)
-			if fkc.stats.Total == 0 {
-				fkc.stats.Total = time.Since(start)
-			}
+			fkc.stats.Total = time.Since(start)
 		}()
 	}
 	txn, err := fkc.ctx.Txn(false)
@@ -221,7 +219,6 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	}
 	if fkc.stats != nil {
 		fkc.stats.Check = time.Since(start)
-		fkc.stats.Total = fkc.stats.Check
 	}
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
@@ -239,8 +236,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
 	if fkc.stats != nil {
-		fkc.stats.Total = time.Since(start)
-		fkc.stats.Lock = fkc.stats.Total - fkc.stats.Check
+		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
 	}
 	return err
 }
