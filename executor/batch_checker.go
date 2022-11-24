@@ -180,6 +180,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
+		if v.Meta().BackfillState == model.BackfillStateRunning {
+			_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
+		}
 		colValStr, err1 := formatDataForDupError(colVals)
 		if err1 != nil {
 			return nil, err1
