@@ -3014,7 +3014,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
 	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
-	pworkerSes, err := createSessions(store, 2)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
 	if err != nil {
 		return nil, err
 	}
