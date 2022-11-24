@@ -534,57 +534,73 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	return p.planCostVer2.label(p), nil
 }
 
-// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = build-child-cost + build-filter-cost +
-// (probe-cost + probe-filter-cost) / concurrency
-// probe-cost = probe-child-cost * build-rows / batchRatio
-func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, option *PlanCostOption, indexJoinType int) (costVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
 	}
 
 	build, probe := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
+	buildRowSize := getAvgRowSize(build.Stats(), build.Schema().Columns)
 	probeRowsOne := getCardinality(probe, option.CostFlag)
 	probeRowsTot := probeRowsOne * buildRows
+	probeRowSize := getAvgRowSize(probe.Stats(), probe.Schema().Columns)
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
 	probeConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	requestFactor := getTaskRequestFactorVer2(p, taskType)
+	memFactor := getTaskMemFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
+	buildTaskCost := newCostVer2(option, cpuFactor,
+		buildRows*10*cpuFactor.Value,
+		"cpu(%v*10*%v)", buildRows, cpuFactor)
 
 	probeFilterCost := filterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
 	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
+
+	var hashTableCost costVer2
+	switch indexJoinType {
+	case 1: // IndexHashJoin
+		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, cols2Exprs(p.RightJoinKeys), cpuFactor, memFactor)
+	case 2: // IndexMergeJoin
+		hashTableCost = newZeroCostVer2(traceCost(option))
+	default: // IndexJoin
+		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, cols2Exprs(p.LeftJoinKeys), cpuFactor, memFactor)
+	}
+
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
 	// TODO: remove this empirical value.
-	batchRatio := 1800.0
+	batchRatio := 6.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
-	numTasks := math.Max(buildRows/batchRatio, 0.001)
-	doubleReadCost := doubleReadCostVer2(option, numTasks, requestFactor)
 
-	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, doubleReadCost), probeConcurrency))
+	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost +
+// (probe-cost + probe-filter-cost) / concurrency
+// probe-cost = probe-child-cost * build-rows / batchRatio
+func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	return p.getIndexJoinCostVer2(taskType, option, 0)
+}
+
 func (p *PhysicalIndexHashJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	// TODO: distinguish IndexHashJoin with IndexJoin
-	return p.PhysicalIndexJoin.getPlanCostVer2(taskType, option)
+	return p.getIndexJoinCostVer2(taskType, option, 1)
 }
 
 func (p *PhysicalIndexMergeJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	// TODO: distinguish IndexMergeJoin with IndexJoin
-	return p.PhysicalIndexJoin.getPlanCostVer2(taskType, option)
+	return p.getIndexJoinCostVer2(taskType, option, 2)
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:

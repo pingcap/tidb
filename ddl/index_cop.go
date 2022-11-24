@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -29,41 +31,189 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generic"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // copReadBatchFactor is the factor of batch size of coprocessor read.
 // It multiplies the tidb_ddl_reorg_batch_size to avoid sending too many cop requests for the same handle range.
 const copReadBatchFactor = 10
 
-func (w *addIndexWorker) fetchRowColValsFromCop(txn kv.Transaction, handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	w.idxRecords = w.idxRecords[:0]
-	start, end := handleRange.startKey, handleRange.excludedEndKey()
-	batchCnt := w.batchCnt * copReadBatchFactor
-	return fetchRowsFromCop(w.ctx, w.copCtx, start, end, txn.StartTS(), w.idxRecords, batchCnt)
+func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case rs, ok := <-c.resultsCh:
+			if !ok {
+				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed",
+					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
+				return nil, handleRange.endKey, true, nil
+			}
+			if rs.err != nil {
+				return nil, handleRange.startKey, false, rs.err
+			}
+			if rs.done {
+				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
+					zap.Int("id", rs.id), zap.Int("total", rs.total))
+				c.results.Store(rs.id, struct{}{})
+			}
+			if _, found := c.results.Load(handleRange.id); found {
+				logutil.BgLogger().Info("[ddl-ingest] task is found in results",
+					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
+				c.results.Delete(handleRange.id)
+				return rs.records, handleRange.endKey, true, nil
+			}
+			return rs.records, handleRange.startKey, false, nil
+		case <-ticker.C:
+			logutil.BgLogger().Info("[ddl-ingest] cop-request result channel is empty",
+				zap.Int("id", handleRange.id))
+			if _, found := c.results.Load(handleRange.id); found {
+				c.results.Delete(handleRange.id)
+				return nil, handleRange.endKey, true, nil
+			}
+		}
+	}
 }
 
-// fetchRowsFromCop sends a coprocessor request and fetches the first batchCnt rows.
-func fetchRowsFromCop(ctx context.Context, copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
-	buf []*indexRecord, batchCnt int) ([]*indexRecord, kv.Key, bool, error) {
-	srcResult, err := copCtx.buildTableScan(ctx, startTS, startKey, endKey)
-	if err != nil {
-		return nil, nil, false, errors.Trace(err)
-	}
-	var done bool
-	buf, done, err = copCtx.fetchTableScanResult(ctx, srcResult, buf, batchCnt)
-	nextKey := endKey
-	if !done {
-		lastHandle := buf[len(buf)-1].handle
-		prefix := tablecodec.GenTableRecordPrefix(copCtx.tblInfo.ID)
-		nextKey = tablecodec.EncodeRecordKey(prefix, lastHandle).Next()
-	}
-	return buf, nextKey, done, err
+type copReqSenderPool struct {
+	tasksCh   chan *reorgBackfillTask
+	resultsCh chan idxRecResult
+	results   generic.SyncMap[int, struct{}]
+
+	ctx     context.Context
+	copCtx  *copContext
+	startTS uint64
+
+	senders []*copReqSender
+	wg      sync.WaitGroup
+
+	idxBufPool sync.Pool
 }
 
+type copReqSender struct {
+	senderPool *copReqSenderPool
+
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (c *copReqSender) run() {
+	p := c.senderPool
+	defer p.wg.Done()
+	srcChk := renewChunk(nil, p.copCtx.fieldTps)
+	for {
+		if util.HasCancelled(c.ctx) {
+			return
+		}
+		task, ok := <-p.tasksCh
+		if !ok {
+			return
+		}
+		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
+			zap.Int("id", task.id), zap.String("task", task.String()))
+		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
+		if err != nil {
+			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			return
+		}
+		var done bool
+		var total int
+		for !done {
+			idxRec := p.idxBufPool.Get().([]*indexRecord)
+			idxRec = idxRec[:0]
+			srcChk = renewChunk(srcChk, p.copCtx.fieldTps)
+			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
+			if err != nil {
+				p.resultsCh <- idxRecResult{id: task.id, err: err}
+				return
+			}
+			total += len(idxRec)
+			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, done: done, total: total}
+		}
+	}
+}
+
+// renewChunk creates a new chunk when the reorg batch size is changed.
+func renewChunk(oldChk *chunk.Chunk, fts []*types.FieldType) *chunk.Chunk {
+	newSize := variable.GetDDLReorgBatchSize()
+	newCap := int(newSize) * copReadBatchFactor
+	if oldChk == nil || oldChk.Capacity() != newCap {
+		return chunk.NewChunkWithCapacity(fts, newCap)
+	}
+	oldChk.Reset()
+	return oldChk
+}
+
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
+	return &copReqSenderPool{
+		tasksCh:   make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultsCh: make(chan idxRecResult, backfillTaskChanSize),
+		results:   generic.NewSyncMap[int, struct{}](10),
+		ctx:       ctx,
+		copCtx:    copCtx,
+		startTS:   startTS,
+		senders:   make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:        sync.WaitGroup{},
+		idxBufPool: sync.Pool{
+			New: func() any {
+				return make([]*indexRecord, 0, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
+			},
+		},
+	}
+}
+
+func (c *copReqSenderPool) sendTask(task *reorgBackfillTask) {
+	c.tasksCh <- task
+}
+
+func (c *copReqSenderPool) adjustSize(n int) {
+	// Add some senders.
+	for i := len(c.senders); i < n; i++ {
+		ctx, cancel := context.WithCancel(c.ctx)
+		c.senders = append(c.senders, &copReqSender{
+			senderPool: c,
+			ctx:        ctx,
+			cancel:     cancel,
+		})
+		c.wg.Add(1)
+		go c.senders[i].run()
+	}
+	// Remove some senders.
+	if n < len(c.senders) {
+		for i := n; i < len(c.senders); i++ {
+			c.senders[i].cancel()
+		}
+		c.senders = c.senders[:n]
+	}
+}
+
+func (c *copReqSenderPool) close() {
+	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool", zap.Int("results not handled", len(c.results.Keys())))
+	close(c.tasksCh)
+	for _, w := range c.senders {
+		w.cancel()
+	}
+	c.wg.Wait()
+	close(c.resultsCh)
+}
+
+// recycleIdxRecords puts the index record slice back to the pool for reuse.
+func (c *copReqSenderPool) recycleIdxRecords(idxRecs []*indexRecord) {
+	if len(idxRecs) == 0 {
+		return
+	}
+	c.idxBufPool.Put(idxRecs[:0])
+}
+
+// copContext contains the information that is needed when building a coprocessor request.
+// It is unchanged after initialization.
 type copContext struct {
 	tblInfo  *model.TableInfo
 	idxInfo  *model.IndexInfo
@@ -71,8 +221,6 @@ type copContext struct {
 	colInfos []*model.ColumnInfo
 	fieldTps []*types.FieldType
 	sessCtx  sessionctx.Context
-
-	srcChunk *chunk.Chunk
 }
 
 func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) *copContext {
@@ -99,7 +247,6 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 		colInfos: colInfos,
 		fieldTps: fieldTps,
 		sessCtx:  sessCtx,
-		srcChunk: chunk.NewChunkWithCapacity(fieldTps, variable.DefMaxChunkSize),
 	}
 	return copCtx
 }
@@ -127,30 +274,27 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 }
 
 func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
-	buf []*indexRecord, batchCnt int) ([]*indexRecord, bool, error) {
+	chk *chunk.Chunk, buf []*indexRecord) ([]*indexRecord, bool, error) {
 	sctx := c.sessCtx.GetSessionVars().StmtCtx
-	for {
-		err := result.Next(ctx, c.srcChunk)
+	err := result.Next(ctx, chk)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if chk.NumRows() == 0 {
+		return buf, true, nil
+	}
+	iter := chunk.NewIterator4Chunk(chk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
+		handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		if c.srcChunk.NumRows() == 0 {
-			return buf, true, nil
-		}
-		iter := chunk.NewIterator4Chunk(c.srcChunk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
-			handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
-			buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
-			if len(buf) >= batchCnt {
-				return buf, false, nil
-			}
-		}
+		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
+		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
+	done := chk.NumRows() < chk.Capacity()
+	return buf, done, nil
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
@@ -218,4 +362,12 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 		return kv.NewCommonHandle(handleBytes)
 	}
 	return kv.IntHandle(pkDts[0].GetInt64()), nil
+}
+
+type idxRecResult struct {
+	id      int
+	records []*indexRecord
+	err     error
+	done    bool
+	total   int
 }
