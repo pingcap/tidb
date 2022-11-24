@@ -1151,6 +1151,11 @@ var (
 	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 
+	PasswordValidationLength           = atomic.NewInt32(8)
+	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
+	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
+	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+
 	IsSandBoxModeEnabled = atomic.NewBool(false)
 )
 
