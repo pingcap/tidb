@@ -821,6 +821,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
 					tryFallbackToTxnMerge(job, err)
+					err = nil
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
