@@ -50,11 +50,7 @@ import (
 )
 
 var pdScheduleKey = []string{
-	"hot-region-schedule-limit",
-	"leader-schedule-limit",
 	"merge-schedule-limit",
-	"region-schedule-limit",
-	"replica-schedule-limit",
 }
 
 const (
