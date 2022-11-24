@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/resourcemanage/util"
-	"github.com/pingcap/tidb/util/cpu"
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
@@ -48,15 +47,10 @@ func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool
 	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
 		return Hold
 	}
-	usage := cpu.GetCPUUsage()
-	if usage > 0.8 && component == util.DDL {
-		return Downclock
-	}
 
 	if p.InFlight() < int64(p.Cap())/2 {
 		return Hold
 	}
-
 	gradient := mathutil.Max(0.5, mathutil.Min(1.0, p.LongRTT()/float64(p.ShortRTT())))
 	newLimit := float64(p.Running())*gradient + float64(p.GetQueueSize())
 	newLimit = float64(p.Running())*(1-b.smoothing) + newLimit*b.smoothing
