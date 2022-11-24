@@ -1580,25 +1580,21 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		sctx: collectorSctx,
 	}
 	taskCH := make(chan *PlanReplayerDumpTask, 16)
-	finished := &atomic.Bool{}
 	taskStatus := &planReplayerDumpTaskStatus{}
 	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
 	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
 
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
-		taskCH:   taskCH,
-		status:   taskStatus,
-		finished: finished,
+		taskCH: taskCH,
+		status: taskStatus,
 	}
 	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
 	for i := 0; i < len(workersSctxs); i++ {
 		worker := &planReplayerTaskDumpWorker{
-			ctx:        ctx,
-			sctx:       workersSctxs[i],
-			taskCH:     taskCH,
-			status:     taskStatus,
-			taskHandle: do.planReplayerHandle.planReplayerTaskCollectorHandle,
-			finished:   finished,
+			ctx:    ctx,
+			sctx:   workersSctxs[i],
+			taskCH: taskCH,
+			status: taskStatus,
 		}
 		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
@@ -1660,7 +1656,7 @@ func (do *Domain) StartPlanReplayerHandle() {
 		for {
 			select {
 			case <-do.exit:
-				do.planReplayerHandle.planReplayerTaskDumpHandle.Finish()
+				do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
 				return
 			}
 		}

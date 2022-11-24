@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -127,20 +126,6 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	}
 }
 
-type planReplayerHandle struct {
-	*planReplayerTaskCollectorHandle
-	*planReplayerTaskDumpHandle
-}
-
-type planReplayerTaskCollectorHandle struct {
-	taskMu struct {
-		sync.RWMutex
-		tasks map[PlanReplayerTaskKey]struct{}
-	}
-	ctx  context.Context
-	sctx sessionctx.Context
-}
-
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.(sqlexec.SQLExecutor)
@@ -190,6 +175,35 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
 	}
+}
+
+type planReplayerHandle struct {
+	*planReplayerTaskCollectorHandle
+	*planReplayerTaskDumpHandle
+}
+
+// SendTask send dumpTask in background task handler
+func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) {
+	select {
+	case h.planReplayerTaskDumpHandle.taskCH <- task:
+		// we directly remove the task key if we put task in channel successfully, if the task was failed to dump,
+		// the task handle will re-add the task in next loop
+		h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
+	default:
+		// TODO: add metrics here
+		// directly discard the task if the task channel is full in order not to block the query process
+		logutil.BgLogger().Info("discard one plan replayer dump task",
+			zap.String("sql digest", task.SQLDigest), zap.String("plan digest", task.PlanDigest))
+	}
+}
+
+type planReplayerTaskCollectorHandle struct {
+	taskMu struct {
+		sync.RWMutex
+		tasks map[PlanReplayerTaskKey]struct{}
+	}
+	ctx  context.Context
+	sctx sessionctx.Context
 }
 
 // CollectPlanReplayerTask collects all unhandled plan replayer task
@@ -265,11 +279,13 @@ func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context
 }
 
 type planReplayerDumpTaskStatus struct {
+	// running task records the task running by all workers in order to avoid multi workers running the same task key
 	runningTaskMu struct {
 		sync.RWMutex
 		runningTasks map[PlanReplayerTaskKey]struct{}
 	}
 
+	// finished task records the finished task in order to avoid running finished task key
 	finishedTaskMu struct {
 		sync.RWMutex
 		finishedTask map[PlanReplayerTaskKey]struct{}
@@ -327,12 +343,10 @@ func (r *planReplayerDumpTaskStatus) clearFinishedTask() {
 }
 
 type planReplayerTaskDumpWorker struct {
-	ctx        context.Context
-	sctx       sessionctx.Context
-	taskCH     <-chan *PlanReplayerDumpTask
-	status     *planReplayerDumpTaskStatus
-	taskHandle *planReplayerTaskCollectorHandle
-	finished   *atomic.Bool
+	ctx    context.Context
+	sctx   sessionctx.Context
+	taskCH <-chan *PlanReplayerDumpTask
+	status *planReplayerDumpTaskStatus
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
@@ -340,14 +354,12 @@ func (w *planReplayerTaskDumpWorker) run() {
 		if w.status.checkTaskKeyFinishedBefore(task) {
 			continue
 		}
-		if !w.status.occupyRunningTaskKey(task) {
+		successOccupy := w.status.occupyRunningTaskKey(task)
+		if !successOccupy {
 			continue
 		}
 		w.HandleTask(task)
 		w.status.releaseRunningTaskKey(task)
-		if w.finished.Load() {
-			return
-		}
 	}
 }
 
@@ -355,7 +367,6 @@ func (w *planReplayerTaskDumpWorker) run() {
 func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (success bool) {
 	defer func() {
 		if success {
-			w.taskHandle.removeTask(task.PlanReplayerTaskKey)
 			w.status.setTaskFinished(task)
 		}
 	}()
@@ -417,10 +428,9 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 }
 
 type planReplayerTaskDumpHandle struct {
-	taskCH   chan *PlanReplayerDumpTask
-	finished *atomic.Bool
-	status   *planReplayerDumpTaskStatus
-	workers  []*planReplayerTaskDumpWorker
+	taskCH  chan *PlanReplayerDumpTask
+	status  *planReplayerDumpTaskStatus
+	workers []*planReplayerTaskDumpWorker
 }
 
 // GetTaskStatus used for test
@@ -433,27 +443,14 @@ func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
 	return h.workers[0]
 }
 
-// Finish make finished flag ture
-func (h *planReplayerTaskDumpHandle) Finish() {
+// Close make finished flag ture
+func (h *planReplayerTaskDumpHandle) Close() {
 	close(h.taskCH)
-	h.finished.Store(true)
 }
 
 // DrainTask drain a task for unit test
 func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 	return <-h.taskCH
-}
-
-// SendTask send dumpTask in background task handler
-func (h *planReplayerTaskDumpHandle) SendTask(task *PlanReplayerDumpTask) {
-	select {
-	case h.taskCH <- task:
-	default:
-		logutil.BgLogger().Info("discard one plan replayer dump task",
-			zap.String("sql digest", task.SQLDigest), zap.String("plan digest", task.PlanDigest))
-		// TODO: add metrics here
-		// directly discard the task if the task channel is full in order not to block the query process
-	}
 }
 
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task PlanReplayerTaskKey) (bool, error) {
