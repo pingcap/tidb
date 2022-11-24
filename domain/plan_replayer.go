@@ -450,6 +450,7 @@ func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
 
 // Finish make finished flag ture
 func (h *planReplayerTaskDumpHandle) Finish() {
+	close(h.sender.taskCH)
 	h.finished.Store(true)
 }
 
