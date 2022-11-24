@@ -4,7 +4,8 @@ import (
 	"context"
 	"io"
 	"strconv"
-	"sync/atomic"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -60,10 +61,12 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 	storeSet := map[uint64]struct{}{}
 	for _, store := range stores {
-		_, ok := f.clients[store.ID]
+		sub, ok := f.clients[store.ID]
 		if !ok {
-			f.addSubscription(ctx, store.ID)
+			f.addSubscription(ctx, store)
 			f.clients[store.ID].connect(f.masterCtx, f.dialer)
+		} else if sub.storeBootAt != store.BootAt {
+			sub.connect(f.masterCtx, f.dialer)
 		}
 		storeSet[store.ID] = struct{}{}
 	}
@@ -92,9 +95,10 @@ func (f *FlushSubscriber) Drop() {
 	close(f.eventsTunnel)
 }
 
-// HandleErrors handles all pending errors.
-// Return them if there are some error cannot be handle internally.
-func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
+// HandleErrors execute the handlers over all pending errors.
+// Note that the handler may cannot handle the pending errors, at that time,
+// you can fetch the errors via `PendingErrors` call.
+func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 	for id, sub := range f.clients {
 		err := sub.loadError()
 		if err != nil {
@@ -105,7 +109,6 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (f *FlushSubscriber) Events() <-chan spans.Valued {
@@ -114,36 +117,82 @@ func (f *FlushSubscriber) Events() <-chan spans.Valued {
 
 type eventStream = logbackup.LogBackup_SubscribeFlushEventClient
 
+type joinHandle <-chan struct{}
+
+func (jh joinHandle) WaitTimeOut(dur time.Duration) {
+	var t <-chan time.Time
+	if dur > 0 {
+		t = time.After(dur)
+	}
+	select {
+	case <-jh:
+	case <-t:
+		log.Warn("join handle timed out.")
+	}
+}
+
+func spawnJoinable(f func()) joinHandle {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		f()
+	}()
+	return c
+}
+
 type subscription struct {
-	cancel context.CancelFunc
-	err    atomic.Value
+	cancel     context.CancelFunc
+	background joinHandle
+	errMu      sync.Mutex
+	err        error
 
 	// Immutable state.
 	storeID uint64
-	output  chan<- spans.Valued
+	// We record start bootstrap time and once a store restarts
+	// we need to try reconnect even there is a error cannot be retry.
+	storeBootAt uint64
+	output      chan<- spans.Valued
 }
 
 func (s *subscription) emitError(err error) {
-	s.err.Store(err)
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+
+	s.err = err
 }
 
 func (s *subscription) loadError() error {
-	err, ok := s.err.Load().(error)
-	if !ok {
-		return nil
-	}
-	return err
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+
+	return s.err
 }
 
-func newSubscription(toStore uint64, output chan<- spans.Valued) *subscription {
+func (s *subscription) clearError() {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+
+	s.err = nil
+}
+
+func newSubscription(toStore Store, output chan<- spans.Valued) *subscription {
 	return &subscription{
-		storeID: toStore,
-		output:  output,
+		storeID:     toStore.ID,
+		storeBootAt: toStore.BootAt,
+		output:      output,
 	}
 }
 
-func (s *subscription) connect(ctx context.Context, dialer LogBackupService) error {
+func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
+	err := s.doConnect(ctx, dialer)
+	if err != nil {
+		s.emitError(err)
+	}
+}
+
+func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
 	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID))
+	s.clearError()
 
 	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
 	if err != nil {
@@ -158,13 +207,14 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) err
 		return err
 	}
 	s.cancel = cancel
-	go s.listenOver(cli)
+	s.background = spawnJoinable(func() { s.listenOver(cli) })
 	return nil
 }
 
 func (s *subscription) close() {
 	if s.cancel != nil {
 		s.cancel()
+		s.background.WaitTimeOut(1 * time.Minute)
 	}
 	// HACK: don't close the internal channel here,
 	// because it is a ever-sharing channel.
@@ -199,8 +249,8 @@ func (s *subscription) listenOver(cli eventStream) {
 	}
 }
 
-func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore uint64) {
-	f.clients[toStore] = newSubscription(toStore, f.eventsTunnel)
+func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
+	f.clients[toStore.ID] = newSubscription(toStore, f.eventsTunnel)
 }
 
 func (f *FlushSubscriber) removeSubscription(toStore uint64) {
@@ -234,4 +284,14 @@ func (f *FlushSubscriber) canBeRetried(err error) bool {
 		}
 	}
 	return true
+}
+
+func (f *FlushSubscriber) PendingErrors() error {
+	var allErr error
+	for _, s := range f.clients {
+		if err := s.loadError(); err != nil {
+			allErr = multierr.Append(allErr, errors.Annotatef(err, "store %d has error", s.storeID))
+		}
+	}
+	return allErr
 }

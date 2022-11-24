@@ -108,7 +108,7 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
 		for _, r := range rs {
-			err := collector.collectRegion(r)
+			err := collector.CollectRegion(r)
 			if err != nil {
 				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 				return err
@@ -138,7 +138,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int, getRang
 	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
-	collector.setOnSuccessHook(func(u uint64, kr kv.KeyRange) {
+	collector.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
 		c.checkpointsMu.Lock()
 		defer c.checkpointsMu.Unlock()
 		c.checkpoints.Merge(spans.Valued{Key: kr, Value: u})
@@ -169,9 +169,9 @@ func tsoBefore(n time.Duration) uint64 {
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
 }
 
-func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
+func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context, threshold time.Duration) (uint64, error) {
 	var targets []spans.Valued
-	c.checkpoints.TraverseValuesLessThan(tsoBefore(config.DefaultTryAdvanceThreshold), func(v spans.Valued) bool {
+	c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
 		targets = append(targets, v)
 		return true
 	})
@@ -291,7 +291,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = nil
 		c.taskRange = nil
 		c.checkpoints = nil
-		c.clearSubscriptions()
+		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
+		c.subscriber.Clear()
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
@@ -300,13 +301,6 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		return e.Err
 	}
 	return nil
-}
-
-func (c *CheckpointAdvancer) clearSubscriptions() {
-	c.subscriberMu.Lock()
-	defer c.subscriberMu.Unlock()
-
-	c.subscriber.Clear()
 }
 
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
@@ -370,6 +364,17 @@ func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
 	}()
 }
 
+func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
+	if c.subscriber == nil {
+		return nil
+	}
+	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
+		log.Warn("[log backup advancer] Error when updating store topology.", logutil.ShortError(err))
+	}
+	c.subscriber.HandleErrors(ctx)
+	return c.subscriber.PendingErrors()
+}
+
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
@@ -378,14 +383,15 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 		return nil
 	}
 
-	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
-		log.Warn("[log backup advancer] Error when updating store topology.", logutil.ShortError(err))
-	}
-	if err := c.subscriber.HandleErrors(ctx); err != nil {
-		log.Warn("[log backup advancer] Error when handling subscription errors.", logutil.ShortError(err))
+	threshold := c.Config().GetDefaultStartPollThreshold()
+	if err := c.subscribeTick(ctx); err != nil {
+		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
+		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
 	}
 
-	err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpointLight)
+	err := c.advanceCheckpointBy(ctx, func(ctx context.Context) (uint64, error) {
+		return c.CalculateGlobalCheckpointLight(ctx, threshold)
+	})
 	if err != nil {
 		return err
 	}

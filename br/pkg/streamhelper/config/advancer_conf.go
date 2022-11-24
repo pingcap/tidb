@@ -16,7 +16,7 @@ const (
 	flagTryAdvanceThreshold = "try-advance-threshold"
 
 	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 5 * time.Minute
+	DefaultTryAdvanceThreshold  = 9 * time.Minute
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
@@ -65,4 +65,16 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 		return err
 	}
 	return nil
+}
+
+// GetDefaultStartPollThreshold returns the threshold of begin polling the checkpoint
+// in the normal condition (the subscribe manager is available.)
+func (conf Config) GetDefaultStartPollThreshold() time.Duration {
+	return conf.TryAdvanceThreshold
+}
+
+// GetSubscriberErrorStartPollThreshold returns the threshold of begin polling the checkpoint
+// when the subscriber meets error.
+func (conf Config) GetSubscriberErrorStartPollThreshold() time.Duration {
+	return conf.TryAdvanceThreshold / 5
 }

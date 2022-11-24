@@ -55,11 +55,12 @@ func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
 	}
 	r := make([]Store, 0, len(res))
 	for _, re := range res {
-		r = append(r, Store {
-			ID: re.GetId(),
+		r = append(r, Store{
+			BootAt: uint64(re.StartTimestamp),
+			ID:     re.GetId(),
 		})
 	}
-	return r, nil 
+	return r, nil
 }
 
 // clusterEnv is the environment for running in the real cluster.

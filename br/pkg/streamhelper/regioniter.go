@@ -38,7 +38,8 @@ type TiKVClusterMeta interface {
 }
 
 type Store struct {
-	ID uint64
+	ID     uint64
+	BootAt uint64
 }
 
 type RegionIter struct {
