@@ -92,7 +92,7 @@ func TestGetPathByIndexName(t *testing.T) {
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path := getPathByIndexName(accessPath, model.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, model.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
