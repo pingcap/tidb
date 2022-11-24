@@ -17,8 +17,10 @@ package resourcemanage
 import (
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanage/scheduler"
 	"github.com/pingcap/tidb/resourcemanage/util"
+	"go.uber.org/zap"
 )
 
 func (r *ResourceManage) schedule() {
@@ -59,9 +61,21 @@ func (*ResourceManage) exec(pool *util.PoolContainer, cmd scheduler.Command, isL
 		con := pool.Pool.Cap()
 		switch cmd {
 		case scheduler.Downclock:
-			pool.Pool.Tune(con-1, isLimit)
+			concurrency := con - 1
+			log.Info("downclock goroutine pool",
+				zap.Int("origin concurrency", con),
+				zap.Int("concurrency", concurrency),
+				zap.String("name", pool.Pool.Name()),
+				zap.Bool("isLimit", isLimit))
+			pool.Pool.Tune(concurrency, isLimit)
 		case scheduler.Overclock:
-			pool.Pool.Tune(con+1, isLimit)
+			concurrency := con + 1
+			log.Info("overclock goroutine pool",
+				zap.Int("origin concurrency", con),
+				zap.Int("concurrency", concurrency),
+				zap.String("name", pool.Pool.Name()),
+				zap.Bool("isLimit", isLimit))
+			pool.Pool.Tune(concurrency, isLimit)
 		}
 	}
 }

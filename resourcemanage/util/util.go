@@ -19,7 +19,6 @@ import "time"
 // GorotinuePool is a pool interface
 type GorotinuePool interface {
 	Release()
-
 	Tune(size int, isLimit bool)
 	LastTunerTs() time.Time
 	MaxInFlight() int64
@@ -31,6 +30,7 @@ type GorotinuePool interface {
 	ShortRTT() uint64
 	GetQueueSize() int64
 	Running() int
+	Name() string
 }
 
 // PoolContainer is a pool container

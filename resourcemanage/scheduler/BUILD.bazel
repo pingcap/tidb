@@ -10,7 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//resourcemanage/util",
-        "//util/cpu",
         "//util/mathutil",
     ],
 )
