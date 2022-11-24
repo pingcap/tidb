@@ -1176,7 +1176,6 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	result.MergeNulls(bufStrings, bufFormats)
 	d64s := result.GoDurations()
 	sc := b.ctx.GetSessionVars().StmtCtx
-	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1190,6 +1189,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			result.SetNull(i, true)
 			continue
 		}
+<<<<<<< HEAD
 		if hasNoZeroDateMode && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
@@ -1198,6 +1198,9 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			continue
 		}
 		t.SetFsp(int8(b.tp.Decimal))
+=======
+		t.SetFsp(b.tp.GetDecimal())
+>>>>>>> 7930c2ce7b (expression: fix that str_to_date returns different result on no zero date sql mode. (#39316))
 		dur, err := t.ConvertToDuration()
 		if err != nil {
 			return err
