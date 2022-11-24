@@ -992,7 +992,29 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	return p, nil
 }
 
+func (b *PlanBuilder) buildSetBindingStatusPlanByDigest(v *ast.SetBindingStmt) (Plan, error) {
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSetBindingStatus,
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+	}
+	switch v.BindingStatusType {
+	case ast.BindingStatusTypeEnabled:
+		p.NewStatus = bindinfo.Enabled
+	case ast.BindingStatusTypeDisabled:
+		p.NewStatus = bindinfo.Disabled
+	}
+	if v.HintedNode != nil {
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
+	if v.SQLDigest != "" {
+		return b.buildSetBindingStatusPlanByDigest(v)
+	}
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSetBindingStatus,
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
