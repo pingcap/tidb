@@ -325,7 +325,9 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 type basicCopRuntimeStats struct {
 	storeType string
 	BasicRuntimeStats
-	threads int32
+	threads    int32
+	totalTasks int32
+	procTimes  []time.Duration
 }
 
 // String implements the RuntimeStats interface.
@@ -355,6 +357,8 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.consume += tmp.consume
 	e.rows += tmp.rows
 	e.threads += tmp.threads
+	e.totalTasks += tmp.totalTasks
+	e.procTimes = append(e.procTimes, tmp.procTimes...)
 }
 
 // Tp implements the RuntimeStats interface.
@@ -369,7 +373,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string][]*basicCopRuntimeStats
+	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
@@ -380,20 +384,24 @@ type CopRuntimeStats struct {
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
 	defer crs.Unlock()
-	crs.stats[address] = append(crs.stats[address],
-		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
+	if crs.stats[address] == nil {
+		crs.stats[address] = &basicCopRuntimeStats{}
+	}
+	crs.stats[address].Merge(&basicCopRuntimeStats{
+		storeType: crs.storeType,
+		BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)},
-			threads:   int32(summary.GetConcurrency()),
-			storeType: crs.storeType})
+		threads:    int32(summary.GetConcurrency()),
+		totalTasks: 1,
+		procTimes:  []time.Duration{time.Duration(int64(*summary.TimeProcessedNs))},
+	})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	for _, instanceStats := range crs.stats {
-		for _, stat := range instanceStats {
-			totalRows += stat.rows
-		}
+		totalRows += instanceStats.rows
 	}
 	return totalRows
 }
@@ -402,13 +410,11 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
 	procTimes = make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
-		for _, stat := range instanceStats {
-			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
-			totalTime += time.Duration(stat.consume)
-			totalLoops += stat.loop
-			totalThreads += stat.threads
-			totalTasks++
-		}
+		procTimes = append(procTimes, instanceStats.procTimes...)
+		totalTime += time.Duration(instanceStats.consume)
+		totalLoops += instanceStats.loop
+		totalThreads += instanceStats.threads
+		totalTasks += instanceStats.totalTasks
 	}
 	return
 }
@@ -693,7 +699,7 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *Co
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		copStats = &CopRuntimeStats{
-			stats:      make(map[string][]*basicCopRuntimeStats),
+			stats:      make(map[string]*basicCopRuntimeStats),
 			scanDetail: &util.ScanDetail{},
 			storeType:  storeType,
 		}
