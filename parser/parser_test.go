@@ -7011,8 +7011,7 @@ func TestIntervalPartition(t *testing.T) {
 func TestTTLTableOption(t *testing.T) {
 	table := []testCase{
 		// create table with various temporal interval
-		{"create table t (created_at datetime) TTL = created_at + INTERVAL CAST(6/4 AS DECIMAL(3,1)) HOUR_MINUTE", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL CAST(6/4 AS DECIMAL(3, 1)) HOUR_MINUTE"},
-		{"create table t (created_at datetime) TTL = created_at + INTERVAL 6/4 HOUR_MINUTE", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 6/4 HOUR_MINUTE"},
+		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 3.1415 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL '1 1:1:1' DAY_SECOND", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL _UTF8MB4'1 1:1:1' DAY_SECOND"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
@@ -7027,7 +7026,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
 
 		// alter table to remove ttl settings
-		{"alter table t NO_TTL", true, "ALTER TABLE `t` NO_TTL"},
+		{"alter table t remove ttl", true, "ALTER TABLE `t` REMOVE TTL"},
 
 		// validate invalid TTL_ENABLE settings
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
