@@ -44,13 +44,16 @@ func TestDDLStatsInfo(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := domain.DDL()
 
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session()
 	dbInfo, err := testSchemaInfo(store, "test_stat")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	testCreateSchema(t, ctx, d, dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 2)
 	require.NoError(t, err)
-	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
-	ctx := testkit.NewTestKit(t, store).Session()
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
