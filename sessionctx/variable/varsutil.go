@@ -531,31 +531,6 @@ func collectAllowFuncName4ExpressionIndex() string {
 	return strings.Join(str, ", ")
 }
 
-func getPasswordValidationLength(vars *SessionVars) (length, numberCount, specialCharCount, mixedCaseCount int64, err error) {
-	var lengthStr, numberCountStr, specialCharCountStr, mixedCaseCountStr string
-	if lengthStr, err = vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordLength); err != nil {
-		return
-	} else if length, err = strconv.ParseInt(lengthStr, 10, 64); err != nil {
-		return
-	}
-	if numberCountStr, err = vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordNumberCount); err != nil {
-		return
-	} else if numberCount, err = strconv.ParseInt(numberCountStr, 10, 64); err != nil {
-		return
-	}
-	if specialCharCountStr, err = vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordSpecialCharCount); err != nil {
-		return
-	} else if specialCharCount, err = strconv.ParseInt(specialCharCountStr, 10, 64); err != nil {
-		return
-	}
-	if mixedCaseCountStr, err = vars.GlobalVarsAccessor.GetGlobalSysVar(ValidatePasswordMixedCaseCount); err != nil {
-		return
-	} else if mixedCaseCount, err = strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
-		return
-	}
-	return
-}
-
 // GAFunction4ExpressionIndex stores functions GA for expression index.
 var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Lower:      {},

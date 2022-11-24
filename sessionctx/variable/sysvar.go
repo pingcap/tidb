@@ -491,72 +491,80 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			_, numberCount, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			numberCount, specialCharCount, mixedCaseCount := PasswordValidtaionNumberCount.Load(), PasswordValidationSpecialCharCount.Load(), PasswordValidationMixedCaseCount.Load()
+			length, err := strconv.ParseInt(normalizedValue, 10, 32)
 			if err != nil {
 				return "", err
 			}
-			if length, err := strconv.ParseInt(normalizedValue, 10, 64); err != nil {
-				return "", err
-			} else if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
-				return strconv.FormatInt(minLength, 10), nil
+			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; int32(length) < minLength {
+				return strconv.FormatInt(int64(minLength), 10), nil
 			}
 			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return fmt.Sprintf("%d", PasswordValidationLength.Load()), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, numberCount, specialCharCount, _, err := getPasswordValidationLength(vars)
+			length, numberCount, specialCharCount := PasswordValidationLength.Load(), PasswordValidtaionNumberCount.Load(), PasswordValidationSpecialCharCount.Load()
+			mixedCaseCount, err := strconv.ParseInt(normalizedValue, 10, 32)
 			if err != nil {
 				return "", err
 			}
-			mixedCaseCount, err := strconv.ParseInt(normalizedValue, 10, 64)
-			if err != nil {
-				return "", err
-			}
-			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
-				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
-				if err != nil {
-					return "", err
-				}
+			if minLength := numberCount + specialCharCount + 2*int32(mixedCaseCount); length < minLength {
+				PasswordValidationLength.Store(minLength)
 			}
 			return normalizedValue, nil
-		}},
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationMixedCaseCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return fmt.Sprintf("%d", PasswordValidationMixedCaseCount.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, _, specialCharCount, mixedCaseCount, err := getPasswordValidationLength(vars)
+			length, specialCharCount, mixedCaseCount := PasswordValidationLength.Load(), PasswordValidationSpecialCharCount.Load(), PasswordValidationMixedCaseCount.Load()
+			numberCount, err := strconv.ParseInt(normalizedValue, 10, 32)
 			if err != nil {
 				return "", err
 			}
-			numberCount, err := strconv.ParseInt(normalizedValue, 10, 64)
-			if err != nil {
-				return "", err
-			}
-			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
-				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
-				if err != nil {
-					return "", err
-				}
+			if minLength := int32(numberCount) + specialCharCount + 2*mixedCaseCount; length < minLength {
+				PasswordValidationLength.Store(minLength)
 			}
 			return normalizedValue, nil
-		}},
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidtaionNumberCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return fmt.Sprintf("%d", PasswordValidtaionNumberCount.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			length, numberCount, _, mixedCaseCount, err := getPasswordValidationLength(vars)
+			length, numberCount, mixedCaseCount := PasswordValidationLength.Load(), PasswordValidtaionNumberCount.Load(), PasswordValidationMixedCaseCount.Load()
+			specialCharCount, err := strconv.ParseInt(normalizedValue, 10, 32)
 			if err != nil {
 				return "", err
 			}
-			specialCharCount, err := strconv.ParseInt(normalizedValue, 10, 64)
-			if err != nil {
-				return "", err
-			}
-			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; length < minLength {
-				err = vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), ValidatePasswordLength, strconv.FormatInt(minLength, 10))
-				if err != nil {
-					return "", err
-				}
+			if minLength := numberCount + int32(specialCharCount) + 2*mixedCaseCount; length < minLength {
+				PasswordValidationLength.Store(minLength)
 			}
 			return normalizedValue, nil
-		}},
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationSpecialCharCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return fmt.Sprintf("%d", PasswordValidationSpecialCharCount.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 
 	/* TiDB specific variables */
