@@ -1144,28 +1144,27 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
-
+		if failedLoginAttempts > 32767 {
+			failedLoginAttempts = 32767
+		}
+		if failedLoginAttempts < 0 {
+			failedLoginAttempts = 0
+		}
+		if passwordLockTime > 32767 {
+			passwordLockTime = 32767
+		}
+		if passwordLockTime < -1 {
+			failedLoginAttempts = -1
+		}
 		if failedLoginAttemptsChange && passwordLockTimeChange {
-			if failedLoginAttempts > 32767 {
-				failedLoginAttempts = 32767
-			}
-			if failedLoginAttempts < 0 {
-				failedLoginAttempts = 0
-			}
-			if passwordLockTime > 32767 {
-				passwordLockTime = 32767
-			}
-			if passwordLockTime < -1 {
-				failedLoginAttempts = -1
-			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				failedLoginAttempts, passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		} else if failedLoginAttemptsChange && !passwordLockTimeChange {
+		} else if !failedLoginAttemptsChange && passwordLockTimeChange {
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		} else if !failedLoginAttemptsChange && passwordLockTimeChange {
+		} else if failedLoginAttemptsChange && !passwordLockTimeChange {
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
 				failedLoginAttempts, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
