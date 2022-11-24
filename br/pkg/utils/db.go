@@ -15,6 +15,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	tidbNewCollationEnabled = "new_collation_enabled"
+)
+
 var (
 	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
 	_ DBExecutor = &sql.DB{}
@@ -116,4 +120,8 @@ func CheckLogBackupTaskExist() bool {
 // IsLogBackupInUse checks the log backup task existed.
 func IsLogBackupInUse(ctx sessionctx.Context) bool {
 	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+}
+
+func GetTidbNewCollationEnabled() string {
+	return tidbNewCollationEnabled
 }
