@@ -902,8 +902,8 @@ func (e *Explain) explainFlatOpInJSONFormat(i int, childrenIdx []int, flatOp *Fl
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	explainID := flatOp.Origin.ExplainID().String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID+flatOp.Label.String(), flatOp.TextTreeIndent, flatOp.IsLastChild)
+	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 	e.prepareOperatorInfoForJSONFormat(i, childrenIdx, flatOp.Origin, taskTp, textTreeExplainID, explainID)
 	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
 		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
