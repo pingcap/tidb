@@ -1094,5 +1094,19 @@
       "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100"
 
     ]
+  },
+  {
+    "name": "TestCountStarForTikv",
+    "cases": [
+      "select count(*) from t",
+      "select count(*) from t where a=1"
+    ]
+  },
+  {
+    "name": "TestCountStarForTiFlash",
+    "cases": [
+      "select count(*) from t",
+      "select count(*) from t where a=1"
+    ]
   }
 ]

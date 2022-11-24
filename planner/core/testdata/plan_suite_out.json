@@ -6438,5 +6438,59 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestCountStarForTikv",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#11)->Column#9",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t._tidb_rowid)->Column#11",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t where a=1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#11)->Column#9",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#11",
+          "    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestCountStarForTiFlash",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#17)->Column#9",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#17",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t where a=1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#11)->Column#9",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.a)->Column#11",
+          "      └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]

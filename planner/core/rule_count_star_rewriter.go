@@ -21,12 +21,14 @@ Table
 
 Case1 there are columns exists in datasource
 Query: select count(*) from table where k3=1
-Rule: pick the shortest not null column exists in datasource
+CountStarRewriterRule: pick the shortest not null column exists in datasource
 Rewritten Query: select count(k3) from table where k3=1
 
 Case2 there is no columns exists in datasource
 Query: select count(*) from table
-Rule: pick the shortest not null column from origin table
+ColumnPruningRule: pick k1 as the shortest not null column from origin table @Function.preferNotNullColumnFromTable
+                   datasource.columns: k1
+CountStarRewriterRule: rewrite count(*) -> count(k1)
 Rewritten Query: select count(k1) from table
 
 Attention:
@@ -50,13 +52,10 @@ func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimiz
 				if aggFunc.Name == "count" && len(aggFunc.Args) == 1 {
 					if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
 						if constExpr.Value.GetInt64() == 1 {
-							// case 1: pick not null column already exists in the datasource
 							if len(dataSource.Columns) > 0 {
 								rewriteCount1ToCountColumn(dataSource, aggFunc)
 								continue
 							}
-							// case 2: pick not null column from table
-							// pickNotNullColumnFromTable(dataSource, agg, aggFunc)
 						}
 					}
 				}
