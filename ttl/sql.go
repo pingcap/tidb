@@ -443,6 +443,10 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 
 // BuildDeleteSQL builds a delete SQL
 func BuildDeleteSQL(tbl *PhysicalTable, rows [][]types.Datum, expire time.Time) (string, error) {
+	if len(rows) == 0 {
+		return "", errors.New("Cannot build delete SQL with empty rows")
+	}
+
 	b := NewSQLBuilder(tbl)
 	if err := b.WriteDelete(); err != nil {
 		return "", err

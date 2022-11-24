@@ -601,6 +601,75 @@ func TestScanQueryGenerator(t *testing.T) {
 	}
 }
 
+func TestBuildDeleteSQL(t *testing.T) {
+	t1 := &ttl.PhysicalTable{
+		Schema: model.NewCIStr("test"),
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("t1"),
+		},
+		KeyColumns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		},
+		TimeColumn: &model.ColumnInfo{
+			Name:      model.NewCIStr("time"),
+			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		},
+	}
+
+	t2 := &ttl.PhysicalTable{
+		Schema: model.NewCIStr("test2"),
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("t2"),
+		},
+		KeyColumns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+		},
+		TimeColumn: &model.ColumnInfo{
+			Name:      model.NewCIStr("time"),
+			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		},
+	}
+
+	cases := []struct {
+		tbl    *ttl.PhysicalTable
+		expire time.Time
+		rows   [][]types.Datum
+		sql    string
+	}{
+		{
+			tbl:    t1,
+			expire: time.UnixMilli(0).In(time.UTC),
+			rows:   [][]types.Datum{d(1)},
+			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (1) AND `time` < '1970-01-01 00:00:00' LIMIT 1",
+		},
+		{
+			tbl:    t1,
+			expire: time.UnixMilli(0).In(time.UTC),
+			rows:   [][]types.Datum{d(2), d(3), d(4)},
+			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (2, 3, 4) AND `time` < '1970-01-01 00:00:00' LIMIT 3",
+		},
+		{
+			tbl:    t2,
+			expire: time.UnixMilli(0).In(time.UTC),
+			rows:   [][]types.Datum{d(1, "a")},
+			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a')) AND `time` < '1970-01-01 00:00:00' LIMIT 1",
+		},
+		{
+			tbl:    t2,
+			expire: time.UnixMilli(0).In(time.UTC),
+			rows:   [][]types.Datum{d(1, "a"), d(2, "b")},
+			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a'), (2, 'b')) AND `time` < '1970-01-01 00:00:00' LIMIT 2",
+		},
+	}
+
+	for _, c := range cases {
+		sql, err := ttl.BuildDeleteSQL(c.tbl, c.rows, c.expire)
+		require.NoError(t, err)
+		require.Equal(t, c.sql, sql)
+	}
+}
+
 func d(vs ...interface{}) []types.Datum {
 	datums := make([]types.Datum, len(vs))
 	for i, v := range vs {
