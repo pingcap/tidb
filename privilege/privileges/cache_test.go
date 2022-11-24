@@ -60,10 +60,10 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, "user@pingcap.com", user[4].Email)
 	require.Equal(t, "<token-issuer>", user[4].AuthTokenIssuer)
 	require.Equal(t, true, user[5].PasswordExpired)
-	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[5].PasswordLastChanged)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.Local), user[5].PasswordLastChanged)
 	require.Equal(t, int64(3), user[5].PasswordLifeTime)
 	require.Equal(t, false, user[6].PasswordExpired)
-	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.UTC), user[6].PasswordLastChanged)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.Local), user[6].PasswordLastChanged)
 	require.Equal(t, int64(-1), user[6].PasswordLifeTime)
 }
 
