@@ -240,8 +240,9 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	}
 	var primaryIdx *model.IndexInfo
 	if tblInfo.PKIsHandle {
-		usedColumnIDs[tblInfo.GetPkColInfo().ID] = struct{}{}
-		handleIDs = []int64{tblInfo.GetPkColInfo().ID}
+		pkCol := tblInfo.GetPkColInfo()
+		usedColumnIDs[pkCol.ID] = struct{}{}
+		handleIDs = []int64{pkCol.ID}
 	} else if tblInfo.IsCommonHandle {
 		primaryIdx = tables.FindPrimaryIndex(tblInfo)
 		handleIDs = make([]int64, 0, len(primaryIdx.Columns))

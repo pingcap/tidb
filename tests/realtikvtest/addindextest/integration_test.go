@@ -187,6 +187,8 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
+	ingest.ImporterRangeConcurrencyForTest.Store(2)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 20;")
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
@@ -205,6 +207,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 4;")
+	ingest.ImporterRangeConcurrencyForTest = nil
 }
 
 func TestAddIndexIngestGeneratedColumns(t *testing.T) {
