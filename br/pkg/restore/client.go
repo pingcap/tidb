@@ -2017,60 +2017,6 @@ func (rc *Client) SaveSchemas(
 	}
 	return nil
 }
-<<<<<<< HEAD
-=======
-
-// InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
-func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
-	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
-
-	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
-
-	if rc.fullClusterRestore {
-		// have to skip grant table, in order to NotifyUpdatePrivilege
-		config.GetGlobalConfig().Security.SkipGrantTable = true
-	}
-}
-
-func (rc *Client) IsFullClusterRestore() bool {
-	return rc.fullClusterRestore
-}
-
-func (rc *Client) SetWithSysTable(withSysTable bool) {
-	rc.withSysTable = withSysTable
-}
-
-// MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
-	return &Client{databases: dbs}
-}
-
-// TidyOldSchemas produces schemas information.
-func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
-	var schemaIsEmpty bool
-	schemas := backup.NewBackupSchemas()
-
-	for _, dr := range sr.DbMap {
-		if dr.OldDBInfo == nil {
-			continue
-		}
-
-		schemaIsEmpty = true
-		for _, tr := range dr.TableMap {
-			if tr.OldTableInfo == nil {
-				continue
-			}
-			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
-			schemaIsEmpty = false
-		}
-
-		// backup this empty schema if it has nothing table.
-		if schemaIsEmpty {
-			schemas.AddSchema(dr.OldDBInfo, nil)
-		}
-	}
-	return schemas
-}
 
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
@@ -2115,4 +2061,3 @@ func CheckNewCollationEnable(
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
 }
->>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))

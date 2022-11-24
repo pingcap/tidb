@@ -4,7 +4,6 @@ package task
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -23,11 +22,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/kv"
-=======
-	"github.com/pingcap/tidb/util"
->>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -334,46 +328,6 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func CheckNewCollationEnable(
-	backupNewCollationEnable string,
-	g glue.Glue,
-	storage kv.Storage,
-	CheckRequirements bool,
-) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
-		} else {
-			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-			return nil
-		}
-	}
-
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
-		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
-	}
-	return nil
-}
-
-=======
->>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }

@@ -298,8 +298,6 @@ func (gs *tidbSession) showCreateDatabase(db *model.DBInfo) (string, error) {
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
 }
-<<<<<<< HEAD
-=======
 
 // mockSession is used for test.
 type mockSession struct {
@@ -318,23 +316,6 @@ func (s *mockSession) Execute(ctx context.Context, sql string) error {
 }
 
 func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	rs, err := s.se.ExecuteInternal(ctx, sql, args...)
-	if err != nil {
-		return err
-	}
-	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
-	// At least call `next` once for triggering theirs side effect.
-	// (Maybe we'd better drain all returned rows?)
-	if rs != nil {
-		//nolint: errcheck
-		defer rs.Close()
-		c := rs.NewChunk(nil)
-		if err := rs.Next(ctx, c); err != nil {
-			return nil
-		}
-	}
 	return nil
 }
 
@@ -351,13 +332,13 @@ func (s *mockSession) CreatePlacementPolicy(ctx context.Context, policy *model.P
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -430,4 +411,3 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 	}
 	return fn(glueSession)
 }
->>>>>>> 84703efd01 (br: modify collate.newCollationEnabled according to the config of the cluster (#39173))
