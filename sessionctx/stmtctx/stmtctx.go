@@ -115,10 +115,7 @@ func (rf *ReferenceCount) TryIncrease() bool {
 	refCnt := atomic.LoadInt32((*int32)(rf))
 	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
 	}
-	if refCnt == ReferenceCountIsFrozen {
-		return false
-	}
-	return true
+	return refCnt != ReferenceCountIsFrozen
 }
 
 // Decrease decreases the reference count.
