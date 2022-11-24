@@ -132,11 +132,6 @@ type planReplayerHandle struct {
 	*planReplayerTaskDumpHandle
 }
 
-// HandlePlanReplayerDumpTask handle dump task
-func (h *planReplayerHandle) HandlePlanReplayerDumpTask(task *PlanReplayerDumpTask) {
-	h.sender.sendTask(task)
-}
-
 type planReplayerTaskCollectorHandle struct {
 	taskMu struct {
 		sync.RWMutex
@@ -267,14 +262,6 @@ func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context
 		})
 	}
 	return allKeys, nil
-}
-
-type planReplayerTaskDumpSender struct {
-	taskCH chan *PlanReplayerDumpTask
-}
-
-func (s *planReplayerTaskDumpSender) sendTask(task *PlanReplayerDumpTask) {
-	s.taskCH <- task
 }
 
 type planReplayerDumpTaskStatus struct {
@@ -433,9 +420,7 @@ type planReplayerTaskDumpHandle struct {
 	taskCH   chan *PlanReplayerDumpTask
 	finished *atomic.Bool
 	status   *planReplayerDumpTaskStatus
-
-	sender  *planReplayerTaskDumpSender
-	workers []*planReplayerTaskDumpWorker
+	workers  []*planReplayerTaskDumpWorker
 }
 
 // GetTaskStatus used for test
@@ -450,7 +435,7 @@ func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
 
 // Finish make finished flag ture
 func (h *planReplayerTaskDumpHandle) Finish() {
-	close(h.sender.taskCH)
+	close(h.taskCH)
 	h.finished.Store(true)
 }
 
@@ -464,6 +449,8 @@ func (h *planReplayerTaskDumpHandle) SendTask(task *PlanReplayerDumpTask) {
 	select {
 	case h.taskCH <- task:
 	default:
+		logutil.BgLogger().Info("discard one plan replayer dump task",
+			zap.String("sql digest", task.SQLDigest), zap.String("plan digest", task.PlanDigest))
 		// TODO: add metrics here
 		// directly discard the task if the task channel is full in order not to block the query process
 	}

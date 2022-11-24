@@ -1590,16 +1590,12 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		status:   taskStatus,
 		finished: finished,
 	}
-	senderTaskCH := make(chan *PlanReplayerDumpTask, len(workersSctxs))
-	do.planReplayerHandle.planReplayerTaskDumpHandle.sender = &planReplayerTaskDumpSender{
-		taskCH: senderTaskCH,
-	}
 	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
 	for i := 0; i < len(workersSctxs); i++ {
 		worker := &planReplayerTaskDumpWorker{
 			ctx:        ctx,
 			sctx:       workersSctxs[i],
-			taskCH:     senderTaskCH,
+			taskCH:     taskCH,
 			status:     taskStatus,
 			taskHandle: do.planReplayerHandle.planReplayerTaskCollectorHandle,
 			finished:   finished,
@@ -1666,8 +1662,6 @@ func (do *Domain) StartPlanReplayerHandle() {
 			case <-do.exit:
 				do.planReplayerHandle.planReplayerTaskDumpHandle.Finish()
 				return
-			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
-				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
 			}
 		}
 	}()
