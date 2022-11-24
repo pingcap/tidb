@@ -385,8 +385,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
-	basic1 := &BasicRuntimeStats{tiflashScanContext: &TiFlashScanContext{}}
-	basic2 := &BasicRuntimeStats{tiflashScanContext: &TiFlashScanContext{}}
+	basic1 := &BasicRuntimeStats{}
+	basic2 := &BasicRuntimeStats{}
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
 	pid := 1

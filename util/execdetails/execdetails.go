@@ -333,9 +333,8 @@ func (e *basicCopRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
-	tiflashScanContextClone := e.tiflashScanContext.Clone()
 	return &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, tiflashScanContext: &tiflashScanContextClone},
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, tiflashScanContext: e.tiflashScanContext.Clone()},
 		threads:           e.threads,
 		storeType:         e.storeType,
 	}
@@ -381,7 +380,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows),
-			tiflashScanContext: &TiFlashScanContext{
+			tiflashScanContext: TiFlashScanContext{
 				totalDmfileScannedPacks:            summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
 				totalDmfileSkippedPacks:            summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
 				totalDmfileScannedRows:             summary.GetTiflashScanContext().GetTotalDmfileScannedRows(),
@@ -536,7 +535,7 @@ func (context *TiFlashScanContext) String() string {
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
-func (context *TiFlashScanContext) Merge(other *TiFlashScanContext) {
+func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.totalDmfileScannedPacks += other.totalDmfileScannedPacks
 	context.totalDmfileScannedRows += other.totalDmfileScannedRows
 	context.totalDmfileSkippedPacks += other.totalDmfileSkippedPacks
@@ -561,7 +560,7 @@ type BasicRuntimeStats struct {
 	// executor return row count.
 	rows int64
 	// executor extra infos
-	tiflashScanContext *TiFlashScanContext
+	tiflashScanContext TiFlashScanContext
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -571,12 +570,11 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
-	tiflashScanContextClone := e.tiflashScanContext.Clone()
 	return &BasicRuntimeStats{
 		loop:               e.loop,
 		consume:            e.consume,
 		rows:               e.rows,
-		tiflashScanContext: &tiflashScanContextClone,
+		tiflashScanContext: e.tiflashScanContext.Clone(),
 	}
 }
 
