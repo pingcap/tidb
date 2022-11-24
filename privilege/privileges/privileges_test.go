@@ -2983,9 +2983,13 @@ type passwordLocking struct {
 }
 
 func TestFailedLoginTracking(t *testing.T) {
-	store := createStoreAndPrepareDB(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
+	tk.MustExec(session.CreateUserTable)
+	tk.MustExec(session.CreateDBPrivTable)
+	tk.MustExec(session.CreateTablePrivTable)
+	tk.MustExec(session.CreateColumnPrivTable)
 	createAndCheck(tk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u1")
 	createAndCheck(tk, "CREATE USER 'u2'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": -1}}", "u2")
 	createAndCheck(tk, "CREATE USER 'u3'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u3")
@@ -2998,7 +3002,27 @@ func TestFailedLoginTracking(t *testing.T) {
 	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;", "u4", 4, 3)
 	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;", "u4", 4, -1)
 
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	createAndCheck(tk, "CREATE USER 'u6'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u6")
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 1)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+
+	//checkAuthUser(t, tk, "u6", 0)
+	//checkAuthUser(t, tk, "u4", 4)
+
+}
+
+func encodePassword(password string) []byte {
+	pwd := auth.EncodePassword(password)
+	hpwd, err := auth.DecodePassword(pwd)
+	if err != nil {
+
+	}
+	return hpwd
 }
 
 func createAndCheck(tk *testkit.TestKit, sql, rsJson, user string) {
@@ -3030,7 +3054,8 @@ func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockT
 func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64) {
 	userAttributesSql := selectSql(user)
 	resBuff := bytes.NewBufferString("")
-	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+	rs := tk.MustQuery(userAttributesSql)
+	for _, row := range rs.Rows() {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	var ua []userAttributes

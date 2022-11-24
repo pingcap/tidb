@@ -371,7 +371,7 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 	if autoLock {
 		lockTime := record.PasswordLockTime
 		if lockTime == -1 {
-			return "", nil
+			return "", ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host, lockTime, lockTime, lockTime)
 		}
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
@@ -929,6 +929,8 @@ func PasswordLockingInt64Parser(userAttributesJson types.BinaryJSON, pathExpr st
 	}
 	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
 		return BJ.GetInt64(), nil
+	} else {
+		return 0, nil
 	}
 	return -1, err
 }
@@ -948,6 +950,8 @@ func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr
 			return -1, timeErr
 		}
 		return t.Unix(), nil
+	} else {
+		return 0, nil
 	}
 	return -1, err
 }
@@ -969,6 +973,8 @@ func PasswordLockingBoolParser(userAttributesJson types.BinaryJSON, pathExpr str
 		} else {
 			return false, nil
 		}
+	} else {
+		return false, nil
 	}
-	return false, errors.New("pathExpr  not found")
+	return false, nil
 }
