@@ -43,7 +43,7 @@ func NewGradient2Scheduler() *Gradient2Scheduler {
 }
 
 // Tune is to tune the concurrency of the component
-func (b *Gradient2Scheduler) Tune(component util.Component, p util.GorotinuePool) Command {
+func (b *Gradient2Scheduler) Tune(_ util.Component, p util.GorotinuePool) Command {
 	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
 		return Hold
 	}
