@@ -823,7 +823,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 					tryFallbackToTxnMerge(job, err)
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				return false, ver, nil
+				return false, ver, errors.Trace(err)
 			}
 			bc.SetDone()
 		case model.ReorgTypeTxnMerge:
