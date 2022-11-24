@@ -218,14 +218,14 @@ id	estRows	task	access object	operator info
 Projection	1.00	root		1->Column#6
 └─StreamAgg	1.00	root		funcs:count(Column#14)->Column#9
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#14
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(test.t1.c1)->Column#14
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#6
 └─StreamAgg	1.00	root		funcs:count(Column#13)->Column#8
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#13
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(test.t1.c1)->Column#13
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select count(c2) from t1 group by c3) k;
 id	estRows	task	access object	operator info
@@ -519,10 +519,10 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
       ├─HashAgg(Build)	2.00	root		group by:Column#14, Column#15, Column#16, funcs:firstrow(Column#33)->Column#14, funcs:firstrow(Column#34)->Column#15, funcs:firstrow(Column#35)->Column#16, funcs:count(1)->Column#37
       │ └─Union	2.00	root		
       │   ├─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │   │ └─HashAgg	1.00	root		group by:test.test01.region_id, test.test01.show_date, test.test01.stat_date, funcs:firstrow(test.test01.stat_date)->Column#33, funcs:firstrow(test.test01.show_date)->Column#34, funcs:firstrow(test.test01.region_id)->Column#35, funcs:firstrow(test.test01.stat_date)->Column#14, funcs:firstrow(test.test01.show_date)->Column#15, funcs:firstrow(test.test01.region_id)->Column#16, funcs:count(1)->Column#38
+      │   │ └─HashAgg	1.00	root		group by:test.test01.region_id, test.test01.show_date, test.test01.stat_date, funcs:firstrow(test.test01.stat_date)->Column#33, funcs:firstrow(test.test01.show_date)->Column#34, funcs:firstrow(test.test01.region_id)->Column#35, funcs:firstrow(test.test01.stat_date)->Column#14, funcs:firstrow(test.test01.show_date)->Column#15, funcs:firstrow(test.test01.region_id)->Column#16, funcs:count(test.test01.stat_date)->Column#38
       │   │   └─TableDual	0.00	root		rows:0
       │   └─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │     └─HashAgg	1.00	root		group by:test.test01.region_id, test.test01.show_date, test.test01.stat_date, funcs:firstrow(test.test01.stat_date)->Column#33, funcs:firstrow(test.test01.show_date)->Column#34, funcs:firstrow(test.test01.region_id)->Column#35, funcs:firstrow(test.test01.stat_date)->Column#14, funcs:firstrow(test.test01.show_date)->Column#15, funcs:firstrow(test.test01.region_id)->Column#16, funcs:count(1)->Column#39
+      │     └─HashAgg	1.00	root		group by:test.test01.region_id, test.test01.show_date, test.test01.stat_date, funcs:firstrow(test.test01.stat_date)->Column#33, funcs:firstrow(test.test01.show_date)->Column#34, funcs:firstrow(test.test01.region_id)->Column#35, funcs:firstrow(test.test01.stat_date)->Column#14, funcs:firstrow(test.test01.show_date)->Column#15, funcs:firstrow(test.test01.region_id)->Column#16, funcs:count(test.test01.period)->Column#39
       │       └─TableReader	0.01	root		data:Selection
       │         └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202)
       │           └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
