@@ -108,7 +108,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 
 	// test walk nonexistent directory
 	err = store.WalkDir(context.TODO(), &WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
-		return errors.New("find file!")
+		return errors.New("find file")
 	})
 	require.NoError(t, err)
 	// write file to a nonexistent directory
@@ -123,7 +123,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 		if path == "123/456/789.txt" {
 			return nil
 		}
-		return errors.Errorf("find other file: %s!", path)
+		return errors.Errorf("find other file: %s", path)
 	})
 	require.NoError(t, err)
 }
