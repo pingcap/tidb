@@ -505,7 +505,7 @@ var defaultSysVars = []*SysVar{
 			PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return fmt.Sprintf("%d", PasswordValidationLength.Load()), nil
+			return strconv.FormatInt(int64(PasswordValidationLength.Load()), 10), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
@@ -524,7 +524,7 @@ var defaultSysVars = []*SysVar{
 			PasswordValidationMixedCaseCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return fmt.Sprintf("%d", PasswordValidationMixedCaseCount.Load()), nil
+			return strconv.FormatInt(int64(PasswordValidationMixedCaseCount.Load()), 10), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
@@ -543,7 +543,7 @@ var defaultSysVars = []*SysVar{
 			PasswordValidtaionNumberCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return fmt.Sprintf("%d", PasswordValidtaionNumberCount.Load()), nil
+			return strconv.FormatInt(int64(PasswordValidtaionNumberCount.Load()), 10), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
@@ -562,7 +562,7 @@ var defaultSysVars = []*SysVar{
 			PasswordValidationSpecialCharCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return fmt.Sprintf("%d", PasswordValidationSpecialCharCount.Load()), nil
+			return strconv.FormatInt(int64(PasswordValidationSpecialCharCount.Load()), 10), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
@@ -1127,7 +1127,7 @@ var defaultSysVars = []*SysVar{
 		MemoryUsageAlarmKeepRecordNum.Store(TidbOptInt64(val, DefMemoryUsageAlarmKeepRecordNum))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
+		return strconv.FormatInt(MemoryUsageAlarmKeepRecordNum.Load(), 10), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
