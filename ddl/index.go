@@ -808,7 +808,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			if err != nil {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 				tryFallbackToTxnMerge(job, err)
-				return false, ver, nil
+				return false, ver, errors.Trace(err)
 			}
 			if !done {
 				return false, ver, nil
