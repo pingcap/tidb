@@ -235,7 +235,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			var (
 				flags []kv.FlagsOp
 			)
-			if !opt.FromBackFill {
+			if !opt.FromBackFill && keyIsTempIdxKey {
 				needPresumeKey, _, err = KeyExistInTempIndex(txn, key, distinct, h, c.tblInfo.IsCommonHandle)
 				if err != nil {
 					return nil, err
