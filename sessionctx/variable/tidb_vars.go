@@ -1150,6 +1150,8 @@ var (
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+
+	IsSandBoxModeEnabled = atomic.NewBool(false)
 )
 
 var (

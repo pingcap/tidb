@@ -69,6 +69,8 @@ var (
 	ErrFuncNotEnabled                 = dbterror.ClassExecutor.NewStdErr(mysql.ErrNotSupportedYet, parser_mysql.Message("%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.", nil))
 	errSavepointNotExists             = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
 	ErrForeignKeyCascadeDepthExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrForeignKeyCascadeDepthExceeded)
+	ErrPasswordExpireAnonymousUser    = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordExpireAnonymousUser)
+	errMustChangePassword             = dbterror.ClassExecutor.NewStd(mysql.ErrMustChangePassword)
 
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))

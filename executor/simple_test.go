@@ -193,4 +193,8 @@ func TestPasswordExpiration(t *testing.T) {
 	expectedPasswordExpiration(t, tk, "testuser", "Y", "3")
 	tk.MustExec("SET PASSWORD FOR testuser = '1234'")
 	expectedPasswordExpiration(t, tk, "testuser", "N", "3")
+
+	tk.MustGetErrCode(`CREATE USER ''@localhost IDENTIFIED BY 'pass' PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
+	tk.MustExec(`CREATE USER ''@localhost IDENTIFIED BY 'pass'`)
+	tk.MustGetErrCode(`ALTER USER ''@localhost PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
 }

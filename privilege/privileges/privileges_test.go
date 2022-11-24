@@ -3005,7 +3005,7 @@ func TestCheckPasswordExpired(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPasswordExpire(t *testing.T) {
+func TestPasswordExpireWithoutSandBoxMode(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
@@ -3041,4 +3041,52 @@ func TestPasswordExpire(t *testing.T) {
 	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
 	err = tk.Session().Auth(user, nil, nil)
 	require.NoError(t, err)
+}
+
+func TestPasswordExpireWithSandBoxMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	variable.IsSandBoxModeEnabled.Store(true)
+
+	// PASSWORD EXPIRE
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
+	tk := testkit.NewTestKit(t, store)
+	err := tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+
+	// PASSWORD EXPIRE NEVER
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// PASSWORD EXPIRE INTERVAL N DAY
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	time.Sleep(2 * time.Second)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+
+	// PASSWORD EXPIRE DEFAULT
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
 }

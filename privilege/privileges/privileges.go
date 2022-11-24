@@ -359,16 +359,12 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 
 // CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
-	disconnectOnPwdExpiredStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DisconnectOnExpiredPassword)
-	if err != nil {
-		return false, err
-	}
-	disconnectOnPwdExpired := variable.TiDBOptOn(disconnectOnPwdExpiredStr)
+	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
 	if record.PasswordExpired {
-		if disconnectOnPwdExpired {
-			return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+		if isSandBoxModeEnabled {
+			return true, nil
 		}
-		return true, nil
+		return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
 	}
 	if record.PasswordLifeTime != 0 {
 		lifeTime := record.PasswordLifeTime
@@ -384,10 +380,10 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 		}
 		logutil.BgLogger().Info("TestPasswordExpire", zap.Time("expire time", record.PasswordLastChanged.AddDate(0, 0, int(lifeTime))), zap.Time("now", time.Now()))
 		if lifeTime > 0 && record.PasswordLastChanged.AddDate(0, 0, int(lifeTime)).Before(time.Now()) {
-			if disconnectOnPwdExpired {
-				return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+			if isSandBoxModeEnabled {
+				return true, nil
 			}
-			return true, nil
+			return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
 		}
 	}
 	return false, nil

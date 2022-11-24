@@ -877,6 +877,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
+		if len(spec.User.Username) == 0 && passwordExpire == "Y" {
+			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
+		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
 		}
@@ -1121,6 +1124,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
+			if !spec.AuthOpt.ByAuthString && !spec.AuthOpt.ByHashString {
+				if e.ctx.InSandBoxMode() && (spec.User.CurrentUser || e.ctx.GetSessionVars().User.Username == spec.User.Username) {
+					return errMustChangePassword.GenWithStackByArgs()
+				}
+			}
 			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
 				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
@@ -1162,6 +1170,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if len(passwordExpire) != 0 {
+			if len(spec.User.Username) == 0 && passwordExpire == "Y" {
+				return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
+			}
 			fields = append(fields, alterField{"password_expired=%?", passwordExpire})
 		}
 		if passwordExpireInterval != -1 {
