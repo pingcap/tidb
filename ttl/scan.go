@@ -17,6 +17,8 @@ package ttl
 import (
 	"time"
 
+	"github.com/pingcap/tidb/types"
+
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 
@@ -26,10 +28,11 @@ import (
 )
 
 type scanTask struct {
-	tbl       *ttlTable
-	par       model.PartitionDefinition
-	expire    time.Time
-	scanRange []rowKey
+	tbl        *PhysicalTable
+	par        model.PartitionDefinition
+	expire     time.Time
+	rangeStart []types.Datum
+	rangeEnd   []types.Datum
 }
 
 type scanWorker struct {
@@ -104,12 +107,16 @@ func (w *scanWorker) executeScanTask(se *session, task *scanTask) {
 	}()
 
 	expire := task.expire.In(se.GetSessionVars().TimeZone)
-	generator := newScanQueryGenerator(task.tbl, expire, task.scanRange)
-	var continueFrom rowKey
-	var exhausted bool
+	generator, err := NewScanQueryGenerator(task.tbl, expire, task.rangeStart, task.rangeEnd)
+	if err != nil {
+		terror.Log(err)
+		return
+	}
+
 	limit := 5
+	lastResult := make([][]types.Datum, 0, limit)
 	for w.Status() == workerStatusRunning {
-		sql, err := generator.NextQuery(limit, continueFrom, exhausted)
+		sql, err := generator.NextSQL(lastResult, limit)
 		if err != nil {
 			terror.Log(err)
 			time.Sleep(10 * time.Second)
@@ -128,22 +135,15 @@ func (w *scanWorker) executeScanTask(se *session, task *scanTask) {
 			continue
 		}
 
-		expiredKeys := make([]rowKey, 0, len(rows))
+		lastResult = lastResult[:0]
 		for _, row := range rows {
-			expiredKeys = append(expiredKeys, row.GetDatumRow(w.task.tbl.KeyFieldTypes))
+			lastResult = append(lastResult, row.GetDatumRow(w.task.tbl.KeyFieldTypes))
 		}
 
 		w.del <- &delTask{
 			tbl:    task.tbl,
 			expire: task.expire,
-			keys:   expiredKeys,
-		}
-
-		if len(expiredKeys) < limit {
-			continueFrom = nil
-			exhausted = true
-		} else {
-			continueFrom = expiredKeys[len(expiredKeys)-1]
+			keys:   lastResult,
 		}
 	}
 }

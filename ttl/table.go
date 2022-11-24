@@ -15,8 +15,6 @@
 package ttl
 
 import (
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -24,106 +22,50 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-type rowKey []types.Datum
-
-type scanQueryGenerator struct {
-	tbl       *ttlTable
-	scanRange []rowKey
-	expire    time.Time
-}
-
-func newScanQueryGenerator(tbl *ttlTable, expire time.Time, scanRange []rowKey) *scanQueryGenerator {
-	return &scanQueryGenerator{
-		tbl:       tbl,
-		scanRange: scanRange,
-		expire:    expire,
-	}
-}
-
-func (g *scanQueryGenerator) NextQuery(limit int, continueFrom rowKey, exhausted bool) (string, error) {
-	if exhausted {
-		return "", nil
-	}
-
-	b := newSQLBuilder(g.tbl)
-	if err := b.WriteSelect(); err != nil {
-		return "", err
-	}
-
-	left := continueFrom
-	if left == nil && len(g.scanRange) > 0 {
-		left = g.scanRange[0]
-	}
-
-	if left != nil {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns, ">", continueFrom); err != nil {
-			return "", err
-		}
-	}
-
-	if len(g.scanRange) > 1 {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<=", g.scanRange[1]); err != nil {
-			return "", err
-		}
-	}
-
-	if err := b.WriteExpireCondition(g.expire); err != nil {
-		return "", err
-	}
-
-	if err := b.WriteOrderBy(g.tbl.KeyColumns, false); err != nil {
-		return "", err
-	}
-
-	if err := b.WriteLimit(limit); err != nil {
-		return "", err
-	}
-
-	return b.Build()
-}
-
-type ttlTable struct {
-	*model.TableInfo
-	Par           *model.PartitionDefinition
-	Schema        model.CIStr
-	KeyColumns    []*model.ColumnInfo
-	KeyFieldTypes []*types.FieldType
-	TimeColumn    *model.ColumnInfo
-}
-
-func isTTLTable(tbl *model.TableInfo) bool {
-	for _, column := range tbl.Columns {
-		if column.Name.L == "expire" {
+func IsTTLTable(tbl *model.TableInfo) bool {
+	for _, col := range tbl.Cols() {
+		if col.Name.L == "expire" {
 			return true
 		}
 	}
-
 	return false
 }
 
-func newTTLTable(schema model.CIStr, tbl *model.TableInfo, par *model.PartitionDefinition) (*ttlTable, error) {
-	if !isTTLTable(tbl) {
-		return nil, errors.Errorf("table '%s.%s' is not a TTL table", schema, tbl.Name)
+// PhysicalTable is used to provide some information for a physical table in TTL job
+type PhysicalTable struct {
+	ID     int64
+	Schema model.CIStr
+	*model.TableInfo
+	// PartitionDef is the partition definition
+	PartitionDef *model.PartitionDefinition
+	// KeyColumns is the cluster index key columns for the table
+	KeyColumns    []*model.ColumnInfo
+	KeyFieldTypes []*types.FieldType
+	// TimeColum is the time column used for TTL
+	TimeColumn *model.ColumnInfo
+}
+
+func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, par *model.PartitionDefinition) (*PhysicalTable, error) {
+	t := &PhysicalTable{ID: tbl.ID, Schema: schema, PartitionDef: par}
+	if par != nil {
+		t.ID = par.ID
 	}
 
-	ttlTbl := &ttlTable{
-		TableInfo: tbl,
-		Par:       par,
-		Schema:    schema,
-	}
-
-	for _, column := range tbl.Columns {
-		if column.Name.L == "expire" {
-			ttlTbl.TimeColumn = column
-			break
+	for _, col := range tbl.Cols() {
+		if col.Name.L == "expire" {
+			t.TimeColumn = col
 		}
+	}
+
+	if t.TimeColumn == nil {
+		return nil, errors.New("no time column")
 	}
 
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				ttlTbl.KeyColumns = []*model.ColumnInfo{tbl.Columns[i]}
-				ttlTbl.KeyFieldTypes = []*types.FieldType{&tbl.Columns[i].FieldType}
+				t.KeyColumns = []*model.ColumnInfo{tbl.Columns[i]}
+				t.KeyFieldTypes = []*types.FieldType{&tbl.Columns[i].FieldType}
 			}
 		}
 	} else if tbl.IsCommonHandle {
@@ -134,36 +76,19 @@ func newTTLTable(schema model.CIStr, tbl *model.TableInfo, par *model.PartitionD
 			columns[i] = tbl.Columns[idxCol.Offset]
 			fieldTypes[i] = &tbl.Columns[idxCol.Offset].FieldType
 		}
-		ttlTbl.KeyColumns = columns
-		ttlTbl.KeyFieldTypes = fieldTypes
+		t.KeyColumns = columns
+		t.KeyFieldTypes = fieldTypes
 	} else {
-		ttlTbl.KeyColumns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
-		ttlTbl.KeyFieldTypes = []*types.FieldType{&ttlTbl.KeyColumns[0].FieldType}
+		t.KeyColumns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+		t.KeyFieldTypes = []*types.FieldType{&t.KeyColumns[0].FieldType}
 	}
-	return ttlTbl, nil
+	return t, nil
 }
 
-func (t *ttlTable) GetPhysicalTableID() int64 {
-	if t.Par != nil {
-		return t.Par.ID
+// ValidateKey validates a key
+func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
+	if len(t.KeyColumns) != len(key) {
+		return errors.Errorf("invalid key length: %d, expected %d", len(key), len(t.KeyColumns))
 	}
-	return t.ID
-}
-
-func (t *ttlTable) FormatDeleteQuery(keys []rowKey, expire time.Time) (string, error) {
-	b := newSQLBuilder(t)
-
-	if err := b.WriteDelete(); err != nil {
-		return "", err
-	}
-
-	if err := b.WriteInCondition(t.KeyColumns, keys); err != nil {
-		return "", err
-	}
-
-	if err := b.WriteExpireCondition(expire); err != nil {
-		return "", err
-	}
-
-	return b.Build()
+	return nil
 }

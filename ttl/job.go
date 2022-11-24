@@ -129,13 +129,13 @@ func (m *JobManager) rescheduleJobs(se *session) {
 	for _, db := range is.AllSchemas() {
 		for _, tbl := range is.SchemaTables(db.Name) {
 			tblInfo := tbl.Meta()
-			if !isTTLTable(tblInfo) {
+			if !IsTTLTable(tblInfo) {
 				continue
 			}
 
 			ttlTbls := m.ttlTableFromMeta(db.Name, tblInfo)
 			for _, ttlTbl := range ttlTbls {
-				if _, ok := m.jobs.Load(ttlTbl.GetPhysicalTableID()); ok {
+				if _, ok := m.jobs.Load(ttlTbl.ID); ok {
 					continue
 				}
 				job := newTTLJob(ttlTbl)
@@ -172,14 +172,14 @@ func (m *JobManager) rescheduleJobs(se *session) {
 	}
 }
 
-func (m *JobManager) ttlTableFromMeta(schema model.CIStr, tbl *model.TableInfo) []*ttlTable {
+func (m *JobManager) ttlTableFromMeta(schema model.CIStr, tbl *model.TableInfo) []*PhysicalTable {
 	if tbl.Partition == nil {
-		ttlTbl, err := newTTLTable(schema, tbl, nil)
+		ttlTbl, err := NewPhysicalTable(schema, tbl, nil)
 		if err != nil {
 			terror.Log(err)
 			return nil
 		}
-		return []*ttlTable{ttlTbl}
+		return []*PhysicalTable{ttlTbl}
 	}
 	// TODO: partition
 	return nil
@@ -187,19 +187,19 @@ func (m *JobManager) ttlTableFromMeta(schema model.CIStr, tbl *model.TableInfo) 
 
 type ttlJob struct {
 	sync.Mutex
-	tbl      *ttlTable
+	tbl      *PhysicalTable
 	tasks    []*scanTask
 	nextPoll int
 }
 
-func newTTLJob(tbl *ttlTable) *ttlJob {
+func newTTLJob(tbl *PhysicalTable) *ttlJob {
 	return &ttlJob{tbl: tbl, tasks: []*scanTask{
 		{tbl: tbl, expire: time.Now().Add(-time.Minute)},
 	}}
 }
 
 func (t *ttlJob) GetPhysicalTableID() int64 {
-	return t.tbl.GetPhysicalTableID()
+	return t.tbl.ID
 }
 
 func (t *ttlJob) Done() bool {

@@ -17,14 +17,16 @@ package ttl
 import (
 	"time"
 
+	"github.com/pingcap/tidb/types"
+
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 type delTask struct {
-	tbl    *ttlTable
+	tbl    *PhysicalTable
 	expire time.Time
-	keys   []rowKey
+	keys   [][]types.Datum
 }
 
 type delWorker struct {
@@ -61,12 +63,12 @@ func (w *delWorker) delLoop() error {
 func (w *delWorker) executeDelTask(se *session, task *delTask) {
 	totalRows := len(task.keys)
 	batchSize := 2
-	batch := make([]rowKey, 0, batchSize)
+	batch := make([][]types.Datum, 0, batchSize)
 	expire := task.expire.In(se.GetSessionVars().TimeZone)
 	for i, row := range task.keys {
 		batch = append(batch, row)
 		if i == totalRows-1 || len(batch) == batchSize {
-			sql, err := task.tbl.FormatDeleteQuery(batch, expire)
+			sql, err := BuildDeleteSQL(task.tbl, batch, expire)
 			if err != nil {
 				logutil.BgLogger().Error("", zap.Error(err))
 				return
