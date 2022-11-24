@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 const maxPwdValidationLength int = 100
@@ -33,7 +32,6 @@ const minPwdValidationLength int = 4
 // ValidateDictionaryPassword checks if the password contains words in the dictionary.
 func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccessor) (bool, error) {
 	dictionary, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordDictionary)
-	pwdLength := len(pwd)
 	if err != nil {
 		return false, err
 	}
@@ -41,17 +39,10 @@ func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccess
 	if len(words) == 0 {
 		return true, nil
 	}
-	cache := make(map[string]interface{}, len(words))
+	pwd = strings.ToLower(pwd)
 	for _, word := range words {
-		word = strings.ToLower(word)
 		if len(word) >= minPwdValidationLength && len(word) <= maxPwdValidationLength {
-			cache[word] = nil
-		}
-	}
-	for subStrLen := mathutil.Min(maxPwdValidationLength, pwdLength); subStrLen >= minPwdValidationLength; subStrLen-- {
-		for subStrPos := 0; subStrPos+subStrLen <= pwdLength; subStrPos++ {
-			subStr := strings.ToLower(pwd[subStrPos : subStrPos+subStrLen])
-			if _, ok := cache[subStr]; ok {
+			if strings.Contains(pwd, strings.ToLower(word)) {
 				return false, nil
 			}
 		}
