@@ -788,12 +788,9 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin s
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	if authPlugin == mysql.AuthNativePassword ||
+	return authPlugin == mysql.AuthNativePassword ||
 		authPlugin == mysql.AuthTiDBSM3Password ||
-		authPlugin == mysql.AuthCachingSha2Password {
-		return true
-	}
-	return false
+		authPlugin == mysql.AuthCachingSha2Password
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
