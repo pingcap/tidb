@@ -202,7 +202,7 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 
 func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID, partitionID int64, isPartition bool, info string, index int) {
 	if index < 0 {
-		logutil.BgLogger().Info(info,
+		logutil.BgLogger().Debug(info,
 			zap.Int64("tableID", tableID),
 			zap.Int64("partitionID", partitionID),
 			zap.Bool("isPartitionTable", isPartition),
@@ -210,7 +210,7 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 			zap.Int64("newRootCount", newRootCount),
 			zap.Int64("subCount", subCount))
 	} else {
-		logutil.BgLogger().Info(info,
+		logutil.BgLogger().Debug(info,
 			zap.Int64("tableID", tableID),
 			zap.Int64("partitionID", partitionID),
 			zap.Bool("isPartitionTable", isPartition),
