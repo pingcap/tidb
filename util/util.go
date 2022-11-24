@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -106,6 +107,11 @@ func Str2Int64Map(str string) map[int64]struct{} {
 
 // GenLogFields generate log fields.
 func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+	if !info.RefCountOfStmtCtx.TryIncrease() {
+		return nil
+	}
+	defer info.RefCountOfStmtCtx.Decrease()
+
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
