@@ -66,6 +66,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 			f.addSubscription(ctx, store)
 			f.clients[store.ID].connect(f.masterCtx, f.dialer)
 		} else if sub.storeBootAt != store.BootAt {
+			sub.storeBootAt = store.BootAt
 			sub.connect(f.masterCtx, f.dialer)
 		}
 		storeSet[store.ID] = struct{}{}
@@ -191,8 +192,9 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 }
 
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
-	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID))
+	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	s.clearError()
+	s.cancel()
 
 	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
 	if err != nil {
@@ -276,7 +278,7 @@ func decodeKey(key []byte) []byte {
 }
 
 func (f *FlushSubscriber) canBeRetried(err error) bool {
-	for _, e := range multierr.Errors(err) {
+	for _, e := range multierr.Errors(errors.Cause(err)) {
 		s := status.Convert(e)
 		// Is there any other error cannot be retried?
 		if s.Code() == codes.Unimplemented {
