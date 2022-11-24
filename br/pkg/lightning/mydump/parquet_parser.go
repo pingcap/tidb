@@ -430,16 +430,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
-<<<<<<< HEAD
-	d.SetString(v, "")
-=======
-	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
-		ts := int96ToTime([]byte(v))
-		ts = ts.UTC()
-		v = ts.Format(utcTimeLayout)
-	}
 	d.SetString(v, "utf8mb4_bin")
->>>>>>> 68305e9004 (lightning: specify collation when parquet value to string datum (#38391))
 }
 
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
@@ -502,15 +493,9 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string
-<<<<<<< HEAD
 		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, "2006-01-02 15:04:05.999999",
 			"2006-01-02 15:04:05.999999Z", logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
-=======
-		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
-			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
 		d.SetString(timeStr, "utf8mb4_bin")
->>>>>>> 68305e9004 (lightning: specify collation when parquet value to string datum (#38391))
 	case logicalType.TIME != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
