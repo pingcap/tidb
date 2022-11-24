@@ -48,7 +48,7 @@ const (
 	flagRemoveSchedulers = "remove-schedulers"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
-	flagUseCheckpoint    = "use-checkpoint"
+	flagNoCheckpoint     = "no-checkpoint"
 
 	flagGCTTL = "gcttl"
 
@@ -133,7 +133,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
 	_ = flags.MarkHidden(flagUseBackupMetaV2)
 
-	flags.Bool(flagUseCheckpoint, false, "use checkpoint")
+	flags.Bool(flagNoCheckpoint, false, "not use checkpoint")
+	_ = flags.MarkHidden(flagNoCheckpoint)
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -158,10 +159,11 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	noCheckpoint, err := flags.GetBool(flagNoCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.UseCheckpoint = !noCheckpoint
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
