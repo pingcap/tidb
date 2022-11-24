@@ -1023,7 +1023,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				break Loop2
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count >= 65536 {
-					return types.ErrWrongValue.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
+					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
 				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
 				break Loop2
