@@ -22,12 +22,12 @@ Table
 
 Case1 there are columns exists in datasource
 Query: select count(*) from table where k3=1
-CountStarRewriterRule: pick the shortest not null column exists in datasource
+CountStarRewriterRule: pick the narrowest not null column exists in datasource
 Rewritten Query: select count(k3) from table where k3=1
 
 Case2 there is no columns exists in datasource
 Query: select count(*) from table
-ColumnPruningRule: pick k1 as the shortest not null column from origin table @Function.preferNotNullColumnFromTable
+ColumnPruningRule: pick k1 as the narrowest not null column from origin table @Function.preferNotNullColumnFromTable
                    datasource.columns: k1
 CountStarRewriterRule: rewrite count(*) -> count(k1)
 Rewritten Query: select count(k1) from table
@@ -47,15 +47,16 @@ func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *lo
 func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
 	if agg, ok := p.(*LogicalAggregation); ok {
-		// todo if all kinds of data source could be matched ?
-		if dataSource, ok := agg.Children()[0].(*DataSource); ok {
-			for _, aggFunc := range agg.AggFuncs {
-				if aggFunc.Name == "count" && len(aggFunc.Args) == 1 {
-					if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
-						if constExpr.Value.GetInt64() == 1 {
-							if len(dataSource.Columns) > 0 {
-								rewriteCount1ToCountColumn(dataSource, aggFunc)
-								continue
+		if agg.GroupByItems == nil || len(agg.GroupByItems) == 0 {
+			if dataSource, ok := agg.Children()[0].(*DataSource); ok {
+				for _, aggFunc := range agg.AggFuncs {
+					if aggFunc.Name == "count" && len(aggFunc.Args) == 1 && !aggFunc.HasDistinct {
+						if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
+							if constExpr.Value.GetInt64() == 1 {
+								if len(dataSource.Columns) > 0 {
+									rewriteCount1ToCountColumn(dataSource, aggFunc)
+									continue
+								}
 							}
 						}
 					}
@@ -75,7 +76,7 @@ func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimiz
 	return p, nil
 }
 
-// Pick the shortest and not null column from Data Source
+// Pick the narrowest and not null column from Data Source
 // If there is no not null column in Data Source, the count(1) will not be rewritten.
 func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.AggFuncDesc) {
 	var newAggColumn *expression.Column

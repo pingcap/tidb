@@ -23,6 +23,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -45,8 +48,6 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
@@ -2503,6 +2504,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null)")
+	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())

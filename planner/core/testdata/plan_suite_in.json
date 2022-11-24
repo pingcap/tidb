@@ -1099,14 +1099,19 @@
     "name": "TestCountStarForTikv",
     "cases": [
       "select count(*) from t",
-      "select count(*) from t where a=1"
+      "select count(*) from t where a=1",
+      "select a, count(*) from t group by a -- shouldn't be rewritten"
     ]
   },
   {
     "name": "TestCountStarForTiFlash",
     "cases": [
       "select count(*) from t",
-      "select count(*) from t where a=1"
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- count(1) to count(a)",
+      "select a, count(*) from t group by a -- shouldn't be rewritten"
     ]
   }
 ]

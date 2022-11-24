@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -652,16 +653,25 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fm
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-// pick a not null and shortest column from table
+// pick a not null and narrowest column from table
 func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
+
+	if dataSource.handleCols != nil {
+		resultColumn = dataSource.handleCols.GetCol(0)
+		resultColumnInfo = resultColumn.ToInfo()
+	} else {
+		resultColumn = dataSource.newExtraHandleSchemaCol()
+		resultColumnInfo = model.NewExtraHandleColInfo()
+	}
+
 	for _, columnInfo := range dataSource.tableInfo.Columns {
 		if columnInfo.Hidden || columnInfo.FieldType.IsVarLengthType() {
 			continue
 		}
 		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
-			if resultColumnInfo == nil || columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
+			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
 				resultColumnInfo = columnInfo
 				resultColumn = &expression.Column{
 					UniqueID: dataSource.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -671,16 +681,6 @@ func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *
 					IsHidden: resultColumnInfo.Hidden,
 				}
 			}
-		}
-	}
-	if resultColumnInfo == nil {
-		// todo
-		if dataSource.handleCols != nil {
-			resultColumn = dataSource.handleCols.GetCol(0)
-			resultColumnInfo = resultColumn.ToInfo()
-		} else {
-			resultColumn = dataSource.newExtraHandleSchemaCol()
-			resultColumnInfo = model.NewExtraHandleColInfo()
 		}
 	}
 	return resultColumn, resultColumnInfo
