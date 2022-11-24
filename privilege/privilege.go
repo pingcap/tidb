@@ -75,7 +75,7 @@ type Manager interface {
 	BuildPasswordLockingJson(failedLoginAttempts int64,
 		passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string
 
-	BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string
+	BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.

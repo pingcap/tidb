@@ -2614,7 +2614,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if connVerifErr != nil {
 		if enableAutoLock {
 			if strings.Index(connVerifErr.Error(), "decode") != -1 || strings.Index(connVerifErr.Error(), "caching_sha2_password") != -1 || strings.Index(connVerifErr.Error(), "socket") != -1 || strings.Index(connVerifErr.Error(), "Access denied") != -1 {
-				if failedLoginErr := failedLogin(s, authUser.Username, authUser.Hostname); failedLoginErr != nil {
+				if failedLoginErr := authFailedTracking(s, authUser.Username, authUser.Hostname); failedLoginErr != nil {
 					return failedLoginErr
 				}
 			}
@@ -2622,11 +2622,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		return connVerifErr
 	} else {
 		if enableAutoLock {
-			passwordLockingJson := pm.BuildPasswordLockingJsonByRecord(authUser.Username, authUser.Hostname, false, 0)
-			if passwordLockingJson != "" {
-				if lockingErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJson); lockingErr != nil {
-					return lockingErr
-				}
+			if clearErr := authSuccessClearCount(s, authUser.Username, authUser.Hostname); clearErr != nil {
+				return clearErr
 			}
 		}
 	}
@@ -2635,6 +2632,44 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
 	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return nil
+}
+
+func authSuccessClearCount(s *session, user string, host string) error {
+	passwordLocking, getErr := getFailedLoginCount(s, user, host)
+	if getErr != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
+		return getErr
+	}
+	pm := privilege.GetPrivilegeManager(s)
+	passwordLockingJson := pm.BuildSuccessPasswordLockingJson(user, host, passwordLocking.FailedLoginCount)
+	if passwordLockingJson != "" {
+		if lockingErr := s.passwordLocking(user, host, passwordLockingJson); lockingErr != nil {
+			return lockingErr
+		}
+	}
+	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
+		return commitErr
+	}
+	return nil
+}
+
+func authFailedTracking(s *session, user string, host string) error {
+	passwordLocking, getErr := getFailedLoginCount(s, user, host)
+	if getErr != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
+		return getErr
+	}
+	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1, passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
+		return err
+	}
+	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
+		return commitErr
+	}
 	return nil
 }
 
@@ -2648,12 +2683,7 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 	if len(fields) > 0 {
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
-		for i, f := range fields {
-			sqlexec.MustFormatSQL(sql, f.expr, f.value)
-			if i < len(fields)-1 {
-				sqlexec.MustFormatSQL(sql, ",")
-			}
-		}
+		sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
 		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 		_, err := s.ExecuteInternal(ctx, sql.String())
@@ -2673,6 +2703,15 @@ func failedLoginTrackingCommit(s *session) error {
 		if rollBackErr != nil {
 			return rollBackErr
 		}
+		return err
+	}
+	return nil
+}
+
+func failedLoginTrackingRollback(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "ROLLBACK")
+	if err != nil {
 		return err
 	}
 	return nil
@@ -2721,20 +2760,6 @@ func userAutoAccountLocked(s *session, user string, host string, failedLoginCoun
 		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
 	if err := s.passwordLocking(user, host, newAttributesStr); err != nil {
 		return err
-	}
-	return nil
-}
-
-func failedLogin(s *session, user string, host string) error {
-	passwordLocking, getErr := getFailedLoginCount(s, user, host)
-	if getErr != nil {
-		return getErr
-	}
-	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1, passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
-		return err
-	}
-	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
-		return commitErr
 	}
 	return nil
 }

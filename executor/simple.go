@@ -1140,10 +1140,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if failedLoginAttempts != 0 && passwordLockTime != 0 {
-			lock := "N"
-			if lockAccount == "Y" {
-				lock = "Y"
-			}
 			if failedLoginAttempts > 32767 {
 				failedLoginAttempts = 32767
 			}
@@ -1157,23 +1153,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				failedLoginAttempts = -1
 			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				failedLoginAttempts, passwordLockTime, lock, 0, time.Now().Format(time.UnixDate))
+				failedLoginAttempts, passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		} else if failedLoginAttempts == 0 && passwordLockTime != 0 {
-			lock := "N"
-			if lockAccount == "Y" {
-				lock = "Y"
-			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				passwordLockTime, lock, 0, time.Now().Format(time.UnixDate))
+				passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		} else if failedLoginAttempts != 0 && passwordLockTime == 0 {
-			lock := "N"
-			if lockAccount == "Y" {
-				lock = "Y"
-			}
 			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				failedLoginAttempts, lock, 0, time.Now().Format(time.UnixDate))
+				failedLoginAttempts, "N", 0, time.Now().Format(time.UnixDate))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 

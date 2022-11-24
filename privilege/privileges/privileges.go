@@ -410,7 +410,26 @@ func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
 	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
 }
 
-func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
+//func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
+//	if SkipWithGrant {
+//		p.user = user
+//		p.host = host
+//	}
+//	mysqlPriv := p.Handle.Get()
+//	record := mysqlPriv.matchUser(user, host)
+//	if record == nil {
+//		logutil.BgLogger().Error("get authUser privilege record fail",
+//			zap.String("authUser", user), zap.String("authHost", host))
+//		ErrAccessDenied.FastGenByArgs(user, host)
+//		return ""
+//	}
+//	if record.FailedLoginCount == 0 {
+//		return ""
+//	}
+//	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount, time.Now().Format(time.UnixDate))
+//}
+
+func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -423,10 +442,10 @@ func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host stri
 		ErrAccessDenied.FastGenByArgs(user, host)
 		return ""
 	}
-	if record.FailedLoginCount == 0 {
+	if failedLoginCount == 0 {
 		return ""
 	}
-	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount, time.Now().Format(time.UnixDate))
+	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0, time.Now().Format(time.UnixDate))
 }
 
 func buildPasswordLockingJson(failedLoginAttempts int64,
