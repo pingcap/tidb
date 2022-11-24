@@ -139,19 +139,23 @@ func (m *JobManager) rescheduleJobs(se *ttl.Session, tables *ttlTables) {
 		return
 	}
 
+	localJobs := tables.LocalJobs()
 	tbls := tables.ReadyForNewJobTables(se.Sctx.GetSessionVars())
-	jobs := tables.ReadyForResumeJobs(se.Sctx.GetSessionVars())
+	jobInfos := tables.ReadyForResumeJobs(se.Sctx.GetSessionVars())
 	for len(idleScanWorkers) > 0 && (len(tbls) > 0 || len(jobs) > 0) {
 		var job *ttlJob
 		var err error
 		switch {
+		case len(localJobs) > 0:
+			job = localJobs[0]
+			localJobs = localJobs[1:]
 		case len(tbls) > 0:
 			tbl := tbls[0]
 			tbls = tbls[1:]
 			job, err = tables.CreateNewJob(m.ctx, se, tbl.ID)
-		case len(jobs) > 0:
-			jobInfo := jobs[0]
-			jobs = jobs[1:]
+		case len(jobInfos) > 0:
+			jobInfo := jobInfos[0]
+			jobInfos = jobInfos[1:]
 			job, err = tables.ResumeJob(m.ctx, se, jobInfo.TableID, jobInfo.ID)
 		}
 
@@ -160,7 +164,7 @@ func (m *JobManager) rescheduleJobs(se *ttl.Session, tables *ttlTables) {
 			continue
 		}
 
-		for len(idleScanWorkers) > 0 {
+		for len(idleScanWorkers) > 0 && !job.Done() {
 			task, ok := job.PollNextScanTask()
 			if !ok {
 				break
@@ -283,6 +287,11 @@ func (ts *ttlTables) ReadyForNewJobTables(sessVars *variable.SessionVars) []*ttl
 }
 
 func (ts *ttlTables) ReadyForResumeJobs(sessVars *variable.SessionVars) []*ttl.JobInfo {
+	// TODO:
+	return nil
+}
+
+func (ts *ttlTables) LocalJobs() []*ttlJob {
 	// TODO:
 	return nil
 }
