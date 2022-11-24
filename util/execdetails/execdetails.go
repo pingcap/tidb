@@ -326,7 +326,7 @@ type basicCopRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_dmfile_read_time: %dms}, total_create_snapshot_time: %dms}", FormatDuration(time.Duration(e.consume)), e.loop, e.threads, e.tiflashScanContext.totalScannedPacksInDmfile, e.tiflashScanContext.totalSkippedPacksInDmfile, e.tiflashScanContext.totalScannedRowsInDmfile, e.tiflashScanContext.totalSkippedRowsInDmfile, e.tiflashScanContext.totalRoughSetIndexLoadTimeInNs/1000000, e.tiflashScanContext.totalDmfileReadTimeInNs/1000000, e.tiflashScanContext.totalCreateSnapshotTimeInNs/1000000)
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume)), e.loop, e.threads) + e.BasicRuntimeStats.tiflashScanContext.String()
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
@@ -381,13 +381,13 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows),
 			tiflashScanContext: &TiFlashScanContext{
-				totalScannedPacksInDmfile:      summary.GetTiflashScanContext().GetTotalScannedPacksInDmfile(),
-				totalSkippedPacksInDmfile:      summary.GetTiflashScanContext().GetTotalSkippedPacksInDmfile(),
-				totalScannedRowsInDmfile:       summary.GetTiflashScanContext().GetTotalScannedRowsInDmfile(),
-				totalSkippedRowsInDmfile:       summary.GetTiflashScanContext().GetTotalSkippedRowsInDmfile(),
-				totalRoughSetIndexLoadTimeInNs: summary.GetTiflashScanContext().GetTotalRoughSetIndexLoadTimeInNs(),
-				totalDmfileReadTimeInNs:        summary.GetTiflashScanContext().GetTotalDmfileReadTimeInNs(),
-				totalCreateSnapshotTimeInNs:    summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeInNs()}},
+				totalDmfileScannedPacks:            summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
+				totalDmfileSkippedPacks:            summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
+				totalDmfileScannedRows:             summary.GetTiflashScanContext().GetTotalDmfileScannedRows(),
+				totalDmfileSkippedRows:             summary.GetTiflashScanContext().GetTotalDmfileSkippedRows(),
+				totalDmfileRoughSetIndexLoadTimeMs: summary.GetTiflashScanContext().GetTotalDmfileRoughSetIndexLoadTimeMs(),
+				totalDmfileReadTimeMs:              summary.GetTiflashScanContext().GetTotalDmfileReadTimeMs(),
+				totalCreateSnapshotTimeMs:          summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeMs()}},
 			threads:   int32(summary.GetConcurrency()),
 			storeType: crs.storeType})
 }
@@ -434,7 +434,7 @@ func (crs *CopRuntimeStats) String() string {
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(fmt.Sprintf(", tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_dmfile_read_time: %dms}, total_create_snapshot_time: %dms}", totalTiFlashScanContext.totalScannedPacksInDmfile, totalTiFlashScanContext.totalSkippedPacksInDmfile, totalTiFlashScanContext.totalScannedRowsInDmfile, totalTiFlashScanContext.totalSkippedRowsInDmfile, totalTiFlashScanContext.totalRoughSetIndexLoadTimeInNs/1000000, totalTiFlashScanContext.totalDmfileReadTimeInNs/1000000, totalTiFlashScanContext.totalCreateSnapshotTimeInNs/1000000))
+				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
 		} else {
 			buf.WriteString("}")
@@ -448,7 +448,7 @@ func (crs *CopRuntimeStats) String() string {
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(fmt.Sprintf(", tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_dmfile_read_time: %dms}, total_create_snapshot_time: %dms}", totalTiFlashScanContext.totalScannedPacksInDmfile, totalTiFlashScanContext.totalSkippedPacksInDmfile, totalTiFlashScanContext.totalScannedRowsInDmfile, totalTiFlashScanContext.totalSkippedRowsInDmfile, totalTiFlashScanContext.totalRoughSetIndexLoadTimeInNs/1000000, totalTiFlashScanContext.totalDmfileReadTimeInNs/1000000, totalTiFlashScanContext.totalCreateSnapshotTimeInNs/1000000))
+				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
 		} else {
 			buf.WriteString("}")
@@ -509,29 +509,33 @@ type RuntimeStats interface {
 
 // TiFlashScanContext is used to express the table scan information in tiflash
 type TiFlashScanContext struct {
-	totalScannedPacksInDmfile      uint64
-	totalScannedRowsInDmfile       uint64
-	totalSkippedPacksInDmfile      uint64
-	totalSkippedRowsInDmfile       uint64
-	totalRoughSetIndexLoadTimeInNs uint64
-	totalDmfileReadTimeInNs        uint64
-	totalCreateSnapshotTimeInNs    uint64
+	totalDmfileScannedPacks            uint64
+	totalDmfileScannedRows             uint64
+	totalDmfileSkippedPacks            uint64
+	totalDmfileSkippedRows             uint64
+	totalDmfileRoughSetIndexLoadTimeMs uint64
+	totalDmfileReadTimeMs              uint64
+	totalCreateSnapshotTimeMs          uint64
+}
+
+func (context *TiFlashScanContext) String() string {
+	return fmt.Sprintf("tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
 func (context *TiFlashScanContext) Merge(other *TiFlashScanContext) {
-	context.totalScannedPacksInDmfile += other.totalScannedPacksInDmfile
-	context.totalScannedRowsInDmfile += other.totalScannedRowsInDmfile
-	context.totalSkippedPacksInDmfile += other.totalSkippedPacksInDmfile
-	context.totalSkippedRowsInDmfile += other.totalSkippedRowsInDmfile
-	context.totalRoughSetIndexLoadTimeInNs += other.totalRoughSetIndexLoadTimeInNs
-	context.totalDmfileReadTimeInNs += other.totalDmfileReadTimeInNs
-	context.totalCreateSnapshotTimeInNs += other.totalCreateSnapshotTimeInNs
+	context.totalDmfileScannedPacks += other.totalDmfileScannedPacks
+	context.totalDmfileScannedRows += other.totalDmfileScannedRows
+	context.totalDmfileSkippedPacks += other.totalDmfileSkippedPacks
+	context.totalDmfileSkippedRows += other.totalDmfileSkippedRows
+	context.totalDmfileRoughSetIndexLoadTimeMs += other.totalDmfileRoughSetIndexLoadTimeMs
+	context.totalDmfileReadTimeMs += other.totalDmfileReadTimeMs
+	context.totalCreateSnapshotTimeMs += other.totalCreateSnapshotTimeMs
 }
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := (context.totalScannedPacksInDmfile == 0 && context.totalSkippedPacksInDmfile == 0)
+	res := (context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0)
 	return res
 }
 
