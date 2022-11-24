@@ -17,6 +17,7 @@ package stmtctx
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"strconv"
 	"sync"
@@ -988,8 +989,16 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 
 // CopTasksDetails returns some useful information of cop-tasks during execution.
 func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
+	if !sc.InRestrictedSQL {
+		logutil.BgLogger().Error("coptasks details sleep 1111111111")
+		time.Sleep(5 * time.Second)
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	if !sc.InRestrictedSQL {
+		logutil.BgLogger().Error("coptasks details sleep 22222222")
+		time.Sleep(10 * time.Second)
+	}
 	n := len(sc.mu.allExecDetails)
 	d := &CopTasksDetails{
 		NumCopTasks:       n,
