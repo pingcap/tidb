@@ -317,7 +317,7 @@ func TestSQLBuilder(t *testing.T) {
 	b = ttl.NewSQLBuilder(t1)
 	must(b.WriteDelete())
 	_, err = b.Build()
-	require.EqualError(t, err, "expire condition not write!")
+	require.EqualError(t, err, "expire condition not write")
 
 	b = ttl.NewSQLBuilder(t1)
 	must(b.WriteDelete())
