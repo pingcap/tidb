@@ -4143,6 +4143,6 @@ func TestReorgPartitionRangeFailure(t *testing.T) {
 	tk.MustExec("use reorgfail")
 
 	tk.MustExec("CREATE TABLE t (id int, d varchar(255)) partition by range (id) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition p2 values less than (3000000))")
-	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (1000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not a single range")
-	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (4000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not a single range")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (1000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (4000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
 }

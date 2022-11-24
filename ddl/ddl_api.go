@@ -3844,7 +3844,7 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			// Not continues range
 			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-				"REORGANIZE PARTITION of RANGE; not a single range"))
+				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
 		}
 	}
 
