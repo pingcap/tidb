@@ -73,7 +73,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
-					logutil.BgLogger().Error("merge global stats failed", zap.String("info", job.JobInfo), zap.Error(err))
+					logutil.BgLogger().Error("merge global stats failed",
+						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -95,7 +96,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						true,
 					)
 					if err != nil {
-						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err))
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
+							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
 					}
 					// Dump stats to historical storage.
 					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {

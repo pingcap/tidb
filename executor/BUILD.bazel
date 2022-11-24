@@ -177,6 +177,7 @@ go_library(
         "//util/mathutil",
         "//util/memory",
         "//util/mvmap",
+        "//util/password-validation",
         "//util/pdapi",
         "//util/plancodec",
         "//util/printer",
