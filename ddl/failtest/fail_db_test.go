@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -319,6 +320,8 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
 	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
 		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	})
 }
@@ -327,6 +330,8 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
 	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
+		// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	})
 }
@@ -419,6 +424,7 @@ func TestPartitionAddIndexGC(t *testing.T) {
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
@@ -530,6 +536,34 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t5 modify a int not null;")
 
 	tk.MustExec("drop table t, t2, t3, t4, t5")
+}
+
+func TestIssue38699(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	//Test multi records
+	tk.MustExec("USE test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000), (2000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result := tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []interface{}) bool {
+		//Check if it starts with x warning(s)
+		return strings.EqualFold(actual[0], expected[0].(string)) && strings.EqualFold(actual[1], expected[1].(string)) && strings.HasPrefix(actual[2], expected[2].(string))
+	})
+
+	//Test single record
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result = tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.Check(testkit.Rows("Warning 1690 constant 1000000000 overflows tinyint"))
 }
 
 func TestPartitionAddPanic(t *testing.T) {

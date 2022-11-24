@@ -1065,7 +1065,7 @@ const (
 	DefTiFlashFastScan                             = false
 	DefMemoryUsageAlarmRatio                       = 0.7
 	DefMemoryUsageAlarmKeepRecordNum               = 5
-	DefTiDBEnableFastReorg                         = false
+	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1148,9 +1148,8 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
+	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
 var (

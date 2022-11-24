@@ -587,6 +587,10 @@ type PlanReplayer struct {
 	Analyze  bool
 	Load     bool
 	File     string
+
+	Capture    bool
+	SQLDigest  string
+	PlanDigest string
 }
 
 // IndexAdvise represents a index advise plan.

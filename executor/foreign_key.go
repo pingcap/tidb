@@ -137,6 +137,10 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	if fkc.ReferredFK != nil {
+		// Insert into parent table doesn't need to do foreign key check.
+		return nil
+	}
 	return fkc.addRowNeedToCheck(sc, row)
 }
 
