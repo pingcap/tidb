@@ -375,6 +375,12 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				finished := rc.status.FinishedFileSize.Load()
+				total := rc.status.TotalFileSize.Load()
+				tr.logger.Warn("print lightning status",
+					zap.Int64("finished", finished),
+					zap.Int64("total", total),
+					zap.Bool("equal", finished == total))
 				panic("forcing failure due to FailBeforeIndexEngineImported")
 			})
 		}
