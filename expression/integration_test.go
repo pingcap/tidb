@@ -7119,6 +7119,17 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
+func TestIssue30081(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
 func TestIssue30326(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -7382,4 +7393,35 @@ func TestIssue31569(t *testing.T) {
 	tk.MustExec("insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2)")
 	tk.MustQuery("show warnings").Check([][]interface{}{})
 	tk.MustExec("drop table t")
+}
+
+func TestIssue38736(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL, c1 INT);")
+	tk.MustExec("CREATE TABLE t1 LIKE t0;")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT IS_IPV4(t0.c1) FROM t0, t1;")
+	tk.MustExec("INSERT INTO t0(c0, c1) VALUES (true, 0);")
+	tk.MustExec("INSERT INTO t1(c0, c1) VALUES (true, 2);")
+
+	// The filter is evaled as false.
+	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);").Check(testkit.Rows())
+
+	// Also the filter is evaled as false.
+	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0) or v0.c0 > 0").Check(testkit.Rows())
+}
+
+func TestIfNullParamMarker(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(100), c2 varchar(128));")
+	tk.MustExec(`prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";`)
+	tk.MustExec(`set @a='1',@b=repeat('x', 80);`)
+	// Should not report 'Data too long for column' error.
+	tk.MustExec(`execute pr1 using @a,@b;`)
 }
