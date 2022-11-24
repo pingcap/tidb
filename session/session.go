@@ -2711,10 +2711,7 @@ func failedLoginTrackingCommit(s *session) error {
 func failedLoginTrackingRollback(s *session) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "ROLLBACK")
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func getFailedLoginCount(s *session, user string, host string) (privileges.PasswordLocking, error) {

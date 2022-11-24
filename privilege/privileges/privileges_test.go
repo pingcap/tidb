@@ -3026,3 +3026,17 @@ func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockT
 		fmt.Println(err)
 	}
 }
+
+func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64) {
+	userAttributesSql := selectSql(user)
+	resBuff := bytes.NewBufferString("")
+	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	var ua []userAttributes
+	if err := json.Unmarshal([]byte(resBuff.String()), &ua); err == nil {
+		require.True(t, ua[0].Password_locking.FailedLoginCount == failedLoginCount)
+	} else {
+		fmt.Println(err)
+	}
+}

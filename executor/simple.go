@@ -813,8 +813,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	lockAccount := "N"
 	var failedLoginAttempts int64 = 0
 	var passwordLockTime int64 = 0
-	//var failedLoginAttempts
-	//passwordLockTime := 0
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
@@ -838,11 +836,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	var userAttributes any = nil
+	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
 	if passwordLockTime != 0 || failedLoginAttempts != 0 {
 		if failedLoginAttempts > 32767 {
 			failedLoginAttempts = 32767
 		}
-		if failedLoginAttempts < 0 {
+		if failedLoginAttempts <= 0 {
 			failedLoginAttempts = 0
 		}
 		if passwordLockTime > 32767 {

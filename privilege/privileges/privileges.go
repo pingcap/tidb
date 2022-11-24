@@ -410,25 +410,6 @@ func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
 	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
 }
 
-//func (p *UserPrivileges) BuildPasswordLockingJsonByRecord(user string, host string, autoAccountLocked bool, failedLoginCount int64) string {
-//	if SkipWithGrant {
-//		p.user = user
-//		p.host = host
-//	}
-//	mysqlPriv := p.Handle.Get()
-//	record := mysqlPriv.matchUser(user, host)
-//	if record == nil {
-//		logutil.BgLogger().Error("get authUser privilege record fail",
-//			zap.String("authUser", user), zap.String("authHost", host))
-//		ErrAccessDenied.FastGenByArgs(user, host)
-//		return ""
-//	}
-//	if record.FailedLoginCount == 0 {
-//		return ""
-//	}
-//	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, autoAccountLocked, failedLoginCount, time.Now().Format(time.UnixDate))
-//}
-
 func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string {
 	if SkipWithGrant {
 		p.user = user
@@ -960,9 +941,12 @@ func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr
 	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
 		value, BJErr := BJ.Unquote()
 		if BJErr != nil {
-			return -1, err
+			return -1, BJErr
 		}
-		t, _ := time.ParseInLocation(time.UnixDate, value, time.Local)
+		t, timeErr := time.ParseInLocation(time.UnixDate, value, time.Local)
+		if timeErr != nil {
+			return -1, timeErr
+		}
 		return t.Unix(), nil
 	}
 	return -1, err
@@ -976,13 +960,15 @@ func PasswordLockingBoolParser(userAttributesJson types.BinaryJSON, pathExpr str
 	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
 		value, BJErr := BJ.Unquote()
 		if BJErr != nil {
-			return false, err
+			return false, BJErr
 		}
 		if value == "Y" {
 			return true, nil
+		} else if value == "N" {
+			return false, nil
 		} else {
 			return false, nil
 		}
 	}
-	return false, nil
+	return false, errors.New("pathExpr  not found")
 }
