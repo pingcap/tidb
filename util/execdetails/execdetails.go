@@ -344,6 +344,8 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
 		threads:           e.threads,
 		storeType:         e.storeType,
+		totalTasks:        e.totalTasks,
+		procTimes:         e.procTimes,
 	}
 }
 
@@ -358,7 +360,11 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.rows += tmp.rows
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
-	e.procTimes = append(e.procTimes, tmp.procTimes...)
+	if len(tmp.procTimes) > 0 {
+		e.procTimes = append(e.procTimes, tmp.procTimes...)
+	} else {
+		e.procTimes = append(e.procTimes, time.Duration(tmp.consume))
+	}
 }
 
 // Tp implements the RuntimeStats interface.
@@ -385,7 +391,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	if crs.stats[address] == nil {
-		crs.stats[address] = &basicCopRuntimeStats{}
+		crs.stats[address] = &basicCopRuntimeStats{
+			storeType: crs.storeType,
+		}
 	}
 	crs.stats[address].Merge(&basicCopRuntimeStats{
 		storeType: crs.storeType,
@@ -394,7 +402,6 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			rows:    int64(*summary.NumProducedRows)},
 		threads:    int32(summary.GetConcurrency()),
 		totalTasks: 1,
-		procTimes:  []time.Duration{time.Duration(int64(*summary.TimeProcessedNs))},
 	})
 }
 
@@ -547,6 +554,11 @@ type RootRuntimeStats struct {
 	groupRss []RuntimeStats
 }
 
+// NewRootRuntimeStats returns a new RootRuntimeStats
+func NewRootRuntimeStats() *RootRuntimeStats {
+	return &RootRuntimeStats{basic: &BasicRuntimeStats{}}
+}
+
 // GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
 	return e.basic.rows
@@ -636,7 +648,7 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
 	stats, ok := e.rootStats[planID]
 	if !ok {
-		stats = &RootRuntimeStats{}
+		stats = NewRootRuntimeStats()
 		e.rootStats[planID] = stats
 	}
 	tp := info.Tp()
@@ -660,7 +672,7 @@ func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
 	if !ok {
-		stats = &RootRuntimeStats{}
+		stats = NewRootRuntimeStats()
 		e.rootStats[planID] = stats
 	}
 	if stats.basic == nil {
@@ -675,7 +687,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
 	if !exists {
-		runtimeStats = &RootRuntimeStats{}
+		runtimeStats = NewRootRuntimeStats()
 		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats

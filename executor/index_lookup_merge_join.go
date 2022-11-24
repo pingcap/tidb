@@ -173,6 +173,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	if e.runtimeStats != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
