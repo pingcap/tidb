@@ -16,6 +16,7 @@ package ttl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
@@ -91,4 +92,84 @@ func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
 		return errors.Errorf("invalid key length: %d, expected %d", len(key), len(t.KeyColumns))
 	}
 	return nil
+}
+
+type InfoSchemaTables struct {
+	schemaVer int64
+	tables    map[int64]*PhysicalTable
+}
+
+func NewInfoSchemaTables() *InfoSchemaTables {
+	return &InfoSchemaTables{
+		tables: make(map[int64]*PhysicalTable, 64),
+	}
+}
+
+func (t *InfoSchemaTables) Foreach(fn func(t *PhysicalTable) bool) {
+	for _, tbl := range t.tables {
+		if !fn(tbl) {
+			break
+		}
+	}
+}
+
+func (t *InfoSchemaTables) GetByID(id int64) (tbl *PhysicalTable, ok bool) {
+	tbl, ok = t.tables[id]
+	return
+}
+
+func (t *InfoSchemaTables) Update(is infoschema.InfoSchema) error {
+	if is == nil {
+		return errors.New("Cannot update tables with nil information schema")
+	}
+
+	if t.schemaVer == is.SchemaMetaVersion() {
+		return nil
+	}
+
+	newTables := make(map[int64]*PhysicalTable, len(t.tables))
+	for _, db := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(db.Name) {
+			tblInfo := tbl.Meta()
+			if !IsTTLTable(tblInfo) {
+				continue
+			}
+
+			if tblInfo.Partition == nil {
+				ttlTable, err := t.newTable(db.Name, tblInfo, nil)
+				if err != nil {
+					return err
+				}
+				newTables[ttlTable.ID] = ttlTable
+				continue
+			}
+
+			for _, par := range tblInfo.Partition.Definitions {
+				ttlTable, err := t.newTable(db.Name, tblInfo, &par)
+				if err != nil {
+					return err
+				}
+				newTables[ttlTable.ID] = ttlTable
+				continue
+			}
+		}
+	}
+
+	t.schemaVer = is.SchemaMetaVersion()
+	t.tables = newTables
+	return nil
+}
+
+func (t *InfoSchemaTables) newTable(schema model.CIStr, tblInfo *model.TableInfo, par *model.PartitionDefinition) (*PhysicalTable, error) {
+	id := tblInfo.ID
+	if par != nil {
+		id = par.ID
+	}
+
+	ttlTable, ok := t.tables[id]
+	if ok && ttlTable.TableInfo == tblInfo {
+		return ttlTable, nil
+	}
+
+	return NewPhysicalTable(schema, tblInfo, par)
 }

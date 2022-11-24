@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package ttlworker
 
 import (
 	"context"
 	"sync"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type workerStatus int
@@ -31,53 +27,6 @@ const (
 	workerStatusStopping
 	workerStatusStopped
 )
-
-type session struct {
-	pool sessionPool
-	sessionctx.Context
-	sqlexec.SQLExecutor
-}
-
-func getWorkerSession(pool sessionPool) (*session, error) {
-	resource, err := pool.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	sctx, ok := resource.(sessionctx.Context)
-	if !ok {
-		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
-	}
-
-	exec, ok := resource.(sqlexec.SQLExecutor)
-	if !ok {
-		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
-	}
-
-	se := &session{
-		pool:        pool,
-		Context:     sctx,
-		SQLExecutor: exec,
-	}
-
-	if _, err = executeSQL(context.Background(), se, "commit"); err != nil {
-		se.Close()
-		return nil, err
-	}
-
-	if _, err = executeSQL(context.Background(), se, "set @@time_zone=(select @@global.time_zone)"); err != nil {
-		se.Close()
-		return nil, err
-	}
-
-	return se, nil
-}
-
-func (s *session) Close() {
-	s.pool.Put(s)
-	s.Context = nil
-	s.SQLExecutor = nil
-}
 
 type worker interface {
 	Start()

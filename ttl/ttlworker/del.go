@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package ttlworker
 
 import (
 	"time"
 
+	"github.com/pingcap/tidb/ttl"
 	"github.com/pingcap/tidb/types"
-
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 type delTask struct {
-	tbl    *PhysicalTable
+	tbl    *ttl.PhysicalTable
 	expire time.Time
 	keys   [][]types.Datum
 }
@@ -60,15 +60,15 @@ func (w *delWorker) delLoop() error {
 	}
 }
 
-func (w *delWorker) executeDelTask(se *session, task *delTask) {
+func (w *delWorker) executeDelTask(se *ttl.Session, task *delTask) {
 	totalRows := len(task.keys)
 	batchSize := 2
 	batch := make([][]types.Datum, 0, batchSize)
-	expire := task.expire.In(se.GetSessionVars().TimeZone)
+	expire := task.expire.In(se.Sctx.GetSessionVars().TimeZone)
 	for i, row := range task.keys {
 		batch = append(batch, row)
 		if i == totalRows-1 || len(batch) == batchSize {
-			sql, err := BuildDeleteSQL(task.tbl, batch, expire)
+			sql, err := ttl.BuildDeleteSQL(task.tbl, batch, expire)
 			if err != nil {
 				logutil.BgLogger().Error("", zap.Error(err))
 				return
@@ -80,11 +80,11 @@ func (w *delWorker) executeDelTask(se *session, task *delTask) {
 	}
 }
 
-func (w *delWorker) doDelete(se *session, sql string) {
+func (w *delWorker) doDelete(se *ttl.Session, sql string) {
 	maxRetry := 10
 	for i := 0; i <= maxRetry && w.Status() == workerStatusRunning; i++ {
 		logutil.BgLogger().Info("TTL delete query", zap.String("sql", sql))
-		if _, err := executeSQL(w.ctx, se, sql); err != nil {
+		if _, err := se.ExecuteSQL(w.ctx, sql); err != nil {
 			logutil.BgLogger().Error("", zap.Error(err))
 			time.Sleep(time.Second)
 			continue

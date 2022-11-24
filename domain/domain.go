@@ -27,8 +27,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/ttl"
-
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -61,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -1059,7 +1058,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	ttl.NewJobManager(do.sysSessionPool).Start()
+	ttlworker.NewJobManager(do.sysSessionPool).Start()
 	return nil
 }
 

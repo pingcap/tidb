@@ -17,15 +17,40 @@ package ttl
 import (
 	"context"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func executeSQL(ctx context.Context, se *session, sql string, args ...interface{}) ([]chunk.Row, error) {
+type Session struct {
+	Sctx     sessionctx.Context
+	Executor sqlexec.SQLExecutor
+	CloseFn  func()
+}
+
+func (s *Session) GetDomainInfoSchema() infoschema.InfoSchema {
+	is, ok := s.Sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return nil
+	}
+
+	if ext, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		return ext.InfoSchema
+	}
+
+	return is
+}
+
+func (s *Session) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
-	rs, err := se.ExecuteInternal(ctx, sql, args...)
+	rs, err := s.Executor.ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -39,4 +64,10 @@ func executeSQL(ctx context.Context, se *session, sql string, args ...interface{
 	}()
 
 	return sqlexec.DrainRecordSet(ctx, rs, 8)
+}
+
+func (s *Session) Close() {
+	if s.CloseFn != nil {
+		s.CloseFn()
+	}
 }

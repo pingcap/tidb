@@ -12,23 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package ttlworker
 
 import (
 	"time"
 
-	"github.com/pingcap/tidb/types"
-
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type scanTask struct {
-	tbl        *PhysicalTable
+	tbl        *ttl.PhysicalTable
 	par        model.PartitionDefinition
 	expire     time.Time
 	rangeStart []types.Datum
@@ -99,15 +98,15 @@ func (w *scanWorker) scanLoop() error {
 	}
 }
 
-func (w *scanWorker) executeScanTask(se *session, task *scanTask) {
+func (w *scanWorker) executeScanTask(se *ttl.Session, task *scanTask) {
 	defer func() {
 		w.Lock()
 		defer w.Unlock()
 		w.task = nil
 	}()
 
-	expire := task.expire.In(se.GetSessionVars().TimeZone)
-	generator, err := NewScanQueryGenerator(task.tbl, expire, task.rangeStart, task.rangeEnd)
+	expire := task.expire.In(se.Sctx.GetSessionVars().TimeZone)
+	generator, err := ttl.NewScanQueryGenerator(task.tbl, expire, task.rangeStart, task.rangeEnd)
 	if err != nil {
 		terror.Log(err)
 		return
@@ -128,7 +127,7 @@ func (w *scanWorker) executeScanTask(se *session, task *scanTask) {
 		}
 
 		logutil.BgLogger().Info("TTL scan query", zap.String("sql", sql))
-		rows, err := executeSQL(w.ctx, se, sql)
+		rows, err := se.ExecuteSQL(w.ctx, sql)
 		if err != nil {
 			terror.Log(err)
 			time.Sleep(10 * time.Second)
