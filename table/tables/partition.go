@@ -1288,7 +1288,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	partInfo.AddingDefinitions = nil
 	tblInfo.Partition = &partInfo
 	var tc TableCommon
-	tc.meta = tblInfo
+	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 
 	// and rebuild the partitioning structure
 
