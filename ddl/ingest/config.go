@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
 func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config.Config, error) {
