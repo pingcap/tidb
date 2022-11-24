@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -833,7 +832,7 @@ func isUnknownSystemVariableErr(err error) bool {
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]interface{}) (*sql.DB, error) {
 	support := make(map[string]interface{})
 	for k, v := range params {
 		var pv interface{}
@@ -861,6 +860,10 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		support[k] = pv
 	}
 
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
+	}
+
 	for k, v := range support {
 		var s string
 		// Wrap string with quote to handle string with space. For example, '2020-10-20 13:41:40'
@@ -870,14 +873,20 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		} else {
 			s = fmt.Sprintf("%v", v)
 		}
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
+		cfg.Params[k] = s
 	}
 
-	newDB, err := sql.Open("mysql", dsn)
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	newDB := sql.OpenDB(c)
+	// ping to make sure all session parameters are set correctly
+	err = newDB.PingContext(tctx)
 	if err == nil {
 		db.Close()
 	}
-	return newDB, errors.Trace(err)
+	return newDB, nil
 }
 
 func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead bool) (*sql.Conn, error) {
