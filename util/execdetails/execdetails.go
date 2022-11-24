@@ -32,17 +32,22 @@ import (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	BackoffSleep     map[string]time.Duration
-	BackoffTimes     map[string]int
+	DetailsNeedP90
 	CommitDetail     *util.CommitDetails
 	LockKeysDetail   *util.LockKeysDetails
 	ScanDetail       *util.ScanDetail
-	CalleeAddress    string
-	TimeDetail       util.TimeDetail
 	CopTime          time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	RequestCount     int
+}
+
+// DetailsNeedP90 contains execution detail information which need calculate P90.
+type DetailsNeedP90 struct {
+	BackoffSleep  map[string]time.Duration
+	BackoffTimes  map[string]int
+	CalleeAddress string
+	TimeDetail    util.TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
