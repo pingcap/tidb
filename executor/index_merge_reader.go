@@ -912,7 +912,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			},
 		})
 		if w.indexMerge.partitionTableMode {
-			tasks[parTblIdx].partitionTable = w.indexMerge.prunedPartitions[parTblIdx]
+			tasks[len(tasks)-1].partitionTable = w.indexMerge.prunedPartitions[parTblIdx]
 		}
 	}
 	for _, task := range tasks {
