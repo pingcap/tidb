@@ -52,12 +52,15 @@ func NewFullWith(initSpans []Span, init Value) *ValuedFull {
 	return &ValuedFull{inner: t}
 }
 
+// Merge merges a new interval into the span set. The value of overlapped
+// part with other spans would be "merged" by the `join` function.
 func (f *ValuedFull) Merge(val Valued) {
 	overlaps := make([]Valued, 0, 16)
 	f.overlapped(val.Key, &overlaps)
 	f.mergeWithOverlap(val, overlaps, nil)
 }
 
+// Traverse traverses all ranges by order.
 func (f *ValuedFull) Traverse(m func(Valued) bool) {
 	f.inner.Ascend(func(item btree.Item) bool {
 		return m(item.(Valued))

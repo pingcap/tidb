@@ -12,11 +12,14 @@ func (s sortedByValueThenStartKey) Less(o btree.Item) bool {
 	return Valued(s).Less(Valued(other))
 }
 
+// ValueSortedFull is almost the same as `Valued`, however it added an
+// extra index hence enabled query range by theirs value.
 type ValueSortedFull struct {
 	*ValuedFull
 	valueIdx *btree.BTree
 }
 
+// Sorted takes the ownership of a raw `ValuedFull` and then wrap it with `ValueSorted`.
 func Sorted(f *ValuedFull) *ValueSortedFull {
 	vf := &ValueSortedFull{
 		ValuedFull: f,

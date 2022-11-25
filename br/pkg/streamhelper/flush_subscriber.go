@@ -194,7 +194,7 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
 	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	s.clearError()
-	s.cancel()
+	s.close()
 
 	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
 	if err != nil {
