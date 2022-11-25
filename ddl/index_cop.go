@@ -97,7 +97,7 @@ type copReqSenderPool struct {
 
 	idxBufPool sync.Pool // []*indexRecord
 	srcChkPool sync.Pool // *chunk.Chunk
-	binding    map[*[]*indexRecord]*chunk.Chunk
+	binding    generic.SyncMap[*[]*indexRecord, *chunk.Chunk]
 }
 
 type copReqSender struct {
@@ -160,7 +160,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 				return chunk.NewChunkWithCapacity(copCtx.fieldTps, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
 			},
 		},
-		binding: make(map[*[]*indexRecord]*chunk.Chunk),
+		binding: generic.NewSyncMap[*[]*indexRecord, *chunk.Chunk](4),
 	}
 }
 
@@ -206,7 +206,7 @@ func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Ch
 		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
 	}
 	chk.Reset()
-	c.binding[&ir] = chk
+	c.binding.Store(&ir, chk)
 	return ir[:0], chk
 }
 
@@ -216,7 +216,9 @@ func (c *copReqSenderPool) recycleIdxRecords(idxRecs []*indexRecord) {
 		return
 	}
 	c.idxBufPool.Put(idxRecs[:0])
-	c.srcChkPool.Put(c.binding[&idxRecs])
+	if bindingChunk, ok := c.binding.Load(&idxRecs); ok {
+		c.srcChkPool.Put(bindingChunk)
+	}
 }
 
 // copContext contains the information that is needed when building a coprocessor request.
