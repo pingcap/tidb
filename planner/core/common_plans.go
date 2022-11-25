@@ -671,16 +671,16 @@ type JSONSlice []*ExplainInfoForEncode
 
 // ToString convert json to string
 func (j *JSONSlice) ToString() (string, error) {
-	b, err := json.Marshal(*j)
+	byteBuffer := bytes.NewBuffer([]byte{})
+	encoder := json.NewEncoder(byteBuffer)
+	// avoid wrongly embedding
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "    ")
+	err := encoder.Encode(j)
 	if err != nil {
 		return "", err
 	}
-	var out bytes.Buffer
-	err = json.Indent(&out, b, "", "    ")
-	if err != nil {
-		return "", err
-	}
-	return out.String(), nil
+	return byteBuffer.String(), nil
 }
 
 // Explain represents a explain plan.
@@ -1026,11 +1026,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormatR(p Plan, taskType, id string,
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
-		jsonRow.ActRows = actRows
-		jsonRow.ExecuteInfo = analyzeInfo
-		jsonRow.MemoryInfo = memoryInfo
-		jsonRow.DiskInfo = diskInfo
+		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 	}
 	return jsonRow
 }
