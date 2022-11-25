@@ -87,6 +87,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "set @@global.tidb_source_id=2;")
 	require.NoError(t, err)
 	for i := 0; i < 20; i++ {
