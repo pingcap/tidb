@@ -1212,7 +1212,6 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if canDeleteNum < 0 {
 		canDeleteNum = 0
 	}
-	// no limit
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, canDeleteNum, nil
 	}
