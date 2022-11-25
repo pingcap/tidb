@@ -164,6 +164,9 @@ type ColumnInfo struct {
 
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
+	if c == nil {
+		return nil
+	}
 	nc := *c
 	return &nc
 }
