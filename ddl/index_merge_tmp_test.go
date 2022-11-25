@@ -264,6 +264,12 @@ func TestPessimisticAmendIncompatibleWithFastReorg(t *testing.T) {
 // Create one unique index idx((a*b+1));
 // insert (0, 6) and delete it;
 // insert (0, 9), it should be successful;
+// Should check temp key exist and skip deleted mark
+// The error returned below:
+// Error Trace:	/tidb/ddl/index_merge_tmp_test.go:345
+// Error:      	Received unexpected error:
+//
+//	[kv:1062]Duplicate entry '1' for key 't.idx'
 func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
