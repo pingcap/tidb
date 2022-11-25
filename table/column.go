@@ -197,9 +197,10 @@ func convertToIncorrectStringErr(err error, colName string) error {
 // handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
 // Currently only called from CastValue.
 // returns:
-//   value (possibly adjusted)
-//   boolean; true if break error/warning handling in CastValue and return what was returned from this
-//   error
+//
+//	value (possibly adjusted)
+//	boolean; true if break error/warning handling in CastValue and return what was returned from this
+//	error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
