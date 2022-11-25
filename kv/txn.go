@@ -81,7 +81,8 @@ func (ib *innerTxnStartTsBox) getMinStartTS(now time.Time, startTSLowerLimit uin
 
 // PrintLongTimeInternalTxn print the internal transaction information.
 // runByFunction	true means the transaction is run by `RunInNewTxn`,
-//					false means the transaction is run by internal session.
+//
+//	false means the transaction is run by internal session.
 func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool) {
 	if startTS > 0 {
 		innerTxnStartTime := oracle.GetTimeFromTS(startTS)
