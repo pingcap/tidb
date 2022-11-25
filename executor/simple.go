@@ -1324,7 +1324,6 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	if !res {
 		return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host))
 	}
-	// delete useless password logging
 	err = deleteHistoricalData(ctx, sqlExecutor, userDetail, maxDelNum, passwdReuseInfo, sctx)
 	if err != nil {
 		return err
