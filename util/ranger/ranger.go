@@ -490,14 +490,17 @@ func hasPrefix(lengths []int) bool {
 // change the exclude status of that point and return `true` to tell
 // that we need do a range merging since that interval may have intersection.
 // e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
-//      then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
-//      so we need a merge operation.
+//
+//	then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
+//	so we need a merge operation.
+//
 // Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
 // A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
-//    The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
-//    whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
-//    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
-//    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
+//
+//	The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
+//	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
+//	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
+//	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
 	var hasCut bool
 	for _, ran := range ranges {
