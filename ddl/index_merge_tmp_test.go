@@ -266,7 +266,6 @@ func TestPessimisticAmendIncompatibleWithFastReorg(t *testing.T) {
 // insert (0, 9), it should be successful;
 // Should check temp key exist and skip deleted mark
 // The error returned below:
-// Error Trace:	/tidb/ddl/index_merge_tmp_test.go:345
 // Error:      	Received unexpected error:
 //
 //	[kv:1062]Duplicate entry '1' for key 't.idx'
