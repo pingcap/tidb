@@ -25,7 +25,7 @@ require (
 	github.com/coreos/go-semver v0.3.0
 	github.com/daixiang0/gci v0.8.5
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
-	github.com/dgraph-io/ristretto v0.1.1-0.20220403145359-8e850b710d6d
+	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
 	github.com/emirpasic/gods v1.18.1
@@ -68,7 +68,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20221103025916-e7e21f0e9cd9
+	github.com/pingcap/kvproto v0.0.0-20221114102356-3debb6820e46
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -110,7 +110,7 @@ require (
 	golang.org/x/net v0.1.0
 	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5
 	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.1.0
+	golang.org/x/sys v0.2.0
 	golang.org/x/term v0.1.0
 	golang.org/x/text v0.4.0
 	golang.org/x/time v0.1.0

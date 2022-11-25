@@ -96,8 +96,6 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
-	tidbNewCollationEnabled = "new_collation_enabled"
-
 	flagFullBackupType = "type"
 )
 
