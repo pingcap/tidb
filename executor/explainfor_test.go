@@ -1413,15 +1413,21 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
+
 	j := new(core.JSONSlice)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	require.Equal(t, len(*j), len(resRow))
+	var flatJSONRows core.JSONSlice
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
 	for i, row := range resRow {
-		require.Contains(t, row[0], (*j)[i].ID)
-		require.Equal(t, (*j)[i].EstRows, row[1])
-		require.Equal(t, (*j)[i].TaskType, row[2])
-		require.Equal(t, (*j)[i].AccessObject, row[3])
-		require.Equal(t, (*j)[i].OperatorInfo, row[4])
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].TaskType, row[2])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
 	}
 
 	tk1.MustExec("set @@tidb_enable_collect_execution_info=1;")
@@ -1434,20 +1440,26 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
+
 	j = new(core.JSONSlice)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	require.Equal(t, len(*j), len(resRow))
+	flatJSONRows = core.JSONSlice{}
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
 	for i, row := range resRow {
-		require.Contains(t, row[0], (*j)[i].ID)
-		require.Equal(t, (*j)[i].EstRows, row[1])
-		require.Equal(t, (*j)[i].ActRows, row[2])
-		require.Equal(t, (*j)[i].TaskType, row[3])
-		require.Equal(t, (*j)[i].AccessObject, row[4])
-		require.Equal(t, (*j)[i].OperatorInfo, row[6])
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].ActRows, row[2])
+		require.Equal(t, flatJSONRows[i].TaskType, row[3])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
 		// executeInfo, memory, disk maybe vary in multi execution
-		require.NotEqual(t, (*j)[i].ExecuteInfo, "")
-		require.NotEqual(t, (*j)[i].MemoryInfo, "")
-		require.NotEqual(t, (*j)[i].DiskInfo, "")
+		require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+		require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
 	}
 	// test syntax
 	tk2.MustExec(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID))

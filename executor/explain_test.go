@@ -517,6 +517,17 @@ func TestIssue35105(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }
 
+func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res plannercore.JSONSlice) {
+	if j == nil {
+		return
+	}
+	res = append(res, j)
+	for _, child := range j.SubOperators {
+		res = append(res, flatJSONPlan(child)...)
+	}
+	return
+}
+
 func TestExplainJSON(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -554,13 +565,18 @@ func TestExplainJSON(t *testing.T) {
 
 		j := new(plannercore.JSONSlice)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-		require.Equal(t, len(*j), len(resRow))
+		var flatJSONRows plannercore.JSONSlice
+		for _, row := range *j {
+			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+		}
+		require.Equal(t, len(flatJSONRows), len(resRow))
+
 		for i, row := range resRow {
-			require.Contains(t, row[0], (*j)[i].ID)
-			require.Equal(t, (*j)[i].EstRows, row[1])
-			require.Equal(t, (*j)[i].TaskType, row[2])
-			require.Equal(t, (*j)[i].AccessObject, row[3])
-			require.Equal(t, (*j)[i].OperatorInfo, row[4])
+			require.Contains(t, row[0], flatJSONRows[i].ID)
+			require.Equal(t, flatJSONRows[i].EstRows, row[1])
+			require.Equal(t, flatJSONRows[i].TaskType, row[2])
+			require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+			require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
 		}
 	}
 
@@ -573,18 +589,23 @@ func TestExplainJSON(t *testing.T) {
 
 		j := new(plannercore.JSONSlice)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-		require.Equal(t, len(*j), len(resRow))
+		var flatJSONRows plannercore.JSONSlice
+		for _, row := range *j {
+			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+		}
+		require.Equal(t, len(flatJSONRows), len(resRow))
+
 		for i, row := range resRow {
-			require.Contains(t, row[0], (*j)[i].ID)
-			require.Equal(t, (*j)[i].EstRows, row[1])
-			require.Equal(t, (*j)[i].ActRows, row[2])
-			require.Equal(t, (*j)[i].TaskType, row[3])
-			require.Equal(t, (*j)[i].AccessObject, row[4])
-			require.Equal(t, (*j)[i].OperatorInfo, row[6])
+			require.Contains(t, row[0], flatJSONRows[i].ID)
+			require.Equal(t, flatJSONRows[i].EstRows, row[1])
+			require.Equal(t, flatJSONRows[i].ActRows, row[2])
+			require.Equal(t, flatJSONRows[i].TaskType, row[3])
+			require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+			require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
 			// executeInfo, memory, disk maybe vary in multi execution
-			require.NotEqual(t, (*j)[i].ExecuteInfo, "")
-			require.NotEqual(t, (*j)[i].MemoryInfo, "")
-			require.NotEqual(t, (*j)[i].DiskInfo, "")
+			require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+			require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+			require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
 		}
 	}
 }

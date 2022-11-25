@@ -651,20 +651,19 @@ type SelectInto struct {
 
 // ExplainInfoForEncode store explain info for JSON encode
 type ExplainInfoForEncode struct {
-	ID                  string `json:"id"`
-	EstRows             string `json:"estRows"`
-	ActRows             string `json:"actRows,omitempty"`
-	TaskType            string `json:"taskType"`
-	AccessObject        string `json:"accessObject"`
-	ExecuteInfo         string `json:"executeInfo,omitempty"`
-	OperatorInfo        string `json:"operatorInfo"`
-	EstCost             string `json:"estCost,omitempty"`
-	CostFormula         string `json:"costFormula,omitempty"`
-	Idx                 int    `json:"idx"`
-	ChildrenIdx         []int  `json:"childrenIdx"`
-	MemoryInfo          string `json:"memoryInfo,omitempty"`
-	DiskInfo            string `json:"diskInfo,omitempty"`
-	TotalMemoryConsumed string `json:"totalMemoryConsumed,omitempty"`
+	ID                  string                  `json:"id"`
+	EstRows             string                  `json:"estRows"`
+	ActRows             string                  `json:"actRows,omitempty"`
+	TaskType            string                  `json:"taskType"`
+	AccessObject        string                  `json:"accessObject"`
+	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
+	OperatorInfo        string                  `json:"operatorInfo"`
+	EstCost             string                  `json:"estCost,omitempty"`
+	CostFormula         string                  `json:"costFormula,omitempty"`
+	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
+	DiskInfo            string                  `json:"diskInfo,omitempty"`
+	TotalMemoryConsumed string                  `json:"totalMemoryConsumed,omitempty"`
+	SubOperators        []*ExplainInfoForEncode `json:"subOperators"`
 }
 
 // JSONSlice store JSONExplainRows
@@ -877,25 +876,15 @@ func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
-	i := 0
-	for _, flatOp := range flat.Main {
-		e.explainFlatOpInJSONFormat(i, flatOp.ChildrenIdx, flatOp)
-		i++
-	}
+	// flat.Main[0] must be the root node of tree
+	e.JSON = append(e.JSON, e.explainRecursiveOpInJSONFormat(flat.Main[0], flat.Main))
+
 	for _, cte := range flat.CTEs {
-		cteBegin := i
-		for _, flatOp := range cte {
-			children := make([]int, len(flatOp.ChildrenIdx))
-			for j, child := range flatOp.ChildrenIdx {
-				children[j] = child + cteBegin
-			}
-			e.explainFlatOpInJSONFormat(i, children, flatOp)
-			i++
-		}
+		e.JSON = append(e.JSON, e.explainRecursiveOpInJSONFormat(cte[0], cte))
 	}
 }
 
-func (e *Explain) explainFlatOpInJSONFormat(i int, childrenIdx []int, flatOp *FlatOperator) {
+func (e *Explain) explainRecursiveOpInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
 	taskTp := ""
 	if flatOp.IsRoot {
 		taskTp = "root"
@@ -904,12 +893,19 @@ func (e *Explain) explainFlatOpInJSONFormat(i int, childrenIdx []int, flatOp *Fl
 	}
 	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
 	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
-	e.prepareOperatorInfoForJSONFormat(i, childrenIdx, flatOp.Origin, taskTp, textTreeExplainID, explainID)
+
+	cur := e.prepareOperatorInfoForJSONFormatR(flatOp.Origin, taskTp, textTreeExplainID, explainID)
 	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
 		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
 		}
 	}
+
+	for _, idx := range flatOp.ChildrenIdx {
+		cur.SubOperators = append(cur.SubOperators,
+			e.explainRecursiveOpInJSONFormat(flats[idx], flats))
+	}
+	return cur
 }
 
 func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
@@ -1014,40 +1010,29 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(idx int, childrenIdx []int, p Plan, taskType, id string, explainID string) {
+func (e *Explain) prepareOperatorInfoForJSONFormatR(p Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
-		return
+		return nil
 	}
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
-		Idx:          idx,
-		ChildrenIdx:  childrenIdx,
+		SubOperators: make([]*ExplainInfoForEncode, 0),
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-			jsonRow.EstCost = estCost
-		}
-		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-			jsonRow.CostFormula = costFormula
-		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 		jsonRow.ActRows = actRows
 		jsonRow.ExecuteInfo = analyzeInfo
 		jsonRow.MemoryInfo = memoryInfo
 		jsonRow.DiskInfo = diskInfo
-	} else {
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
-			jsonRow.CostFormula = costFormula
-		}
 	}
-	e.JSON = append(e.JSON, jsonRow)
+	return jsonRow
 }
 
 func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
