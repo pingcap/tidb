@@ -1041,6 +1041,10 @@ type SessionVars struct {
 
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
+
+	// CDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	CDCWriteSource uint64
+
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
 
