@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -592,6 +593,64 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	<-ch // wait for goroutine to quit.
 
 	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
+}
+
+func TestIndexMergeIntersectionConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3)) partition by hash(c1) partitions 10;")
+	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	// Default is tidb_executor_concurrency.
+	res = tk.MustQuery("select @@tidb_executor_concurrency;").Sort().Rows()
+	defExecCon := res[0][0].(string)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", fmt.Sprintf("return(%s)", defExecCon)))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency"))
+	}()
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_executor_concurrency = 10")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+	// workerCnt = min(part_num, concurrency)
+	tk.MustExec("set tidb_executor_concurrency = 20")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_executor_concurrency = 2")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(2)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(9)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_index_merge_intersection_concurrency = 21")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_index_merge_intersection_concurrency = 3")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(3)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+
+	// Concurrency only works for dynamic pruning partition table.
+	tk.MustExec("set tidb_partition_prune_mode = 'static'")
+	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
+
+	// Concurrency only works for dynamic pruning partition table.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
+	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 }
 
 func TestIntersectionWithDifferentConcurrency(t *testing.T) {
