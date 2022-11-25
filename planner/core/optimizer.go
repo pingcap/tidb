@@ -19,6 +19,11 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,10 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/atomic"
-	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -72,7 +73,7 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
-	flagCountStarRewriter
+	flagCountConstantRewriter
 )
 
 var optRuleList = []logicalOptRule{
@@ -95,7 +96,7 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&countStarRewriter{},
+	&countConstantRewriter{},
 }
 
 type logicalOptimizeOp struct {

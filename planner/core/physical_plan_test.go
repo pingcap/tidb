@@ -2503,7 +2503,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null)")
+	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
 	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
 
 	// tiflash
@@ -2513,7 +2513,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		tableName := tblInfo.Name.L
-		if tableName == "t" {
+		if tableName == "t" || tableName == "t_pick_row_id" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,

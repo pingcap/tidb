@@ -1109,6 +1109,8 @@
       "select count(*) from t",
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- count(1) to count(a)",
       "select a, count(*) from t group by a -- shouldn't be rewritten"

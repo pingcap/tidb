@@ -205,7 +205,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagPredicatePushDown
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
-	b.optFlag |= flagCountStarRewriter
+	b.optFlag |= flagCountConstantRewriter
 
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
@@ -4149,7 +4149,6 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
-		IsHidden: true,
 	}
 }
 

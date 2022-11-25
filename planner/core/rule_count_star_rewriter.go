@@ -9,7 +9,11 @@ import (
 )
 
 /**
-The countStarRewriter is used to rewrite count(*) -> count(not null column)
+The countConstantRewriter is used to rewrite
+    count(constant value) -> count(not null column)
+Attention:
+Since count(*) is directly translated into count(1) during grammar parsing,
+the rewritten pattern also matches count(*)
 
 Pattern:
 LogcialAggregation
@@ -32,27 +36,24 @@ ColumnPruningRule: pick k1 as the narrowest not null column from origin table @F
 CountStarRewriterRule: rewrite count(*) -> count(k1)
 Rewritten Query: select count(k1) from table
 
-Attention:
-Since count(*) is directly translated into count(1) during grammar parsing,
-the rewritten pattern actually matches count(1)
 */
 
-type countStarRewriter struct {
+type countConstantRewriter struct {
 }
 
-func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (c *countConstantRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return c.countStarRewriter(p, opt)
 }
 
-func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (c *countConstantRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
 	if agg, ok := p.(*LogicalAggregation); ok {
-		if agg.GroupByItems == nil || len(agg.GroupByItems) == 0 {
+		if len(agg.GroupByItems) == 0 {
 			if dataSource, ok := agg.Children()[0].(*DataSource); ok {
 				for _, aggFunc := range agg.AggFuncs {
 					if aggFunc.Name == "count" && len(aggFunc.Args) == 1 && !aggFunc.HasDistinct {
 						if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
-							if constExpr.Value.GetInt64() == 1 {
+							if !constExpr.Value.IsNull() {
 								if len(dataSource.Columns) > 0 {
 									rewriteCount1ToCountColumn(dataSource, aggFunc)
 									continue
@@ -96,6 +97,6 @@ func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.Agg
 	}
 }
 
-func (*countStarRewriter) name() string {
-	return "count_star_rewriter"
+func (*countConstantRewriter) name() string {
+	return "count_constant_rewriter"
 }
