@@ -757,7 +757,6 @@
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "enable to ddl",
-      "planner/": "enable to planner",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
