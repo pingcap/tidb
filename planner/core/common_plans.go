@@ -894,7 +894,7 @@ func (e *Explain) explainRecursiveOpInJSONFormat(flatOp *FlatOperator, flats Fla
 	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
 	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	cur := e.prepareOperatorInfoForJSONFormatR(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
 	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
 		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
@@ -1010,7 +1010,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormatR(p Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
 	}
