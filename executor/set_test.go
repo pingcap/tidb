@@ -863,13 +863,13 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("6"))
 
 	// test tidb_cdc_write_source
-	require.Equal(t, 0, tk.Session().GetSessionVars().CDCWriteSource)
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_cdc_write_source = 2")
 	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("2"))
-	require.Equal(t, 2, tk.Session().GetSessionVars().CDCWriteSource)
+	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
-	require.Equal(t, 0, tk.Session().GetSessionVars().CDCWriteSource)
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 }
 
 func TestGetSetNoopVars(t *testing.T) {
