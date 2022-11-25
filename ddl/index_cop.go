@@ -21,13 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -221,34 +222,145 @@ type copContext struct {
 	colInfos []*model.ColumnInfo
 	fieldTps []*types.FieldType
 	sessCtx  sessionctx.Context
+
+	expColInfos         []*expression.Column
+	idxColOutputOffsets []int
+	handleOutputOffsets []int
+	virtualColOffsets   []int
+	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) *copContext {
-	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
-	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		c := tblInfo.Columns[idxCol.Offset]
-		if c.IsGenerated() && !c.GeneratedStored {
-			// TODO(tangenta): support reading virtual generated columns.
-			return nil
+func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+	var err error
+	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
+	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
+	var handleIDs []int64
+	if err != nil {
+		return nil, err
+	}
+	var primaryIdx *model.IndexInfo
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		usedColumnIDs[pkCol.ID] = struct{}{}
+		handleIDs = []int64{pkCol.ID}
+	} else if tblInfo.IsCommonHandle {
+		primaryIdx = tables.FindPrimaryIndex(tblInfo)
+		handleIDs = make([]int64, 0, len(primaryIdx.Columns))
+		for _, pkCol := range primaryIdx.Columns {
+			col := tblInfo.Columns[pkCol.Offset]
+			handleIDs = append(handleIDs, col.ID)
 		}
-		colInfos = append(colInfos, c)
-		fieldTps = append(fieldTps, &c.FieldType)
+		usedColumnIDs, err = fillUsedColumns(usedColumnIDs, primaryIdx, tblInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	pkColInfos, pkFieldTps, pkInfo := buildHandleColInfoAndFieldTypes(tblInfo)
-	colInfos = append(colInfos, pkColInfos...)
-	fieldTps = append(fieldTps, pkFieldTps...)
+	// Only collect the columns that are used by the index.
+	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
+	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
+	for i := range tblInfo.Columns {
+		col := tblInfo.Columns[i]
+		if _, found := usedColumnIDs[col.ID]; found {
+			colInfos = append(colInfos, col)
+			fieldTps = append(fieldTps, &col.FieldType)
+		}
+	}
+
+	// Append the extra handle column when _tidb_rowid is used.
+	if !tblInfo.HasClusteredIndex() {
+		extra := model.NewExtraHandleColInfo()
+		colInfos = append(colInfos, extra)
+		fieldTps = append(fieldTps, &extra.FieldType)
+		handleIDs = []int64{extra.ID}
+	}
+
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx,
+		model.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	idxOffsets := resolveIndicesForIndex(expColInfos, idxInfo, tblInfo)
+	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
+	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
 	copCtx := &copContext{
 		tblInfo:  tblInfo,
 		idxInfo:  idxInfo,
-		pkInfo:   pkInfo,
+		pkInfo:   primaryIdx,
 		colInfos: colInfos,
 		fieldTps: fieldTps,
 		sessCtx:  sessCtx,
+
+		expColInfos:         expColInfos,
+		idxColOutputOffsets: idxOffsets,
+		handleOutputOffsets: hdColOffsets,
+		virtualColOffsets:   vColOffsets,
+		virtualColFieldTps:  vColFts,
 	}
-	return copCtx
+	return copCtx, nil
+}
+
+func fillUsedColumns(usedCols map[int64]struct{}, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) (map[int64]struct{}, error) {
+	colsToChecks := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		colsToChecks = append(colsToChecks, tblInfo.Columns[idxCol.Offset])
+	}
+	for len(colsToChecks) > 0 {
+		next := colsToChecks[0]
+		colsToChecks = colsToChecks[1:]
+		usedCols[next.ID] = struct{}{}
+		for depColName := range next.Dependences {
+			// Expand the virtual generated columns.
+			depCol := model.FindColumnInfo(tblInfo.Columns, depColName)
+			if depCol == nil {
+				return nil, errors.Trace(errors.Errorf("dependent column %s not found", depColName))
+			}
+			if _, ok := usedCols[depCol.ID]; !ok {
+				colsToChecks = append(colsToChecks, depCol)
+			}
+		}
+	}
+	return usedCols, nil
+}
+
+func resolveIndicesForIndex(outputCols []*expression.Column, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []int {
+	offsets := make([]int, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		hid := tblInfo.Columns[idxCol.Offset].ID
+		for j, col := range outputCols {
+			if col.ID == hid {
+				offsets = append(offsets, j)
+				break
+			}
+		}
+	}
+	return offsets
+}
+
+func resolveIndicesForHandle(cols []*expression.Column, handleIDs []int64) []int {
+	offsets := make([]int, 0, len(handleIDs))
+	for _, hid := range handleIDs {
+		for j, col := range cols {
+			if col.ID == hid {
+				offsets = append(offsets, j)
+				break
+			}
+		}
+	}
+	return offsets
+}
+
+func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*types.FieldType) {
+	var offsets []int
+	var fts []*types.FieldType
+	for i, col := range cols {
+		if col.VirtualExpr != nil {
+			offsets = append(offsets, i)
+			fts = append(fts, col.GetType())
+		}
+	}
+	return offsets, fts
 }
 
 func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
@@ -284,8 +396,13 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		return buf, true, nil
 	}
 	iter := chunk.NewIterator4Chunk(chk)
+	err = table.FillVirtualColumnValue(c.virtualColFieldTps, c.virtualColOffsets, c.expColInfos, c.colInfos, c.sessCtx, chk)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
+		idxDt := extractDatumByOffsets(row, c.idxColOutputOffsets, c.expColInfos)
+		hdDt := extractDatumByOffsets(row, c.handleOutputOffsets, c.expColInfos)
 		handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
@@ -321,34 +438,13 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, *model.IndexInfo) {
-	if tbInfo.PKIsHandle {
-		for i := range tbInfo.Columns {
-			if mysql.HasPriKeyFlag(tbInfo.Columns[i].GetFlag()) {
-				return []*model.ColumnInfo{tbInfo.Columns[i]}, []*types.FieldType{&tbInfo.Columns[i].FieldType}, nil
-			}
-		}
-	} else if tbInfo.IsCommonHandle {
-		primaryIdx := tables.FindPrimaryIndex(tbInfo)
-		pkCols := make([]*model.ColumnInfo, 0, len(primaryIdx.Columns))
-		pkFts := make([]*types.FieldType, 0, len(primaryIdx.Columns))
-		for _, pkCol := range primaryIdx.Columns {
-			pkCols = append(pkCols, tbInfo.Columns[pkCol.Offset])
-			pkFts = append(pkFts, &tbInfo.Columns[pkCol.Offset].FieldType)
-		}
-		return pkCols, pkFts, primaryIdx
+func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column) []types.Datum {
+	datumBuf := make([]types.Datum, 0, len(offsets))
+	for _, offset := range offsets {
+		c := expCols[offset]
+		datumBuf = append(datumBuf, row.GetDatum(offset, c.GetType()))
 	}
-	extra := model.NewExtraHandleColInfo()
-	return []*model.ColumnInfo{extra}, []*types.FieldType{&extra.FieldType}, nil
-}
-
-func extractIdxValsAndHandle(row chunk.Row, idxInfo *model.IndexInfo, fieldTps []*types.FieldType) ([]types.Datum, []types.Datum) {
-	datumBuf := make([]types.Datum, 0, len(fieldTps))
-	idxColLen := len(idxInfo.Columns)
-	for i, ft := range fieldTps {
-		datumBuf = append(datumBuf, row.GetDatum(i, ft))
-	}
-	return datumBuf[:idxColLen], datumBuf[idxColLen:]
+	return datumBuf
 }
 
 func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
