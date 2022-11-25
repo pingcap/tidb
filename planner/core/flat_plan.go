@@ -288,15 +288,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childIdxs = append(childIdxs, childIdx)
 		}
 	}
-	// For foreign key cascade plan.
-	if fkCascade, ok := p.(*FKCascade); ok {
-		for i, child := range fkCascade.CascadePlans {
-			childCtx.label = Empty
-			childCtx.isLastChild = i == len(fkCascade.CascadePlans)-1
-			target, childIdx = f.flattenRecursively(child, childCtx, target)
-			childIdxs = append(childIdxs, childIdx)
-		}
-	}
 
 	// For part of physical operators and some special operators, we need some special logic to get their "children".
 	// For PhysicalCTE, we need to add the plan tree into flatTree.ctesToFlatten.
@@ -405,6 +396,13 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 				isLastChild: true,
 			}
 			target, childIdx = f.flattenRecursively(plan.TargetPlan, initInfo, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
+	case *FKCascade:
+		for i, child := range plan.CascadePlans {
+			childCtx.label = Empty
+			childCtx.isLastChild = i == len(plan.CascadePlans)-1
+			target, childIdx = f.flattenRecursively(child, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
 	}
