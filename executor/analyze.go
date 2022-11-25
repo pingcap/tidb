@@ -176,8 +176,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+			tableID := results.TableID.TableID
 			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
@@ -209,6 +210,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
+				logutil.BgLogger().Error("merge global stats failed",
+					zap.Error(err), zap.Int64("tableID", globalStatsID.tableID))
 				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -221,7 +224,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				// fms for global stats doesn't need to dump to kv.
 				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
 				if err != nil {
-					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err), zap.Int64("tableID", globalStatsID.tableID))
 				}
 				// Dump stats to historical storage.
 				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
@@ -1052,7 +1055,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
@@ -1072,7 +1075,12 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			continue
 		}
 		oldRootCollectorSize := rootRowCollector.Base().MemSize
+		oldRootCollectorCount := rootRowCollector.Base().Count
 		rootRowCollector.MergeCollector(mergeResult.collector)
+		newRootCollectorCount := rootRowCollector.Base().Count
+		printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
+			mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
+			"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
 	if err != nil {
@@ -1368,7 +1376,29 @@ type samplingMergeResult struct {
 	err       error
 }
 
-func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
+func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID, partitionID int64, isPartition bool, info string, index int) {
+	if index < 0 {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount))
+	} else {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount),
+			zap.Int("subCollectorIndex", index))
+	}
+}
+
+func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+	isClosedChanThread := index == 0
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -1413,8 +1443,13 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
+		oldRetCollectorCount := retCollector.Base().Count
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
+		newRetCollectorCount := retCollector.Base().Count
+		printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
+			e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
+			"merge subCollector in concurrency in AnalyzeColumnsExecV2", index)
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - oldRetCollectorSize - subCollectorSize)
 	}

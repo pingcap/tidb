@@ -240,9 +240,10 @@ func NewRulePushSelDownIndexScan() Transformation {
 
 // OnTransform implements Transformation interface.
 // It will transform `Selection -> IndexScan` to:
-//   `IndexScan(with a new access range)` or
-//   `Selection -> IndexScan(with a new access range)`
-//	 or just keep the two GroupExprs unchanged.
+//
+//	  `IndexScan(with a new access range)` or
+//	  `Selection -> IndexScan(with a new access range)`
+//		 or just keep the two GroupExprs unchanged.
 func (r *PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
