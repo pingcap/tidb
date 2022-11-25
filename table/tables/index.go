@@ -227,7 +227,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
-		var needPresumeKey int
+		var needPresumeKey KeyInTempIndex
 		if keyIsTempIdxKey {
 			idxVal = append(idxVal, keyVer)
 			needPresumeKey, _, err = KeyExistInTempIndex(ctx, txn, key, distinct, h, c.tblInfo.IsCommonHandle)
@@ -388,19 +388,17 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 	// check key exist status in temp index.
 	key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
 	if keyVer != TempIndexKeyTypeNone {
-		if len(tempKey) > 0 {
-			KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
-			if err1 != nil {
-				return false, nil, err
-			}
-			switch KeyExistInfo {
-			case KeyInTempIndexNotExist, KeyInTempIndexIsDeleted:
-				return false, nil, nil
-			case KeyInTempIndexConflict:
-				return true, h1, kv.ErrKeyExists
-			case KeyInTempIndexIsItself:
-				return true, h, nil
-			}
+		KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
+		if err1 != nil {
+			return false, nil, err
+		}
+		switch KeyExistInfo {
+		case KeyInTempIndexNotExist, KeyInTempIndexIsDeleted:
+			return false, nil, nil
+		case KeyInTempIndexConflict:
+			return true, h1, kv.ErrKeyExists
+		case KeyInTempIndexIsItself:
+			return true, h, nil
 		}
 	}
 
@@ -504,21 +502,23 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 	return colInfo
 }
 
+type KeyInTempIndex byte
+
 const (
 	// KeyInTempIndexUnknown whether the key exists or not in temp index is unknown.
-	KeyInTempIndexUnknown = 0
+	KeyInTempIndexUnknown KeyInTempIndex = iota
 	// KeyInTempIndexNotExist the key is not exist in temp index.
-	KeyInTempIndexNotExist = 1
+	KeyInTempIndexNotExist
 	// KeyInTempIndexIsDeleted the key is marked deleted in temp index.
-	KeyInTempIndexIsDeleted = 2
+	KeyInTempIndexIsDeleted
 	// KeyInTempIndexIsItself the key is correlated to itself in temp index.
-	KeyInTempIndexIsItself = 3
+	KeyInTempIndexIsItself
 	// KeyInTempIndexConflict the key is conflict in temp index.
-	KeyInTempIndexConflict = 4
+	KeyInTempIndexConflict
 )
 
-// KeyExistInTempIndex is used to check if there is unique key is marked delete in temp index.
-func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (int, kv.Handle, error) {
+// KeyExistInTempIndex is used to check the unique key exist status in temp index.
+func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (KeyInTempIndex, kv.Handle, error) {
 	value, err := txn.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
 		return KeyInTempIndexNotExist, nil, nil
