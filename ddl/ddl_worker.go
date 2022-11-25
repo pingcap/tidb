@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -91,8 +92,8 @@ type worker struct {
 	ctx             context.Context
 	wg              sync.WaitGroup
 
-	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
-	sess            *session     // sess is used and only used in running DDL job.
+	sessPool        *sessionPool // sessPool is used to new sessions to Execute SQL in ddl package.
+	sess            *res.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	lockSeqNum      bool
@@ -159,7 +160,7 @@ func (w *worker) String() string {
 func (w *worker) Close() {
 	startTime := time.Now()
 	if w.sess != nil {
-		w.sessPool.put(w.sess.session())
+		w.sessPool.put(w.sess.Session())
 	}
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
@@ -395,7 +396,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.put(sess)
-	job, err := getJobsBySQL(newSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	job, err := getJobsBySQL(res.NewSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -427,7 +428,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		}
 
 		sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-		err = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
+		err = insertDDLJobs2Table(res.NewSession(sess), true, jobTasks...)
 	}
 	return errors.Trace(err)
 }
@@ -499,7 +500,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if ver == 0 {
 		return nil
 	}
-	rows, err := w.sess.execute(context.Background(), fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
+	rows, err := w.sess.Execute(context.Background(), fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
 	if err != nil {
 		return err
 	}
@@ -508,7 +509,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	}
 	ids := rows[0].GetString(0)
 	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
-	_, err = w.sess.execute(context.Background(), sql, "register-mdl-info")
+	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
 	return err
 }
 
@@ -520,9 +521,9 @@ func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client) {
 	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.get()
 	defer pool.put(sctx)
-	sess := newSession(sctx)
+	sess := res.NewSession(sctx)
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := sess.execute(context.Background(), sql, "delete-mdl-info")
+	_, err := sess.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
 	}
@@ -540,8 +541,8 @@ func checkMDLInfo(jobID int64, pool *sessionPool) (bool, error) {
 	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.get()
 	defer pool.put(sctx)
-	sess := newSession(sctx)
-	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
+	sess := res.NewSession(sctx)
+	rows, err := sess.Execute(context.Background(), sql, "check-mdl-info")
 	if err != nil {
 		return false, err
 	}
@@ -764,11 +765,11 @@ func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	err := w.finishDDLJob(t, job)
 	if err != nil {
-		w.sess.rollback()
+		w.sess.Rollback()
 		return err
 	}
 
-	err = w.sess.commit()
+	err = w.sess.Commit()
 	if err != nil {
 		return err
 	}
@@ -786,12 +787,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		w.unlockSeqNum(err)
 	}()
 
-	err = w.sess.begin()
+	err = w.sess.Begin()
 	if err != nil {
 		return 0, err
 	}
 	if !variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
-		w.sess.rollback()
+		w.sess.Rollback()
 		return 0, nil
 	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
@@ -799,12 +800,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
 	})
-	txn, err := w.sess.txn()
+	txn, err := w.sess.GetTxn()
 	if err != nil {
-		w.sess.rollback()
+		w.sess.Rollback()
 		return 0, err
 	}
-	// Only general DDLs are allowed to be executed when TiKV is disk full.
+	// Only general DDLs are allowed to be Executed when TiKV is disk full.
 	if w.tp == addIdxWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
@@ -836,7 +837,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
-		w.sess.reset()
+		w.sess.Reset()
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
 	}
@@ -848,7 +849,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		w.sess.reset()
+		w.sess.Reset()
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
@@ -856,20 +857,20 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
-		w.sess.rollback()
+		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
-		w.sess.rollback()
+		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-	err = w.sess.commit()
+	err = w.sess.Commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
@@ -942,7 +943,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			defer d.deleteRunningDDLJobMap(job.ID)
 
-			// only general ddls allowed to be executed when TiKV is disk full.
+			// only general ddls allowed to be Executed when TiKV is disk full.
 			if w.tp == addIdxWorker && job.IsRunning() {
 				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 			}

@@ -78,7 +78,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
-	array		  "ARRAY"
+	array             "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -460,7 +460,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
-	member		      "MEMBER"
+	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -501,6 +501,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	pause                 "PAUSE"
 	percent               "PERCENT"
 	per_db                "PER_DB"
 	per_table             "PER_TABLE"
@@ -989,7 +990,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
-	ArrayKwdOpt	  		       "Array options"
+	ArrayKwdOpt                            "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -6470,6 +6471,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"PAUSE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -7250,7 +7252,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -10553,6 +10555,21 @@ AdminStmt:
 		ret.LimitSimple.Count = $6.(*ast.LimitSimple).Count
 		ret.LimitSimple.Offset = $6.(*ast.LimitSimple).Offset
 		$$ = ret
+	}
+|	"ADMIN" "PAUSE" Identifier ForceOpt
+	{
+		$$ = &ast.AdminStmt{
+			Tp:       ast.AdminPause,
+			TaskType: strings.ToUpper($3),
+			Force:    $4.(bool),
+		}
+	}
+|	"ADMIN" "RESUME" Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp:       ast.AdminResume,
+			TaskType: strings.ToUpper($3),
+		}
 	}
 |	"ADMIN" "SHOW" "SLOW" AdminShowSlow
 	{

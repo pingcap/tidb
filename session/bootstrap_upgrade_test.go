@@ -86,3 +86,16 @@ func TestUpgradeVersion84(t *testing.T) {
 		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
 	}
 }
+
+// TestBackendTaskOpsUpgrade110 backend task operations table and history has been created.
+func TestBackendTaskOpsUpgrade110(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk.MustExec("select * from mysql.tidb_backend_task_operation")
+	tk.MustExec("select * from mysql.tidb_backend_task_operation_history")
+}

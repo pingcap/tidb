@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "runcontrol",
+    srcs = ["operation.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanager/runcontrol",
+    visibility = ["//visibility:public"],
+    deps = [
+        //resourcemanager
+        //errno"
+        //sessionctx"
+        //util/dbterror"
+    ],
+)

@@ -1092,6 +1092,12 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 
+	// TiDB resource management errors
+	ErrUnsupportedBackendOpType = 8300
+	ErrDuplicatePauseOperation  = 8301
+	ErrNoCounterPauseForResume  = 8302
+	ErrOnExecOperation          = 8303
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

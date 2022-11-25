@@ -1098,6 +1098,13 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 
 	ErrColumnInChange: mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
+
+	// TiDB resource management errors
+	ErrUnsupportedBackendOpType: mysql.Message("'%s' is unsupported PAUSE/RESUME operation type.", nil),
+	ErrDuplicatePauseOperation:  mysql.Message("'%s' is duplicate for PAUSE operation type.", nil),
+	ErrNoCounterPauseForResume:  mysql.Message("'%s' no PAUSE operation issued for RESUME operation type.", nil),
+	ErrOnExecOperation:          mysql.Message("'%s' PAUSE operation issued error", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

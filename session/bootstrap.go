@@ -497,6 +497,24 @@ const (
 		current_job_state text DEFAULT NULL,
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
+	// CreateBackTaskOpsTable is the CREATE TABLE SQL of `backend_tasks_schedule` to do runtime operation on backend tasks.
+	CreateBackTaskOpsTable = `CREATE TABLE  IF NOT EXISTS mysql.tidb_backend_task_operation (
+   	    op_id    bigint not null primary key auto_increment,
+        is_force char(1) not null,
+        op_type  varchar(50) not null,
+        op_meta   blob,
+        start_time datetime,
+		unique key(op_type));`
+
+	// CreateBackTaskOpsHistoryTable is the CREATE TABLE SQL of `backend_tasks_schedule_history`.
+	CreateBackTaskOpsHistoryTable = `CREATE TABLE  IF NOT EXISTS mysql.tidb_backend_task_operation_history (
+        op_id    bigint not null,
+        is_force char(1) not null,
+        op_type  varchar(50) not null,
+		op_meta   blob,
+        start_time datetime,
+        end_time datetime);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -735,11 +753,13 @@ const (
 	version108 = 108
 	// version109 add column source to mysql.stats_meta_history
 	version109 = 109
+	// version110 add mysql.tidb_backend_tasks_operation and mysql.tidb_backend_tasks_operation_history
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version109
+var currentBootstrapVersion int64 = version110
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -853,6 +873,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 	}
 )
 
@@ -2201,6 +2222,14 @@ func upgradeToVer109(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	doReentrantDDL(s, CreateBackTaskOpsTable)
+	doReentrantDDL(s, CreateBackTaskOpsHistoryTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2307,6 +2336,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_backend_task_operation table
+	mustExecute(s, CreateBackTaskOpsTable)
+	// Create tidb_backend_task_operation_history table
+	mustExecute(s, CreateBackTaskOpsHistoryTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

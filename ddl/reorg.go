@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -762,19 +763,19 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 	}
 	defer pool.put(se)
 
-	sess := newSession(se)
-	err = sess.begin()
+	sess := res.NewSession(se)
+	err = sess.Begin()
 	if err != nil {
 		return
 	}
-	txn, err := sess.txn()
+	txn, err := sess.GetTxn()
 	if err != nil {
-		sess.rollback()
+		sess.Rollback()
 		return err
 	}
 	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
 	err = rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := sess.commit()
+	err1 := sess.Commit()
 	if err == nil {
 		err = err1
 	}
@@ -784,17 +785,17 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
 	m *meta.Meta
-	s *session
+	s *res.Session
 
 	enableConcurrentDDL bool
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
 func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(t, newSession(sess), variable.EnableConcurrentDDL.Load())
+	return newReorgHandler(t, res.NewSession(sess), variable.EnableConcurrentDDL.Load())
 }
 
-func newReorgHandler(t *meta.Meta, sess *session, enableConcurrentDDL bool) *reorgHandler {
+func newReorgHandler(t *meta.Meta, sess *res.Session, enableConcurrentDDL bool) *reorgHandler {
 	return &reorgHandler{m: t, s: sess, enableConcurrentDDL: enableConcurrentDDL}
 }
 

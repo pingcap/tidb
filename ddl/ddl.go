@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -57,12 +58,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -662,7 +661,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 				return nil, err
 			}
 			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = newSession(sessForJob)
+			wk.sess = res.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -1239,8 +1238,8 @@ func (d *ddl) SwitchMDL(enable bool) error {
 			return nil
 		}
 		defer d.sessPool.put(sess)
-		se := newSession(sess)
-		_, err = se.execute(ctx, sql, "disableMDL")
+		se := res.NewSession(sess)
+		_, err = se.Execute(ctx, sql, "disableMDL")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
 		}
@@ -1259,8 +1258,8 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	se := newSession(sess)
-	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
+	se := res.NewSession(sess)
+	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
 	}
@@ -1398,13 +1397,13 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	sess := newSession(s)
-	err := sess.begin()
+	sess := res.NewSession(s)
+	err := sess.Begin()
 	if err != nil {
 		return nil, err
 	}
 	info, err := GetDDLInfo(s)
-	sess.rollback()
+	sess.Rollback()
 	return info, err
 }
 
@@ -1412,8 +1411,8 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	sess := newSession(s)
-	txn, err := sess.txn()
+	sess := res.NewSession(s)
+	txn, err := sess.GetTxn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1470,7 +1469,7 @@ func get2JobsFromQueue(t *meta.Meta) (*model.Job, *model.Job, error) {
 	return generalJob, reorgJob, nil
 }
 
-func get2JobsFromTable(sess *session) (*model.Job, *model.Job, error) {
+func get2JobsFromTable(sess *res.Session) (*model.Job, *model.Job, error) {
 	var generalJob, reorgJob *model.Job
 	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {
@@ -1581,8 +1580,8 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	}
 	var jobMap = make(map[int64]int) // jobID -> error index
 
-	sess := newSession(se)
-	err := sess.begin()
+	sess := res.NewSession(se)
+	err := sess.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1595,7 +1594,7 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 
 	jobs, err := getJobsBySQL(sess, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
 	if err != nil {
-		sess.rollback()
+		sess.Rollback()
 		return nil, err
 	}
 
@@ -1635,7 +1634,7 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 			errs[i] = errors.Trace(err)
 		}
 	}
-	err = sess.commit()
+	err = sess.Commit()
 	if err != nil {
 		return nil, err
 	}
@@ -1663,7 +1662,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	if variable.EnableConcurrentDDL.Load() {
-		return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
+		return getJobsBySQL(res.NewSession(sess), JobTable, "1 order by job_id")
 	}
 
 	return getDDLJobs(t)
@@ -1744,68 +1743,6 @@ func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
 	return m.GetLastHistoryDDLJobsIterator()
 }
 
-// session wraps sessionctx.Context for transaction usage.
-type session struct {
-	sessionctx.Context
-}
-
-func newSession(s sessionctx.Context) *session {
-	return &session{s}
-}
-
-func (s *session) begin() error {
-	err := sessiontxn.NewTxn(context.Background(), s)
-	if err != nil {
-		return err
-	}
-	s.GetSessionVars().SetInTxn(true)
-	return nil
-}
-
-func (s *session) commit() error {
-	s.StmtCommit()
-	return s.CommitTxn(context.Background())
-}
-
-func (s *session) txn() (kv.Transaction, error) {
-	return s.Txn(true)
-}
-
-func (s *session) rollback() {
-	s.StmtRollback()
-	s.RollbackTxn(context.Background())
-}
-
-func (s *session) reset() {
-	s.StmtRollback()
-}
-
-func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
-	startTime := time.Now()
-	var err error
-	defer func() {
-		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}()
-	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), query)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if rs == nil {
-		return nil, nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return rows, nil
-}
-
-func (s *session) session() sessionctx.Context {
-	return s.Context
-}
-
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 	iterator, err := GetLastHistoryDDLJobsIterator(m)
@@ -1871,11 +1808,11 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 
 // AddHistoryDDLJobForTest used for test.
 func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
+	return AddHistoryDDLJob(res.NewSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob record the history job.
-func AddHistoryDDLJob(sess *session, t *meta.Meta, job *model.Job, updateRawArgs bool, concurrentDDL bool) error {
+func AddHistoryDDLJob(sess *res.Session, t *meta.Meta, job *model.Job, updateRawArgs bool, concurrentDDL bool) error {
 	if concurrentDDL {
 		// only add history job into table if it is concurrent DDL.
 		err := addHistoryDDLJob2Table(sess, job, updateRawArgs)
@@ -1888,12 +1825,12 @@ func AddHistoryDDLJob(sess *session, t *meta.Meta, job *model.Job, updateRawArgs
 }
 
 // addHistoryDDLJob2Table adds DDL job to history table.
-func addHistoryDDLJob2Table(sess *session, job *model.Job, updateRawArgs bool) error {
+func addHistoryDDLJob2Table(sess *res.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
-	_, err = sess.execute(context.Background(),
+	_, err = sess.Execute(context.Background(),
 		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
 			job.ID, wrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),

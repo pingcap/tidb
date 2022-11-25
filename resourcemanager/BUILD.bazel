@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "resourcemanage",
-    srcs = ["rm.go"],
+    srcs = [
+                "rm.go",
+                "session.go"
+            ],
     importpath = "github.com/pingcap/tidb/resourcemanager",
     visibility = ["//visibility:public"],
     deps = [
