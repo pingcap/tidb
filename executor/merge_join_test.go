@@ -738,6 +738,7 @@ func TestMergeJoinDifferentTypes(t *testing.T) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedMergeJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -856,6 +857,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 }
 
 // TestVectorizedShuffleMergeJoin is used to test vectorized shuffle merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedShuffleMergeJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
