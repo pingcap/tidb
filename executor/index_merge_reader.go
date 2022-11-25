@@ -222,7 +222,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
 	workCh := make(chan *indexMergeTableTask, 1)
-	fetchCh := make(chan *indexMergeTableTask, len(e.keyRanges))
+	fetchCh := make(chan *indexMergeTableTask, len(e.partialPlans))
 
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
