@@ -750,6 +750,8 @@
     "only_files": {
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
+      "util/watcher": "util/watcher",
+      "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
