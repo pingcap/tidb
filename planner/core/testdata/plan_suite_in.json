@@ -1107,7 +1107,8 @@
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- count(1) to count(a)",
-      "select a, count(*) from t group by a -- shouldn't be rewritten"
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
     ]
   },
   {
@@ -1122,7 +1123,8 @@
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- count(1) to count(a)",
-      "select a, count(*) from t group by a -- shouldn't be rewritten"
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
     ]
   }
 ]

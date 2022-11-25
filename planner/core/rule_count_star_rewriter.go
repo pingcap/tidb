@@ -9,14 +9,14 @@ import (
 )
 
 /**
-The countConstantRewriter is used to rewrite
-    count(constant value) -> count(not null column)
+The countStarRewriter is used to rewrite
+    count(*) -> count(not null column)
 Attention:
 Since count(*) is directly translated into count(1) during grammar parsing,
-the rewritten pattern also matches count(*)
+the rewritten pattern actually matches count(constant)
 
 Pattern:
-LogcialAggregation
+LogcialAggregation: count(constant)
        |
    DataSource
 
@@ -26,26 +26,26 @@ Table
 
 Case1 there are columns from datasource
 Query: select count(*) from table where k3=1
-CountConstantRewriterRule: pick the narrowest not null column from datasource
+CountStarRewriterRule: pick the narrowest not null column from datasource
 Rewritten Query: select count(k3) from table where k3=1
 
 Case2 there is no columns from datasource
 Query: select count(*) from table
 ColumnPruningRule: pick k1 as the narrowest not null column from origin table @Function.preferNotNullColumnFromTable
                    datasource.columns: k1
-CountConstantRewriterRule: rewrite count(*) -> count(k1)
+CountStarRewriterRule: rewrite count(*) -> count(k1)
 Rewritten Query: select count(k1) from table
 
 */
 
-type countConstantRewriter struct {
+type countStarRewriter struct {
 }
 
-func (c *countConstantRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return c.countConstantRewriter(p, opt)
+func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	return c.countStarRewriter(p, opt)
 }
 
-func (c *countConstantRewriter) countConstantRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
 	if agg, ok := p.(*LogicalAggregation); ok {
 		if len(agg.GroupByItems) == 0 {
@@ -67,7 +67,7 @@ func (c *countConstantRewriter) countConstantRewriter(p LogicalPlan, opt *logica
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := c.countConstantRewriter(child, opt)
+		newChild, err := c.countStarRewriter(child, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -97,6 +97,6 @@ func rewriteCountConstantToCountColumn(dataSource *DataSource, aggFunc *aggregat
 	}
 }
 
-func (*countConstantRewriter) name() string {
-	return "count_constant_rewriter"
+func (*countStarRewriter) name() string {
+	return "count_star_rewriter"
 }
