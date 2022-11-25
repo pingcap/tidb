@@ -227,20 +227,23 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		var needPresumeKey int
 		if keyIsTempIdxKey {
 			idxVal = append(idxVal, keyVer)
-		}
-		var needPresumeKey int
-		if lazyCheck {
-			var (
-				flags []kv.FlagsOp
-			)
-			if !opt.FromBackFill && keyIsTempIdxKey {
-				needPresumeKey, _, err = KeyExistInTempIndex(txn, key, distinct, h, c.tblInfo.IsCommonHandle)
+			needPresumeKey, _, err = KeyExistInTempIndex(txn, key, distinct, h, c.tblInfo.IsCommonHandle)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if len(tempKey) > 0 {
+				needPresumeKey, _, err = KeyExistInTempIndex(txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
 				if err != nil {
 					return nil, err
 				}
 			}
+		}
+		if lazyCheck {
+			var flags []kv.FlagsOp
 			if needPresumeKey != KeyInTempIndexIsDeleted {
 				flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 			}
@@ -381,6 +384,8 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 		tempKey []byte
 		keyVer  byte
 	)
+	// If index current is in creating status and using ingest mode, we need first
+	// check key exist status in temp index.
 	key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
 	if keyVer != TempIndexKeyTypeNone {
 		if len(tempKey) > 0 {

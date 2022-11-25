@@ -180,7 +180,8 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
-		if v.Meta().BackfillState == model.BackfillStateRunning {
+		// If index is used ingest ways, then we should check key from temp index.
+		if v.Meta().BackfillState != model.BackfillStateInapplicable {
 			_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
 		}
 		colValStr, err1 := formatDataForDupError(colVals)
