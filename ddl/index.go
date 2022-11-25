@@ -753,12 +753,13 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 }
 
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
-func tryFallbackToTxnMerge(job *model.Job, err error) {
+func tryFallbackToTxnMerge(job *model.Job, err *error) {
 	if job.State != model.JobStateRollingback {
-		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
+		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(*err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
 		job.RowCount = 0
+		*err = nil
 	}
 }
 
@@ -801,16 +802,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
-				tryFallbackToTxnMerge(job, err)
-				return false, ver, nil
+				tryFallbackToTxnMerge(job, &err)
+				return false, ver, err
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				tryFallbackToTxnMerge(job, err)
-				if job.State != model.JobStateRollingback {
-					return false, ver, nil
-				}
+				tryFallbackToTxnMerge(job, &err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -823,8 +821,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-					tryFallbackToTxnMerge(job, err)
-					err = nil
+					tryFallbackToTxnMerge(job, &err)
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
