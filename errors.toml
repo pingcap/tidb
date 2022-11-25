@@ -366,9 +366,24 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
+'''
+
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
 '''
 
 ["Lightning:KV:RegionNotFound"]
@@ -484,6 +499,11 @@ invalid schema statement: '%s'
 ["Lightning:Restore:ErrOpenDuplicateDB"]
 error = '''
 open duplicate db error
+'''
+
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
 '''
 
 ["Lightning:Restore:ErrRestoreTable"]
@@ -1374,6 +1394,11 @@ Dynamic privilege '%s' is not registered with the server.
 ["executor:8003"]
 error = '''
 TiDB admin check table failed.
+'''
+
+["executor:8067"]
+error = '''
+Load data: unmatched columns
 '''
 
 ["executor:8114"]

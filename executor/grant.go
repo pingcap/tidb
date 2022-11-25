@@ -105,8 +105,9 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		}
-		// Note the table name compare is case sensitive here.
-		if tbl != nil && tbl.Meta().Name.String() != e.Level.TableName {
+		// Note the table name compare is not case sensitive here.
+		// In TiDB, system variable lower_case_table_names = 2 which means name comparisons are not case-sensitive.
+		if tbl != nil && tbl.Meta().Name.L != strings.ToLower(e.Level.TableName) {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
 		if len(e.Level.DBName) > 0 {
@@ -127,6 +128,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// Create internal session to start internal transaction.
 	isCommit := false
 	internalSession, err := e.getSysSession()
+	internalSession.GetSessionVars().User = e.ctx.GetSessionVars().User
 	if err != nil {
 		return err
 	}

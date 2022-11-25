@@ -26,6 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDomapHandleNil(t *testing.T) {
+	// this is required for enterprise plugins
+	// ref: https://github.com/pingcap/tidb/issues/37319
+	require.NotPanics(t, func() {
+		_, _ = domap.Get(nil)
+	})
+}
+
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

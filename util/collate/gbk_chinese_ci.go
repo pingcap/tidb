@@ -40,7 +40,11 @@ func (g *gbkChineseCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (g *gbkChineseCICollator) Key(str string) []byte {
-	str = truncateTailingSpace(str)
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// KeyWithoutTrimRightSpace implement Collator interface.
+func (g *gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
 	i := 0
 	r := rune(0)

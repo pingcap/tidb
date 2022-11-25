@@ -259,7 +259,11 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	shouldUpdateVer := !reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo) || restart
+	same := reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo)
+	if same && !restart {
+		job.State = model.JobStateDone
+		return ver, errors.Trace(err)
+	}
 	tblInfo.Sequence = &copySequenceInfo
 
 	// Restart the sequence value.
@@ -276,7 +280,9 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	// Store the sequence info into kv.
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer)
+	// Set shouldUpdateVer always to be true even altering doesn't take effect, since some tools like drainer won't take
+	// care of SchemaVersion=0.
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

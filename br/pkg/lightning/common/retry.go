@@ -20,15 +20,38 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	drivererr "github.com/pingcap/tidb/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// some component doesn't have an accurate named error or transform a named error into string,
+// so we need to check by error message,
+// such as distsql.Checksum which transforms tikv other-error into its own error
+var retryableErrorMsgList = []string{
+	"is not fully replicated",
+	// for cluster >= 4.x, lightning calls distsql.Checksum to do checksum
+	// this error happens on when distsql.Checksum calls TiKV
+	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
+	"coprocessor task terminated due to exceeding the deadline",
+}
+
+func isRetryableFromErrorMessage(err error) bool {
+	msg := err.Error()
+	msgLower := strings.ToLower(msg)
+	for _, errStr := range retryableErrorMsgList {
+		if strings.Contains(msgLower, errStr) {
+			return true
+		}
+	}
+	return false
+}
 
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
@@ -42,6 +65,26 @@ func IsRetryableError(err error) bool {
 		}
 	}
 	return true
+}
+
+var retryableErrorIDs = map[errors.ErrorID]struct{}{
+	ErrKVEpochNotMatch.ID():  {},
+	ErrKVNotLeader.ID():      {},
+	ErrKVRegionNotFound.ID(): {},
+	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
+	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
+	// so we have to transform it into a defined code
+	ErrKVServerIsBusy.ID():        {},
+	ErrKVReadIndexNotReady.ID():   {},
+	ErrKVIngestFailed.ID():        {},
+	ErrKVRaftProposalDropped.ID(): {},
+	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
+	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
+	drivererr.ErrRegionUnavailable.ID(): {},
+	drivererr.ErrTiKVStaleCommand.ID():  {},
+	drivererr.ErrTiKVServerTimeout.ID(): {},
+	drivererr.ErrTiKVServerBusy.ID():    {},
+	drivererr.ErrUnknown.ID():           {},
 }
 
 func isSingleRetryableError(err error) bool {
@@ -78,12 +121,7 @@ func isSingleRetryableError(err error) bool {
 			return false
 		}
 	case *errors.Error:
-		switch {
-		case berrors.Is(nerr, ErrKVEpochNotMatch), berrors.Is(nerr, ErrKVNotLeader),
-			berrors.Is(nerr, ErrKVRegionNotFound), berrors.Is(nerr, ErrKVServerIsBusy):
-			// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
-			// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
-			// so we have to transform it into a defined code
+		if _, ok := retryableErrorIDs[nerr.ID()]; ok {
 			return true
 		}
 		return false
@@ -91,10 +129,8 @@ func isSingleRetryableError(err error) bool {
 		switch status.Code(err) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
-		case codes.Unknown:
-			return false
 		default:
-			return false
+			return isRetryableFromErrorMessage(err)
 		}
 	}
 }
