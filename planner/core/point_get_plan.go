@@ -1228,7 +1228,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 		})
 	}
 
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	infoSchema := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
@@ -1883,7 +1883,7 @@ func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.Colum
 }
 
 func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil
@@ -1911,7 +1911,7 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 	if pi.Type != model.PartitionTypeHash {
 		return nil
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil
