@@ -24,16 +24,16 @@ Optimize:
 Table
   <k1 bool not null, k2 int null, k3 bigint not null>
 
-Case1 there are columns exists in datasource
+Case1 there are columns from datasource
 Query: select count(*) from table where k3=1
-CountStarRewriterRule: pick the narrowest not null column exists in datasource
+CountConstantRewriterRule: pick the narrowest not null column from datasource
 Rewritten Query: select count(k3) from table where k3=1
 
-Case2 there is no columns exists in datasource
+Case2 there is no columns from datasource
 Query: select count(*) from table
 ColumnPruningRule: pick k1 as the narrowest not null column from origin table @Function.preferNotNullColumnFromTable
                    datasource.columns: k1
-CountStarRewriterRule: rewrite count(*) -> count(k1)
+CountConstantRewriterRule: rewrite count(*) -> count(k1)
 Rewritten Query: select count(k1) from table
 
 */
@@ -42,10 +42,10 @@ type countConstantRewriter struct {
 }
 
 func (c *countConstantRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return c.countStarRewriter(p, opt)
+	return c.countConstantRewriter(p, opt)
 }
 
-func (c *countConstantRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (c *countConstantRewriter) countConstantRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
 	if agg, ok := p.(*LogicalAggregation); ok {
 		if len(agg.GroupByItems) == 0 {
@@ -55,7 +55,7 @@ func (c *countConstantRewriter) countStarRewriter(p LogicalPlan, opt *logicalOpt
 						if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
 							if !constExpr.Value.IsNull() {
 								if len(dataSource.Columns) > 0 {
-									rewriteCount1ToCountColumn(dataSource, aggFunc)
+									rewriteCountConstantToCountColumn(dataSource, aggFunc)
 									continue
 								}
 							}
@@ -67,7 +67,7 @@ func (c *countConstantRewriter) countStarRewriter(p LogicalPlan, opt *logicalOpt
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := c.countStarRewriter(child, opt)
+		newChild, err := c.countConstantRewriter(child, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -78,16 +78,16 @@ func (c *countConstantRewriter) countStarRewriter(p LogicalPlan, opt *logicalOpt
 }
 
 // Pick the narrowest and not null column from Data Source
-// If there is no not null column in Data Source, the count(1) will not be rewritten.
-func rewriteCount1ToCountColumn(dataSource *DataSource, aggFunc *aggregation.AggFuncDesc) {
+// If there is no not null column in Data Source, the count(constant) will not be rewritten.
+func rewriteCountConstantToCountColumn(dataSource *DataSource, aggFunc *aggregation.AggFuncDesc) {
 	var newAggColumn *expression.Column
-	for _, columnExistsInDataSource := range dataSource.schema.Columns {
-		if columnExistsInDataSource.IsHidden || columnExistsInDataSource.GetType().IsVarLengthType() {
+	for _, columnFromDataSource := range dataSource.schema.Columns {
+		if columnFromDataSource.GetType().IsVarLengthType() {
 			continue
 		}
-		if mysql.HasNotNullFlag(columnExistsInDataSource.GetType().GetFlag()) {
-			if newAggColumn == nil || columnExistsInDataSource.GetType().GetFlen() < newAggColumn.GetType().GetFlen() {
-				newAggColumn = columnExistsInDataSource
+		if mysql.HasNotNullFlag(columnFromDataSource.GetType().GetFlag()) {
+			if newAggColumn == nil || columnFromDataSource.GetType().GetFlen() < newAggColumn.GetType().GetFlen() {
+				newAggColumn = columnFromDataSource
 			}
 		}
 	}

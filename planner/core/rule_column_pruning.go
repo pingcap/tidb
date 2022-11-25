@@ -667,7 +667,7 @@ func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *
 	}
 
 	for _, columnInfo := range dataSource.tableInfo.Columns {
-		if columnInfo.Hidden || columnInfo.FieldType.IsVarLengthType() {
+		if columnInfo.FieldType.IsVarLengthType() {
 			continue
 		}
 		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
@@ -678,7 +678,6 @@ func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *
 					ID:       resultColumnInfo.ID,
 					RetType:  resultColumnInfo.FieldType.Clone(),
 					OrigName: fmt.Sprintf("%s.%s.%s", dataSource.DBName.L, dataSource.tableInfo.Name.L, resultColumnInfo.Name),
-					IsHidden: resultColumnInfo.Hidden,
 				}
 			}
 		}
