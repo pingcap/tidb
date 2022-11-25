@@ -68,7 +68,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20221117075110-51120697d051
+	github.com/pingcap/kvproto v0.0.0-20221123043343-cdc67325f05f
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -86,7 +86,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.3-0.20221124031013-92f0a82e1a9f
+	github.com/tikv/client-go/v2 v2.0.3-0.20221125022819-f05c6886bbad
 	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
@@ -107,13 +107,13 @@ require (
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.23.0
 	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
-	golang.org/x/net v0.1.0
-	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5
+	golang.org/x/net v0.2.0
+	golang.org/x/oauth2 v0.2.0
 	golang.org/x/sync v0.1.0
 	golang.org/x/sys v0.2.0
-	golang.org/x/term v0.1.0
+	golang.org/x/term v0.2.0
 	golang.org/x/text v0.4.0
-	golang.org/x/time v0.1.0
+	golang.org/x/time v0.2.0
 	golang.org/x/tools v0.2.0
 	google.golang.org/api v0.74.0
 	google.golang.org/grpc v1.45.0
@@ -202,6 +202,7 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
+	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -215,6 +216,7 @@ require (
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
+	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/stathat/consistent v1.0.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
@@ -238,7 +240,7 @@ require (
 	go.opentelemetry.io/proto/otlp v0.7.0 // indirect
 	golang.org/x/crypto v0.1.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20220827204233-334a2380cb91 // indirect
-	golang.org/x/mod v0.6.0 // indirect
+	golang.org/x/mod v0.7.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb // indirect
