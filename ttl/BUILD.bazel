@@ -26,9 +26,12 @@ go_test(
         "main_test.go",
         "sql_test.go",
     ],
+    flaky = True,
     deps = [
         ":ttl",
         "//kv",
+        "//parser",
+        "//parser/ast",
         "//parser/model",
         "//parser/mysql",
         "//testkit",
@@ -38,5 +41,4 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
-    flaky = True,
 )
