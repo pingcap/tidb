@@ -65,11 +65,8 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 
 // rewriteAstExpr rewrites ast expression directly.
 func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
-	var is infoschema.InfoSchema
 	// in tests, it may be null
-	if s, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(infoschema.InfoSchema); ok {
-		is = s
-	}
+	var is = sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
