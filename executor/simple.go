@@ -813,6 +813,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	lockAccount := "N"
 	var failedLoginAttempts int64 = 0
 	var passwordLockTime int64 = 0
+	var failedLoginAttemptsChange = false
+	var passwordLockTimeChange = false
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
@@ -824,13 +826,17 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
 				failedLoginAttempts = s.PasswordOrLockOptions[i].Count
+				failedLoginAttemptsChange = true
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
 				passwordLockTime = s.PasswordOrLockOptions[i].Count
+				passwordLockTimeChange = true
 			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
 				passwordLockTime = -1
+				passwordLockTimeChange = true
 			}
 		}
 	}
+
 	if s.IsCreateRole {
 		lockAccount = "Y"
 	}
@@ -839,7 +845,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
 	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
 	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
-	if passwordLockTime != 0 || failedLoginAttempts != 0 {
+	if failedLoginAttemptsChange || passwordLockTimeChange {
 		if failedLoginAttempts > 32767 {
 			failedLoginAttempts = 32767
 		}
@@ -1144,6 +1150,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
+
+		// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+		// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+		// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
 		if failedLoginAttempts > 32767 {
 			failedLoginAttempts = 32767
 		}
