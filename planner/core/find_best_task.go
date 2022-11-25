@@ -920,11 +920,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}, cntPlan, nil
 		}
 
-		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		isPointGetPath := ds.isPointGetPath(path)
-		if isPointGetPath && path.StoreType == kv.TiFlash && prop.InLock {
-			continue
-		}
+		//// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
+		//if path.StoreType == kv.TiFlash {
+		//	if ds.isPointGetPath(path) && prop.InLock {
+		//		continue
+		//	}
+		//}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
@@ -1070,15 +1071,16 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 	if len(path.Ranges) < 1 {
 		return false
 	}
-	if !path.IsIntHandlePath {
-		if !path.Index.Unique || path.Index.HasPrefixIndex() {
+	if path.Index.HasPrefixIndex() {
+		return false
+	}
+	if !path.IsIntHandlePath && !path.Index.Unique {
+		return false
+	}
+	idxColsLen := len(path.Index.Columns)
+	for _, ran := range path.Ranges {
+		if len(ran.LowVal) != idxColsLen {
 			return false
-		}
-		idxColsLen := len(path.Index.Columns)
-		for _, ran := range path.Ranges {
-			if len(ran.LowVal) != idxColsLen {
-				return false
-			}
 		}
 	}
 	allRangeIsPoint := true

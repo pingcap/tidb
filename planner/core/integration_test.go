@@ -7554,6 +7554,23 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	checkMpp(rs)
 }
 
+func TestPointGetWithSelectLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a, b));")
+	tk.MustExec("insert into t values(1,2,3), (4,5,6);")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
+	tk.MustExec("begin;")
+	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "ERROR 1815 (HY000): Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery("explain select a, b from t where a = 1 for update;")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
+	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+	tk.MustExec("commit")
+}
+
 func TestTableRangeFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
