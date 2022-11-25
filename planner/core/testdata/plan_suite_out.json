@@ -1588,7 +1588,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -6236,7 +6236,7 @@
           "  └─MaxOneRow(Probe) 250.00 root  ",
           "    └─HashAgg 250.00 root  funcs:sum(Column#33)->Column#18",
           "      └─Projection 1998.00 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#33",
-          "        └─IndexJoin 1998.00 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
+          "        └─IndexHashJoin 1998.00 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
           "          ├─IndexLookUp(Build) 2497.50 root  ",
           "          │ ├─IndexRangeScan(Build) 2500.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
           "          │ └─Selection(Probe) 2497.50 cop[tikv]  not(isnull(test.tb.name))",
@@ -6368,7 +6368,7 @@
           "Projection 249.75 root  test.ta.name",
           "└─Apply 249.75 root  CARTESIAN inner join",
           "  ├─Apply(Build) 249.75 root  CARTESIAN inner join",
-          "  │ ├─IndexJoin(Build) 249.75 root  inner join, inner:IndexLookUp, outer key:test.tb.code, inner key:test.ta.code, equal cond:eq(test.tb.code, test.ta.code)",
+          "  │ ├─IndexHashJoin(Build) 249.75 root  inner join, inner:IndexLookUp, outer key:test.tb.code, inner key:test.ta.code, equal cond:eq(test.tb.code, test.ta.code)",
           "  │ │ ├─HashAgg(Build) 199.80 root  group by:test.tb.code, funcs:firstrow(test.tb.code)->test.tb.code",
           "  │ │ │ └─TableReader 249.75 root  data:Selection",
           "  │ │ │   └─Selection 249.75 cop[tikv]  like(test.tb.name, \"chad9%\", 92), not(isnull(test.tb.code))",
