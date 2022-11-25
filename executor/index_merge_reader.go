@@ -127,8 +127,7 @@ type IndexMergeReaderExecutor struct {
 type indexMergeTableTask struct {
 	lookupTableTask
 
-	// workerID and parTblIdx are only used in indexMergeProcessWorker.fetchLoopIntersection.
-	workerID  int
+	// parTblIdx are only used in indexMergeProcessWorker.fetchLoopIntersection.
 	parTblIdx int
 }
 
@@ -307,7 +306,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					batchSize:    e.maxChunkSize,
 					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize: e.maxChunkSize,
-					workerID:     workID,
 				}
 
 				if e.isCorColInPartialFilters[workID] {
@@ -425,7 +423,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize: e.maxChunkSize,
 					tableReader:  partialTableReader,
-					workerID:     workID,
 				}
 
 				if e.isCorColInPartialFilters[workID] {
@@ -514,7 +511,6 @@ type partialTableWorker struct {
 	maxChunkSize int
 	tableReader  Executor
 	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	workerID     int
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask,
@@ -589,7 +585,6 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 
 			partitionTable: w.partition,
 		},
-		workerID:  w.workerID,
 		parTblIdx: parTblIdx,
 	}
 
@@ -959,7 +954,6 @@ type partialIndexWorker struct {
 	maxBatchSize int
 	maxChunkSize int
 	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	workerID     int
 }
 
 func syncErr(resultCh chan<- *indexMergeTableTask, err error) {
@@ -1057,7 +1051,6 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 
 			partitionTable: w.partition,
 		},
-		workerID:  w.workerID,
 		parTblIdx: parTblIdx,
 	}
 
