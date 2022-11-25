@@ -705,8 +705,10 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 
 // checkSetOprSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
-//        https://mariadb.com/kb/en/intersect/
-//        https://mariadb.com/kb/en/except/
+//
+//	https://mariadb.com/kb/en/intersect/
+//	https://mariadb.com/kb/en/except/
+//
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
@@ -1689,9 +1691,9 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 
 // ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
-//    - the stmt specifies the schema version.
-//    - session variable
-//    - transaction context
+//   - the stmt specifies the schema version.
+//   - session variable
+//   - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema != nil {
 		return p.InfoSchema

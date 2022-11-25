@@ -754,10 +754,10 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 }
 
 // checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
-// 1. pick one table with two CSV files and a unique/primary key
-// 2. read the first row of those two CSV files
-// 3. checks if the content of those first rows are compatible with the table schema, and whether the
-//    two rows are identical, to determine if the first rows are a header rows.
+//  1. pick one table with two CSV files and a unique/primary key
+//  2. read the first row of those two CSV files
+//  3. checks if the content of those first rows are compatible with the table schema, and whether the
+//     two rows are identical, to determine if the first rows are a header rows.
 func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
 	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.
