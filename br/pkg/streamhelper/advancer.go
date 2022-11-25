@@ -189,7 +189,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 		return 0, err
 	}
 	ts := c.checkpoints.MinValue()
-	spans.Debug(c.checkpoints)
 	return ts, nil
 }
 
