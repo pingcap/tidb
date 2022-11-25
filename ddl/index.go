@@ -803,7 +803,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
 				tryFallbackToTxnMerge(job, &err)
-				return false, ver, err
+				return false, ver, errors.Trace(err)
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
