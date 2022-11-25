@@ -566,10 +566,11 @@ func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
-//	1. Open numbers of defaultWorkers goroutines.
-//	2. Split table key range from PD regions.
-//	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
-//	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+//  1. Open numbers of defaultWorkers goroutines.
+//  2. Split table key range from PD regions.
+//  3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
+//  4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+//
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
