@@ -806,9 +806,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+				tryFallbackToTxnMerge(job, err)
 				if job.State != model.JobStateRollingback {
-					ingest.LitBackCtxMgr.Unregister(job.ID)
-					tryFallbackToTxnMerge(job, err)
 					return false, ver, nil
 				}
 				return false, ver, errors.Trace(err)
