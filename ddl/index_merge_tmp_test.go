@@ -284,7 +284,6 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
-	var checkErr error
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -295,26 +294,13 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
-				_, checkErr = tk1.Exec(sql)
-				if checkErr != nil {
-					return
-				}
+				tk1.MustExec(sql)
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
-			_, checkErr = tk1.Exec("insert into t values (8, 8)")
-			if checkErr != nil {
-				return
-			}
-
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 3")
-			if checkErr != nil {
-				return
-			}
+			tk1.MustExec("insert into t values (8, 8)")
+			tk1.MustExec("update t set b = 7 where a = 2")
+			tk1.MustExec("delete from t where b = 3")
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8)
 		case model.StateWriteReorganization:
 			if reorgTime < 1 {
@@ -322,29 +308,16 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 			} else {
 				return
 			}
-			_, checkErr = tk1.Exec("insert into t values (10, 10)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 6")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 9")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
-			if checkErr != nil {
-				return
-			}
+			tk1.MustExec("insert into t values (10, 10)")
+			tk1.MustExec("delete from t where b = 6")
+			tk1.MustExec("insert into t set b = 9")
+			tk1.MustExec("update t set b = 7 where a = 5")
 			// (1, 7), (2, 7), (5, 7), (8, 8), (10, 10), (0, 9)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
-	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "1 7", "2 7", "5 7", "8 8", "10 10"))
 }

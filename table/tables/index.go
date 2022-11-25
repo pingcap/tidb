@@ -230,13 +230,13 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		var needPresumeKey int
 		if keyIsTempIdxKey {
 			idxVal = append(idxVal, keyVer)
-			needPresumeKey, _, err = KeyExistInTempIndex(txn, key, distinct, h, c.tblInfo.IsCommonHandle)
+			needPresumeKey, _, err = KeyExistInTempIndex(ctx, txn, key, distinct, h, c.tblInfo.IsCommonHandle)
 			if err != nil {
 				return nil, err
 			}
 		} else {
 			if len(tempKey) > 0 {
-				needPresumeKey, _, err = KeyExistInTempIndex(txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
+				needPresumeKey, _, err = KeyExistInTempIndex(ctx, txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
 				if err != nil {
 					return nil, err
 				}
@@ -389,7 +389,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 	key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
 	if keyVer != TempIndexKeyTypeNone {
 		if len(tempKey) > 0 {
-			KeyExistInfo, h1, err1 := KeyExistInTempIndex(txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
+			KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
 			if err1 != nil {
 				return false, nil, err
 			}
@@ -518,8 +518,8 @@ const (
 )
 
 // KeyExistInTempIndex is used to check if there is unique key is marked delete in temp index.
-func KeyExistInTempIndex(txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (int, kv.Handle, error) {
-	value, err := txn.Get(context.TODO(), key)
+func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (int, kv.Handle, error) {
+	value, err := txn.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
 		return KeyInTempIndexNotExist, nil, nil
 	}
@@ -528,6 +528,8 @@ func KeyExistInTempIndex(txn kv.Transaction, key kv.Key, distinct bool, h kv.Han
 	}
 
 	length := len(value)
+	// Firstly, we will remove the last byte of key version.
+	// It should be TempIndexKeyTypeBackfill or TempIndexKeyTypeMerge.
 	value = value[:length-1]
 	if distinct {
 		if bytes.Equal(value, DeleteMarkerUnique) {
@@ -539,7 +541,7 @@ func KeyExistInTempIndex(txn kv.Transaction, key kv.Key, distinct bool, h kv.Han
 		}
 	}
 
-	// Check if handle equal?
+	// Check if handle equal.
 	var handle kv.Handle
 	if distinct {
 		handle, err = tablecodec.DecodeHandleInUniqueIndexValue(value, IsCommonHandle)
