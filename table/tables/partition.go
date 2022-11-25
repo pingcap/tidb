@@ -283,16 +283,17 @@ type ListPartitionGroup struct {
 // In partition p0, both value group0 (1,5) and group1 (1,6) are contain the column a which value is 1.
 // In partition p1, value group0 (1,7) contains the column a which value is 1.
 // So, the ListPartitionLocation of column a which value is 1 is:
-// []ListPartitionGroup{
-// 	{
-// 		PartIdx: 0,               // `0` is the partition p0 index in all partitions.
-// 		GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
-// 	},
-// 	{
-// 		PartIdx: 1,               // `1` is the partition p1 index in all partitions.
-// 		GroupIdxs: []int{0}       // `0` is the index of the value group0.
-// 	},
-// }
+//
+//	[]ListPartitionGroup{
+//		{
+//			PartIdx: 0,               // `0` is the partition p0 index in all partitions.
+//			GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
+//		},
+//		{
+//			PartIdx: 1,               // `1` is the partition p1 index in all partitions.
+//			GroupIdxs: []int{0}       // `0` is the index of the value group0.
+//		},
+//	}
 type ListPartitionLocation []ListPartitionGroup
 
 // IsEmpty returns true if the ListPartitionLocation is empty.

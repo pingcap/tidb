@@ -51,10 +51,12 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
-//   0                                          before
-//   |------------------------------------------|
-//    |-file1---------------| <- File contains records in this TS range would be found.
-//                                  |-file2--------------| <- File contains any record out of this won't be found.
+//
+//	0                                          before
+//	|------------------------------------------|
+//	 |-file1---------------| <- File contains records in this TS range would be found.
+//	                               |-file2--------------| <- File contains any record out of this won't be found.
+//
 // This function would call the `f` over file1 only.
 func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
 	ms.iterateDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
