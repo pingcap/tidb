@@ -20,9 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // SQLBindExec represents a bind executor.
@@ -134,6 +136,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Db:          e.db,
 		Bindings:    []bindinfo.Binding{bindInfo},
 	}
+	logutil.BgLogger().Info(parser.DigestNormalized(e.normdOrigSQL).String())
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		return handle.CreateBindRecord(e.ctx, record)

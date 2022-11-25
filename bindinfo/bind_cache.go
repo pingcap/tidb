@@ -153,12 +153,12 @@ func (c *bindCache) GetBindRecordBySQLDigest(hash string) (*BindRecord, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	bindings := c.get(bindCacheKey(hash))
-	if len(bindings) == 0 {
-		return nil, errors.New("sql digest ` " + hash + "` is invalid")
-	}
 	if len(bindings) > 1 {
 		// currently, we only allow one binding for a sql
 		return nil, errors.New("more than 1 binding matched")
+	}
+	if len(bindings) == 0 || len(bindings[0].Bindings) == 0 {
+		return nil, errors.New("sql digest ` " + hash + "` is invalid")
 	}
 	return bindings[0], nil
 }
