@@ -235,10 +235,12 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	// data-engines that need to be restore or import. Otherwise, all data-engines should
 	// be finished already.
 
+	handleDataEngineThisRun := false
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
+		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
@@ -370,11 +372,26 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		return errors.Trace(restoreErr)
 	}
 
+	// if data engine is handled in previous run and we continue importing from checkpoint
+	if !handleDataEngineThisRun {
+		for _, engine := range cp.Engines {
+			for _, chunk := range engine.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+			}
+		}
+	}
+
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				finished := rc.status.FinishedFileSize.Load()
+				total := rc.status.TotalFileSize.Load()
+				tr.logger.Warn("print lightning status",
+					zap.Int64("finished", finished),
+					zap.Int64("total", total),
+					zap.Bool("equal", finished == total))
 				panic("forcing failure due to FailBeforeIndexEngineImported")
 			})
 		}

@@ -853,6 +853,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
+
+	// test for password validation
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("8"))
+	tk.MustExec("SET GLOBAL validate_password.length = 3")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("4"))
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 2")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("6"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -1407,14 +1415,11 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
-	tk.MustExec("set @@global.validate_password_number_count=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
+	tk.MustExec("set @@global.validate_password.number_count=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.number_count value: '-1'"))
 
-	tk.MustExec("set @@global.validate_password_length=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
-
-	tk.MustExec("set @@global.validate_password_length=8")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@global.validate_password.length=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.length value: '-1'"))
 
 	err = tk.ExecToErr("set @@tx_isolation=''")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
