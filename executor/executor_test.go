@@ -6278,3 +6278,25 @@ func TestIssue39211(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
 	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
 }
+
+func TestPointGetWithSelectLock(t *testing.T) {
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a, b));")
+	tk.MustExec("insert into t values(1,2,3), (4,5,6);")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tk.MustExec("set tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tiflash';")
+	tk.MustExec("begin;")
+	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tidb,tiflash', valid values can be 'tikv'.")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
+	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select a, b from t where a = 1 for update;")
+	tk.MustExec("commit")
+}
