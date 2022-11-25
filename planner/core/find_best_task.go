@@ -392,6 +392,13 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
+	if _, ok := p.self.(*LogicalLock); ok && !p.ctx.GetSessionVars().InRestrictedSQL {
+		newProp.InLock = true
+		defer func() {
+			newProp.InLock = false
+		}()
+	}
+
 	var plansFitsProp, plansNeedEnforce []PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
@@ -436,7 +443,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
+	bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt)
+	if err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -912,6 +920,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
+
+		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
+		isPointGetPath := ds.isPointGetPath(path)
+		if isPointGetPath && path.StoreType == kv.TiFlash && prop.InLock {
+			continue
+		}
+
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
 		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
@@ -1050,6 +1065,35 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
+}
+
+func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
+	if len(path.Ranges) < 1 {
+		return false
+	}
+	if !path.IsIntHandlePath {
+		if !path.Index.Unique || path.Index.HasPrefixIndex() {
+			return false
+		}
+		idxColsLen := len(path.Index.Columns)
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) != idxColsLen {
+				return false
+			}
+		}
+	}
+	allRangeIsPoint := true
+	for _, ran := range path.Ranges {
+		if !ran.IsPointNonNullable(ds.ctx) {
+			// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
+			allRangeIsPoint = false
+			break
+		}
+	}
+	if !allRangeIsPoint {
+		return false
+	}
+	return true
 }
 
 func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
