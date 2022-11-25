@@ -1202,7 +1202,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		return false, 0, err
 	}
 	if len(rows) != 1 {
-		err := fmt.Errorf("`%s`@`%s` Classification is not unique,Please confirm the mysql.password_history table structure", userDetail.user, strings.ToLower(userDetail.host))
+		err := fmt.Errorf("`%s`@`%s` is not unique, please confirm the mysql.password_history table structure", userDetail.user, strings.ToLower(userDetail.host))
 		return false, 0, err
 	}
 
@@ -1372,7 +1372,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
 		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 		if errRollback != nil {
 			return errRollback
 		}
@@ -1403,7 +1402,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 				if errRollback != nil {
 					return errRollback
 				}
@@ -1411,7 +1409,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 				if errRollback != nil {
 					return errRollback
 				}
@@ -1419,7 +1416,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
 				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 				if errRollback != nil {
 					return errRollback
 				}
@@ -1430,7 +1426,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		exists, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 			if errRollback != nil {
 				return errRollback
 			}
@@ -1456,7 +1451,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
 		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
 			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 			if errRollback != nil {
 				return errRollback
 			}
@@ -1475,7 +1469,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
 					_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 					if errRollback != nil {
 						return errRollback
 					}
@@ -1505,7 +1498,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
 				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-
 				if errRollback != nil {
 					return errRollback
 				}
