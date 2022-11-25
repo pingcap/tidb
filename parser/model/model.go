@@ -1407,6 +1407,9 @@ type IndexInfo struct {
 
 // Clone clones IndexInfo.
 func (index *IndexInfo) Clone() *IndexInfo {
+	if index == nil {
+		return nil
+	}
 	ni := *index
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
