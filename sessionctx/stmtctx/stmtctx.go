@@ -101,10 +101,13 @@ func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
 const (
-	ReferenceCountIsFrozen    int32 = -1
+	// ReferenceCountIsFrozen indicates the current StmtCtx is resetting, it'll refuse all the access from other sessions.
+	ReferenceCountIsFrozen int32 = -1
+	// ReferenceCountNoReference indicates the current StmtCtx is not accessed by other sessions.
 	ReferenceCountNoReference int32 = 0
 )
 
