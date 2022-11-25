@@ -59,11 +59,11 @@ type ProcessInfo struct {
 	CurTxnStartTS         uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime          uint64
-	State                     uint16
-	Command                   byte
-	ExceedExpensiveTimeThresh bool
-	RedactSQL                 bool
+	MaxExecutionTime                     uint64
+	State                                uint16
+	Command                              byte
+	LastExceedExpensiveTimeThreshLogTime time.Time
+	RedactSQL                            bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".

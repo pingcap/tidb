@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // Process global Observation indicators for memory limit.
@@ -81,12 +83,19 @@ type sessionToBeKilled struct {
 	sqlStartTime   time.Time
 	sessionID      uint64
 	sessionTracker *memory.Tracker
+
+	lastLogTime time.Time
 }
 
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
+				if time.Since(s.lastLogTime) > 5*time.Second {
+					logutil.BgLogger().Warn("Memory usage Top1 SQL can't handle the kill signal",
+						zap.String("sql_text", info.Info))
+					s.lastLogTime = time.Now()
+				}
 				return
 			}
 		}
@@ -119,6 +128,12 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				SessionKillLast.Store(killTime)
 				IsKilling.Store(true)
 				GlobalMemoryOpsHistoryManager.recordOne(info, killTime, bt, instanceStats.HeapInuse)
+				s.lastLogTime = time.Now()
+				logutil.BgLogger().Warn("tidb-server has the risk of OOM. Try to kill the memory usage Top1 SQL.",
+					zap.String("sql_text", info.Info),
+					zap.Uint64("server_memory_limit", bt),
+					zap.Int64("sql_memory_usage", info.MemTracker.BytesConsumed()),
+				)
 			}
 		}
 	}
