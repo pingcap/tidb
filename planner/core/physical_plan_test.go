@@ -23,9 +23,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
-
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -48,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
