@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
@@ -30,6 +32,130 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEscape(t *testing.T) {
+	tb := &ttl.PhysicalTable{
+		Schema: model.NewCIStr("testp;\"';123`456"),
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("tp\"';123`456"),
+		},
+		KeyColumns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
+		},
+		TimeColumn: &model.ColumnInfo{
+			Name:      model.NewCIStr("time\"';123`456"),
+			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		},
+		PartitionDef: &model.PartitionDefinition{
+			Name: model.NewCIStr("p1\"';123`456"),
+		},
+	}
+
+	buildSelect := func(d []types.Datum) string {
+		b := ttl.NewSQLBuilder(tb)
+		require.NoError(t, b.WriteSelect())
+		require.NoError(t, b.WriteCommonCondition(tb.KeyColumns, ">", d))
+		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
+		s, err := b.Build()
+		require.NoError(t, err)
+		return s
+	}
+
+	buildDelete := func(ds ...[]types.Datum) string {
+		b := ttl.NewSQLBuilder(tb)
+		require.NoError(t, b.WriteDelete())
+		require.NoError(t, b.WriteInCondition(tb.KeyColumns, ds...))
+		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
+		s, err := b.Build()
+		require.NoError(t, err)
+		return s
+	}
+
+	cases := []struct {
+		tp  string
+		ds  [][]types.Datum
+		sql string
+	}{
+		{
+			tp:  "select",
+			ds:  [][]types.Datum{d("key1'\";123`456")},
+			sql: "SELECT LOW_PRIORITY `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456' AND `time\"';123``456` < '1970-01-01 00:00:00'",
+		},
+		{
+			tp:  "delete",
+			ds:  [][]types.Datum{d("key2'\";123`456")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456') AND `time\"';123``456` < '1970-01-01 00:00:00'",
+		},
+		{
+			tp:  "delete",
+			ds:  [][]types.Datum{d("key3'\";123`456"), d("key4'`\"")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456', 'key4\\'`\\\"') AND `time\"';123``456` < '1970-01-01 00:00:00'",
+		},
+	}
+
+	for _, c := range cases {
+		switch c.tp {
+		case "select":
+			require.Equal(t, 1, len(c.ds))
+			require.Equal(t, c.sql, buildSelect(c.ds[0]))
+		case "delete":
+			require.Equal(t, c.sql, buildDelete(c.ds...))
+		default:
+			require.FailNow(t, "invalid tp: %s", c.tp)
+		}
+
+		p := parser.New()
+		stmts, _, err := p.Parse(c.sql, "", "")
+		require.Equal(t, 1, len(stmts))
+		require.NoError(t, err)
+
+		var tbName *ast.TableName
+		var keyColumnName, timeColumnName string
+		var values []string
+		var timeString string
+		switch c.tp {
+		case "select":
+			stmt, ok := stmts[0].(*ast.SelectStmt)
+			require.True(t, ok)
+			tbName = stmt.From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
+			and := stmt.Where.(*ast.BinaryOperationExpr)
+			cond1 := and.L.(*ast.BinaryOperationExpr)
+			keyColumnName = cond1.L.(*ast.ColumnNameExpr).Name.Name.O
+			values = []string{cond1.R.(ast.ValueExpr).GetValue().(string)}
+			cond2 := and.R.(*ast.BinaryOperationExpr)
+			timeColumnName = cond2.L.(*ast.ColumnNameExpr).Name.Name.O
+			timeString = cond2.R.(ast.ValueExpr).GetValue().(string)
+		case "delete":
+			stmt, ok := stmts[0].(*ast.DeleteStmt)
+			require.True(t, ok)
+			tbName = stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
+			and := stmt.Where.(*ast.BinaryOperationExpr)
+			cond1 := and.L.(*ast.PatternInExpr)
+			keyColumnName = cond1.Expr.(*ast.ColumnNameExpr).Name.Name.O
+			require.Equal(t, len(c.ds), len(cond1.List))
+			values = make([]string, 0, len(c.ds))
+			for _, expr := range cond1.List {
+				values = append(values, expr.(ast.ValueExpr).GetValue().(string))
+			}
+			cond2 := and.R.(*ast.BinaryOperationExpr)
+			timeColumnName = cond2.L.(*ast.ColumnNameExpr).Name.Name.O
+			timeString = cond2.R.(ast.ValueExpr).GetValue().(string)
+		default:
+			require.FailNow(t, "invalid tp: %s", c.tp)
+		}
+
+		require.Equal(t, tb.Schema.O, tbName.Schema.O)
+		require.Equal(t, tb.Name.O, tbName.Name.O)
+		require.Equal(t, 1, len(tbName.PartitionNames))
+		require.Equal(t, tb.PartitionDef.Name.O, tbName.PartitionNames[0].O)
+		require.Equal(t, tb.KeyColumns[0].Name.O, keyColumnName)
+		require.Equal(t, tb.TimeColumn.Name.O, timeColumnName)
+		for i, row := range c.ds {
+			require.Equal(t, row[0].GetString(), values[i])
+		}
+		require.Equal(t, "1970-01-01 00:00:00", timeString)
+	}
+}
 
 func TestFormatSQLDatum(t *testing.T) {
 	cases := []struct {

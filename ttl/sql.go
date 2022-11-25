@@ -36,24 +36,24 @@ func writeHex(in io.Writer, d types.Datum) error {
 	return err
 }
 
-func writeDatum(in io.Writer, d types.Datum, ft *types.FieldType) error {
+func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
 	switch d.Kind() {
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return writeHex(in, d)
+			return writeHex(restoreCtx.In, d)
 		}
-		_, err := fmt.Fprintf(in, "'%s'", sqlexec.EscapeString(d.GetString()))
+		_, err := fmt.Fprintf(restoreCtx.In, "'%s'", sqlexec.EscapeString(d.GetString()))
 		return err
 	}
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, in)
 	expr := ast.NewValueExpr(d.GetValue(), ft.GetCharset(), ft.GetCollate())
-	return expr.Restore(ctx)
+	return expr.Restore(restoreCtx)
 }
 
 // FormatSQLDatum formats the datum to a value string in sql
 func FormatSQLDatum(d types.Datum, ft *types.FieldType) (string, error) {
 	var sb strings.Builder
-	if err := writeDatum(&sb, d, ft); err != nil {
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := writeDatum(ctx, d, ft); err != nil {
 		return "", err
 	}
 	return sb.String(), nil
@@ -72,9 +72,10 @@ const (
 
 // SQLBuilder is used to build SQLs for TTL
 type SQLBuilder struct {
-	tbl   *PhysicalTable
-	sb    strings.Builder
-	state sqlBuilderState
+	tbl        *PhysicalTable
+	sb         strings.Builder
+	restoreCtx *format.RestoreCtx
+	state      sqlBuilderState
 
 	isReadOnly         bool
 	hasWriteExpireCond bool
@@ -82,7 +83,9 @@ type SQLBuilder struct {
 
 // NewSQLBuilder creates a new TTLSQLBuilder
 func NewSQLBuilder(tbl *PhysicalTable) *SQLBuilder {
-	return &SQLBuilder{tbl: tbl, state: writeBegin}
+	b := &SQLBuilder{tbl: tbl, state: writeBegin}
+	b.restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &b.sb)
+	return b
 }
 
 // Build builds the final sql
@@ -108,14 +111,16 @@ func (b *SQLBuilder) WriteSelect() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.sb.WriteString("SELECT LOW_PRIORITY ")
+	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY ")
 	b.writeColNames(b.tbl.KeyColumns, false)
-	b.sb.WriteString(" FROM ")
-	b.writeTblName()
+	b.restoreCtx.WritePlain(" FROM ")
+	if err := b.writeTblName(); err != nil {
+		return err
+	}
 	if par := b.tbl.PartitionDef; par != nil {
-		b.sb.WriteString(" PARTITION(`")
-		b.sb.WriteString(par.Name.O)
-		b.sb.WriteString("`)")
+		b.restoreCtx.WritePlain(" PARTITION(")
+		b.restoreCtx.WriteName(par.Name.O)
+		b.restoreCtx.WritePlain(")")
 	}
 	b.state = writeSelOrDel
 	b.isReadOnly = true
@@ -127,12 +132,14 @@ func (b *SQLBuilder) WriteDelete() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.sb.WriteString("DELETE LOW_PRIORITY FROM ")
-	b.writeTblName()
+	b.restoreCtx.WritePlain("DELETE LOW_PRIORITY FROM ")
+	if err := b.writeTblName(); err != nil {
+		return err
+	}
 	if par := b.tbl.PartitionDef; par != nil {
-		b.sb.WriteString(" PARTITION(`")
-		b.sb.WriteString(par.Name.O)
-		b.sb.WriteString("`)")
+		b.restoreCtx.WritePlain(" PARTITION(")
+		b.restoreCtx.WriteName(par.Name.O)
+		b.restoreCtx.WritePlain(")")
 	}
 	b.state = writeSelOrDel
 	return nil
@@ -142,18 +149,18 @@ func (b *SQLBuilder) WriteDelete() error {
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
 	switch b.state {
 	case writeSelOrDel:
-		b.sb.WriteString(" WHERE ")
+		b.restoreCtx.WritePlain(" WHERE ")
 		b.state = writeWhere
 	case writeWhere:
-		b.sb.WriteString(" AND ")
+		b.restoreCtx.WritePlain(" AND ")
 	default:
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
 	b.writeColNames(cols, len(cols) > 1)
-	b.sb.WriteRune(' ')
-	b.sb.WriteString(op)
-	b.sb.WriteRune(' ')
+	b.restoreCtx.WritePlain(" ")
+	b.restoreCtx.WritePlain(op)
+	b.restoreCtx.WritePlain(" ")
 	return b.writeDataPoint(cols, dp)
 }
 
@@ -161,19 +168,19 @@ func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, d
 func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 	switch b.state {
 	case writeSelOrDel:
-		b.sb.WriteString(" WHERE ")
+		b.restoreCtx.WritePlain(" WHERE ")
 		b.state = writeWhere
 	case writeWhere:
-		b.sb.WriteString(" AND ")
+		b.restoreCtx.WritePlain(" AND ")
 	default:
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
-	b.sb.WriteString(" < ")
-	b.sb.WriteString("'")
-	b.sb.WriteString(expire.Format("2006-01-02 15:04:05.999999"))
-	b.sb.WriteString("'")
+	b.restoreCtx.WritePlain(" < ")
+	b.restoreCtx.WritePlain("'")
+	b.restoreCtx.WritePlain(expire.Format("2006-01-02 15:04:05.999999"))
+	b.restoreCtx.WritePlain("'")
 	b.hasWriteExpireCond = true
 	return nil
 }
@@ -182,29 +189,29 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.Datum) error {
 	switch b.state {
 	case writeSelOrDel:
-		b.sb.WriteString(" WHERE ")
+		b.restoreCtx.WritePlain(" WHERE ")
 		b.state = writeWhere
 	case writeWhere:
-		b.sb.WriteString(" AND ")
+		b.restoreCtx.WritePlain(" AND ")
 	default:
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
 	b.writeColNames(cols, len(cols) > 1)
-	b.sb.WriteString(" IN ")
-	b.sb.WriteRune('(')
+	b.restoreCtx.WritePlain(" IN ")
+	b.restoreCtx.WritePlain("(")
 	first := true
 	for _, v := range dps {
 		if first {
 			first = false
 		} else {
-			b.sb.WriteString(", ")
+			b.restoreCtx.WritePlain(", ")
 		}
 		if err := b.writeDataPoint(cols, v); err != nil {
 			return err
 		}
 	}
-	b.sb.WriteRune(')')
+	b.restoreCtx.WritePlain(")")
 	return nil
 }
 
@@ -214,12 +221,12 @@ func (b *SQLBuilder) WriteOrderBy(cols []*model.ColumnInfo, desc bool) error {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 	b.state = writeOrderBy
-	b.sb.WriteString(" ORDER BY ")
+	b.restoreCtx.WritePlain(" ORDER BY ")
 	b.writeColNames(cols, false)
 	if desc {
-		b.sb.WriteString(" DESC")
+		b.restoreCtx.WritePlain(" DESC")
 	} else {
-		b.sb.WriteString(" ASC")
+		b.restoreCtx.WritePlain(" ASC")
 	}
 	return nil
 }
@@ -230,28 +237,23 @@ func (b *SQLBuilder) WriteLimit(n int) error {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 	b.state = writeLimit
-	b.sb.WriteString(" LIMIT ")
-	b.sb.WriteString(strconv.Itoa(n))
+	b.restoreCtx.WritePlain(" LIMIT ")
+	b.restoreCtx.WritePlain(strconv.Itoa(n))
 	return nil
 }
 
-func (b *SQLBuilder) writeTblName() {
-	b.sb.WriteRune('`')
-	b.sb.WriteString(b.tbl.Schema.O)
-	b.sb.WriteString("`.`")
-	b.sb.WriteString(b.tbl.Name.O)
-	b.sb.WriteRune('`')
+func (b *SQLBuilder) writeTblName() error {
+	tn := ast.TableName{Schema: b.tbl.Schema, Name: b.tbl.Name}
+	return tn.Restore(b.restoreCtx)
 }
 
 func (b *SQLBuilder) writeColName(col *model.ColumnInfo) {
-	b.sb.WriteRune('`')
-	b.sb.WriteString(col.Name.O)
-	b.sb.WriteRune('`')
+	b.restoreCtx.WriteName(col.Name.O)
 }
 
 func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool) {
 	if writeBrackets {
-		b.sb.WriteRune('(')
+		b.restoreCtx.WritePlain("(")
 	}
 
 	first := true
@@ -259,13 +261,13 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 		if first {
 			first = false
 		} else {
-			b.sb.WriteString(", ")
+			b.restoreCtx.WritePlain(", ")
 		}
 		b.writeColName(col)
 	}
 
 	if writeBrackets {
-		b.sb.WriteRune(')')
+		b.restoreCtx.WritePlain(")")
 	}
 }
 
@@ -276,7 +278,7 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 	}
 
 	if writeBrackets {
-		b.sb.WriteRune('(')
+		b.restoreCtx.WritePlain("(")
 	}
 
 	first := true
@@ -284,15 +286,15 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 		if first {
 			first = false
 		} else {
-			b.sb.WriteString(", ")
+			b.restoreCtx.WritePlain(", ")
 		}
-		if err := writeDatum(&b.sb, d, &cols[i].FieldType); err != nil {
+		if err := writeDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
 			return err
 		}
 	}
 
 	if writeBrackets {
-		b.sb.WriteRune(')')
+		b.restoreCtx.WritePlain(")")
 	}
 
 	return nil
