@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -827,14 +828,12 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 			switch option.Type {
 			case ast.Lock:
 				pLinfo.lockAccount = "Y"
+
 			case ast.Unlock:
 				pLinfo.lockAccount = "N"
+
 			case ast.PasswordHistory:
-				day := option.Count
-				if (day) > 65535 {
-					day = 65535
-				}
-				pLinfo.passwordHistory = day
+				pLinfo.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
 				pLinfo.passwordHistoryFlag = true
 
 			case ast.PasswordHistoryDefault:
@@ -842,11 +841,7 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 				pLinfo.passwordHistoryFlag = true
 
 			case ast.PasswordReuseInterval:
-				day := option.Count
-				if (day) > 65535 {
-					day = 65535
-				}
-				pLinfo.passwordReuseInterval = day
+				pLinfo.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
 				pLinfo.passwordReuseIntervalFlag = true
 
 			case ast.PasswordReuseDefault:
@@ -931,18 +926,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info
 	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
-	// add insert Password_reuse_time column
-	if passwdlockinfo.passwordReuseInterval != notSpecified {
-		sqlTemplate = sqlTemplate + ",Password_reuse_time"
-	}
-	// add insert Password_reuse_history column
-	if passwdlockinfo.passwordHistory != notSpecified {
-		sqlTemplate = sqlTemplate + ",Password_reuse_history"
-	}
 
-	sqlTemplate = sqlTemplate + ") VALUES "
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
 		sqlexec.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
@@ -1016,10 +1002,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		// add Password_reuse_time value
 		if passwdlockinfo.passwordReuseInterval != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
+		} else {
+			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		// add Password_reuse_history value
 		if passwdlockinfo.passwordHistory != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordHistory)
+		} else {
+			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		sqlexec.MustFormatSQL(sql, `)`)
 		// The empty password does not count in the password history and is subject to reuse at any time.
@@ -1108,7 +1098,8 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		return nil, errClose
 	}
 	if rowsNum != 1 {
-		return nil, errors.New("Unable to confirm password reuse configuration information")
+		err := fmt.Errorf("Unable to confirm `%s`@`%s` password reuse configuration information", name, strings.ToLower(host))
+		return nil, err
 	}
 	var rows []chunk.Row
 	iter := chunk.NewIterator4Chunk(req)
@@ -1211,7 +1202,8 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		return false, 0, err
 	}
 	if len(rows) != 1 {
-		return false, 0, errors.New("User and Host Classification is not unique,Please confirm the mysql.password_history table structure")
+		err := fmt.Errorf("`%s`@`%s` Classification is not unique,Please confirm the mysql.password_history table structure", userDetail.user, strings.ToLower(userDetail.host))
+		return false, 0, err
 	}
 
 	passwordNum := rows[0].GetInt64(0)
@@ -1318,7 +1310,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	if err != nil {
 		return err
 	}
-	// insert password logging
+	// insert password history
 	err = addHistoricalData(ctx, sqlExecutor, userDetail, passwdReuseInfo)
 	if err != nil {
 		return err
