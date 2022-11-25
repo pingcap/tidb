@@ -702,6 +702,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
+	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
