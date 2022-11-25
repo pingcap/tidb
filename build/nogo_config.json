@@ -753,7 +753,6 @@
       "util/watcher": "util/watcher",
       "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
