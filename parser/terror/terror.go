@@ -85,6 +85,7 @@ var (
 	ClassSession    = RegisterErrorClass(25, "session")
 	ClassPlugin     = RegisterErrorClass(26, "plugin")
 	ClassUtil       = RegisterErrorClass(27, "util")
+	ClassResource   = RegisterErrorClass(28, "resource")
 	// Add more as needed.
 )
 

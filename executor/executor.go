@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/resourcemanager/runcontrol"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -59,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -374,6 +377,69 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	e.cursor += numCurBatch
+	return nil
+}
+
+// PauseBackendTaskExec represents a Pause DDL backend tasks executor.
+type PauseBackendTaskExec struct {
+	baseExecutor
+
+	stmtSQL  string
+	taskType string
+	force    bool
+}
+
+var errDupPauseOp = dbterror.ClassResource.NewStd(errno.ErrDuplicatePauseOperation)
+
+// Open implements the Executor Open interface.
+func (e *PauseBackendTaskExec) Open(ctx context.Context) error {
+	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
+	newSess, err := e.getSysSession()
+	defer func() {
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+	}()
+	if err != nil {
+		return err
+	}
+	err = runcontrol.PauseBackendTask(newSess, e.taskType, e.force, e.stmtSQL)
+	if kv.ErrKeyExists.Equal(err) {
+		err = errDupPauseOp.GenWithStack("%s, %s, already issued", err.Error(), e.stmtSQL)
+		newSess.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+	return err
+}
+
+// Next implements the Executor Next interface.
+func (e *PauseBackendTaskExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return nil
+}
+
+// ResumeBackendTaskExec represents a Resume DDL backend tasks executor.
+type ResumeBackendTaskExec struct {
+	baseExecutor
+
+	stmtSQL  string
+	taskType string
+}
+
+// Open implements the Executor Open interface.
+func (e *ResumeBackendTaskExec) Open(ctx context.Context) error {
+	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
+	newSess, err := e.getSysSession()
+	defer func() {
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+	}()
+	if err != nil {
+		return err
+	}
+	err = runcontrol.ResumeBackendTask(newSess, e.taskType, e.stmtSQL)
+	return err
+}
+
+// Next implements the Executor Next interface.
+func (e *ResumeBackendTaskExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	return nil
 }
 

@@ -217,6 +217,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plannercore.PauseBackendTask:
+		return b.buildPauseBackendTask(v)
+	case *plannercore.ResumeBackendTask:
+		return b.buildResumeBackendTask(v)
 	case *plannercore.ShowNextRowID:
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
@@ -323,6 +327,27 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 	e := &CancelDDLJobsExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildPauseBackendTask(v *plannercore.PauseBackendTask) Executor {
+	e := &PauseBackendTaskExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+
+		stmtSQL:  v.OriginalSQL,
+		taskType: v.TaskType,
+		force:    v.Force,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildResumeBackendTask(v *plannercore.ResumeBackendTask) Executor {
+	e := &ResumeBackendTaskExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+
+		stmtSQL:  v.OriginalSQL,
+		taskType: v.TaskType,
 	}
 	return e
 }

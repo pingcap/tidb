@@ -1630,6 +1630,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminPause:
+		p := &PauseBackendTask{OriginalSQL: as.OriginalText(), TaskType: as.TaskType, Force: as.Force}
+		ret = p
+	case ast.AdminResume:
+		p := &ResumeBackendTask{OriginalSQL: as.OriginalText(), TaskType: as.TaskType}
+		ret = p
 	case ast.AdminCheckIndexRange:
 		schema, names, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {

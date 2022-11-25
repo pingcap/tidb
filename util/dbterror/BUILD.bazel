@@ -4,6 +4,7 @@ go_library(
     name = "dbterror",
     srcs = [
         "ddl_terror.go",
+        "resource_terror.go",
         "terror.go",
     ],
     importpath = "github.com/pingcap/tidb/util/dbterror",

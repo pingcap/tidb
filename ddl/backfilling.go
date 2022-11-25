@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
@@ -114,8 +115,8 @@ func (bj *BackfillJob) AbbrStr() string {
 }
 
 // GetOracleTimeWithStartTS returns the current time with txn's startTS.
-func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
-	txn, err := se.Txn(true)
+func GetOracleTimeWithStartTS(se *res.Session) (time.Time, error) {
+	txn, err := se.GetTxn()
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -1043,7 +1044,7 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 	return nil
 }
 
-func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo *reorgInfo, notDistTask bool,
+func addBatchBackfillJobs(sess *res.Session, bfWorkerType backfillerType, reorgInfo *reorgInfo, notDistTask bool,
 	batchTasks []*reorgBackfillTask, bJobs []*BackfillJob, isUnique bool, id *int64) error {
 	bJobs = bJobs[:0]
 	instanceID := ""
@@ -1087,7 +1088,7 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 	return nil
 }
 
-func (*ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, pTbl table.PhysicalTable, isUnique bool,
+func (*ddlCtx) splitTableToBackfillJobs(sess *res.Session, reorgInfo *reorgInfo, pTbl table.PhysicalTable, isUnique bool,
 	bfWorkerType backfillerType, startKey kv.Key, currBackfillJobID int64) error {
 	endKey := reorgInfo.EndKey
 	isFirstOps := true
@@ -1135,7 +1136,7 @@ func (*ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, pTb
 	return nil
 }
 
-func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *res.Session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
 		return nil
@@ -1215,7 +1216,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 	}
 }
 
-func checkJobIsSynced(sess *session, jobID int64) (bool, error) {
+func checkJobIsSynced(sess *res.Session, jobID int64) (bool, error) {
 	var err error
 	var unsyncedInstanceIDs []string
 	for i := 0; i < retrySQLTimes; i++ {
@@ -1232,7 +1233,7 @@ func checkJobIsSynced(sess *session, jobID int64) (bool, error) {
 	return false, errors.Trace(err)
 }
 
-func checkAndHandleInterruptedBackfillJobs(sess *session, jobID, currEleID int64, currEleKey []byte) (err error) {
+func checkAndHandleInterruptedBackfillJobs(sess *res.Session, jobID, currEleID int64, currEleKey []byte) (err error) {
 	var bJobs []*BackfillJob
 	for i := 0; i < retrySQLTimes; i++ {
 		bJobs, err = GetInterruptedBackfillJobsForOneEle(sess, jobID, currEleID, currEleKey)
@@ -1260,7 +1261,7 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, jobID, currEleID int64
 	return errors.Trace(err)
 }
 
-func checkBackfillJobCount(sess *session, jobID, currEleID int64, currEleKey []byte) (backfillJobCnt int, err error) {
+func checkBackfillJobCount(sess *res.Session, jobID, currEleID int64, currEleKey []byte) (backfillJobCnt int, err error) {
 	err = checkAndHandleInterruptedBackfillJobs(sess, jobID, currEleID, currEleKey)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1275,7 +1276,7 @@ func checkBackfillJobCount(sess *session, jobID, currEleID int64, currEleKey []b
 	return backfillJobCnt, nil
 }
 
-func getBackfillJobWithRetry(sess *session, tableName string, jobID, currEleID int64, currEleKey []byte, isDesc bool) (*BackfillJob, error) {
+func getBackfillJobWithRetry(sess *res.Session, tableName string, jobID, currEleID int64, currEleKey []byte, isDesc bool) (*BackfillJob, error) {
 	var err error
 	var bJobs []*BackfillJob
 	descStr := ""
@@ -1299,7 +1300,7 @@ func getBackfillJobWithRetry(sess *session, tableName string, jobID, currEleID i
 }
 
 // GetMaxBackfillJob gets the max backfill job in BackfillTable and BackfillHistoryTable.
-func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte) (*BackfillJob, error) {
+func GetMaxBackfillJob(sess *res.Session, jobID, currEleID int64, currEleKey []byte) (*BackfillJob, error) {
 	bfJob, err := getBackfillJobWithRetry(sess, BackfillTable, jobID, currEleID, currEleKey, true)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1323,12 +1324,12 @@ func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
 func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
-	s, ok := sctx.(*session)
+	s, ok := sctx.(*res.Session)
 	if !ok {
 		return errors.Errorf("sess ctx:%#v convert session failed", sctx)
 	}
 
-	return s.runInTxn(func(se *session) error {
+	return res.RunInTxn(s, func(se *res.Session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
 		bJobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey), "update_backfill_job")
@@ -1339,7 +1340,7 @@ func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob)
 			return nil
 		}
 
-		txn, err := se.txn()
+		txn, err := se.GetTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -222,12 +223,12 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
-	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err := res.NewSession(sess).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
 	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err = res.NewSession(sess).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,7 +238,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check is there a DDL task at flashbackTS.
 	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_history_job")
+	rows, err = res.NewSession(sess).Execute(d.ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
 	}

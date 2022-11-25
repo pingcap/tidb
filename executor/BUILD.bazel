@@ -133,6 +133,7 @@ go_library(
         "//plugin",
         "//privilege",
         "//privilege/privileges",
+        "//resourcemanager/runcontrol",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/sessionstates",
