@@ -269,7 +269,8 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	var buf strings.Builder
 	oomAction := variable.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
-	for i, info, totalCnt := 0, list[0], 10; i < len(list) && totalCnt > 0; i++ {
+	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
+		info := list[i]
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
 		if fields == nil {

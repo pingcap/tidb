@@ -106,7 +106,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 
 // GenLogFields generate log fields.
 func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
-	if !info.RefCountOfStmtCtx.TryIncrease() {
+	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
 		return nil
 	}
 	defer info.RefCountOfStmtCtx.Decrease()
