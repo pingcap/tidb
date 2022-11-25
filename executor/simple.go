@@ -809,24 +809,14 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 }
 
 func whetherSavePasswordHistory(passwdlockinfo *passwordLockInfo) bool {
-	var passwdSaveNum int64
-	if passwdlockinfo.passwordHistory == notSpecified {
+	passwdSaveNum, passwdSaveTime := passwdlockinfo.passwordHistory, passwdlockinfo.passwordReuseInterval
+	if passwdSaveNum == notSpecified {
 		passwdSaveNum = variable.PasswordHistory.Load()
-	} else {
-		passwdSaveNum = passwdlockinfo.passwordHistory
 	}
-
-	var passwdSaveTime int64
-	if passwdlockinfo.passwordReuseInterval == notSpecified {
+	if passwdSaveTime == notSpecified {
 		passwdSaveTime = variable.PasswordReuseInterval.Load()
-	} else {
-		passwdSaveTime = passwdlockinfo.passwordReuseInterval
 	}
-
-	if passwdSaveTime > 0 || passwdSaveNum > 0 {
-		return true
-	}
-	return false
+	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
 
 func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []*ast.PasswordOrLockOption) {
