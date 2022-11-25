@@ -259,3 +259,90 @@ func TestPessimisticAmendIncompatibleWithFastReorg(t *testing.T) {
 	tk.MustGetErrMsg("set @@tidb_enable_amend_pessimistic_txn = 1;",
 		"amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
 }
+
+// TestCreateUniqueIndexKeyExist this case will test below things:
+// Create one unique index idx((a*b+1));
+// insert (0, 6) and delete it;
+// insert (0, 9), it should be successful;
+func TestCreateUniqueIndexKeyExist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		require.NoError(t, err)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
+			}
+			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 3")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8)
+		case model.StateWriteReorganization:
+			if reorgTime < 1 {
+				reorgTime++
+			} else {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t values (10, 10)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 6")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 9")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (10, 10), (0, 9)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add unique index idx((a*b+1))")
+	require.NoError(t, checkErr)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "1 7", "2 7", "5 7", "8 8", "10 10"))
+}
