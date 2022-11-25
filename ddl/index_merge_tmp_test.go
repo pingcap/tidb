@@ -290,9 +290,6 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
 		err := originalCallback.OnChanged(nil)
 		require.NoError(t, err)
 		switch job.SchemaState {
