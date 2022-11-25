@@ -60,9 +60,9 @@ type ProcessInfo struct {
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime                     uint64
+	LastExceedExpensiveTimeThreshLogTime time.Time
 	State                                uint16
 	Command                              byte
-	LastExceedExpensiveTimeThreshLogTime time.Time
 	RedactSQL                            bool
 }
 
