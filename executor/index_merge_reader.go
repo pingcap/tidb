@@ -222,7 +222,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
 	workCh := make(chan *indexMergeTableTask, 1)
-	fetchCh := make(chan *indexMergeTableTask, len(e.partialPlans))
+	fetchCh := make(chan *indexMergeTableTask, len(e.keyRanges))
 
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
@@ -847,7 +847,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	partCntPerWorker := 1
 	// One goroutine may handle one or multiple partitions.
 	// Max number of partition number is 8192, we use ExecutorConcurrency to avoid too many goroutines.
-	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().ExecutorConcurrency
+	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().IndexMergeIntersectionConcurrency()
 	maxChannelSize := 1024
 	if w.indexMerge.partitionTableMode {
 		partCnt = len(w.indexMerge.prunedPartitions)
@@ -860,6 +860,12 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			}
 		}
 	}
+	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
+		con := val.(int)
+		if con != workerCnt {
+			panic(fmt.Sprintf("unexpected workerCnt, expect %d, got %d", con, workerCnt))
+		}
+	})
 	handleMaps := make([]*kv.HandleMap, 0, partCnt)
 	workers := make([]*intersectionProcessWorker, 0, workerCnt)
 	wg := sync.WaitGroup{}
