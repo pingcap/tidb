@@ -227,7 +227,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
-		var needPresumeKey KeyInTempIndex
+		var needPresumeKey keyInTempIndex
 		if keyIsTempIdxKey {
 			idxVal = append(idxVal, keyVer)
 			needPresumeKey, _, err = KeyExistInTempIndex(ctx, txn, key, distinct, h, c.tblInfo.IsCommonHandle)
@@ -502,11 +502,11 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 	return colInfo
 }
 
-type KeyInTempIndex byte
+type keyInTempIndex byte
 
 const (
 	// KeyInTempIndexUnknown whether the key exists or not in temp index is unknown.
-	KeyInTempIndexUnknown KeyInTempIndex = iota
+	KeyInTempIndexUnknown keyInTempIndex = iota
 	// KeyInTempIndexNotExist the key is not exist in temp index.
 	KeyInTempIndexNotExist
 	// KeyInTempIndexIsDeleted the key is marked deleted in temp index.
@@ -518,7 +518,7 @@ const (
 )
 
 // KeyExistInTempIndex is used to check the unique key exist status in temp index.
-func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (KeyInTempIndex, kv.Handle, error) {
+func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (keyInTempIndex, kv.Handle, error) {
 	value, err := txn.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
 		return KeyInTempIndexNotExist, nil, nil
