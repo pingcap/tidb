@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -866,6 +867,23 @@ func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []
 	}
 }
 
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
+	if authOpt == nil || !authOpt.ByAuthString {
+		return false
+	}
+	return authPlugin == mysql.AuthNativePassword ||
+		authPlugin == mysql.AuthTiDBSM3Password ||
+		authPlugin == mysql.AuthCachingSha2Password
+}
+
+func (e *SimpleExec) isValidatePasswordEnabled() bool {
+	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return false
+	}
+	return variable.TiDBOptOn(validatePwdEnable)
+}
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -967,14 +985,24 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
+		if e.isValidatePasswordEnabled() && !s.IsCreateRole {
+			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
+				return variable.ErrNotValidPassword.GenWithStackByArgs()
+			}
+			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
+			}
+		}
 		pwd, ok := spec.EncodedPassword()
 
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
-		}
-		authPlugin := mysql.AuthNativePassword
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
-			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 
 		switch authPlugin {
@@ -1464,7 +1492,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
-				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
 					_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 
@@ -1473,7 +1501,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					}
 					return err
 				}
-				spec.AuthOpt.AuthPlugin = authplugin
+				spec.AuthOpt.AuthPlugin = curAuthplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1488,6 +1516,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return errRollback
 				}
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
@@ -2116,6 +2149,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return errRollback
 		}
 		return err
+	}
+	if e.isValidatePasswordEnabled() {
+		if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
+			return err
+		}
 	}
 	var pwd string
 	switch authplugin {

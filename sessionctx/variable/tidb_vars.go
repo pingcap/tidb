@@ -1069,7 +1069,7 @@ const (
 	DefTiFlashFastScan                             = false
 	DefMemoryUsageAlarmRatio                       = 0.7
 	DefMemoryUsageAlarmKeepRecordNum               = 5
-	DefTiDBEnableFastReorg                         = false
+	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1154,11 +1154,15 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
-	PasswordHistory           = atomic.NewInt64(DefTiDBPasswordReuseHistory)
-	PasswordReuseInterval     = atomic.NewInt64(DefTiDBPasswordReuseTime)
+	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+	EnablePlanReplayerCapture          = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
+	PasswordValidationLength           = atomic.NewInt32(8)
+	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
+	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
+	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	PasswordHistory                    = atomic.NewInt64(DefTiDBPasswordReuseHistory)
+	PasswordReuseInterval              = atomic.NewInt64(DefTiDBPasswordReuseTime)
 )
 
 var (
