@@ -877,14 +877,14 @@ func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) {
 		return
 	}
 	// flat.Main[0] must be the root node of tree
-	e.JSON = append(e.JSON, e.explainRecursiveOpInJSONFormat(flat.Main[0], flat.Main))
+	e.JSON = append(e.JSON, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
 
 	for _, cte := range flat.CTEs {
-		e.JSON = append(e.JSON, e.explainRecursiveOpInJSONFormat(cte[0], cte))
+		e.JSON = append(e.JSON, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
 	}
 }
 
-func (e *Explain) explainRecursiveOpInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
+func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
 	taskTp := ""
 	if flatOp.IsRoot {
 		taskTp = "root"
@@ -903,7 +903,7 @@ func (e *Explain) explainRecursiveOpInJSONFormat(flatOp *FlatOperator, flats Fla
 
 	for _, idx := range flatOp.ChildrenIdx {
 		cur.SubOperators = append(cur.SubOperators,
-			e.explainRecursiveOpInJSONFormat(flats[idx], flats))
+			e.explainOpRecursivelyInJSONFormat(flats[idx], flats))
 	}
 	return cur
 }
