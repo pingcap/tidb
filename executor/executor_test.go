@@ -6297,6 +6297,8 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tidb,tiflash', valid values can be 'tikv'.")
 	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
 	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustQuery("explain select a, b from t where a = 1 for update;")
 	tk.MustExec("commit")
 }

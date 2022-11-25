@@ -392,7 +392,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
-	if _, ok := p.self.(*LogicalLock); ok && !p.ctx.GetSessionVars().InRestrictedSQL {
+	if _, ok := p.self.(*LogicalLock); ok {
 		newProp.InLock = true
 		defer func() {
 			newProp.InLock = false
