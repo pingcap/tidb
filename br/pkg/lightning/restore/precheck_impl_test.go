@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/suite"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -597,7 +598,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 		},
 	}
 	ci := NewCDCPITRCheckItem(cfg)
-	checker := ci.(*cdcPITRCheckItem)
+	checker := ci.(*CDCPITRCheckItem)
 	checker.etcdCli = testEtcdCluster.RandClient()
 	result, err := ci.Check(ctx)
 	s.Require().NoError(err)
@@ -623,6 +624,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 		_, err := cli.Put(ctx, key, "")
 		s.Require().NoError(err)
 	}
+	// TiCDC >= v6.2
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
@@ -637,8 +639,27 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().False(result.Passed)
-	s.Require().Equal("found PiTR log streaming task(s): [br_name], local backend is not compatible with them\n"+
-		"found CDC capture(s): clusterID: default captureID(s): [3ecd5c98-0148-4086-adfd-17641995e71f] local backend is not compatible with them",
+	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
+		"found CDC capture(s): clusterID: default captureID(s): [3ecd5c98-0148-4086-adfd-17641995e71f],\n"+
+		"local backend is not compatible with them. Please switch to tidb backend then try again.",
+		result.Message)
+
+	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
+	s.Require().NoError(err)
+
+	// TiCDC <= v6.1
+	checkEtcdPut("/tidb/cdc/capture/f14cb04d-5ba1-410e-a59b-ccd796920e9d")
+	checkEtcdPut("/tidb/cdc/changefeed/info/test")
+	checkEtcdPut("/tidb/cdc/job/test")
+	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
+	checkEtcdPut("/tidb/cdc/task/position/f14cb04d-5ba1-410e-a59b-ccd796920e9d/test")
+
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed)
+	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
+		"found CDC capture(s): clusterID: <nil> captureID(s): [f14cb04d-5ba1-410e-a59b-ccd796920e9d],\n"+
+		"local backend is not compatible with them. Please switch to tidb backend then try again.",
 		result.Message)
 
 	checker.cfg.TikvImporter.Backend = config.BackendTiDB

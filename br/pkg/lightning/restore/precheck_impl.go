@@ -678,21 +678,25 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 	return msgs, nil
 }
 
-type cdcPITRCheckItem struct {
-	cfg *config.Config
+// CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
+// caller override the Instruction message.
+type CDCPITRCheckItem struct {
+	cfg         *config.Config
+	Instruction string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
 func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
-	return &cdcPITRCheckItem{
-		cfg: cfg,
+	return &CDCPITRCheckItem{
+		cfg:         cfg,
+		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
 	}
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *cdcPITRCheckItem) GetCheckItemID() CheckItemID {
+func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetUsingCDCPITR
 }
 
@@ -722,7 +726,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 }
 
 // Check implements PrecheckItem interface.
-func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
@@ -754,9 +758,10 @@ func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		for _, task := range tasks {
 			names = append(names, task.Info.GetName())
 		}
-		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v, local backend is not compatible with them", names))
+		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
+	// check etcd KV of CDC >= v6.2
 	cdcPrefix := "/tidb/cdc/"
 	capturePath := []byte("/__cdc_meta__/capture/")
 	nameSet := make(map[string][]string, 1)
@@ -772,6 +777,23 @@ func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
 		}
 	}
+	if len(nameSet) == 0 {
+		// check etcd KV of CDC <= v6.1
+		cdcPrefixV61 := "/tidb/cdc/capture/"
+		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, kv := range resp.Kvs {
+			// example: /tidb/cdc/capture/<captureID>
+			k := kv.Key[len(cdcPrefixV61):]
+			if len(k) == 0 {
+				continue
+			}
+			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
+		}
+	}
+
 	if len(nameSet) > 0 {
 		var captureMsgBuf strings.Builder
 		captureMsgBuf.WriteString("found CDC capture(s): ")
@@ -786,11 +808,12 @@ func (ci *cdcPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 			captureMsgBuf.WriteString(" captureID(s): ")
 			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
 		}
-		captureMsgBuf.WriteString(" local backend is not compatible with them")
+		captureMsgBuf.WriteString(",")
 		errorMsg = append(errorMsg, captureMsgBuf.String())
 	}
 
 	if len(errorMsg) > 0 {
+		errorMsg = append(errorMsg, ci.Instruction)
 		theResult.Passed = false
 		theResult.Message = strings.Join(errorMsg, "\n")
 	} else {
