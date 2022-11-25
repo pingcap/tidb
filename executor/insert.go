@@ -329,7 +329,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
-	if e.runtimeStats != nil {
+	if e.runtimeStats != nil && e.stats != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	defer e.memTracker.ReplaceBytesUsed(0)
