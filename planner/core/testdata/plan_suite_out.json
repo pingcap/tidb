@@ -6551,6 +6551,16 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:sum(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#12",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
       }
     ]
   },
@@ -6683,6 +6693,18 @@
           "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary]",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#12",
+          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#15",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       }
