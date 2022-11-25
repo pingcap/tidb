@@ -1091,10 +1091,7 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 			break
 		}
 	}
-	if !allRangeIsPoint {
-		return false
-	}
-	return true
+	return allRangeIsPoint
 }
 
 func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
