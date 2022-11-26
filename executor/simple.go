@@ -1049,9 +1049,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		_, err = sqlExecutor.ExecuteInternal(internalCtx, sqlPasswordHistory.String())
 		if err != nil {
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
-				return rollbackErr
+				return errors.Trace(rollbackErr)
 			}
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -1101,13 +1101,8 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		err := fmt.Errorf("Unable to confirm `%s`@`%s` password reuse configuration information", name, strings.ToLower(host))
 		return nil, err
 	}
-	var rows []chunk.Row
 	iter := chunk.NewIterator4Chunk(req)
-	for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-		rows = append(rows, r)
-	}
-	//If the user specifies to use user configuration, otherwise use session
-	for _, row := range rows {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
@@ -1122,7 +1117,6 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if passwdlockinfo.passwordHistoryFlag {
 		res.passwordHistory = passwdlockinfo.passwordHistory
 	}
-
 	if passwdlockinfo.passwordReuseIntervalFlag {
 		res.passwordReuseInterval = passwdlockinfo.passwordReuseInterval
 	}
@@ -1184,7 +1178,7 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, use
 	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(userDetail.host), userDetail.user, userDetail.pwd)
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -1303,7 +1297,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		return err
 	}
 	if !res {
-		return errors.Trace(ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host))
+		return ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host)
 	}
 	err = deleteHistoricalData(ctx, sqlExecutor, userDetail, maxDelNum, passwdReuseInfo, sctx)
 	if err != nil {
@@ -1602,7 +1596,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 	if len(failedUsers) > 0 {
-		// compatible mysql8.0, Alter user realizes atomic operation
+		// Compatible with mysql8.0, `ALTER USER` realizes atomic operation
 		if !s.IfExists || needRollback {
 			if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 				return err
