@@ -234,12 +234,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	txnState, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	memUsageOfTxnState := txnState.Size()
-	err = t.RemoveRecord(ctx, h, data)
+	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return err
 	}
@@ -247,7 +242,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
-	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
