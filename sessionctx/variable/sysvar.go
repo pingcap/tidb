@@ -1134,7 +1134,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(MemoryUsageAlarmKeepRecordNum.Load(), 10), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBPasswordReuseHistory, Value: strconv.Itoa(DefTiDBPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: PasswordReuseHistory, Value: strconv.Itoa(DefPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(PasswordHistory.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		num, err := strconv.ParseInt(val, 10, 64)
@@ -1143,7 +1143,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
-	{Scope: ScopeGlobal, Name: TiDBPasswordReuseTime, Value: strconv.Itoa(DefTiDBPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: PasswordReuseTime, Value: strconv.Itoa(DefPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		num, err := strconv.ParseInt(val, 10, 64)

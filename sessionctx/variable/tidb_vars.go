@@ -858,10 +858,10 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
-	// TiDBPasswordReuseHistory limit a few passwords to reuse
-	TiDBPasswordReuseHistory = "password_history"
-	// TiDBPasswordReuseTime limit how long passwords can be reused
-	TiDBPasswordReuseTime = "password_reuse_interval"
+	// PasswordReuseHistory limit a few passwords to reuse
+	PasswordReuseHistory = "password_history"
+	// PasswordReuseTime limit how long passwords can be reused
+	PasswordReuseTime = "password_reuse_interval"
 )
 
 // TiDB intentional limits
@@ -1102,8 +1102,8 @@ const (
 	DefTiDBEnableReusechunk                  = true
 	DefTiDBUseAlloc                          = false
 	DefTiDBEnablePlanReplayerCapture         = false
-	DefTiDBPasswordReuseHistory              = 0
-	DefTiDBPasswordReuseTime                 = 0
+	DefPasswordReuseHistory                  = 0
+	DefPasswordReuseTime                     = 0
 )
 
 // Process global variables.
@@ -1166,8 +1166,8 @@ var (
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
-	PasswordHistory                    = atomic.NewInt64(DefTiDBPasswordReuseHistory)
-	PasswordReuseInterval              = atomic.NewInt64(DefTiDBPasswordReuseTime)
+	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 )
 
 var (
