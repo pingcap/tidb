@@ -783,6 +783,58 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+type PasswordOrLockOptionsInfo struct {
+	LockAccount               string
+	FailedLoginAttempts       int64
+	PasswordLockTime          int64
+	FailedLoginAttemptsChange bool
+	PasswordLockTimeChange    bool
+	PasswordLocking           string
+}
+
+func (passwordOrLockOptionsInfo *PasswordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(s *ast.CreateUserStmt) {
+	if length := len(s.PasswordOrLockOptions); length > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+				passwordOrLockOptionsInfo.LockAccount = "Y"
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
+				passwordOrLockOptionsInfo.FailedLoginAttempts = s.PasswordOrLockOptions[i].Count
+				passwordOrLockOptionsInfo.FailedLoginAttemptsChange = true
+			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
+				passwordOrLockOptionsInfo.PasswordLockTime = s.PasswordOrLockOptions[i].Count
+				passwordOrLockOptionsInfo.PasswordLockTimeChange = true
+			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
+				passwordOrLockOptionsInfo.PasswordLockTime = -1
+				passwordOrLockOptionsInfo.PasswordLockTimeChange = true
+			}
+		}
+	}
+
+	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
+	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
+	if passwordOrLockOptionsInfo.FailedLoginAttemptsChange || passwordOrLockOptionsInfo.PasswordLockTimeChange {
+		if passwordOrLockOptionsInfo.FailedLoginAttempts > 32767 {
+			passwordOrLockOptionsInfo.FailedLoginAttempts = 32767
+		}
+		if passwordOrLockOptionsInfo.FailedLoginAttempts <= 0 {
+			passwordOrLockOptionsInfo.FailedLoginAttempts = 0
+		}
+		if passwordOrLockOptionsInfo.PasswordLockTime > 32767 {
+			passwordOrLockOptionsInfo.PasswordLockTime = 32767
+		}
+		if passwordOrLockOptionsInfo.PasswordLockTime < -1 {
+			passwordOrLockOptionsInfo.PasswordLockTime = -1
+		}
+		passwordOrLockOptionsInfo.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}", passwordOrLockOptionsInfo.FailedLoginAttempts, passwordOrLockOptionsInfo.PasswordLockTime)
+	}
+}
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -809,62 +861,29 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if err != nil {
 		return err
 	}
-
 	lockAccount := "N"
-	var failedLoginAttempts int64 = 0
-	var passwordLockTime int64 = 0
-	var failedLoginAttemptsChange = false
-	var passwordLockTimeChange = false
-	if length := len(s.PasswordOrLockOptions); length > 0 {
-		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-		// the last declaration takes effect.
-		for i := length - 1; i >= 0; i-- {
-			if s.PasswordOrLockOptions[i].Type == ast.Lock {
-				lockAccount = "Y"
-				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
-				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
-				failedLoginAttempts = s.PasswordOrLockOptions[i].Count
-				failedLoginAttemptsChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
-				passwordLockTime = s.PasswordOrLockOptions[i].Count
-				passwordLockTimeChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
-				passwordLockTime = -1
-				passwordLockTimeChange = true
-			}
-		}
+	passwordOrLockOptionsInfo := PasswordOrLockOptionsInfo{}
+	passwordOrLockOptionsInfo.passwordOrLockOptionsInfoParser(s)
+	if passwordOrLockOptionsInfo.LockAccount != "" {
+		lockAccount = passwordOrLockOptionsInfo.LockAccount
 	}
-
 	if s.IsCreateRole {
 		lockAccount = "Y"
 	}
 
 	var userAttributes any = nil
-	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
-	if failedLoginAttemptsChange || passwordLockTimeChange {
-		if failedLoginAttempts > 32767 {
-			failedLoginAttempts = 32767
-		}
-		if failedLoginAttempts <= 0 {
-			failedLoginAttempts = 0
-		}
-		if passwordLockTime > 32767 {
-			passwordLockTime = 32767
-		}
-		if passwordLockTime < -1 {
-			failedLoginAttempts = -1
-		}
-		userAttributes = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}", failedLoginAttempts, passwordLockTime)
-	}
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
 			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+		}
+		if passwordOrLockOptionsInfo.FailedLoginAttemptsChange || passwordOrLockOptionsInfo.PasswordLockTimeChange {
+			userAttributes = passwordOrLockOptionsInfo.PasswordLocking
+		}
+	} else {
+		if passwordOrLockOptionsInfo.FailedLoginAttemptsChange || passwordOrLockOptionsInfo.PasswordLockTimeChange {
+			userAttributes = passwordOrLockOptionsInfo.PasswordLocking
 		}
 	}
 
