@@ -968,8 +968,6 @@ func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr st
 		}
 		if value == "Y" {
 			return true, nil
-		} else {
-			return false, nil
 		}
 	}
 	return false, nil
