@@ -394,9 +394,6 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
-		logutil.BgLogger().Error("get authUser privilege record fail",
-			zap.String("authUser", user), zap.String("authHost", host))
-		ErrAccessDenied.FastGenByArgs(user, host)
 		return false
 	}
 	if record.FailedLoginAttempts == 0 || record.PasswordLockTime == 0 {
@@ -418,9 +415,6 @@ func (p *UserPrivileges) BuildSuccessPasswordLockingJSON(user string, host strin
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
-		logutil.BgLogger().Error("get authUser privilege record fail",
-			zap.String("authUser", user), zap.String("authHost", host))
-		ErrAccessDenied.FastGenByArgs(user, host)
 		return ""
 	}
 	if failedLoginCount == 0 {
@@ -974,8 +968,6 @@ func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr st
 		}
 		if value == "Y" {
 			return true, nil
-		} else if value == "N" {
-			return false, nil
 		} else {
 			return false, nil
 		}
