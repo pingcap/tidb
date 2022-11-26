@@ -2619,10 +2619,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			}
 		}
 		return connVerifErr
-	} else {
-		if enableAutoLock {
-			return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
-		}
+	}
+	if enableAutoLock {
+		return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
 	}
 	pm.AuthSuccess(authUser.Username, authUser.Hostname)
 	user.AuthUsername = authUser.Username
@@ -2734,10 +2733,8 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 			if !row.IsNull(0) {
 				passwordLockingJSON := row.GetJSON(0)
 				return passwordLocking, passwordLocking.PasswordLockingParser(passwordLockingJSON)
-			} else {
-				return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
 			}
-
+			return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
 		}
 	}
 }
