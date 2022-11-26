@@ -2674,18 +2674,15 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 	}
 	var fields []alterField
 	fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-	if len(fields) > 0 {
-		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
-		sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
-		sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-		_, err := s.ExecuteInternal(ctx, sql.String())
-		if err != nil {
-			return err
-		}
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
+	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
 	}
-
 	return nil
 }
 
@@ -2741,9 +2738,7 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 
 func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
 	autoAccountLocked := "N"
-	if failedLoginCount < userFailedLoginAttempts {
-		autoAccountLocked = "N"
-	} else if failedLoginCount >= userFailedLoginAttempts {
+	if failedLoginCount >= userFailedLoginAttempts {
 		autoAccountLocked = "Y"
 	}
 	pm := privilege.GetPrivilegeManager(s)

@@ -794,26 +794,26 @@ type passwordOrLockOptionsInfo struct {
 	AlterPasswordLocking      string
 }
 
-func (passwordOrLockOptionsInfo *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) {
+func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) {
 	// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 	// the last declaration takes effect.
 	for _, option := range plOption {
 		switch option.Type {
 		case ast.Lock:
-			passwordOrLockOptionsInfo.LockAccount = "Y"
+			info.LockAccount = "Y"
 		case ast.Unlock:
-			passwordOrLockOptionsInfo.LockAccount = "N"
+			info.LockAccount = "N"
 		case ast.FailedLoginAttempts:
-			passwordOrLockOptionsInfo.FailedLoginAttempts = option.Count
-			passwordOrLockOptionsInfo.FailedLoginAttemptsChange = true
+			info.FailedLoginAttempts = option.Count
+			info.FailedLoginAttemptsChange = true
 
 		case ast.PasswordLockTime:
-			passwordOrLockOptionsInfo.PasswordLockTime = option.Count
-			passwordOrLockOptionsInfo.PasswordLockTimeChange = true
+			info.PasswordLockTime = option.Count
+			info.PasswordLockTimeChange = true
 
 		case ast.PasswordLockTimeUnbounded:
-			passwordOrLockOptionsInfo.PasswordLockTime = -1
-			passwordOrLockOptionsInfo.PasswordLockTimeChange = true
+			info.PasswordLockTime = -1
+			info.PasswordLockTimeChange = true
 
 		}
 	}
@@ -821,38 +821,38 @@ func (passwordOrLockOptionsInfo *passwordOrLockOptionsInfo) passwordOrLockOption
 	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
 	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is
 	// unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
-	if passwordOrLockOptionsInfo.FailedLoginAttempts > math.MaxInt16 {
-		passwordOrLockOptionsInfo.FailedLoginAttempts = math.MaxInt16
+	if info.FailedLoginAttempts > math.MaxInt16 {
+		info.FailedLoginAttempts = math.MaxInt16
 	}
-	if passwordOrLockOptionsInfo.FailedLoginAttempts < 0 {
-		passwordOrLockOptionsInfo.FailedLoginAttempts = 0
+	if info.FailedLoginAttempts < 0 {
+		info.FailedLoginAttempts = 0
 	}
-	if passwordOrLockOptionsInfo.PasswordLockTime > math.MaxInt16 {
-		passwordOrLockOptionsInfo.PasswordLockTime = math.MaxInt16
+	if info.PasswordLockTime > math.MaxInt16 {
+		info.PasswordLockTime = math.MaxInt16
 	}
-	if passwordOrLockOptionsInfo.PasswordLockTime < -1 {
-		passwordOrLockOptionsInfo.PasswordLockTime = -1
+	if info.PasswordLockTime < -1 {
+		info.PasswordLockTime = -1
 	}
 
-	if passwordOrLockOptionsInfo.FailedLoginAttemptsChange || passwordOrLockOptionsInfo.PasswordLockTimeChange {
-		passwordOrLockOptionsInfo.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
-			passwordOrLockOptionsInfo.FailedLoginAttempts, passwordOrLockOptionsInfo.PasswordLockTime)
+	if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
+		info.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
+			info.FailedLoginAttempts, info.PasswordLockTime)
 	}
 
 	passwordLockingArray := []string{}
-	if passwordOrLockOptionsInfo.LockAccount == "N" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", passwordOrLockOptionsInfo.LockAccount))
+	if info.LockAccount == "N" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
 	}
-	if passwordOrLockOptionsInfo.FailedLoginAttemptsChange {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", passwordOrLockOptionsInfo.FailedLoginAttempts))
+	if info.FailedLoginAttemptsChange {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", info.FailedLoginAttempts))
 	}
-	if passwordOrLockOptionsInfo.PasswordLockTimeChange {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordOrLockOptionsInfo.PasswordLockTime))
+	if info.PasswordLockTimeChange {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
 	}
 	if len(passwordLockingArray) > 0 {
-		passwordOrLockOptionsInfo.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
+		info.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
 	}
 
 }
