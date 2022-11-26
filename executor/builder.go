@@ -4351,6 +4351,8 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		} else {
 			b.SetTableHandles(getPhysicalTableID(e.table), handles)
 		}
+	} else {
+		b.SetKeyRanges(nil)
 	}
 	return builder.buildTableReaderBase(ctx, e, b)
 }

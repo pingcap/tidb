@@ -70,6 +70,9 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if err != nil {
 		builder.err = err
 	}
+	if builder.Request.KeyRanges == nil {
+		builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(nil)
+	}
 	return &builder.Request, builder.err
 }
 
@@ -111,7 +114,9 @@ func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementCont
 // SetHandleRanges sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	return builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges, fb)
+	builder = builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges, fb)
+	builder.err = builder.Request.KeyRanges.SetToNonPartitioned()
+	return builder
 }
 
 // SetHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting table handle range
@@ -752,7 +757,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 				memTracker.Consume(estimatedMemUsage)
 			}
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
-				return nil, nil
+				return kv.NewPartitionedKeyRanges(nil), nil
 			}
 		}
 	}

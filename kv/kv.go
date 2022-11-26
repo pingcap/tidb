@@ -353,7 +353,7 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return &KeyRanges{
 		ranges:        [][]KeyRange{ranges},
-		isPartitioned: true,
+		isPartitioned: false,
 	}
 }
 
