@@ -692,7 +692,7 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
-	// version104 add mysql.password_history
+	// version104 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user
 	version104 = 104
 )
 
