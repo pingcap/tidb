@@ -7427,7 +7427,8 @@ func TestIfNullParamMarker(t *testing.T) {
 }
 
 func TestIssue39146(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `sun` ( `dest` varchar(10) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
