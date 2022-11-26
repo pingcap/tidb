@@ -251,8 +251,9 @@ func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, range
 	)
 	if e.index.ID == -1 {
 		rRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
+	} else {
+		rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 	}
-	rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 	return rRanges.FirstPartitionRange(), err
 }
 

@@ -349,7 +349,7 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 	}
 }
 
-// NewNonPartitionedRequestRange constructs a new RequestRange for a non partitioned table.
+// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
 func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return &KeyRanges{
 		ranges:        [][]KeyRange{ranges},
@@ -370,7 +370,7 @@ func (rr *KeyRanges) FirstPartitionRange() []KeyRange {
 // SetToNonPartitioned set the status to non-partitioned.
 func (rr *KeyRanges) SetToNonPartitioned() error {
 	if len(rr.ranges) > 1 {
-		return errors.Errorf("You want to change the partitioned ranges to non-partitioned ranges.")
+		return errors.Errorf("you want to change the partitioned ranges to non-partitioned ranges")
 	}
 	rr.isPartitioned = false
 	return nil

@@ -1614,6 +1614,7 @@ func IndexKVIsUnique(value []byte) bool {
 	return segs.IntHandle != nil || segs.CommonHandle != nil
 }
 
+// VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.
 func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
 	tids := make([]int64, 0, keyRanges.PartitionNum())
 	collectFunc := func(ranges []kv.KeyRange) error {
