@@ -2965,13 +2965,13 @@ func TestIssue37488(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
 }
 
-func selectSql(user string) string {
-	userAttributesSql := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
-	return strings.Replace(userAttributesSql, "REUSER", user, -1)
+func selectSQL(user string) string {
+	userAttributesSQL := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
+	return strings.Replace(userAttributesSQL, "REUSER", user, -1)
 }
 
 type userAttributes struct {
-	Password_locking passwordLocking
+	PasswordLocking passwordLocking
 }
 
 type passwordLocking struct {
@@ -3025,17 +3025,17 @@ func encodePassword(password string) []byte {
 	return hpwd
 }
 
-func createAndCheck(tk *testkit.TestKit, sql, rsJson, user string) {
+func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
 	tk.MustExec(sql)
-	sql = selectSql(user)
-	tk.MustQuery(sql).Check(testkit.Rows(rsJson))
+	sql = selectSQL(user)
+	tk.MustQuery(sql).Check(testkit.Rows(rsJSON))
 }
 
 func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays int64) {
 	tk.MustExec(sql)
-	userAttributesSql := selectSql(user)
+	userAttributesSQL := selectSQL(user)
 	resBuff := bytes.NewBufferString("")
-	for _, row := range tk.MustQuery(userAttributesSql).Rows() {
+	for _, row := range tk.MustQuery(userAttributesSQL).Rows() {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	checkUser(t, resBuff.String(), failedLoginAttempts, passwordLockTimeDays)
@@ -3044,23 +3044,23 @@ func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, f
 func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockTimeDays int64) {
 	var ua []userAttributes
 	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
-		require.True(t, ua[0].Password_locking.FailedLoginAttempts == failedLoginAttempts)
-		require.True(t, ua[0].Password_locking.PasswordLockTimeDays == passwordLockTimeDays)
+		require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
+		require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
 	} else {
 		fmt.Println(err)
 	}
 }
 
 func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64) {
-	userAttributesSql := selectSql(user)
+	userAttributesSQL := selectSQL(user)
 	resBuff := bytes.NewBufferString("")
-	rs := tk.MustQuery(userAttributesSql)
+	rs := tk.MustQuery(userAttributesSQL)
 	for _, row := range rs.Rows() {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	var ua []userAttributes
 	if err := json.Unmarshal([]byte(resBuff.String()), &ua); err == nil {
-		require.True(t, ua[0].Password_locking.FailedLoginCount == failedLoginCount)
+		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
 	} else {
 		fmt.Println(err)
 	}

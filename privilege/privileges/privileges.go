@@ -356,6 +356,8 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+// VerificationAccountAutoLock implements the Manager interface.
+// Verification Account Auto Lock
 func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
@@ -373,7 +375,7 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
 		if d > lockTime*24*60*60 {
-			return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
+			return buildPasswordLockingJSON(record.FailedLoginAttempts, record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
 		}
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
 		return "", ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host, lockTime, lockTime, lockTime)
@@ -381,6 +383,8 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 	return "", nil
 }
 
+// IsEnableAccountAutoLock implements the Manager interface.
+// Account enable Auto Lock
 func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool {
 	if SkipWithGrant {
 		p.user = user
@@ -401,12 +405,16 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 	return true
 }
 
-func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
+// BuildPasswordLockingJSON implements the Manager interface.
+// Build PasswordLocking Json
+func (p *UserPrivileges) BuildPasswordLockingJSON(failedLoginAttempts int64,
 	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string {
-	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
+	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
 }
 
-func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string {
+// BuildSuccessPasswordLockingJSON implements the Manager interface.
+// Build Success PasswordLocking Json
+func (p *UserPrivileges) BuildSuccessPasswordLockingJSON(user string, host string, failedLoginCount int64) string {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -418,11 +426,11 @@ func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host strin
 	if failedLoginCount == 0 {
 		return ""
 	}
-	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, "", 0, time.Now().Format(time.UnixDate))
+	return buildPasswordLockingJSON(record.FailedLoginAttempts, record.PasswordLockTime, "", 0, time.Now().Format(time.UnixDate))
 }
 
-func buildPasswordLockingJson(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, auto_locked_last_changed string) string {
+func buildPasswordLockingJSON(failedLoginAttempts int64,
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
 	passwordLockingArray := []string{}
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
@@ -430,8 +438,8 @@ func buildPasswordLockingJson(failedLoginAttempts int64,
 	if autoAccountLocked != "" {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
 	}
-	if auto_locked_last_changed != "" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", auto_locked_last_changed))
+	if autoLockedLastChanged != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", autoLockedLastChanged))
 	}
 
 	if len(passwordLockingArray) > 0 {
@@ -545,6 +553,8 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	return accessDenied, nil
 }
 
+// AuthSuccess implements the Manager interface.
+// Auth Success state
 func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.user = authUser
 	p.host = authHost
@@ -866,6 +876,7 @@ func init() {
 	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
 }
 
+// PasswordLocking user PasswordLocking info
 type PasswordLocking struct {
 	FailedLoginCount      int64
 	PasswordLockTimeDays  int64
@@ -874,8 +885,9 @@ type PasswordLocking struct {
 	FailedLoginAttempts   int64
 }
 
-func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJson types.BinaryJSON) error {
-	failedLoginAttempts, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_attempts")
+// PasswordLockingParser parser PasswordLocking info
+func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSON types.BinaryJSON) error {
+	failedLoginAttempts, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
 	if parserErr != nil {
 		return parserErr
 	}
@@ -886,7 +898,7 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJso
 		passwordLocking.FailedLoginAttempts = 0
 	}
 
-	lockTime, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.password_lock_time_days")
+	lockTime, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if parserErr != nil {
 		return parserErr
 	}
@@ -897,19 +909,19 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJso
 		passwordLocking.PasswordLockTimeDays = -1
 	}
 
-	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_count")
+	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
 	if parserErr != nil {
 		return parserErr
 	}
 	passwordLocking.FailedLoginCount = failedLoginCount
 
-	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJson, "$.Password_locking.auto_locked_last_changed")
+	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if parserErr != nil {
 		return parserErr
 	}
 	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 
-	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJson, "$.Password_locking.auto_account_locked")
+	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
 	if parserErr != nil {
 		return parserErr
 	}
@@ -917,23 +929,25 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJso
 	return nil
 }
 
-func PasswordLockingInt64Parser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
+// PasswordLockingInt64Parser parser Int64 PasswordLocking info
+func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return 0, err
 	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+	if BJ, found := passwordLockingJSON.Extract([]types.JSONPathExpression{jsonPath}); found {
 		return BJ.GetInt64(), nil
 	}
 	return 0, nil
 }
 
-func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
+// PasswordLockingTimeUnixParser parser TimeUnix PasswordLocking info
+func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return -1, err
 	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+	if BJ, found := passwordLockingJSON.Extract([]types.JSONPathExpression{jsonPath}); found {
 		value, BJErr := BJ.Unquote()
 		if BJErr != nil {
 			return -1, BJErr
@@ -943,18 +957,17 @@ func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr
 			return -1, timeErr
 		}
 		return t.Unix(), nil
-	} else {
-		return 0, nil
 	}
-	return -1, err
+	return 0, nil
 }
 
-func PasswordLockingBoolParser(userAttributesJson types.BinaryJSON, pathExpr string) (bool, error) {
+// PasswordLockingBoolParser parser Bool PasswordLocking info
+func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return false, err
 	}
-	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
+	if BJ, found := passwordLockingJSON.Extract([]types.JSONPathExpression{jsonPath}); found {
 		value, BJErr := BJ.Unquote()
 		if BJErr != nil {
 			return false, BJErr

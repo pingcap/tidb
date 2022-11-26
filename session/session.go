@@ -2643,16 +2643,13 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		return getErr
 	}
 	pm := privilege.GetPrivilegeManager(s)
-	passwordLockingJson := pm.BuildSuccessPasswordLockingJson(user, host, passwordLocking.FailedLoginCount)
-	if passwordLockingJson != "" {
-		if lockingErr := s.passwordLocking(user, host, passwordLockingJson); lockingErr != nil {
+	passwordLockingJSON := pm.BuildSuccessPasswordLockingJSON(user, host, passwordLocking.FailedLoginCount)
+	if passwordLockingJSON != "" {
+		if lockingErr := s.passwordLocking(user, host, passwordLockingJSON); lockingErr != nil {
 			return lockingErr
 		}
 	}
-	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
-		return commitErr
-	}
-	return nil
+	return failedLoginTrackingCommit(s)
 }
 
 func authFailedTracking(s *session, user string, host string) error {
@@ -2737,8 +2734,8 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if !row.IsNull(0) {
-				passwordLockingJson := row.GetJSON(0)
-				if parserErr := passwordLocking.PasswordLockingParser(passwordLockingJson); parserErr != nil {
+				passwordLockingJSON := row.GetJSON(0)
+				if parserErr := passwordLocking.PasswordLockingParser(passwordLockingJSON); parserErr != nil {
 					return passwordLocking, parserErr
 				} else {
 					return passwordLocking, nil
@@ -2759,12 +2756,9 @@ func userAutoAccountLocked(s *session, user string, host string, failedLoginCoun
 		autoAccountLocked = "Y"
 	}
 	pm := privilege.GetPrivilegeManager(s)
-	newAttributesStr := pm.BuildPasswordLockingJson(userFailedLoginAttempts,
+	newAttributesStr := pm.BuildPasswordLockingJSON(userFailedLoginAttempts,
 		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
-	if err := s.passwordLocking(user, host, newAttributesStr); err != nil {
-		return err
-	}
-	return nil
+	return s.passwordLocking(user, host, newAttributesStr)
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
