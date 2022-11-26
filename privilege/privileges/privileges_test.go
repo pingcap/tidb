@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -2963,105 +2962,4 @@ func TestIssue37488(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
-}
-
-func selectSQL(user string) string {
-	userAttributesSQL := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
-	return strings.Replace(userAttributesSQL, "REUSER", user, -1)
-}
-
-type userAttributes struct {
-	PasswordLocking passwordLocking
-}
-
-type passwordLocking struct {
-	FailedLoginAttempts   int64  `json:"failed_login_attempts"`
-	PasswordLockTimeDays  int64  `json:"password_lock_time_days"`
-	AutoAccountLocked     string `json:"auto_account_locked"`
-	FailedLoginCount      int64  `json:"failed_login_count"`
-	AutoLockedLastChanged string `json:"auto_locked_last_changed"`
-}
-
-func TestFailedLoginTracking(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
-	tk.MustExec(session.CreateUserTable)
-	tk.MustExec(session.CreateDBPrivTable)
-	tk.MustExec(session.CreateTablePrivTable)
-	tk.MustExec(session.CreateColumnPrivTable)
-	createAndCheck(tk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u1")
-	createAndCheck(tk, "CREATE USER 'u2'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": -1}}", "u2")
-	createAndCheck(tk, "CREATE USER 'u3'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u3")
-	createAndCheck(tk, "CREATE USER 'u4'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME 3;", "{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": 3}}", "u4")
-	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED;", "{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "u5")
-
-	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;", "u1", 4, 6)
-	alterAndCheck(t, tk, "ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;", "u2", 4, -1)
-	alterAndCheck(t, tk, "ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;", "u3", 3, 6)
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;", "u4", 4, 3)
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;", "u4", 4, -1)
-
-	createAndCheck(tk, "CREATE USER 'u6'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;", "{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u6")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 1)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
-
-	//checkAuthUser(t, tk, "u6", 0)
-	//checkAuthUser(t, tk, "u4", 4)
-
-}
-
-func encodePassword(password string) []byte {
-	pwd := auth.EncodePassword(password)
-	hpwd, err := auth.DecodePassword(pwd)
-	if err != nil {
-
-	}
-	return hpwd
-}
-
-func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
-	tk.MustExec(sql)
-	sql = selectSQL(user)
-	tk.MustQuery(sql).Check(testkit.Rows(rsJSON))
-}
-
-func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays int64) {
-	tk.MustExec(sql)
-	userAttributesSQL := selectSQL(user)
-	resBuff := bytes.NewBufferString("")
-	for _, row := range tk.MustQuery(userAttributesSQL).Rows() {
-		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
-	}
-	checkUser(t, resBuff.String(), failedLoginAttempts, passwordLockTimeDays)
-}
-
-func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockTimeDays int64) {
-	var ua []userAttributes
-	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
-		require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
-		require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
-	} else {
-		fmt.Println(err)
-	}
-}
-
-func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64) {
-	userAttributesSQL := selectSQL(user)
-	resBuff := bytes.NewBufferString("")
-	rs := tk.MustQuery(userAttributesSQL)
-	for _, row := range rs.Rows() {
-		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
-	}
-	var ua []userAttributes
-	if err := json.Unmarshal([]byte(resBuff.String()), &ua); err == nil {
-		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
-	} else {
-		fmt.Println(err)
-	}
 }
