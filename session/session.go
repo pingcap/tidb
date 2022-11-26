@@ -2614,14 +2614,14 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	accessDenied, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if connVerifErr != nil {
 		if enableAutoLock && accessDenied {
-			return authFailedTracking(s, authUser.Username, authUser.Hostname)
+			if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
+				return trackingErr
+			}
 		}
 		return connVerifErr
 	} else {
 		if enableAutoLock {
-			if clearErr := authSuccessClearCount(s, authUser.Username, authUser.Hostname); clearErr != nil {
-				return clearErr
-			}
+			return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
 		}
 	}
 	pm.AuthSuccess(authUser.Username, authUser.Hostname)

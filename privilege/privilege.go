@@ -29,15 +29,6 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
-type UserAttributes struct {
-	User                  string
-	Host                  string
-	FailedLoginCount      int64
-	PasswordLockTimeDays  int64
-	AutoAccountLocked     bool
-	AutoLockedLastChanged int64
-	FailedLoginAttempts   int64
-}
 type (
 	// Manager is the interface for providing privilege related operations.
 	Manager interface {
