@@ -751,7 +751,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 	return validPeers, nil
 }
 
-// in cloud, since iops and bandwith limitation, write operator in raft is slow, so raft state (logterm, lastlog, commitlog...) are the same amoung the peers
+// in cloud, since iops and bandwidth limitation, write operator in raft is slow, so raft state (logterm, lastlog, commitlog...) are the same among the peers
 // LeaderCandidates select all peers can be select as a leader during the restore
 func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
 	if peers == nil {
