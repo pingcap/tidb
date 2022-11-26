@@ -197,7 +197,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		Tails:        []PhysicalPlan{tail},
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }

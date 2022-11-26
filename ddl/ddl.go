@@ -979,7 +979,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}

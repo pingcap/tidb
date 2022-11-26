@@ -1108,6 +1108,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
+	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
@@ -1120,7 +1121,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	is := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
-	if indexConds != nil {
+	if len(indexConds) > 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess

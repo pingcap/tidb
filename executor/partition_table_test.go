@@ -2973,7 +2973,7 @@ partition p1 values less than (7),
 partition p2 values less than (10))`)
 	tk.MustExec("alter table p add unique idx(id)")
 	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select id from p use index (idx)").Check(testkit.Rows("1", "3", "5", "7"))
+	tk.MustQuery("select id from p use index (idx) order by id").Check(testkit.Rows("1", "3", "5", "7"))
 }
 
 func TestGlobalIndexDoubleRead(t *testing.T) {
