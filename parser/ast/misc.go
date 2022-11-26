@@ -1510,8 +1510,7 @@ const (
 	Unlock
 	FailedLoginAttempts
 	PasswordLockTime
-	PasswordLockTimeDefault
-
+	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
 )
@@ -1543,7 +1542,7 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	case PasswordLockTime:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
 		ctx.WritePlainf(" %d", p.Count)
-	case PasswordLockTimeDefault:
+	case PasswordLockTimeUnbounded:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)

@@ -73,13 +73,13 @@ type Manager interface {
 	IsEnableAccountAutoLock(user string, host string) bool
 
 	BuildPasswordLockingJson(failedLoginAttempts int64,
-		passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string
+		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string
 
 	BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) error
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) (bool, error)
 
 	AuthSuccess(authUser, authHost string)
 

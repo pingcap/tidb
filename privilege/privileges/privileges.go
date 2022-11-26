@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -356,10 +357,6 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 }
 
 func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
-	if SkipWithGrant {
-		p.user = user
-		p.host = host
-	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -376,7 +373,7 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
 		if d > lockTime*24*60*60 {
-			return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0, time.Now().Format(time.UnixDate)), nil
+			return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
 		}
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.", user, host, lockTime, lockTime, lockTime))
 		return "", ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host, lockTime, lockTime, lockTime)
@@ -388,6 +385,7 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
+		return false
 	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
@@ -397,24 +395,18 @@ func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool 
 		ErrAccessDenied.FastGenByArgs(user, host)
 		return false
 	}
-	failedLoginAttempts := record.FailedLoginAttempts
-	passwordLockTime := record.PasswordLockTime
-	if failedLoginAttempts == 0 || passwordLockTime == 0 {
+	if record.FailedLoginAttempts == 0 || record.PasswordLockTime == 0 {
 		return false
 	}
 	return true
 }
 
 func (p *UserPrivileges) BuildPasswordLockingJson(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64) string {
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string {
 	return buildPasswordLockingJson(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
 }
 
 func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host string, failedLoginCount int64) string {
-	if SkipWithGrant {
-		p.user = user
-		p.host = host
-	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -426,45 +418,49 @@ func (p *UserPrivileges) BuildSuccessPasswordLockingJson(user string, host strin
 	if failedLoginCount == 0 {
 		return ""
 	}
-	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, false, 0, time.Now().Format(time.UnixDate))
+	return buildPasswordLockingJson(record.FailedLoginAttempts, record.PasswordLockTime, "", 0, time.Now().Format(time.UnixDate))
 }
 
 func buildPasswordLockingJson(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked bool, failedLoginCount int64, auto_locked_last_changed string) string {
-	lock := "Y"
-	if !autoAccountLocked {
-		lock = "N"
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, auto_locked_last_changed string) string {
+	passwordLockingArray := []string{}
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
+	if autoAccountLocked != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
 	}
-	if auto_locked_last_changed == "" {
-		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d}}",
-			failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount)
-		return newAttributesStr
-	} else {
-		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-			failedLoginAttempts, passwordLockTimeDays, lock, failedLoginCount, auto_locked_last_changed)
-		return newAttributesStr
+	if auto_locked_last_changed != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", auto_locked_last_changed))
 	}
 
+	if len(passwordLockingArray) > 0 {
+		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
+		return newAttributesStr
+	}
+	return ""
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) (bool, error) {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
 	}
+	accessDenied := false
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
-		return nil
+		return accessDenied, nil
 	}
 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(authUser, authHost)
+
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
-		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
@@ -472,19 +468,20 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if !p.checkSSL(globalPriv, tlsState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	pwd := record.AuthenticationString
+
 	if !p.isValidHash(record) {
-		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
 			logutil.BgLogger().Error("empty authentication")
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
 		var (
@@ -493,23 +490,24 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		)
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
+		accessDenied = true
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -518,22 +516,23 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
+		accessDenied = true
 		if record.AuthPlugin != mysql.AuthSocket {
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
@@ -541,9 +540,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	locked := record.AccountLocked
 	if locked {
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
-		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
+		return accessDenied, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
-	return nil
+	return accessDenied, nil
 }
 
 func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
@@ -879,60 +878,54 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJso
 	failedLoginAttempts, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_attempts")
 	if parserErr != nil {
 		return parserErr
-	} else {
-		if failedLoginAttempts > 32767 {
-			passwordLocking.FailedLoginAttempts = 32767
-		} else if failedLoginAttempts < 0 {
-			passwordLocking.FailedLoginAttempts = 0
-		} else {
-			passwordLocking.FailedLoginAttempts = failedLoginAttempts
-		}
-
 	}
+	passwordLocking.FailedLoginAttempts = failedLoginAttempts
+	if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
+		passwordLocking.FailedLoginAttempts = math.MaxInt16
+	} else if passwordLocking.FailedLoginAttempts < 0 {
+		passwordLocking.FailedLoginAttempts = 0
+	}
+
 	lockTime, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.password_lock_time_days")
 	if parserErr != nil {
 		return parserErr
-	} else {
-		if lockTime > 32767 {
-			passwordLocking.PasswordLockTimeDays = 32767
-		} else if lockTime < -1 {
-			passwordLocking.PasswordLockTimeDays = -1
-		} else {
-			passwordLocking.PasswordLockTimeDays = lockTime
-		}
 	}
+	passwordLocking.PasswordLockTimeDays = lockTime
+	if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
+		passwordLocking.PasswordLockTimeDays = math.MaxInt16
+	} else if passwordLocking.PasswordLockTimeDays < -1 {
+		passwordLocking.PasswordLockTimeDays = -1
+	}
+
 	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJson, "$.Password_locking.failed_login_count")
 	if parserErr != nil {
 		return parserErr
-	} else {
-		passwordLocking.FailedLoginCount = failedLoginCount
 	}
+	passwordLocking.FailedLoginCount = failedLoginCount
+
 	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJson, "$.Password_locking.auto_locked_last_changed")
 	if parserErr != nil {
 		return parserErr
-	} else {
-		passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 	}
+	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
+
 	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJson, "$.Password_locking.auto_account_locked")
 	if parserErr != nil {
 		return parserErr
-	} else {
-		passwordLocking.AutoAccountLocked = autoAccountLock
 	}
+	passwordLocking.AutoAccountLocked = autoAccountLock
 	return nil
 }
 
 func PasswordLockingInt64Parser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	if BJ, found := userAttributesJson.Extract([]types.JSONPathExpression{jsonPath}); found {
 		return BJ.GetInt64(), nil
-	} else {
-		return 0, nil
 	}
-	return -1, err
+	return 0, nil
 }
 
 func PasswordLockingTimeUnixParser(userAttributesJson types.BinaryJSON, pathExpr string) (int64, error) {
@@ -973,8 +966,6 @@ func PasswordLockingBoolParser(userAttributesJson types.BinaryJSON, pathExpr str
 		} else {
 			return false, nil
 		}
-	} else {
-		return false, nil
 	}
 	return false, nil
 }

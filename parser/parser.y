@@ -13008,7 +13008,7 @@ PasswordOrLockOption:
 |	"PASSWORD_LOCK_TIME" "UNBOUNDED"
 	{
 		$$ = &ast.PasswordOrLockOption{
-			Type: ast.PasswordLockTimeDefault,
+			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
 

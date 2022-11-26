@@ -2611,13 +2611,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			domain.GetDomain(s).NotifyUpdatePrivilege()
 		}
 	}
-	connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
+	accessDenied, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if connVerifErr != nil {
-		if enableAutoLock {
-			if strings.Index(connVerifErr.Error(), "decode") != -1 || strings.Index(connVerifErr.Error(), "caching_sha2_password") != -1 || strings.Index(connVerifErr.Error(), "socket") != -1 || strings.Index(connVerifErr.Error(), "Access denied") != -1 {
-				if failedLoginErr := authFailedTracking(s, authUser.Username, authUser.Hostname); failedLoginErr != nil {
-					return failedLoginErr
-				}
+		if enableAutoLock && accessDenied {
+			if failedLoginErr := authFailedTracking(s, authUser.Username, authUser.Hostname); failedLoginErr != nil {
+				return failedLoginErr
 			}
 		}
 		return connVerifErr
@@ -2654,7 +2652,6 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
 		return commitErr
 	}
-	domain.GetDomain(s).NotifyUpdatePrivilege()
 	return nil
 }
 
@@ -2736,24 +2733,30 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 			return passwordLocking, rsErr
 		}
 		if req.NumRows() == 0 {
-			return passwordLocking, rsErr
+			return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			passwordLockingJson := row.GetJSON(0)
-			if err := passwordLocking.PasswordLockingParser(passwordLockingJson); err != nil {
-				return passwordLocking, err
+			if !row.IsNull(0) {
+				passwordLockingJson := row.GetJSON(0)
+				if parserErr := passwordLocking.PasswordLockingParser(passwordLockingJson); parserErr != nil {
+					return passwordLocking, parserErr
+				} else {
+					return passwordLocking, nil
+				}
+			} else {
+				return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
 			}
+
 		}
 	}
-	return passwordLocking, nil
 }
 
 func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
-	autoAccountLocked := false
+	autoAccountLocked := "N"
 	if failedLoginCount < userFailedLoginAttempts {
-		autoAccountLocked = false
+		autoAccountLocked = "N"
 	} else if failedLoginCount >= userFailedLoginAttempts {
-		autoAccountLocked = true
+		autoAccountLocked = "Y"
 	}
 	pm := privilege.GetPrivilegeManager(s)
 	newAttributesStr := pm.BuildPasswordLockingJson(userFailedLoginAttempts,
