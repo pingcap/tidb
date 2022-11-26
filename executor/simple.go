@@ -1165,10 +1165,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"account_locked=%?", lockAccount})
 		}
 
-		if plOptions.AlterPasswordLocking != "" {
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", plOptions.AlterPasswordLocking})
-		}
-
 		if s.CommentOrAttributeOption != nil {
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -1176,7 +1172,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
+			if plOptions.AlterPasswordLocking != "" {
+				newAttributesStr = fmt.Sprintf("{%s,%s}", newAttributesStr, plOptions.AlterPasswordLocking)
+			}
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+		} else {
+			if plOptions.AlterPasswordLocking != "" {
+				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", plOptions.AlterPasswordLocking})
+			}
 		}
 
 		switch authTokenOptionHandler {
