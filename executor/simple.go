@@ -790,48 +790,62 @@ type PasswordOrLockOptionsInfo struct {
 	FailedLoginAttemptsChange bool
 	PasswordLockTimeChange    bool
 	PasswordLocking           string
+	AlterPasswordLocking      string
 }
 
-func (passwordOrLockOptionsInfo *PasswordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(s *ast.CreateUserStmt) {
-	if length := len(s.PasswordOrLockOptions); length > 0 {
+func (passwordOrLockOptionsInfo *PasswordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) {
+	if length := len(plOption); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
 		for i := length - 1; i >= 0; i-- {
-			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+			if plOption[i].Type == ast.Lock {
 				passwordOrLockOptionsInfo.LockAccount = "Y"
 				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+			} else if plOption[i].Type == ast.Unlock {
 				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
-				passwordOrLockOptionsInfo.FailedLoginAttempts = s.PasswordOrLockOptions[i].Count
+			} else if plOption[i].Type == ast.FailedLoginAttempts {
+				passwordOrLockOptionsInfo.FailedLoginAttempts = plOption[i].Count
 				passwordOrLockOptionsInfo.FailedLoginAttemptsChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
-				passwordOrLockOptionsInfo.PasswordLockTime = s.PasswordOrLockOptions[i].Count
+			} else if plOption[i].Type == ast.PasswordLockTime {
+				passwordOrLockOptionsInfo.PasswordLockTime = plOption[i].Count
 				passwordOrLockOptionsInfo.PasswordLockTimeChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
+			} else if plOption[i].Type == ast.PasswordLockTimeDefault {
 				passwordOrLockOptionsInfo.PasswordLockTime = -1
 				passwordOrLockOptionsInfo.PasswordLockTimeChange = true
 			}
 		}
 	}
-
 	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
 	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
 	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
+	if passwordOrLockOptionsInfo.FailedLoginAttempts > 32767 {
+		passwordOrLockOptionsInfo.FailedLoginAttempts = 32767
+	}
+	if passwordOrLockOptionsInfo.FailedLoginAttempts < 0 {
+		passwordOrLockOptionsInfo.FailedLoginAttempts = 0
+	}
+	if passwordOrLockOptionsInfo.PasswordLockTime > 32767 {
+		passwordOrLockOptionsInfo.PasswordLockTime = 32767
+	}
+	if passwordOrLockOptionsInfo.PasswordLockTime < -1 {
+		passwordOrLockOptionsInfo.PasswordLockTime = -1
+	}
+
 	if passwordOrLockOptionsInfo.FailedLoginAttemptsChange || passwordOrLockOptionsInfo.PasswordLockTimeChange {
-		if passwordOrLockOptionsInfo.FailedLoginAttempts > 32767 {
-			passwordOrLockOptionsInfo.FailedLoginAttempts = 32767
-		}
-		if passwordOrLockOptionsInfo.FailedLoginAttempts <= 0 {
-			passwordOrLockOptionsInfo.FailedLoginAttempts = 0
-		}
-		if passwordOrLockOptionsInfo.PasswordLockTime > 32767 {
-			passwordOrLockOptionsInfo.PasswordLockTime = 32767
-		}
-		if passwordOrLockOptionsInfo.PasswordLockTime < -1 {
-			passwordOrLockOptionsInfo.PasswordLockTime = -1
-		}
 		passwordOrLockOptionsInfo.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}", passwordOrLockOptionsInfo.FailedLoginAttempts, passwordOrLockOptionsInfo.PasswordLockTime)
+	}
+	if passwordOrLockOptionsInfo.LockAccount == "N" {
+		passwordOrLockOptionsInfo.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+			passwordOrLockOptionsInfo.LockAccount, 0, time.Now().Format(time.UnixDate))
+	} else if passwordOrLockOptionsInfo.FailedLoginAttemptsChange && passwordOrLockOptionsInfo.PasswordLockTimeChange {
+		passwordOrLockOptionsInfo.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+			passwordOrLockOptionsInfo.FailedLoginAttempts, passwordOrLockOptionsInfo.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate))
+	} else if !passwordOrLockOptionsInfo.FailedLoginAttemptsChange && passwordOrLockOptionsInfo.PasswordLockTimeChange {
+		passwordOrLockOptionsInfo.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+			passwordOrLockOptionsInfo.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate))
+	} else if passwordOrLockOptionsInfo.FailedLoginAttemptsChange && !passwordOrLockOptionsInfo.PasswordLockTimeChange {
+		passwordOrLockOptionsInfo.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
+			passwordOrLockOptionsInfo.FailedLoginAttempts, "N", 0, time.Now().Format(time.UnixDate))
 	}
 }
 
@@ -863,7 +877,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	lockAccount := "N"
 	passwordOrLockOptionsInfo := PasswordOrLockOptionsInfo{}
-	passwordOrLockOptionsInfo.passwordOrLockOptionsInfoParser(s)
+	passwordOrLockOptionsInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
 	if passwordOrLockOptionsInfo.LockAccount != "" {
 		lockAccount = passwordOrLockOptionsInfo.LockAccount
 	}
@@ -1017,33 +1031,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	lockAccount := ""
-	var failedLoginAttempts int64
-	var passwordLockTime int64
-	var failedLoginAttemptsChange = false
-	var passwordLockTimeChange = false
-	if len(s.PasswordOrLockOptions) > 0 {
-		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-		// the last declaration takes effect.
-		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
-			if s.PasswordOrLockOptions[i].Type == ast.Lock {
-				lockAccount = "Y"
-				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
-				lockAccount = "N"
-				break
-			} else if s.PasswordOrLockOptions[i].Type == ast.FailedLoginAttempts {
-				failedLoginAttempts = s.PasswordOrLockOptions[i].Count
-				failedLoginAttemptsChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTime {
-				passwordLockTime = s.PasswordOrLockOptions[i].Count
-				passwordLockTimeChange = true
-			} else if s.PasswordOrLockOptions[i].Type == ast.PasswordLockTimeDefault {
-				passwordLockTime = -1
-				passwordLockTimeChange = true
-			}
-		}
+	passwordOrLockOptionsInfo := PasswordOrLockOptionsInfo{}
+	passwordOrLockOptionsInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
+	if passwordOrLockOptionsInfo.LockAccount != "" {
+		lockAccount = passwordOrLockOptionsInfo.LockAccount
 	}
-
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1163,40 +1155,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", lockAccount})
-			if lockAccount == "N" {
-				newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-					lockAccount, 0, time.Now().Format(time.UnixDate))
-				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-			}
 		}
 
-		// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-		// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-		// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
-		if failedLoginAttempts > 32767 {
-			failedLoginAttempts = 32767
-		}
-		if failedLoginAttempts < 0 {
-			failedLoginAttempts = 0
-		}
-		if passwordLockTime > 32767 {
-			passwordLockTime = 32767
-		}
-		if passwordLockTime < -1 {
-			failedLoginAttempts = -1
-		}
-		if failedLoginAttemptsChange && passwordLockTimeChange {
-			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				failedLoginAttempts, passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		} else if !failedLoginAttemptsChange && passwordLockTimeChange {
-			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"password_lock_time_days\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				passwordLockTime, "N", 0, time.Now().Format(time.UnixDate))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		} else if failedLoginAttemptsChange && !passwordLockTimeChange {
-			newAttributesStr := fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"auto_account_locked\": \"%s\",\"failed_login_count\": %d,\"auto_locked_last_changed\": \"%s\"}}",
-				failedLoginAttempts, "N", 0, time.Now().Format(time.UnixDate))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+		if passwordOrLockOptionsInfo.AlterPasswordLocking != "" {
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", passwordOrLockOptionsInfo.AlterPasswordLocking})
 		}
 
 		if s.CommentOrAttributeOption != nil {
