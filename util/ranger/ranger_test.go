@@ -866,6 +866,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
 	testKit.MustExec("insert into t values(1,1,1,1,2),(2,1,2,1,0)")
@@ -891,6 +892,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")

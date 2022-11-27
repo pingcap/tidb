@@ -18,13 +18,19 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// FunctionContext is a interface to provide context to the custom function
+// FunctionContext is an interface to provide context to the custom function
 type FunctionContext interface {
 	context.Context
+	User() *auth.UserIdentity
+	ActiveRoles() []*auth.RoleIdentity
+	CurrentDB() string
+	ConnectionInfo() *variable.ConnectionInfo
 	EvalArgs(row chunk.Row) ([]types.Datum, error)
 }
 
@@ -42,12 +48,8 @@ type FunctionDef struct {
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
 	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
 	EvalIntFunc func(ctx FunctionContext, row chunk.Row) (int64, bool, error)
-	// RequireDynamicPrivileges is the dynamic privileges needed to invoke the function
-	// If `RequireDynamicPrivileges` is empty, it means every one can invoke this function
-	RequireDynamicPrivileges []string
-	// SemRequireDynamicPrivileges is the dynamic privileges needed to invoke the function in sem mode
-	// If `SemRequireDynamicPrivileges` is empty, `DynamicPrivileges` will be used in sem mode
-	SemRequireDynamicPrivileges []string
+	// RequireDynamicPrivileges is a function to return a list of dynamic privileges to check.
+	RequireDynamicPrivileges func(sem bool) []string
 }
 
 // Validate validates the function definition

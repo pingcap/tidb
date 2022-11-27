@@ -264,6 +264,7 @@ func TestEmptyTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (c1 int)")
 	testKit.MustExec("create table t1 (c1 int)")
@@ -434,6 +435,7 @@ func TestCorrelatedEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
@@ -607,6 +609,7 @@ func TestIssue9562(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	var input [][]string
 	var output []struct {
 		SQL  []string
@@ -700,6 +703,7 @@ func TestLowSelIndexGreedySearch(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")

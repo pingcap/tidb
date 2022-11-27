@@ -132,6 +132,7 @@ type baseExecutor struct {
 	children      []Executor
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.BasicRuntimeStats
+	AllocPool     chunk.Allocator
 }
 
 const (
@@ -234,7 +235,7 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 func tryNewCacheChunk(e Executor) *chunk.Chunk {
 	base := e.base()
 	s := base.ctx.GetSessionVars()
-	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize)
+	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize, base.AllocPool)
 }
 
 // newList creates a new List to buffer current executor's result.
@@ -267,6 +268,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
@@ -600,9 +602,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 
 func showAddIdxReorgTp(job *model.Job) string {
 	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		tp := job.ReorgMeta.ReorgTp.String()
-		if len(tp) > 0 {
-			return " /* " + tp + " */"
+		if job.ReorgMeta != nil {
+			tp := job.ReorgMeta.ReorgTp.String()
+			if len(tp) > 0 {
+				return " /* " + tp + " */"
+			}
 		}
 	}
 	return ""
@@ -1947,6 +1951,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.UseDynamicPruneMode = false
 	}
 
+	sc.StatsLoad.Timeout = 0
+	sc.StatsLoad.NeededItems = nil
+	sc.StatsLoad.ResultCh = nil
+
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
 	vars.MemTracker.UnbindActions()
@@ -1954,6 +1962,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.ResetMaxConsumed()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
@@ -2175,39 +2184,6 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
-}
-
-// FillVirtualColumnValue will calculate the virtual column value by evaluating generated
-// expression using rows from a chunk, and then fill this value into the chunk
-func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
-	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
-	if len(virtualColumnIndex) == 0 {
-		return nil
-	}
-
-	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
-	iter := chunk.NewIterator4Chunk(req)
-	for i, idx := range virtualColumnIndex {
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := schema.Columns[idx].EvalVirtualColumn(row)
-			if err != nil {
-				return err
-			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx], false, true)
-			if err != nil {
-				return err
-			}
-			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
-				castDatum = table.GetZeroValue(columns[idx])
-			}
-			virCols.AppendDatum(i, &castDatum)
-		}
-		req.SetCol(idx, virCols.Column(i))
-	}
-	return nil
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {

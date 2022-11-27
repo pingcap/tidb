@@ -555,6 +555,9 @@ const (
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
 	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
+	// TiDBCDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	TiDBCDCWriteSource = "tidb_cdc_write_source"
+
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
@@ -626,6 +629,9 @@ const (
 
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBSourceID indicates the source ID of the TiDB server.
+	TiDBSourceID = "tidb_source_id"
 
 	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
 	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
@@ -768,6 +774,8 @@ const (
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
 
+	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
+	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 )
@@ -1063,7 +1071,7 @@ const (
 	DefTiFlashFastScan                             = false
 	DefMemoryUsageAlarmRatio                       = 0.7
 	DefMemoryUsageAlarmKeepRecordNum               = 5
-	DefTiDBEnableFastReorg                         = false
+	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1083,12 +1091,13 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold       float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan         = true
-	DefTiDBExternalTS                       = 0
-	DefTiDBEnableExternalTSRead             = false
-	DefTiDBEnableReusechunk                 = true
-	DefTiDBUseAlloc                         = false
+	DefTiDBGOGCTunerThreshold        float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan          = true
+	DefTiDBExternalTS                        = 0
+	DefTiDBEnableExternalTSRead              = false
+	DefTiDBEnableReusechunk                  = true
+	DefTiDBUseAlloc                          = false
+	DefTiDBEnablePlanReplayerCapture         = false
 )
 
 // Process global variables.
@@ -1147,6 +1156,11 @@ var (
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+
+	PasswordValidationLength           = atomic.NewInt32(8)
+	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
+	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
+	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 )
 
 var (

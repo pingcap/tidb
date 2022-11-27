@@ -297,8 +297,6 @@ type StatementContext struct {
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh chan StatsLoadResult
-		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
-		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -341,6 +339,8 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 }

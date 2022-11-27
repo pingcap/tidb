@@ -164,6 +164,9 @@ type ColumnInfo struct {
 
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
+	if c == nil {
+		return nil
+	}
 	nc := *c
 	return &nc
 }
@@ -1407,6 +1410,9 @@ type IndexInfo struct {
 
 // Clone clones IndexInfo.
 func (index *IndexInfo) Clone() *IndexInfo {
+	if index == nil {
+		return nil
+	}
 	ni := *index
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {

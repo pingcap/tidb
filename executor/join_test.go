@@ -1357,7 +1357,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustExec("analyze table s;")
 
 	tk.MustQuery("desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1370,7 +1370,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexMergeJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1384,7 +1384,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexHashJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1412,6 +1412,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
@@ -1478,7 +1479,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc format = 'brief' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#11",
+		"HashAgg 1.00 root  funcs:count(1)->Column#11",
 		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
@@ -2306,16 +2307,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 }
 
 func TestIssue18564(t *testing.T) {

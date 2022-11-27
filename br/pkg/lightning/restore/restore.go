@@ -232,7 +232,15 @@ type Controller struct {
 	precheckItemBuilder *PrecheckItemBuilder
 }
 
+// LightningStatus provides the finished bytes and total bytes of the current task.
+// It should keep the value after restart from checkpoint.
+// When it is tidb backend, FinishedFileSize can be counted after chunk data is
+// restored to tidb. When it is local backend it's counted after whole engine is
+// imported.
+// TotalFileSize may be an estimated value, so when the task is finished, it may
+// not equal to FinishedFileSize.
 type LightningStatus struct {
+	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
 }
@@ -353,6 +361,7 @@ func NewRestoreControllerWithPauser(
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
+	p.Status.backend = cfg.TikvImporter.Backend
 
 	var metaBuilder metaMgrBuilder
 	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
@@ -2190,11 +2199,21 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	var reader storage.ReadSeekCloser
-	var err error
-	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+	var (
+		reader       storage.ReadSeekCloser
+		compressType storage.CompressType
+		err          error
+	)
+	switch {
+	case chunk.FileMeta.Type == mydump.SourceTypeParquet:
 		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
-	} else {
+	case chunk.FileMeta.Compression != mydump.CompressionNone:
+		compressType, err = mydump.ToStorageCompressType(chunk.FileMeta.Compression)
+		if err != nil {
+			break
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, chunk.FileMeta.Path)
+	default:
 		reader, err = store.Open(ctx, chunk.FileMeta.Path)
 	}
 	if err != nil {
@@ -2225,8 +2244,15 @@ func newChunkRestore(
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
-	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-		return nil, errors.Trace(err)
+	if chunk.FileMeta.Compression == mydump.CompressionNone {
+		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
+			return nil, errors.Trace(err)
+		}
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	}
 	if len(chunk.ColumnPermutation) > 0 {
 		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
@@ -2410,8 +2436,13 @@ func (cr *chunkRestore) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-			if currOffset >= startOffset {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+
+			delta := currOffset - startOffset
+			if delta >= 0 {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if rc.status != nil && rc.status.backend == config.BackendTiDB {
+					rc.status.FinishedFileSize.Add(delta)
+				}
 			} else {
 				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
 					zap.Int64("start", startOffset))
@@ -2424,6 +2455,11 @@ func (cr *chunkRestore) deliverLoop(
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
+			finished := rc.status.FinishedFileSize.Load()
+			total := rc.status.TotalFileSize.Load()
+			deliverLogger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total))
 		})
 		failpoint.Inject("FailAfterWriteRows", nil)
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after written
