@@ -830,12 +830,10 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 	if info.PasswordLockTime < -1 {
 		info.PasswordLockTime = -1
 	}
-
 	if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
 		info.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
 			info.FailedLoginAttempts, info.PasswordLockTime)
 	}
-
 	passwordLockingArray := []string{}
 	if info.LockAccount == "N" {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
@@ -851,7 +849,6 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 	if len(passwordLockingArray) > 0 {
 		info.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
 	}
-
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
@@ -875,7 +872,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 	}
-
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -889,7 +885,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if s.IsCreateRole {
 		lockAccount = "Y"
 	}
-
 	var userAttributes any = nil
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -905,7 +900,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			userAttributes = plInfo.PasswordLocking
 		}
 	}
-
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
 		switch authTokenOption.Type {
@@ -913,7 +907,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			tokenIssuer = authTokenOption.Value
 		}
 	}
-
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer) VALUES `, mysql.SystemDB, mysql.UserTable)
 
@@ -959,7 +952,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		default:
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
-
 		recordTokenIssuer := tokenIssuer
 		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
 			err := fmt.Errorf("TOKEN_ISSUER is not needed for '%s' user", authPlugin)
@@ -969,7 +961,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			err := fmt.Errorf("TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer)
 		users = append(users, spec.User)
@@ -1034,7 +1025,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		s.Specs = []*ast.UserSpec{spec}
 	}
-
 	lockAccount := ""
 	plOptions := passwordOrLockOptionsInfo{}
 	plOptions.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
