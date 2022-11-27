@@ -1156,7 +1156,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		hhmmss = true
 	}
 	if err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if err == io.EOF {
 			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 		}
 		return ZeroDatetime, errors.Trace(err)
