@@ -250,6 +250,8 @@ const (
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
+	// OpSetBindingStatusByDigest represents the operation to set SQL binding status by sql digest.
+	OpSetBindingStatusByDigest
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -265,6 +267,7 @@ type SQLBindPlan struct {
 	Charset      string
 	Collation    string
 	NewStatus    string
+	SQLDigest    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

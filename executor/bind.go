@@ -38,6 +38,7 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	SQLDigest    string
 }
 
 // Next implements the Executor Next interface.
@@ -58,6 +59,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
+	case plannercore.OpSetBindingStatusByDigest:
+		return e.setBindingStatusByDigest()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -93,6 +96,23 @@ func (e *SQLBindExec) setBindingStatus() error {
 		}
 	}
 	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
+	}
+	return err
+}
+
+func (e *SQLBindExec) setBindingStatusByDigest() error {
+	//var bindInfo *bindinfo.Binding
+	//if e.bindSQL != "" {
+	//	bindInfo = &bindinfo.Binding{
+	//		BindSQL:   e.bindSQL,
+	//		Charset:   e.charset,
+	//		Collation: e.collation,
+	//	}
+	//}
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatusByDigest(e.normdOrigSQL, e.newStatus, e.SQLDigest)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
