@@ -413,14 +413,17 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 			// Generate normal commands.
 			log.Debug("detected valid region", zap.Uint64("region id", regionId))
 			// calc the leader candidates
-			if leaderCandidates, err := LeaderCandidates(peers); err != nil {
-				// select the leader base on tikv storeBalanceScore
-				leader := SelectRegionLeader(storeBalanceScore, leaderCandidates)
-				log.Debug("as leader peer", zap.Uint64("store id", leader.StoreId), zap.Uint64("region id", leader.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: leader.RegionId, AsLeader: true}
-				recovery.RecoveryPlan[leader.StoreId] = append(recovery.RecoveryPlan[leader.StoreId], plan)
-				storeBalanceScore[leader.StoreId] += 1
+			leaderCandidates, err := LeaderCandidates(peers)
+			if err != nil {
+				return errors.Trace(err)
 			}
+
+			// select the leader base on tikv storeBalanceScore
+			leader := SelectRegionLeader(storeBalanceScore, leaderCandidates)
+			log.Debug("as leader peer", zap.Uint64("store id", leader.StoreId), zap.Uint64("region id", leader.RegionId))
+			plan := &recovpb.RecoverRegionRequest{RegionId: leader.RegionId, AsLeader: true}
+			recovery.RecoveryPlan[leader.StoreId] = append(recovery.RecoveryPlan[leader.StoreId], plan)
+			storeBalanceScore[leader.StoreId] += 1
 
 		}
 	}
