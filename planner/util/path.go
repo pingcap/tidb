@@ -50,7 +50,8 @@ type AccessPath struct {
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
-	// IndexMergeIsIntersection means whether it's intersection type or union type.
+	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
+	// It's only valid for a IndexMerge path.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IndexMergeIsIntersection bool
 

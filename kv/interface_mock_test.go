@@ -161,6 +161,14 @@ func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
 
 }
 
+func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
+
+}
+
+func (t *mockTxn) Mem() uint64 {
+	return 0
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{

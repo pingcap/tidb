@@ -725,7 +725,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	if b.copReqSenderPool != nil {
 		b.copReqSenderPool.adjustSize(len(b.workers))
 	}
-	return injectCheckBackfillWorkerNum(len(b.workers))
+	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
 
 func (b *backfillScheduler) initCopReqSenderPool() {
@@ -744,9 +744,9 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	copCtx := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
-	if copCtx == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender")
+	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
 	ver, err := sessCtx.GetStore().CurrentVersion(kv.GlobalTxnScope)
@@ -871,7 +871,10 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	return nil
 }
 
-func injectCheckBackfillWorkerNum(curWorkerSize int) error {
+func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
+	if isMergeWorker {
+		return nil
+	}
 	failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
