@@ -806,15 +806,12 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 		case ast.FailedLoginAttempts:
 			info.FailedLoginAttempts = option.Count
 			info.FailedLoginAttemptsChange = true
-
 		case ast.PasswordLockTime:
 			info.PasswordLockTime = option.Count
 			info.PasswordLockTimeChange = true
-
 		case ast.PasswordLockTimeUnbounded:
 			info.PasswordLockTime = -1
 			info.PasswordLockTimeChange = true
-
 		}
 	}
 	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
