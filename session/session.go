@@ -2668,12 +2668,6 @@ func authFailedTracking(s *session, user string, host string) error {
 }
 
 func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
-	type alterField struct {
-		expr  string
-		value string
-	}
-	var fields []alterField
-	fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 	sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
