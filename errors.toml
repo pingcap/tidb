@@ -2778,12 +2778,12 @@ TiDB does not yet support JSON objects with the key length >= 65536
 
 ["types:8131"]
 error = '''
-Build table: %s global-level stats failed due to missing partition-level stats
+Build global-level stats failed due to missing partition-level stats: %s
 '''
 
 ["types:8244"]
 error = '''
-Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions
+Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions
 '''
 
 ["variable:1193"]

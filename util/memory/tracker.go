@@ -84,7 +84,8 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 		sync.Mutex
 	}
-	label               int              // Label of this "Tracker".
+	label int // Label of this "Tracker".
+	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesConsumed       int64            // Consumed bytes.
 	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
@@ -306,7 +307,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess {
+	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -822,6 +823,8 @@ const (
 	LabelForPreparedPlanCache int = -26
 	// LabelForSession represents the label of a session.
 	LabelForSession int = -27
+	// LabelForMemDB represents the label of the MemDB
+	LabelForMemDB int = -28
 )
 
 // MetricsTypes is used to get label for metrics
