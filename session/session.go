@@ -2740,7 +2740,10 @@ func userAutoAccountLocked(s *session, user string, host string, failedLoginCoun
 	pm := privilege.GetPrivilegeManager(s)
 	newAttributesStr := pm.BuildPasswordLockingJSON(userFailedLoginAttempts,
 		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
-	return s.passwordLocking(user, host, newAttributesStr)
+	if newAttributesStr != "" {
+		return s.passwordLocking(user, host, newAttributesStr)
+	}
+	return nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
