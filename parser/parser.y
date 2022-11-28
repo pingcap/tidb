@@ -635,7 +635,7 @@ import (
 	yearType              "YEAR"
 	wait                  "WAIT"
 	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
-    passwordLockTime      "PASSWORD_LOCK_TIME"
+	passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
