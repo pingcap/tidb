@@ -978,7 +978,7 @@ l_partkey = p_partkey
 );
 id	estRows	task	access object	operator info
 Projection	1.00	root		div(Column#46, 7.0)->Column#47
-└─HashAgg	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
+└─StreamAgg	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
   └─HashJoin	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
     ├─HashJoin(Build)	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
     │ ├─TableReader(Build)	9736.49	root		data:Selection

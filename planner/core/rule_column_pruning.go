@@ -336,6 +336,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	appendColumnPruneTraceStep(ds, prunedColumns, opt)
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
+	// There are two situations
+	// case 1: tiflash. Select a non-empty and narrowest column.
+	//         The main reason is that tiflash is a column storage structure,
+	//         and choosing the narrowest column can reduce the amount of data read as much as possible,
+	//         making the reading efficiency the best.
+	// case 2: tikv. Select row_id or pk column.
+	//         The main reason is that tikv is a kv store.
+	//         Select the key column for the best read efficiency.
 	if ds.schema.Len() == 0 {
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
@@ -690,7 +698,7 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
 	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first line.
+		// use the first column.
 		resultColumnInfo = originSchemaColumns[0]
 		resultColumn = originColumns[0]
 	} else {

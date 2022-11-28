@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -61,24 +61,7 @@ func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *lo
 
 func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// match pattern agg(count(*)) -> datasource
-	if agg, ok := p.(*LogicalAggregation); ok {
-		if len(agg.GroupByItems) == 0 {
-			if dataSource, ok := agg.Children()[0].(*DataSource); ok {
-				for _, aggFunc := range agg.AggFuncs {
-					if aggFunc.Name == "count" && len(aggFunc.Args) == 1 && !aggFunc.HasDistinct {
-						if constExpr, ok := aggFunc.Args[0].(*expression.Constant); ok {
-							if !constExpr.Value.IsNull() {
-								if len(dataSource.Columns) > 0 {
-									rewriteCountConstantToCountColumn(dataSource, aggFunc)
-									continue
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+	c.matchPatternAndRewrite(p)
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, err := c.countStarRewriter(child, opt)
@@ -89,6 +72,29 @@ func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimiz
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+func (c *countStarRewriter) matchPatternAndRewrite(p LogicalPlan) {
+	// match pattern agg(count(constant)) -> datasource
+	agg, ok := p.(*LogicalAggregation)
+	if !ok || len(agg.GroupByItems) > 0 {
+		return
+	}
+	dataSource, ok := agg.Children()[0].(*DataSource)
+	if !ok {
+		return
+	}
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name != "count" || len(aggFunc.Args) != 1 || aggFunc.HasDistinct {
+			continue
+		}
+		constExpr, ok := aggFunc.Args[0].(*expression.Constant)
+		if !ok || constExpr.Value.IsNull() || len(dataSource.Columns) == 0 {
+			continue
+		}
+		// rewrite
+		rewriteCountConstantToCountColumn(dataSource, aggFunc)
+	}
 }
 
 // Pick the narrowest and not null column from Data Source
