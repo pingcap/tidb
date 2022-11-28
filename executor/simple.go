@@ -1378,12 +1378,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
-	err = sysSession.GetSessionVars().SetStmtVar(variable.TxnIsolation, ast.ReadCommitted)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	// session isolation level changed to  READ-COMMITTED
+	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
 	}
-
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
 		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 		if errRollback != nil {
@@ -2080,7 +2080,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	err = sysSession.GetSessionVars().SetStmtVar(variable.TxnIsolation, ast.ReadCommitted)
+	// session isolation level changed to  READ-COMMITTED
+	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
 	}
