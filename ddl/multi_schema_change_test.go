@@ -568,8 +568,6 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// TODO: will check why tidb_ddl_enable_fast_reorg could not default be on in another pr.
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	originHook := dom.DDL().GetHook()
 
 	// Test cancel successfully.
