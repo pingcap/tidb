@@ -7,8 +7,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    race = "on",
-    shard_count = 2,
+    shard_count = 50,
     deps = [
         "//config",
         "//kv",
