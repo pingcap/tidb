@@ -2457,6 +2457,7 @@ func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
 }
 
+// SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
 func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
 	c.indexMergeIntersectionConcurrency = n
 }
@@ -2543,6 +2544,7 @@ func (c *Concurrency) StreamAggConcurrency() int {
 	return c.ExecutorConcurrency
 }
 
+// IndexMergeIntersectionConcurrency return the number of concurrent process worker.
 func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
 	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
 		return c.indexMergeIntersectionConcurrency
