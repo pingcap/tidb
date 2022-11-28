@@ -885,14 +885,6 @@ func TestUser(t *testing.T) {
 }
 
 func TestFailedLoginTracking(t *testing.T) {
-	//store := testkit.CreateMockStore(t)
-	//tk := testkit.NewTestKit(t, store)
-	//tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
-	//tk.MustExec(session.CreateUserTable)
-	//tk.MustExec(session.CreateDBPrivTable)
-	//tk.MustExec(session.CreateTablePrivTable)
-	//tk.MustExec(session.CreateColumnPrivTable)
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -916,18 +908,11 @@ func TestFailedLoginTracking(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
-
-	//checkAuthUser(t, tk, "u6", 0)
-	//checkAuthUser(t, tk, "u4", 4)
-
 }
 
 func encodePassword(password string) []byte {
 	pwd := auth.EncodePassword(password)
-	hpwd, err := auth.DecodePassword(pwd)
-	if err != nil {
-
-	}
+	hpwd, _ := auth.DecodePassword(pwd)
 	return hpwd
 }
 
