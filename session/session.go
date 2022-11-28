@@ -2718,14 +2718,14 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 			return passwordLocking, rsErr
 		}
 		if req.NumRows() == 0 {
-			return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
+			return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if !row.IsNull(0) {
 				passwordLockingJSON := row.GetJSON(0)
 				return passwordLocking, passwordLocking.PasswordLockingParser(passwordLockingJSON)
 			}
-			return passwordLocking, fmt.Errorf("not get user_attributes by `%s`@`%s`", user, host)
+			return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
 		}
 	}
 }

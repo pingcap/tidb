@@ -29,89 +29,87 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
-type (
-	// Manager is the interface for providing privilege related operations.
-	Manager interface {
-		// ShowGrants shows granted privileges for user.
-		ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+// Manager is the interface for providing privilege related operations.
+type Manager interface {
+	// ShowGrants shows granted privileges for user.
+	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
-		// GetEncodedPassword shows the encoded password for user.
-		GetEncodedPassword(user, host string) string
+	// GetEncodedPassword shows the encoded password for user.
+	GetEncodedPassword(user, host string) string
 
-		// RequestVerification verifies user privilege for the request.
-		// If table is "", only check global/db scope privileges.
-		// If table is not "", check global/db/table scope privileges.
-		// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
-		// this means any privilege would be OK.
-		RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
+	// RequestVerification verifies user privilege for the request.
+	// If table is "", only check global/db scope privileges.
+	// If table is not "", check global/db/table scope privileges.
+	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
+	// this means any privilege would be OK.
+	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 
-		// RequestVerificationWithUser verifies specific user privilege for the request.
-		RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
+	// RequestVerificationWithUser verifies specific user privilege for the request.
+	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
-		// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
-		// without using the SUPER privilege as a fallback.
-		HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+	// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
+	// without using the SUPER privilege as a fallback.
+	HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
-		// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-		// Dynamic privileges are only assignable globally, and have their own grantable attribute.
-		RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
+	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
+	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
-		// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
-		RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
+	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
+	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
-		// VerificationAccountAutoLock Verification Account Auto Lock
-		VerificationAccountAutoLock(user string, host string) (string, error)
+	// VerificationAccountAutoLock Verification Account Auto Lock
+	VerificationAccountAutoLock(user string, host string) (string, error)
 
-		// IsEnableAccountAutoLock Account enable Auto Lock
-		IsEnableAccountAutoLock(user string, host string) bool
+	// IsEnableAccountAutoLock Account enable Auto Lock
+	IsEnableAccountAutoLock(user string, host string) bool
 
-		// BuildPasswordLockingJSON Build PasswordLocking Json
-		BuildPasswordLockingJSON(failedLoginAttempts int64,
-			passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string
+	// BuildPasswordLockingJSON Build PasswordLocking Json
+	BuildPasswordLockingJSON(failedLoginAttempts int64,
+		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string
 
-		// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
-		BuildSuccessPasswordLockingJSON(user string, host string, failedLoginCount int64) string
+	// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
+	BuildSuccessPasswordLockingJSON(user string, host string, failedLoginCount int64) string
 
-		// ConnectionVerification verifies user privilege for connection.
-		// Requires exact match on user name and host name.
-		ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) (bool, error)
+	// ConnectionVerification verifies user privilege for connection.
+	// Requires exact match on user name and host name.
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) (bool, error)
 
-		// AuthSuccess Auth Success state
-		AuthSuccess(authUser, authHost string)
+	// AuthSuccess Auth Success state
+	AuthSuccess(authUser, authHost string)
 
-		// GetAuthWithoutVerification uses to get auth name without verification.
-		// Requires exact match on user name and host name.
-		GetAuthWithoutVerification(user, host string) bool
+	// GetAuthWithoutVerification uses to get auth name without verification.
+	// Requires exact match on user name and host name.
+	GetAuthWithoutVerification(user, host string) bool
 
-		// MatchIdentity matches an identity
-		MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
+	// MatchIdentity matches an identity
+	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
-		// DBIsVisible returns true is the database is visible to current user.
-		DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
+	// DBIsVisible returns true is the database is visible to current user.
+	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
-		// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
-		UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
+	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
 
-		// ActiveRoles active roles for current session.
-		// The first illegal role will be returned.
-		ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+	// ActiveRoles active roles for current session.
+	// The first illegal role will be returned.
+	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
 
-		// FindEdge find if there is an edge between role and user.
-		FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+	// FindEdge find if there is an edge between role and user.
+	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
 
-		// GetDefaultRoles returns all default roles for certain user.
-		GetDefaultRoles(user, host string) []*auth.RoleIdentity
+	// GetDefaultRoles returns all default roles for certain user.
+	GetDefaultRoles(user, host string) []*auth.RoleIdentity
 
-		// GetAllRoles return all roles of user.
-		GetAllRoles(user, host string) []*auth.RoleIdentity
+	// GetAllRoles return all roles of user.
+	GetAllRoles(user, host string) []*auth.RoleIdentity
 
-		// IsDynamicPrivilege returns if a privilege is in the list of privileges.
-		IsDynamicPrivilege(privNameInUpper string) bool
+	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
+	IsDynamicPrivilege(privNameInUpper string) bool
 
-		// Get the authentication plugin for a user
-		GetAuthPlugin(user, host string) (string, error)
-	}
-)
+	// Get the authentication plugin for a user
+	GetAuthPlugin(user, host string) (string, error)
+}
 
 const key keyType = 0
 

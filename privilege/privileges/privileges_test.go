@@ -20,11 +20,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -2962,4 +2964,134 @@ func TestIssue37488(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
+
+func TestFailedLoginTracking(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	createAndCheck(tk, "CREATE USER 'u6'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u6")
+	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 60 PASSWORD_LOCK_TIME 3;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 60, \"password_lock_time_days\": 3}}", "u5")
+	failedLoginTrackingCase1(t, tk)
+	failedLoginTrackingCase2(t, tk)
+	failedLoginTrackingCase3(t, tk)
+	failedLoginTrackingCase4(t, tk)
+}
+
+func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit) {
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 1, "N")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
+	checkAuthUser(t, tk, "u6", 0, "N")
+}
+
+func failedLoginTrackingCase2(t *testing.T, tk *testkit.TestKit) {
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 1, "N")
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 2, "N")
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 3, "Y")
+}
+
+func failedLoginTrackingCase3(t *testing.T, tk *testkit.TestKit) {
+	changeAutoLockedLastChanged(tk)
+	loadUser(t, tk, 1)
+	checkAuthUser(t, tk, "u6", 3, "Y")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
+	checkAuthUser(t, tk, "u6", 0, "N")
+}
+
+func failedLoginTrackingCase4(t *testing.T, tk *testkit.TestKit) {
+	failedLoginTrackingCase2(t, tk)
+	alterAndCheck(t, tk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
+	loadUser(t, tk, 2)
+	checkAuthUser(t, tk, "u6", 0, "N")
+}
+
+func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64) {
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u5", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u5", useCount, "N")
+}
+
+func changeAutoLockedLastChanged(tk *testkit.TestKit) {
+	SQL := "UPDATE `mysql`.`User` SET user_attributes=json_merge_patch(user_attributes, '{\"Password_locking\": {\"failed_login_attempts\": 3," +
+		"\"password_lock_time_days\": 3,\"auto_account_locked\": \"Y\",\"failed_login_count\": 3,\"auto_locked_last_changed\": \"%s\"}}') " +
+		"WHERE Host='localhost' and User='u6';"
+	d, _ := time.ParseDuration("-96h")
+	changeTime := time.Now().Add(d).Format(time.UnixDate)
+	SQL = fmt.Sprintf(SQL, changeTime)
+	tk.MustExec(SQL)
+}
+
+func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64) {
+	tk.MustExec(sql)
+	userAttributesSQL := selectSQL(user)
+	resBuff := bytes.NewBufferString("")
+	rs := tk.MustQuery(userAttributesSQL)
+	for _, row := range rs.Rows() {
+		_, err := fmt.Fprintf(resBuff, "%s\n", row)
+		require.NoError(t, err)
+	}
+	err := checkUser(t, resBuff.String(), failedLoginAttempts, passwordLockTimeDays, failedLoginCount)
+	require.NoError(t, err)
+}
+
+func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64) error {
+	var ua []userAttributes
+	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
+		require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
+		require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
+		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+		return nil
+	} else {
+		return err
+	}
+}
+
+func encodePassword(password string) []byte {
+	pwd := auth.EncodePassword(password)
+	hpwd, _ := auth.DecodePassword(pwd)
+	return hpwd
+}
+
+func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
+	tk.MustExec(sql)
+	sql = selectSQL(user)
+	tk.MustQuery(sql).Check(testkit.Rows(rsJSON))
+}
+
+func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64, autoAccountLocked string) {
+	userAttributesSQL := selectSQL(user)
+	resBuff := bytes.NewBufferString("")
+	rs := tk.MustQuery(userAttributesSQL)
+	for _, row := range rs.Rows() {
+		_, err := fmt.Fprintf(resBuff, "%s\n", row)
+		require.NoError(t, err)
+	}
+	var ua []userAttributes
+	if err := json.Unmarshal([]byte(resBuff.String()), &ua); err == nil {
+		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+		require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
+	} else {
+		require.NoError(t, err)
+	}
+}
+
+func selectSQL(user string) string {
+	userAttributesSQL := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
+	return strings.Replace(userAttributesSQL, "REUSER", user, -1)
+}
+
+type userAttributes struct {
+	PasswordLocking passwordLocking `json:"Password_locking"`
+}
+
+type passwordLocking struct {
+	FailedLoginAttempts   int64  `json:"failed_login_attempts"`
+	PasswordLockTimeDays  int64  `json:"password_lock_time_days"`
+	AutoAccountLocked     string `json:"auto_account_locked"`
+	FailedLoginCount      int64  `json:"failed_login_count"`
+	AutoLockedLastChanged string `json:"auto_locked_last_changed"`
 }
