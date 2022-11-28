@@ -1713,7 +1713,10 @@ func (do *Domain) StartHistoricalStatsWorker() {
 			case <-do.exit:
 				return
 			case tblID := <-do.historicalStatsWorker.tblCH:
-				do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				if err != nil {
+					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+				}
 			}
 		}
 	}()
