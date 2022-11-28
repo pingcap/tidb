@@ -1590,9 +1590,8 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.C
 // SetupHistoricalStatsWorker setups worker
 func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
 	do.historicalStatsWorker = &HistoricalStatsWorker{
-		tblCH:  make(chan int64, 16),
-		sctx:   ctx,
-		handle: do.StatsHandle(),
+		tblCH: make(chan int64, 16),
+		sctx:  ctx,
 	}
 }
 
@@ -1605,11 +1604,17 @@ var planReplayerHandleLease atomic.Uint64
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
+	enableDumpHistoricalStats.Store(true)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
+}
+
+// DisableDumpHistoricalStats4Test disable historical dump worker for test
+func DisableDumpHistoricalStats4Test() {
+	enableDumpHistoricalStats.Store(false)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
@@ -1688,8 +1693,14 @@ func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
 	return do.historicalStatsWorker
 }
 
+// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+var enableDumpHistoricalStats atomic.Bool
+
 // StartHistoricalStatsWorker start historical workers running
 func (do *Domain) StartHistoricalStatsWorker() {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -1702,7 +1713,7 @@ func (do *Domain) StartHistoricalStatsWorker() {
 			case <-do.exit:
 				return
 			case tblID := <-do.historicalStatsWorker.tblCH:
-				do.historicalStatsWorker.dumpHistoricalStats(tblID)
+				do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
 			}
 		}
 	}()

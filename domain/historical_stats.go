@@ -22,9 +22,8 @@ import (
 
 // HistoricalStatsWorker indicates for dump historical stats
 type HistoricalStatsWorker struct {
-	tblCH  chan int64
-	sctx   sessionctx.Context
-	handle *handle.Handle
+	tblCH chan int64
+	sctx  sessionctx.Context
 }
 
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats
@@ -32,8 +31,8 @@ func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
 	w.tblCH <- tableID
 }
 
-func (w *HistoricalStatsWorker) dumpHistoricalStats(tableID int64) error {
-	statsHandle := w.handle
+// DumpHistoricalStats dump stats by given tableID
+func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *handle.Handle) error {
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
@@ -56,4 +55,9 @@ func (w *HistoricalStatsWorker) dumpHistoricalStats(tableID int64) error {
 		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
 	}
 	return nil
+}
+
+// GetOneHistoricalStatsTable gets one tableID from channel, only used for test
+func (w *HistoricalStatsWorker) GetOneHistoricalStatsTable() int64 {
+	return <-w.tblCH
 }
