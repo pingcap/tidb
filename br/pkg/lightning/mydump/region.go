@@ -316,7 +316,7 @@ func MakeSourceFileRegion(
 		},
 	}
 
-	if fi.FileMeta.Compression == CompressionNone && tableRegion.Size() > tableRegionSizeWarningThreshold {
+	if fi.FileMeta.Compression == CompressionNone && fi.FileMeta.FileSize > tableRegionSizeWarningThreshold {
 		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
