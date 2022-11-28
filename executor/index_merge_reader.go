@@ -814,7 +814,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 				(*cntPtr)++
 			} else {
 				cnt := 1
-				mapDelta += hMap.Set(h, &cnt)
+				mapDelta += hMap.Set(h, &cnt) + int64(h.MemUsage())
 				rowDelta += 1
 			}
 		}
