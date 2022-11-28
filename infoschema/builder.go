@@ -700,8 +700,13 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer, idCacheOpt)
-			allocs = allocs.Append(newAlloc)
+			// If the allocator type might be AutoIncrementType, create both AutoIncrementType
+			// and RowIDAllocType allocator for it. Because auto id and row id could share the same allocator.
+			// Allocate auto id may route to allocate row id, if row id allocator is nil, the program panic!
+			for _, tp := range [2]autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType} {
+				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), tp, tblVer, idCacheOpt)
+				allocs = allocs.Append(newAlloc)
+			}
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 			allocs = allocs.Append(newAlloc)

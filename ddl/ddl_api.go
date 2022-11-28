@@ -3367,7 +3367,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					}
 					err = d.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
+					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoIncrementType, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
@@ -3497,6 +3497,8 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		}
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
+		actionType = model.ActionRebaseAutoID
+	case autoid.AutoIncrementType:
 		actionType = model.ActionRebaseAutoID
 	default:
 		panic(fmt.Sprintf("unimplemented rebase autoid type %s", tp))
