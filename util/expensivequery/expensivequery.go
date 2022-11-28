@@ -184,6 +184,15 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
+<<<<<<< HEAD
 func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	logutil.BgLogger().Warn("expensive_query", genLogFields(costTime, info)...)
+=======
+func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo, msg string) {
+	fields := util.GenLogFields(costTime, info, true)
+	if fields == nil {
+		return
+	}
+	logutil.BgLogger().Warn(msg, fields...)
+>>>>>>> f8a6bde954 (*: add a reference count for StmtCtx (#39368))
 }
