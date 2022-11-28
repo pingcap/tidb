@@ -400,6 +400,7 @@ func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
 
 func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
+		logutil.BgLogger().Info("[autoid service] Alloc AutoID fail, not leader")
 		return nil, errors.New("not leader")
 	}
 
@@ -483,6 +484,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
+		logutil.BgLogger().Info("[autoid service] Rebase() fail, not leader")
 		return nil, errors.New("not leader")
 	}
 
