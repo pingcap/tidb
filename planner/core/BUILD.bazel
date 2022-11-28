@@ -62,6 +62,7 @@ go_library(
         "rule_result_reorder.go",
         "rule_semi_join_rewrite.go",
         "rule_topn_push_down.go",
+        "rule_count_star_rewriter.go",
         "show_predicate_extractor.go",
         "stats.go",
         "stringer.go",
