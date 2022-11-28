@@ -353,6 +353,8 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
 	case *ast.ExplainStmt:
 		return in, true
+	case *ast.CreateBindingStmt:
+		return in, true
 	}
 	return in, false
 }
