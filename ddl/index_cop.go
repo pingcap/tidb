@@ -95,7 +95,9 @@ type copReqSenderPool struct {
 	senders []*copReqSender
 	wg      sync.WaitGroup
 
-	idxBufPool sync.Pool
+	idxBufPool sync.Pool // []*indexRecord
+	srcChkPool sync.Pool // *chunk.Chunk
+	binding    generic.SyncMap[*[]*indexRecord, *chunk.Chunk]
 }
 
 type copReqSender struct {
@@ -108,7 +110,6 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
-	srcChk := renewChunk(nil, p.copCtx.fieldTps)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -127,9 +128,7 @@ func (c *copReqSender) run() {
 		var done bool
 		var total int
 		for !done {
-			idxRec := p.idxBufPool.Get().([]*indexRecord)
-			idxRec = idxRec[:0]
-			srcChk = renewChunk(srcChk, p.copCtx.fieldTps)
+			idxRec, srcChk := p.getIndexRecordsAndChunks()
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
@@ -139,17 +138,6 @@ func (c *copReqSender) run() {
 			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, done: done, total: total}
 		}
 	}
-}
-
-// renewChunk creates a new chunk when the reorg batch size is changed.
-func renewChunk(oldChk *chunk.Chunk, fts []*types.FieldType) *chunk.Chunk {
-	newSize := variable.GetDDLReorgBatchSize()
-	newCap := int(newSize) * copReadBatchFactor
-	if oldChk == nil || oldChk.Capacity() != newCap {
-		return chunk.NewChunkWithCapacity(fts, newCap)
-	}
-	oldChk.Reset()
-	return oldChk
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
@@ -167,6 +155,12 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 				return make([]*indexRecord, 0, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
 			},
 		},
+		srcChkPool: sync.Pool{
+			New: func() any {
+				return chunk.NewChunkWithCapacity(copCtx.fieldTps, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
+			},
+		},
+		binding: generic.NewSyncMap[*[]*indexRecord, *chunk.Chunk](4),
 	}
 }
 
@@ -205,12 +199,26 @@ func (c *copReqSenderPool) close() {
 	close(c.resultsCh)
 }
 
+func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
+	ir, chk := c.idxBufPool.Get().([]*indexRecord), c.srcChkPool.Get().(*chunk.Chunk)
+	newCap := int(variable.GetDDLReorgBatchSize()) * copReadBatchFactor
+	if chk.Capacity() != newCap {
+		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
+	}
+	chk.Reset()
+	c.binding.Store(&ir, chk)
+	return ir[:0], chk
+}
+
 // recycleIdxRecords puts the index record slice back to the pool for reuse.
 func (c *copReqSenderPool) recycleIdxRecords(idxRecs []*indexRecord) {
-	if len(idxRecs) == 0 {
+	if idxRecs == nil {
 		return
 	}
 	c.idxBufPool.Put(idxRecs[:0])
+	if bindingChunk, ok := c.binding.Load(&idxRecs); ok {
+		c.srcChkPool.Put(bindingChunk)
+	}
 }
 
 // copContext contains the information that is needed when building a coprocessor request.
@@ -410,8 +418,7 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
 		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
-	done := chk.NumRows() < chk.Capacity()
-	return buf, done, nil
+	return buf, false, nil
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
