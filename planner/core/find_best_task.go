@@ -914,10 +914,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 
 		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		if path.StoreType == kv.TiFlash && ds.isPointGetPath(path) {
-			if _, ok := ds.ctx.GetSessionVars().StmtCtx.LockTableIDs[ds.table.Meta().ID]; ok {
-				continue
-			}
+		if path.StoreType == kv.TiFlash && ds.isPointGetPath(path) && ds.isForUpdateRead {
+			continue
 		}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()

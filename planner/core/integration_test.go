@@ -7555,16 +7555,19 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 }
 
 func TestPointGetWithSelectLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert into t values(1,2,3), (4,5,6);")
-	tk.MustExec("alter table t set tiflash replica 1;")
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
-	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "ERROR 1815 (HY000): Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	tk.MustQuery("explain select a, b from t where a = 1 for update;")
 	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
 	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
