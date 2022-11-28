@@ -413,7 +413,7 @@ func (t *Tracker) Consume(bs int64) {
 		for {
 			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CompareAndSwap(maxNow, consumed) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
