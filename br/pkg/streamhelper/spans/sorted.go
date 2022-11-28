@@ -65,6 +65,12 @@ func (f *ValuedFull) Traverse(m func(Valued) bool) {
 }
 
 func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems *[]Valued) {
+	// There isn't any range overlaps with the input range, perhaps the input range is empty.
+	// do nothing for this case.
+	if len(overlapped) == 0 {
+		return
+	}
+
 	for _, r := range overlapped {
 		f.inner.Delete(r)
 		// Assert All overlapped ranges are deleted.
