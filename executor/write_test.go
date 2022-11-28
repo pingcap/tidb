@@ -323,6 +323,13 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
 	err = tk.ExecToErr("insert into t(name, b) values(\"测试\", 3)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '\xe6\xb5' for key 't.PRIMARY'")
+
+	// issue 37412
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (   `id` bigint(20) NOT NULL AUTO_INCREMENT,   `col1` varbinary(1024) NOT NULL,   PRIMARY KEY (`id`),   UNIQUE KEY (`col1`) );")
+	tk.MustExec("INSERT INTO t SELECT NULL, RANDOM_BYTES(1024) FROM dual;")
+	tk.MustExec("INSERT INTO t SELECT NULL, RANDOM_BYTES(1024) FROM t;")
+	tk.MustExec("INSERT INTO t SELECT NULL, RANDOM_BYTES(1024) FROM t;")
 }
 
 func TestMultiBatch(t *testing.T) {
