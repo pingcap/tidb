@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"math"
 	"strconv"
 	"strings"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -1086,8 +1086,6 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		Charset:      charSet,
 		Collation:    collation,
 	}
-	logutil.BgLogger().Info("sql digest with DB: " + parser.DigestNormalized(p.NormdOrigSQL).String())
-	logutil.BgLogger().Info("sql digest withOUT DB: " + parser.DigestNormalized(parser.Normalize(v.OriginNode.Text())).String())
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
