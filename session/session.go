@@ -2608,7 +2608,10 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJSON); lockErr != nil {
 				return lockErr
 			}
-			domain.GetDomain(s).NotifyUpdatePrivilege()
+			notifyUpdatePrivilegeErr := domain.GetDomain(s).NotifyUpdatePrivilege()
+			if notifyUpdatePrivilegeErr != nil {
+				return notifyUpdatePrivilegeErr
+			}
 		}
 	}
 	accessDenied, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
@@ -2663,7 +2666,10 @@ func authFailedTracking(s *session, user string, host string) error {
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
 		return commitErr
 	}
-	domain.GetDomain(s).NotifyUpdatePrivilege()
+	notifyUpdatePrivilegeErr := domain.GetDomain(s).NotifyUpdatePrivilege()
+	if notifyUpdatePrivilegeErr != nil {
+		return notifyUpdatePrivilegeErr
+	}
 	return nil
 }
 
