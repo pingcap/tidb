@@ -415,6 +415,7 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 			// calc the leader candidates
 			leaderCandidates, err := LeaderCandidates(peers)
 			if err != nil {
+				log.Warn("region without peer", zap.Uint64("region id", regionId))
 				return errors.Trace(err)
 			}
 
@@ -424,7 +425,6 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 			plan := &recovpb.RecoverRegionRequest{RegionId: leader.RegionId, AsLeader: true}
 			recovery.RecoveryPlan[leader.StoreId] = append(recovery.RecoveryPlan[leader.StoreId], plan)
 			storeBalanceScore[leader.StoreId] += 1
-
 		}
 	}
 	return nil

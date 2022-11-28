@@ -755,7 +755,6 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 // LeaderCandidates select all peers can be select as a leader during the restore
 func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
 	if peers == nil {
-		log.Warn("region without peer")
 		return nil, errors.Annotatef(berrors.ErrRestoreRegionWithoutPeer,
 			"invalid region range")
 	}
@@ -763,16 +762,12 @@ func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
 	// by default, the peers[0] to be assign as a leader, since peers already sorted by leader selection rule
 	leader := peers[0]
 	candidates = append(candidates, leader)
-	for i, peer := range peers {
-		if i == 0 {
-			continue
-		}
+	for _, peer := range peers[1:] {
 		// qualificated candidate is leader.logterm = candidate.logterm && leader.lastindex = candidate.lastindex && && leader.commitindex = candidate.commitindex
 		if peer.LastLogTerm == leader.LastLogTerm && peer.LastIndex == leader.LastIndex && peer.CommitIndex == leader.CommitIndex {
 			log.Debug("leader candidate", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
 			candidates = append(candidates, peer)
 		}
-
 	}
 	return candidates, nil
 }
@@ -793,6 +788,5 @@ func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion
 			leader = peer
 		}
 	}
-
 	return leader
 }
