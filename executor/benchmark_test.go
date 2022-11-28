@@ -907,13 +907,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	}
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
-	for _, keyIdx := range testCase.keyIdx {
-		joinKeysColIdx = append(joinKeysColIdx, keyIdx)
-	}
+	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
 	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
-	for _, keyIdx := range testCase.keyIdx {
-		probeKeysColIdx = append(probeKeysColIdx, keyIdx)
-	}
+	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
 		hashJoinCtx: &hashJoinCtx{
