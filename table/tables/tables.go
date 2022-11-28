@@ -526,9 +526,12 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			break
 		}
 		// If txn is auto commit and index is untouched, no need to write index value.
-		// If InHandleForeignKeyTrigger is true indicate handling foreign key cascade, then we still need to write
-		// index value, otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
-		if untouched && !ctx.GetSessionVars().InTxn() && !ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
+		// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
+		// foreign key cascade need to handle later, then we still need to write index value,
+		// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
+		sessVars := ctx.GetSessionVars()
+		if untouched && !sessVars.InTxn() &&
+			!sessVars.StmtCtx.InHandleForeignKeyTrigger && !sessVars.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 			continue
 		}
 		newVs, err := idx.FetchValues(newData, nil)

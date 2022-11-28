@@ -2100,4 +2100,10 @@ func TestForeignKeyIssue39419(t *testing.T) {
 	tk.MustExec("delete from t1 where id = 2;")
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11", "13"))
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> 11", "3 <nil> 13"))
+
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int, b int, index(id), foreign key fk_2 (b) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("update t1 set id=id+10 where id > 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "12 12", "13 13"))
 }
