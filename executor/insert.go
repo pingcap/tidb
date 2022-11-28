@@ -70,7 +70,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		return err
 	}
 	setOptionForTopSQL(sessVars.StmtCtx, txn)
-	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -113,7 +112,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
