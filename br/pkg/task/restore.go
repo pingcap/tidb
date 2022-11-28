@@ -211,9 +211,6 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
-	_ = command.Flags().MarkHidden(FlagPiTRBatchCount)
-	_ = command.Flags().MarkHidden(FlagPiTRBatchSize)
-	_ = command.Flags().MarkHidden(FlagPiTRConcurrency)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
