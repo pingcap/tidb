@@ -43,6 +43,7 @@ type ProcessInfo struct {
 	Time                  time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
+	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
