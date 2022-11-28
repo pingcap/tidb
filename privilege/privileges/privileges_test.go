@@ -3088,7 +3088,7 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 		require.NoError(t, err)
 	}
 	var ua []userAttributes
-	if err := json.Unmarshal([]byte(resBuff.String()), &ua); err == nil {
+	if err := json.Unmarshal(resBuff.Bytes(), &ua); err == nil {
 		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
 		require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
 	} else {
