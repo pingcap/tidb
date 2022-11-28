@@ -479,7 +479,6 @@ func TestLeaderCandidates(t *testing.T) {
 }
 
 func TestSelectRegionLeader(t *testing.T) {
-
 	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 1, 0, 0, false)
 	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
 	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
