@@ -290,17 +290,21 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
-				tk1.MustExec(sql)
+				_, err = tk1.Exec(sql)
+				assert.NoError(t, err)
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
-			tk1.MustExec("insert into t values (8, 8)")
-			tk1.MustExec("update t set b = 7 where a = 2")
-			tk1.MustExec("delete from t where b = 3")
+			_, err = tk1.Exec("insert into t values (8, 8)")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("update t set b = 7 where a = 2")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("delete from t where b = 3")
+			assert.NoError(t, err)
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8)
 		case model.StateWriteReorganization:
 			if reorgTime < 1 {
@@ -308,10 +312,14 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 			} else {
 				return
 			}
-			tk1.MustExec("insert into t values (10, 10)")
-			tk1.MustExec("delete from t where b = 6")
-			tk1.MustExec("insert into t set b = 9")
-			tk1.MustExec("update t set b = 7 where a = 5")
+			_, err = tk1.Exec("insert into t values (10, 10)")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("delete from t where b = 6")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t set b = 9")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("update t set b = 7 where a = 5")
+			assert.NoError(t, err)
 			// (1, 7), (2, 7), (5, 7), (8, 8), (10, 10), (0, 9)
 		}
 	}

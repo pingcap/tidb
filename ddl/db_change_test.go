@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1739,7 +1740,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
