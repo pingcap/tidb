@@ -93,6 +93,8 @@ const (
 	ReplicaReadAdjuster
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
+	// TxnSource set the source of this transaction.
+	TxnSource
 )
 
 // ReplicaReadType is the type of replica to read data from
