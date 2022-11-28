@@ -2282,8 +2282,6 @@ func doDMLWorks(s Session) {
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
-	writeDefaultExprPushDownBlacklist(s)
-
 	writeStmtSummaryVars(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
