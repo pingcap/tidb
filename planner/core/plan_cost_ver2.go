@@ -420,6 +420,10 @@ func (p *PhysicalStreamAgg) getPlanCostVer2(taskType property.TaskType, option *
 	rows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
+	if rows < 20 { // prefer to use StreamAgg if data-size is very small
+		rows = 0
+	}
+
 	aggCost := aggCostVer2(option, rows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, rows, p.GroupByItems, cpuFactor)
 
@@ -447,10 +451,6 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
 
-	if inputRows < 100 { // prefer to use StreamAgg if rows<100
-		inputRows = 100
-	}
-
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
@@ -476,6 +476,10 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 	leftRows := getCardinality(p.children[0], option.CostFlag)
 	rightRows := getCardinality(p.children[1], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
+
+	if leftRows < 20 && rightRows < 20 {
+		leftRows, rightRows = 0, 0 // prefer to use MergeJoin if data-size if very small
+	}
 
 	filterCost := sumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
 		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor))
