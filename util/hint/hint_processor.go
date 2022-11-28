@@ -325,9 +325,9 @@ type BlockHintProcessor struct {
 	QbHints   map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
 
 	// Used for the view's hint
-	QbNameMap4View       map[string][]ast.HintTable           // Map from view's query block name to view's table list.
-	QbHints4View         map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
-	QbNameUsed4ViewInCTE map[string]struct{}                  // Store all the qb_name hints which are used for view in CTE
+	QbNameMap4View  map[string][]ast.HintTable           // Map from view's query block name to view's table list.
+	QbHints4View    map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
+	QbNameUsed4View map[string]struct{}                  // Store all the qb_name hints which are used for view
 
 	Ctx              sessionctx.Context
 	selectStmtOffset int
@@ -408,7 +408,7 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint, of
 		usedHints[i] = true
 		if p.QbNameMap4View == nil {
 			p.QbNameMap4View = make(map[string][]ast.HintTable)
-			p.QbNameUsed4ViewInCTE = make(map[string]struct{})
+			p.QbNameUsed4View = make(map[string]struct{})
 		}
 		qbName := hint.QBName.L
 		if qbName == "" {
@@ -480,7 +480,7 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint, of
 func (p *BlockHintProcessor) HandleUnusedViewHints() {
 	if p.QbNameMap4View != nil {
 		for qbName := range p.QbNameMap4View {
-			_, ok := p.QbNameUsed4ViewInCTE[qbName]
+			_, ok := p.QbNameUsed4View[qbName]
 			if !ok && p.Ctx != nil {
 				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}

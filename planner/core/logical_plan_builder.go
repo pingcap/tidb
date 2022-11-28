@@ -4437,7 +4437,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
-				b.hintProcessor.QbNameUsed4ViewInCTE[qbName] = struct{}{}
+				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -5040,7 +5040,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	hintProcessor.QbNameMap4View = qbNameMap4View
 	hintProcessor.QbHints4View = viewHints
-	hintProcessor.QbNameUsed4ViewInCTE = make(map[string]struct{})
+	hintProcessor.QbNameUsed4View = make(map[string]struct{})
 	hintProcessor.QbHints = currentQbHints
 	hintProcessor.QbNameMap = currentQbNameMap
 
