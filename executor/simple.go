@@ -847,7 +847,7 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
 	}
 	if len(passwordLockingArray) > 0 {
-		info.AlterPasswordLocking = fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
+		info.AlterPasswordLocking = fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
 	}
 }
 
@@ -1026,7 +1026,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 	lockAccount := ""
-	plOptions := passwordOrLockOptionsInfo{}
+	plOptions := passwordOrLockOptionsInfo{LockAccount: lockAccount}
 	plOptions.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
 	if plOptions.LockAccount != "" {
 		lockAccount = plOptions.LockAccount
@@ -1155,17 +1155,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if s.CommentOrAttributeOption != nil {
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+				newAttributesStr = fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value)
 			} else {
-				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+				newAttributesStr = fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value)
 			}
 			if plOptions.AlterPasswordLocking != "" {
 				newAttributesStr = fmt.Sprintf("{%s,%s}", newAttributesStr, plOptions.AlterPasswordLocking)
+			} else {
+				newAttributesStr = fmt.Sprintf("{%s}", newAttributesStr)
 			}
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		} else {
 			if plOptions.AlterPasswordLocking != "" {
-				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", plOptions.AlterPasswordLocking})
+				newAttributesStr := fmt.Sprintf("{%s}", plOptions.AlterPasswordLocking)
+				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
 

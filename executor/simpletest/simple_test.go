@@ -899,11 +899,13 @@ func TestFailedLoginTracking(t *testing.T) {
 	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "u5")
 
-	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;", "u1", 4, 6)
-	alterAndCheck(t, tk, "ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;", "u2", 4, -1)
-	alterAndCheck(t, tk, "ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;", "u3", 3, 6)
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;", "u4", 4, 3)
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;", "u4", 4, -1)
+	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;", "u1", 4, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;", "u2", 4, -1, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;", "u3", 3, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;", "u4", 4, 3, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;", "u4", 4, -1, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6;", "u5", 3, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6 COMMENT 'Something';", "u5", 3, 6, 0, "Something")
 }
 
 func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
@@ -912,7 +914,7 @@ func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
 	tk.MustQuery(sql).Check(testkit.Rows(rsJSON))
 }
 
-func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays int64) {
+func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64, comment string) {
 	tk.MustExec(sql)
 	userAttributesSQL := selectSQL(user)
 	resBuff := bytes.NewBufferString("")
@@ -921,15 +923,19 @@ func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, f
 		_, err := fmt.Fprintf(resBuff, "%s\n", row)
 		require.NoError(t, err)
 	}
-	err := checkUser(t, resBuff.String(), failedLoginAttempts, passwordLockTimeDays)
+	err := checkUser(t, resBuff.String(), failedLoginAttempts, passwordLockTimeDays, failedLoginCount, comment)
 	require.NoError(t, err)
 }
 
-func checkUser(t *testing.T, rs string, failedLoginAttempts int64, passwordLockTimeDays int64) error {
+func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64, comment string) error {
 	var ua []userAttributes
 	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
 		require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
 		require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
+		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+		if comment != "" {
+			require.True(t, ua[0].Metadata.Comment == comment)
+		}
 		return nil
 	} else {
 		return err
@@ -943,6 +949,7 @@ func selectSQL(user string) string {
 
 type userAttributes struct {
 	PasswordLocking passwordLocking `json:"Password_locking"`
+	Metadata        metadata        `json:"metadata"`
 }
 
 type passwordLocking struct {
@@ -951,6 +958,10 @@ type passwordLocking struct {
 	AutoAccountLocked     string `json:"auto_account_locked"`
 	FailedLoginCount      int64  `json:"failed_login_count"`
 	AutoLockedLastChanged string `json:"auto_locked_last_changed"`
+}
+
+type metadata struct {
+	Comment string `json:"comment"`
 }
 
 func TestSetPwd(t *testing.T) {

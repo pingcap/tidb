@@ -2666,11 +2666,7 @@ func authFailedTracking(s *session, user string, host string) error {
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
 		return commitErr
 	}
-	notifyUpdatePrivilegeErr := domain.GetDomain(s).NotifyUpdatePrivilege()
-	if notifyUpdatePrivilegeErr != nil {
-		return notifyUpdatePrivilegeErr
-	}
-	return nil
+	return domain.GetDomain(s).NotifyUpdatePrivilege()
 }
 
 func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {

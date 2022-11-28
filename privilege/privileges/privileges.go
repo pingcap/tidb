@@ -904,19 +904,19 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
-	if parserErr != nil {
+	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
 		return parserErr
 	}
 	passwordLocking.FailedLoginCount = failedLoginCount
 
 	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
-	if parserErr != nil {
+	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
 		return parserErr
 	}
 	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 
 	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
-	if parserErr != nil {
+	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
 		return parserErr
 	}
 	passwordLocking.AutoAccountLocked = autoAccountLock
@@ -932,7 +932,7 @@ func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr s
 	if BJ, found := passwordLockingJSON.Extract([]types.JSONPathExpression{jsonPath}); found {
 		return BJ.GetInt64(), nil
 	}
-	return 0, nil
+	return 0, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
 // PasswordLockingTimeUnixParser parser TimeUnix PasswordLocking info
@@ -952,7 +952,7 @@ func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExp
 		}
 		return t.Unix(), nil
 	}
-	return 0, nil
+	return 0, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
 // PasswordLockingBoolParser parser Bool PasswordLocking info
@@ -970,5 +970,5 @@ func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr st
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, fmt.Errorf("user_attributes not found by  `%s`", jsonPath)
 }
