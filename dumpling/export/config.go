@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -221,6 +222,13 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg.MaxAllowedPacket = 0
 	if conf.Security.DriveTLSName != "" {
 		driverCfg.TLSConfig = conf.Security.DriveTLSName
+	} else {
+		// Use TLS first.
+		driverCfg.AllowFallbackToPlaintext = true
+		driverCfg.TLS = &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS10,
+		}
 	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
