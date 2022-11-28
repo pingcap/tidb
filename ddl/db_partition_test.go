@@ -109,7 +109,8 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		vals: make([][]byte, 0),
 		tp:   make([]string, 0),
 	}
-	prefix := tablecodec.EncodeTablePrefix(physTable.GetPhysicalID())
+	pid := physTable.GetPhysicalID()
+	prefix := tablecodec.EncodeTablePrefix(pid)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
 	for it.Valid() {
@@ -120,6 +121,12 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		all.vals = append(all.vals, it.Value())
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
+			tblId, kv, _ := tablecodec.DecodeRecordKey(it.Key())
+			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
+			logutil.BgLogger().Info("Record",
+				zap.Int64("pid", tblId),
+				zap.Stringer("key", kv),
+				zap.Strings("values", vals))
 		} else if tablecodec.IsIndexKey(it.Key()) {
 			all.tp = append(all.tp, "Index")
 		} else {
@@ -5094,10 +5101,15 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	wait := make(chan bool)
 	defer close(wait)
 
-	injected := false
+	currState := model.StateNone
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
-			injected = true
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && currState != job.SchemaState {
+			currState = job.SchemaState
+			<-wait
+			<-wait
+		}
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteReorganization && currState != job.SchemaState {
+			currState = job.SchemaState
 			<-wait
 			<-wait
 		}
@@ -5108,22 +5120,24 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
 	oldInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	wait <- true
-	syncOnChanged <- true
+	wait <- true
 	// This reads the new schema (fully
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"14 14 14",
 		"15 15 15"))
-	tk.MustExec(`insert into t values (16, "16", 16)`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-oldInfoSchema.SchemaMetaVersion())
+	tk.MustExec(`insert into t values (16, "16", 16)`)
 	tbl, err := oldInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef := tbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1", partDef.Name.O)
 	rows := getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.Definitions[1:2])
-	// TODO: This should be 5, not 4 (not the newest row) or 0 (GC already done)!
-	require.Equal(t, 0, rows)
+	require.Equal(t, 4, rows)
+	wait <- true
+	syncOnChanged <- true
+	// TODO: Check status here as well
 	syncOnChanged <- true
 	require.NoError(t, <-alterErr)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +

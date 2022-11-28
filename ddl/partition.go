@@ -2386,7 +2386,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		newIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.AddingDefinitions)
 		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2415,11 +2414,27 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		newDefs := getReorganizedDefinitions(tblInfo.Partition, firstPartIdx, lastPartIdx, idMap)
 
+		// From now on, use the new definitions, but keep the Adding and Dropping for double write
 		tblInfo.Partition.Definitions = newDefs
-		tblInfo.Partition.AddingDefinitions = nil
-		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
-		tblInfo.Partition.DroppingDefinitions = nil
 
+		// TODO: How do we handle the table schema change for Adding and Dropping Definitions?
+
+		// Now all the data copying is done, but we cannot simply remove the droppingDefinitions
+		// since they are a part of the normal Definitions that other nodes with
+		// the current schema version. So we need to double write for one more schema version
+		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = model.StateDeleteReorganization
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
+
+	case model.StateDeleteReorganization:
+		// Drop the droppingDefinitions and finish the DDL
+		// This state is needed for the case where client A sees the schema
+		// with version of StateWriteReorg and would not see updates of
+		// client B that writes to the new partitions, previously
+		// addingDefinitions, since it would not double write to
+		// the droppingDefinitions during this time
+		// By adding StateDeleteReorg state, client B will write to both
+		// the new (previously addingDefinitions) AND droppingDefinitions
 		// TODO: Make sure the dropLabelRules are done both if successful (droppingDefinitions) or if rollback (addingDefinitions)
 		// TODO: Make sure stats is handled (eventually dropped for old partitions, and added for new?)
 		// Hmm, maybe we should actually update the stats here as well?
@@ -2427,7 +2442,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 		// Register the droppingDefinitions ids for rangeDelete
 		// and the addingDefinitions for handling in the updateSchemaVersion
+		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
+		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
+		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.AddingDefinitions = nil
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
 			if val.(bool) {
@@ -2438,26 +2458,14 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateNone
-		// TODO: Change ^^ to model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// How to handle this?
-		// TODO: Should the event type really be ActionDropTablePartition and not ReorganizePartition?
 		// Seems to only trigger asyncron update of statistics. Should it actually be syncronous?
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionReorganizePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
-		/*
-			case model.StateDeleteReorganization:
-				// Drop the droppingDefinitions and finish the DDL
-				// This state is needed for the case where client A sees the schema
-				// with version of StateWriteReorg and would not see updates of
-				// client B that writes to the new partitions, previously
-				// addingDefinitions, since it would not double write to
-				// the droppingDefinitions during this time
-				// By adding StateDeleteReorg state, client B will write to both
-				// the new (previously addingDefinitions) AND droppingDefinitions
 
-		*/
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
