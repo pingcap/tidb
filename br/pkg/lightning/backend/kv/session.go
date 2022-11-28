@@ -104,12 +104,7 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
-<<<<<<< HEAD
 	size = utils.MaxInt(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
-	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
-		mb.buf = mb.availableBufs[0]
-=======
-	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
 	var (
 		existingBuf    *bytesBuf
 		existingBufIdx int
@@ -124,7 +119,6 @@ func (mb *kvMemBuf) AllocateBuf(size int) {
 	if existingBuf != nil {
 		mb.buf = existingBuf
 		mb.availableBufs[existingBufIdx] = mb.availableBufs[0]
->>>>>>> 5c9570d51e (import: fix memory leak (#39332))
 		mb.availableBufs = mb.availableBufs[1:]
 	} else {
 		mb.buf = newBytesBuf(size)
