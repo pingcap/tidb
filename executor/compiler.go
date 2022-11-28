@@ -164,7 +164,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 }
 
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	tasks := domain.GetDomain(sctx).GetPlanReplayerHandle().GetTasks()
+	handle := domain.GetDomain(sctx).GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	tasks := handle.GetTasks()
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
 	for _, task := range tasks {
