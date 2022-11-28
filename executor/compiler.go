@@ -164,7 +164,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 }
 
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	handle := domain.GetDomain(sctx).GetPlanReplayerHandle()
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
 	if handle == nil {
 		return
 	}
