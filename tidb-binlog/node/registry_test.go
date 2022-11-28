@@ -32,7 +32,7 @@ type RegisrerTestClient interface {
 }
 
 func TestUpdateNodeInfo(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
@@ -60,7 +60,7 @@ func TestUpdateNodeInfo(t *testing.T) {
 }
 
 func TestRegisterNode(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
@@ -84,7 +84,7 @@ func TestRegisterNode(t *testing.T) {
 }
 
 func TestRefreshNode(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 

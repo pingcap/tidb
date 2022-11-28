@@ -58,13 +58,13 @@ var (
 //
 // The execution flow is really like IndexLookUpReader. However, it uses multiple index scans
 // or table scans to get the handles:
-// 1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
-//    and send them to the indexMergeProcessWorker.
-// 2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
-//    For every handle in the batch:
-//    1. check whether it has been accessed.
-//    2. if not, record it and send it to the indexMergeTableScanWorker.
-//    3. if accessed, just ignore it.
+//  1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
+//     and send them to the indexMergeProcessWorker.
+//  2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
+//     For every handle in the batch:
+//  1. check whether it has been accessed.
+//  2. if not, record it and send it to the indexMergeTableScanWorker.
+//  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
@@ -508,7 +508,7 @@ func (w *partialTableWorker) syncErr(resultCh chan<- *lookupTableTask, err error
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
+	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
 	var basic *execdetails.BasicRuntimeStats
 	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
 		basic = be.runtimeStats
@@ -961,7 +961,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := newFirstChunk(tableReader)
+		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))

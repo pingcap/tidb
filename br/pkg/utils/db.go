@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
@@ -14,10 +15,17 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	tidbNewCollationEnabled = "new_collation_enabled"
+)
+
 var (
 	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
 	_ DBExecutor = &sql.DB{}
 	_ DBExecutor = &sql.Conn{}
+
+	LogBackupTaskMutex sync.Mutex
+	logBackupTaskCount int
 )
 
 // QueryExecutor is a interface for exec query
@@ -67,7 +75,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 // we use `sqlexec.RestrictedSQLExecutor` as parameter because it's easy to mock.
 // it should return error.
 func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
-	valStr := "show config where name = 'log-backup.enable'"
+	valStr := "show config where name = 'log-backup.enable' and type = 'tikv'"
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
 	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
 	if errSQL != nil {
@@ -88,4 +96,32 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// CheckLogBackupTaskExist increases the count of log backup task.
+func LogBackupTaskCountInc() {
+	LogBackupTaskMutex.Lock()
+	logBackupTaskCount++
+	LogBackupTaskMutex.Unlock()
+}
+
+// CheckLogBackupTaskExist decreases the count of log backup task.
+func LogBackupTaskCountDec() {
+	LogBackupTaskMutex.Lock()
+	logBackupTaskCount--
+	LogBackupTaskMutex.Unlock()
+}
+
+// CheckLogBackupTaskExist checks that whether log-backup is existed.
+func CheckLogBackupTaskExist() bool {
+	return logBackupTaskCount > 0
+}
+
+// IsLogBackupInUse checks the log backup task existed.
+func IsLogBackupInUse(ctx sessionctx.Context) bool {
+	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+}
+
+func GetTidbNewCollationEnabled() string {
+	return tidbNewCollationEnabled
 }

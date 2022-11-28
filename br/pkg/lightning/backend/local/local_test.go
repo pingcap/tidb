@@ -30,22 +30,19 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -509,11 +506,6 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Equal(t, retryWrite, retryType)
 	require.Error(t, err)
 
-	resp.Error = &errorpb.Error{Message: "unknown error"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.EqualError(t, err, "non-retryable error: unknown error")
-
 	resp.Error = &errorpb.Error{
 		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
 			Reason: "test",
@@ -522,6 +514,27 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryWrite, retryType)
 	require.Error(t, err)
+
+	resp.Error = &errorpb.Error{
+		Message: "raft: proposal dropped",
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.True(t, berrors.Is(err, common.ErrKVRaftProposalDropped))
+
+	resp.Error = &errorpb.Error{
+		DiskFull: &errorpb.DiskFull{},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryNone, retryType)
+	require.Contains(t, err.Error(), "non-retryable error")
+
+	resp.Error = &errorpb.Error{
+		StaleCommand: &errorpb.StaleCommand{},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryNone, retryType)
+	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
 }
 
 type testIngester struct{}
@@ -634,55 +647,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, f.TotalSize.Load(), totalSize)
 	require.Equal(t, int64(concurrency*count), f.Length.Load())
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
-}
-
-func TestCheckRequirementsTiFlash(t *testing.T) {
-	controller := gomock.NewController(t)
-	defer controller.Finish()
-	glue := mock.NewMockGlue(controller)
-	exec := mock.NewMockSQLExecutor(controller)
-	ctx := context.Background()
-
-	dbMetas := []*mydump.MDDatabaseMeta{
-		{
-			Name: "test",
-			Tables: []*mydump.MDTableMeta{
-				{
-					DB:        "test",
-					Name:      "t1",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-				{
-					DB:        "test",
-					Name:      "tbl",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-			},
-		},
-		{
-			Name: "test1",
-			Tables: []*mydump.MDTableMeta{
-				{
-					DB:        "test1",
-					Name:      "t",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-				{
-					DB:        "test1",
-					Name:      "tbl",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-			},
-		},
-	}
-	checkCtx := &backend.CheckCtx{DBMetas: dbMetas}
-
-	glue.EXPECT().GetSQLExecutor().Return(exec)
-	exec.EXPECT().QueryStringsWithLog(ctx, tiFlashReplicaQuery, gomock.Any(), gomock.Any()).
-		Return([][]string{{"db", "tbl"}, {"test", "t1"}, {"test1", "tbl"}}, nil)
-
-	err := checkTiFlashVersion(ctx, glue, checkCtx, *semver.New("4.0.2"))
-	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
 }
 
 func makeRanges(input []string) []Range {
@@ -1253,6 +1217,6 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	l := local{}
-	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
-	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
+	require.True(t, l.isRetryableImportTiKVError(io.EOF))
+	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }

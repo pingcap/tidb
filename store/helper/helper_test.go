@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
@@ -153,6 +154,7 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 
 	t.Cleanup(func() {
 		server.Close()
+		view.Stop()
 		require.NoError(t, store.Close())
 	})
 

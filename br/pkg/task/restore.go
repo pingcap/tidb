@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	pconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -20,11 +21,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -55,9 +57,14 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
+	FlagPiTRBatchCount = "pitr-batch-count"
+	FlagPiTRBatchSize  = "pitr-batch-size"
 
+	defaultPiTRBatchCount           = 16
+	defaultPiTRBatchSize            = 32 * 1024 * 1024
 	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 16
+	defaultRestoreStreamConcurrency = 128
 	maxRestoreBatchSizeLimit        = 10240
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second
@@ -163,9 +170,22 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
-	skipTiflash bool   `json:"-" toml:"-"`
+	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
+	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+
+	// for ebs-based restore
+	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
+	Prepare             bool                  `json:"prepare" toml:"prepare"`
+	OutputFile          string                `json:"output-file" toml:"output-file"`
+	SkipAWS             bool                  `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint                  `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
+	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
+	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -186,6 +206,10 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "")
+	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "")
+	_ = command.Flags().MarkHidden(FlagPiTRBatchCount)
+	_ = command.Flags().MarkHidden(FlagPiTRBatchSize)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -206,6 +230,18 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
+			FlagStreamStartTS, FlagStreamFullBackupStorage)
+	}
+
+	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -247,14 +283,69 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
+
+	if flags.Lookup(flagFullBackupType) != nil {
+		// for restore full only
+		fullBackupType, err := flags.GetString(flagFullBackupType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !FullBackupType(fullBackupType).Valid() {
+			return errors.New("invalid full backup type")
+		}
+		cfg.FullBackupType = FullBackupType(fullBackupType)
+		cfg.Prepare, err = flags.GetBool(flagPrepare)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.OutputFile, err = flags.GetString(flagOutputMetaFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		volumeType, err := flags.GetString(flagVolumeType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.VolumeType = pconfig.EBSVolumeType(volumeType)
+		if !cfg.VolumeType.Valid() {
+			return errors.New("invalid volume type: " + volumeType)
+		}
+		if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
+		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
+		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
+		// Other instance families support performance up to 32,000 IOPS.
+		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
+		// todo: check lower/upper bound
+	}
+
 	return nil
 }
 
-// adjustRestoreConfig is use for BR(binary) and BR in TiDB.
+// Adjust is use for BR(binary) and BR in TiDB.
 // When new config was added and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
-func (cfg *RestoreConfig) adjustRestoreConfig() {
+func (cfg *RestoreConfig) Adjust() {
 	cfg.Config.adjust()
 	cfg.RestoreCommonConfig.adjust()
 
@@ -273,10 +364,13 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	if cfg.DdlBatchSize == 0 {
 		cfg.DdlBatchSize = defaultFlagDdlBatchSize
 	}
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
+	}
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 || cfg.Config.Concurrency > defaultRestoreStreamConcurrency {
+	if cfg.Config.Concurrency == 0 {
 		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
 		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
 	}
@@ -346,42 +440,6 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-func CheckNewCollationEnable(
-	backupNewCollationEnable string,
-	g glue.Glue,
-	storage kv.Storage,
-	CheckRequirements bool,
-) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
-		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-		return nil
-	}
-
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
-		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
-	}
-	return nil
-}
-
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
@@ -397,7 +455,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
 
-	cfg.adjustRestoreConfig()
+	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -453,7 +511,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -472,11 +530,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
+
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
-	restoreTS, err := client.GetTS(ctx)
+	restoreTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -502,7 +561,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
-	g.Record("BackupTS", restoreTS)
+	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("RestoreTS", restoreTS)
 
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
@@ -519,7 +579,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -573,11 +633,21 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
+
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
+	}
+
+	if cfg.tiflashRecorder != nil {
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			if cfg.tiflashRecorder != nil {
+				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
+			}
+			return t
+		})
 	}
 
 	tableFileMap := restore.MapTableToFiles(files)
@@ -601,7 +671,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
-		if err = client.ResetTS(ctx, cfg.PD); err != nil {
+		if err = client.ResetTS(ctx, mgr.PdController); err != nil {
 			log.Error("reset pd TS failed", zap.Error(err))
 			return errors.Trace(err)
 		}

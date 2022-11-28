@@ -102,9 +102,9 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists temporary_admin_test;")
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	_, err := tk.Exec("admin check table temporary_admin_test;")
+	err := tk.ExecToErr("admin check table temporary_admin_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
-	_, err = tk.Exec("admin check index temporary_admin_test c1;")
+	err = tk.ExecToErr("admin check index temporary_admin_test c1;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
@@ -118,9 +118,9 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
-	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_with_index_test;")
+	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_with_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
+	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_without_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
 }
@@ -141,9 +141,9 @@ func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_without_index_test;")
 	tk.MustExec("create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
 	tk.MustExec("create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id))")
-	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
+	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
+	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
@@ -210,7 +210,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key(c2))")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
 	// pk is handle, no additional unique index, no way to recover
-	_, err := tk.Exec("admin recover index admin_test c1")
+	err := tk.ExecToErr("admin recover index admin_test c1")
 	// err:index is not found
 	require.Error(t, err)
 
@@ -497,7 +497,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("insert admin_test (c1, c3) values (7, 100), (9, 100), (11, NULL)")
 
 	// pk is handle, no need to cleanup
-	_, err := tk.Exec("admin cleanup index admin_test `primary`")
+	err := tk.ExecToErr("admin cleanup index admin_test `primary`")
 	require.Error(t, err)
 	r := tk.MustQuery("admin cleanup index admin_test c2")
 	r.Check(testkit.Rows("0"))

@@ -16,7 +16,6 @@ package bindinfo_test
 
 import (
 	"context"
-	"crypto/tls"
 	"strconv"
 	"testing"
 	"time"
@@ -26,10 +25,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -182,7 +179,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	tk.MustExec("create database SPM")
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int)")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("update t set a = a + 1")
 	tk.MustExec("update t set a = a + 1")
 	tk.MustExec("admin capture bindings")
@@ -272,7 +269,7 @@ func TestShowGlobalBindings(t *testing.T) {
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int, key(a))")
 	tk.MustExec("create table t0(a int, b int, key(a))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 	// Simulate existing bindings in the mysql.bind_info.
@@ -362,56 +359,15 @@ func TestDefaultDB(t *testing.T) {
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
 }
 
-type mockSessionManager struct {
-	PS []*util.ProcessInfo
-}
-
-func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-func (msm *mockSessionManager) KillAllConnections() {
-}
-
-func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
-}
-
-func (msm *mockSessionManager) ServerID() uint64 {
-	return 1
-}
-
-func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestIssue19836(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	tk := testkit.NewTestKit(t, store)
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key (a));")
@@ -420,9 +376,6 @@ func TestIssue19836(t *testing.T) {
 	tk.MustExec("set @a=1;")
 	tk.MustExec("set @b=2;")
 	tk.MustExec("EXECUTE stmt USING @a, @b;")
-	tk.Session().SetSessionManager(&mockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
-	})
 	explainResult := testkit.Rows(
 		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
 		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
@@ -508,15 +461,8 @@ func TestDropSingleBindings(t *testing.T) {
 
 func TestPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled, or the IndexNames = 1 on first test.
-
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")

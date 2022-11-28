@@ -150,6 +150,8 @@ type MemBuffer interface {
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags updates the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 
@@ -180,6 +182,17 @@ type MemBuffer interface {
 	RemoveFromBuffer(Key)
 }
 
+// FindKeysInStage returns all keys in the given stage that satisfies the given condition.
+func FindKeysInStage(m MemBuffer, h StagingHandle, predicate func(Key, KeyFlags, []byte) bool) []Key {
+	result := make([]Key, 0)
+	m.InspectStage(h, func(k Key, f KeyFlags, v []byte) {
+		if predicate(k, f, v) {
+			result = append(result, k)
+		}
+	})
+	return result
+}
+
 // LockCtx contains information for LockKeys method.
 type LockCtx = tikvstore.LockCtx
 
@@ -191,6 +204,10 @@ type Transaction interface {
 	AggressiveLockingController
 	// Size returns sum of keys and values length.
 	Size() int
+	// Mem returns the memory consumption of the transaction.
+	Mem() uint64
+	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
+	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Reset reset the Transaction to initial states.
@@ -246,6 +263,9 @@ type Transaction interface {
 
 	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
+
+	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
+	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -256,6 +276,7 @@ type AssertionProto interface {
 	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
+// AggressiveLockingController is the interface that defines aggressive locking related operations.
 type AggressiveLockingController interface {
 	StartAggressiveLocking()
 	RetryAggressiveLocking(ctx context.Context)
@@ -387,6 +408,8 @@ type Request struct {
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
+	// FixedRowCountHint is the optimization hint for copr request for task scheduling.
+	FixedRowCountHint []int
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

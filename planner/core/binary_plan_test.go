@@ -80,6 +80,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	// If we don't set this, it will be false sometimes and the cost in the result will be different.
 	tk.MustExec("set @@tidb_enable_chunk_rpc=true")
 
@@ -150,7 +151,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 func TestBinaryPlanSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -220,7 +221,7 @@ func TestBinaryPlanSwitch(t *testing.T) {
 func TestTooLongBinaryPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -282,7 +283,7 @@ func TestTooLongBinaryPlan(t *testing.T) {
 func TestLongBinaryPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -337,7 +338,7 @@ func TestLongBinaryPlan(t *testing.T) {
 func TestBinaryPlanOfPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -500,7 +501,7 @@ func TestInvalidDecodeBinaryPlan(t *testing.T) {
 func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

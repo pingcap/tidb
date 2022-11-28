@@ -575,9 +575,17 @@ func GetFsp(s string) int {
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
+// It will not be affected by the time zone suffix. For format like '2020-01-01 12:00:00.123456+05:00', the index should be 19.
 func GetFracIndex(s string) (index int) {
+	tzIndex, _, _, _, _ := GetTimezone(s)
+	var end int
+	if tzIndex != -1 {
+		end = tzIndex - 1
+	} else {
+		end = len(s) - 1
+	}
 	index = -1
-	for i := len(s) - 1; i >= 0; i-- {
+	for i := end; i >= 0; i-- {
 		if unicode.IsPunct(rune(s[i])) {
 			if s[i] == '.' {
 				index = i
@@ -613,18 +621,17 @@ func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 
 // ToPackedUint encodes Time to a packed uint64 value.
 //
-//    1 bit  0
-//   17 bits year*13+month   (year 0-9999, month 0-12)
-//    5 bits day             (0-31)
-//    5 bits hour            (0-23)
-//    6 bits minute          (0-59)
-//    6 bits second          (0-59)
-//   24 bits microseconds    (0-999999)
+//	 1 bit  0
+//	17 bits year*13+month   (year 0-9999, month 0-12)
+//	 5 bits day             (0-31)
+//	 5 bits hour            (0-23)
+//	 6 bits minute          (0-59)
+//	 6 bits second          (0-59)
+//	24 bits microseconds    (0-999999)
 //
-//   Total: 64 bits = 8 bytes
+//	Total: 64 bits = 8 bytes
 //
-//   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
-//
+//	0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
 func (t Time) ToPackedUint() (uint64, error) {
 	tm := t
 	if t.IsZero() {
@@ -834,12 +841,13 @@ var validIdxCombinations = map[int]struct {
 // empty string will be returned.
 //
 // Supported syntax:
-//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
-//     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
-//     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
-//     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
-//   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
-//     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
+//
+//	MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
+//	  https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+//	  the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
+//	  second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
+//	ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
+//	  see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	idx, zidx, sidx, spidx := -1, -1, -1, -1
 	// idx is for the position of the starting of the timezone information
@@ -1753,9 +1761,9 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 }
 
 // canFallbackToDateTime return true
-// 1. the string is failed to be parsed by `matchDuration`
-// 2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
-//	  or the string start with a date literal.
+//  1. the string is failed to be parsed by `matchDuration`
+//  2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
+//     or the string start with a date literal.
 func canFallbackToDateTime(str string) bool {
 	digits, rest, err := parser.Digit(str, 1)
 	if err != nil {
@@ -3444,7 +3452,7 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 		return false, nil
 	}
 
-	if t, err = date.GoTime(tz); err != nil {
+	if t, err = date.AdjustedGoTime(tz); err != nil {
 		return false, err
 	}
 

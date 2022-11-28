@@ -78,21 +78,22 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		return txn.extractKeyErr(err)
 	}
 	if lockCtx.MaxLockedWithConflictTS != 0 {
-		var buf bytes.Buffer
+		var bufTableID, bufRest bytes.Buffer
 		foundKey := false
 		for k, v := range lockCtx.Values {
 			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
 				foundKey = true
-				prettyWriteKey(&buf, []byte(k))
+				prettyWriteKey(&bufTableID, &bufRest, []byte(k))
 				break
 			}
 		}
 		if !foundKey {
-			buf.WriteString("<unknown>")
+			bufTableID.WriteString("<unknown>")
 		}
 		// TODO: Primary is not exported here.
-		buf.WriteString(" primary=<unknown>")
-		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, buf.String())
+		primary := " primary=<unknown>"
+		primaryRest := ""
+		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
 	}
 	return nil
 }
@@ -279,6 +280,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRequestSourceType(val.(string))
 	case kv.ReplicaReadAdjuster:
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
+	case kv.TxnSource:
+		txn.KVTxn.SetTxnSource(val.(uint64))
 	}
 }
 
@@ -320,6 +323,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
+	indexID = tablecodec.IndexIDMask & indexID
 
 	tblInfo := txn.GetTableInfo(tableID)
 	if tblInfo == nil {
@@ -345,8 +349,12 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	if err == nil && f.HasAssertionFlags() {
 		return nil
 	}
-	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(assertion)...)
+	txn.UpdateMemBufferFlags(key, assertion...)
 	return nil
+}
+
+func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

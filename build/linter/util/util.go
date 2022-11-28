@@ -27,7 +27,6 @@ import (
 	"honnef.co/go/tools/analysis/report"
 )
 
-//
 type skipType int
 
 const (

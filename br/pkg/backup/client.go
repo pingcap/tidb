@@ -94,14 +94,24 @@ type Client struct {
 }
 
 // NewBackupClient returns a new backup client.
-func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
+func NewBackupClient(ctx context.Context, mgr ClientMgr) *Client {
 	log.Info("new backup client")
 	pdClient := mgr.GetPDClient()
 	clusterID := pdClient.GetClusterID(ctx)
 	return &Client{
 		clusterID: clusterID,
 		mgr:       mgr,
-	}, nil
+	}
+}
+
+// GetTS gets a new timestamp from PD.
+func (bc *Client) GetCurerntTS(ctx context.Context) (uint64, error) {
+	p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	restoreTS := oracle.ComposeTS(p, l)
+	return restoreTS, nil
 }
 
 // GetTS returns the latest timestamp.
@@ -173,13 +183,17 @@ func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
-// SetStorage set ExternalStorage for client.
-func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	bc.storage, err = storage.New(ctx, backend, opts)
+// SetStorageAndCheckNotInUse sets ExternalStorage for client and check storage not in used by others.
+func (bc *Client) SetStorageAndCheckNotInUse(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	opts *storage.ExternalStorageOptions,
+) error {
+	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// backupmeta already exists
 	exist, err := bc.storage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
@@ -194,8 +208,20 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	if err != nil {
 		return err
 	}
-	bc.backend = backend
 	return nil
+}
+
+// SetStorage sets ExternalStorage for client.
+func (bc *Client) SetStorage(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	opts *storage.ExternalStorageOptions,
+) error {
+	var err error
+
+	bc.backend = backend
+	bc.storage, err = storage.New(ctx, backend, opts)
+	return errors.Trace(err)
 }
 
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
@@ -377,6 +403,9 @@ func BuildBackupRangeAndSchema(
 				// ignore placement policy when not in full backup
 				tableInfo.ClearPlacement()
 			}
+
+			// Treat cached table as normal table.
+			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration

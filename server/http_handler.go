@@ -72,27 +72,29 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName             = "db"
+	pHexKey             = "hexKey"
+	pIndexName          = "index"
+	pHandle             = "handle"
+	pRegionID           = "regionID"
+	pStartTS            = "startTS"
+	pTableName          = "table"
+	pTableID            = "tableID"
+	pColumnID           = "colID"
+	pColumnTp           = "colTp"
+	pColumnFlag         = "colFlag"
+	pColumnLen          = "colLen"
+	pRowBin             = "rowBin"
+	pSnapshot           = "snapshot"
+	pFileName           = "filename"
+	pDumpPartitionStats = "dumpPartitionStats"
 )
 
 // For query string
 const (
 	qTableID   = "table_id"
 	qLimit     = "limit"
+	qJobID     = "start_job_id"
 	qOperation = "op"
 	qSeconds   = "seconds"
 )
@@ -391,6 +393,9 @@ type ddlHookHandler struct {
 type valueHandler struct {
 }
 
+// labelHandler is the handler for set labels
+type labelHandler struct{}
+
 const (
 	opTableRegions     = "regions"
 	opTableRanges      = "ranges"
@@ -654,9 +659,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -676,9 +681,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -743,9 +748,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch mutationChecker {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -795,14 +800,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -967,9 +980,12 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+		var tableInfo model.TableInfo
+		tableInfo.ID = status.ID
+		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
+		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1196,7 +1212,13 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		// The tid maybe a partition ID of the partition-table.
+		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+		if tbl == nil {
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		writeData(w, tbl.Meta())
 		return
 	}
 
@@ -1251,50 +1273,51 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
-		lid, err := strconv.Atoi(limitID)
-
+	var jobID, limitID int
+	var err error
+	if jobValue := req.FormValue(qJobID); len(jobValue) > 0 {
+		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-
-		if lid < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 1"))
+		if jobID < 1 {
+			writeError(w, errors.New("ddl history start_job_id must be greater than 0"))
 			return
 		}
-
-		jobs, err := h.getAllHistoryDDL()
-		if err != nil {
-			writeError(w, errors.New("ddl history not found"))
-			return
-		}
-
-		jobsLen := len(jobs)
-		if jobsLen > lid {
-			start := jobsLen - lid
-			jobs = jobs[start:]
-		}
-
-		writeData(w, jobs)
-		return
 	}
-	jobs, err := h.getAllHistoryDDL()
+	if limitValue := req.FormValue(qLimit); len(limitValue) > 0 {
+		limitID, err = strconv.Atoi(limitValue)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if limitID < 1 {
+			writeError(w, errors.New("ddl history limit must be greater than 0"))
+			return
+		}
+	}
+
+	jobs, err := h.getHistoryDDL(jobID, limitID)
 	if err != nil {
-		writeError(w, errors.New("ddl history not found"))
+		writeError(w, err)
 		return
 	}
 	writeData(w, jobs)
 }
 
-func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
+func (h ddlHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job, err error) {
 	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
+	if jobID == 0 && limit == 0 {
+		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
+	} else {
+		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2083,9 +2106,9 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Supported operations:
-//   * resolvelock?safepoint={uint64}&physical={bool}:
-//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
-//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+//   - resolvelock?safepoint={uint64}&physical={bool}:
+//   - safepoint: resolve all locks whose timestamp is less than the safepoint.
+//   - physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
 	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
 		writeError(w, errors.New("GC is running"))
@@ -2155,4 +2178,33 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
+}
+
+// ServeHTTP handles request of set server labels.
+func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	labels := make(map[string]string)
+	err := json.NewDecoder(req.Body).Decode(&labels)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	if len(labels) > 0 {
+		cfg := *config.GetGlobalConfig()
+		if cfg.Labels == nil {
+			cfg.Labels = make(map[string]string, len(labels))
+		}
+		for k, v := range labels {
+			cfg.Labels[k] = v
+		}
+		config.StoreGlobalConfig(&cfg)
+		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
+	}
+
+	writeData(w, config.GetGlobalConfig().Labels)
 }

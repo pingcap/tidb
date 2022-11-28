@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -59,7 +60,7 @@ func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockD
 	if err != nil {
 		return err
 	}
-	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil)
+	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	if err != nil {
 		return err
 	}
@@ -124,6 +125,7 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
 	s.T().Logf("check result message: %s", result.Message)
+	s.Require().Equal(Warn, result.Severity)
 	s.Require().True(result.Passed)
 
 	testMockSrcData := s.generateMockData(1, 1, 1,
@@ -141,6 +143,7 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 
@@ -153,6 +156,7 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckTargetClusterSize, result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -172,6 +176,7 @@ func (s *precheckImplSuite) TestClusterVersionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -191,6 +196,7 @@ func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -213,6 +219,7 @@ func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckTargetClusterEmptyRegion, result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -232,6 +239,7 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -253,6 +261,7 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckTargetClusterRegionDist, result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -273,6 +282,7 @@ func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -281,6 +291,7 @@ func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckSourcePermission, result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -300,6 +311,7 @@ func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -318,6 +330,7 @@ func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -339,6 +352,7 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -348,6 +362,7 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckLocalDiskPlacement, result.Item)
+	s.Require().Equal(Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -368,6 +383,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -386,6 +402,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -407,6 +424,7 @@ func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -444,6 +462,7 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -462,6 +481,7 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -498,6 +518,7 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -516,6 +537,7 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -544,6 +566,7 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -554,6 +577,7 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(CheckTargetTableEmpty, result.Item)
+	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }

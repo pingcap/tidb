@@ -4,6 +4,7 @@ package stream
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -24,8 +25,20 @@ func TestDateFormat(t *testing.T) {
 		},
 	}
 
+	timeZone, _ := time.LoadLocation("Asia/Shanghai")
 	for _, ca := range cases {
-		date := FormatDate(oracle.GetTimeFromTS(ca.ts))
-		require.Equal(t, date, ca.target)
+		date := FormatDate(oracle.GetTimeFromTS(ca.ts).In(timeZone))
+		require.Equal(t, ca.target, date)
 	}
+}
+
+func TestPrefix(t *testing.T) {
+	require.True(t, IsMetaDBKey([]byte("mDBs")))
+	require.False(t, IsMetaDBKey([]byte("mDDL")))
+	require.True(t, IsMetaDDLJobHistoryKey([]byte("mDDLJobHistory")))
+	require.False(t, IsMetaDDLJobHistoryKey([]byte("mDDL")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDL")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDB:")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDDLHistory")))
+	require.False(t, MaybeDBOrDDLJobHistoryKey([]byte("DDL")))
 }

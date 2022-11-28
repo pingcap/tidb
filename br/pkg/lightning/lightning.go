@@ -77,6 +77,7 @@ type Lightning struct {
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
+	metrics      *metric.Metrics
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -96,7 +97,15 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
-	tls, err := common.NewTLS(globalCfg.Security.CAPath, globalCfg.Security.CertPath, globalCfg.Security.KeyPath, globalCfg.App.StatusAddr)
+	tls, err := common.NewTLS(
+		globalCfg.Security.CAPath,
+		globalCfg.Security.CertPath,
+		globalCfg.Security.KeyPath,
+		globalCfg.App.StatusAddr,
+		globalCfg.Security.CABytes,
+		globalCfg.Security.CertBytes,
+		globalCfg.Security.KeyBytes,
+	)
 	if err != nil {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
@@ -257,11 +266,12 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 }
 
 // RunOnce is used by binary lightning and host when using lightning as a library.
-// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
-//   use a default glue later.
-// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
-//   caller implemented glue.
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
+//     use a default glue later.
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
+//     caller implemented glue.
+//
 // deprecated: use RunOnceWithOptions instead.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
 	if err := taskCfg.Adjust(taskCtx); err != nil {
@@ -309,10 +319,10 @@ func (l *Lightning) RunServer() error {
 }
 
 // RunOnceWithOptions is used by binary lightning and host when using lightning as a library.
-// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
-// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
-//   be used:
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
+//     be used:
 //   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
 //   - WithDumpFileStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
 //     storage by config
@@ -379,6 +389,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	defer func() {
 		metrics.UnregisterFrom(o.promRegistry)
 	}()
+	l.metrics = metrics
 
 	ctx := metric.NewContext(taskCtx, metrics)
 	ctx = log.NewContext(ctx, o.logger)
@@ -422,6 +433,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
 			panic(err)
 		}
+	})
+
+	failpoint.Inject("PrintStatus", func() {
+		defer func() {
+			finished, total := l.Status()
+			o.logger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total),
+				zap.Bool("equal", finished == total))
+		}()
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -493,8 +514,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	var procedure *restore.Controller
-
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
@@ -505,6 +524,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		CheckpointName:    o.checkpointName,
 	}
 
+	var procedure *restore.Controller
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))
@@ -533,6 +553,12 @@ func (l *Lightning) Status() (finished int64, total int64) {
 	finished = l.status.FinishedFileSize.Load()
 	total = l.status.TotalFileSize.Load()
 	return
+}
+
+// Metrics returns the metrics of lightning.
+// it's inited during `run`, so might return nil.
+func (l *Lightning) Metrics() *metric.Metrics {
+	return l.metrics
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {

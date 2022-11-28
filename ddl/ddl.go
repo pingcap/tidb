@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -83,10 +85,61 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+
+	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
+	checkFlagIndexInJobArgs = 1
+)
+
+const (
+	// The recoverCheckFlag is used to judge the gc work status when RecoverTable/RecoverSchema.
+	recoverCheckFlagNone int64 = iota
+	recoverCheckFlagEnableGC
+	recoverCheckFlagDisableGC
 )
 
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
+
+// AllocTableIDIf specifies whether to retain the old table ID.
+// If this returns "false", then we would assume the table ID has been
+// allocated before calling `CreateTableWithInfo` family.
+type AllocTableIDIf func(*model.TableInfo) bool
+
+// CreateTableWithInfoConfig is the configuration of `CreateTableWithInfo`.
+type CreateTableWithInfoConfig struct {
+	OnExist            OnExist
+	ShouldAllocTableID AllocTableIDIf
+}
+
+// CreateTableWithInfoConfigurier is the "diff" which can be applied to the
+// CreateTableWithInfoConfig, currently implementations are "OnExist" and "AllocTableIDIf".
+type CreateTableWithInfoConfigurier interface {
+	// Apply the change over the config.
+	Apply(*CreateTableWithInfoConfig)
+}
+
+// GetCreateTableWithInfoConfig applies the series of configurier from default config
+// and returns the final config.
+func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
+	config := CreateTableWithInfoConfig{}
+	for _, c := range cs {
+		c.Apply(&config)
+	}
+	if config.ShouldAllocTableID == nil {
+		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
+	}
+	return config
+}
+
+// Apply implements Configurier.
+func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
+	c.OnExist = o
+}
+
+// Apply implements Configurier.
+func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
+	c.ShouldAllocTableID = a
+}
 
 const (
 	// OnExistError throws an error on name collision.
@@ -117,6 +170,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -134,6 +188,7 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -152,13 +207,13 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// CreatePlacementPolicyWithInfo creates a placement policy
 	//
@@ -180,7 +235,7 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() util.SchemaSyncer
+	SchemaSyncer() syncer.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -268,7 +323,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
+	schemaSyncer syncer.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -513,16 +568,16 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var syncer util.SchemaSyncer
+	var schemaSyncer syncer.SchemaSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
-		syncer = NewMockSchemaSyncer()
+		schemaSyncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -541,7 +596,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		lease:                      opt.Lease,
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
-		schemaSyncer:               syncer,
+		schemaSyncer:               schemaSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -570,6 +625,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
+	variable.SwitchMDL = d.SwitchMDL
 
 	return d
 }
@@ -659,12 +715,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
 
-	go d.schemaSyncer.StartCleanWork()
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
 	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -680,6 +734,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
+
+	ingest.InitGlobalLightningEnv()
 
 	return nil
 }
@@ -809,7 +865,7 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() util.SchemaSyncer {
+func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
 }
 
@@ -923,7 +979,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -1038,8 +1093,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
 				} else {
 					for key, warning := range historyJob.ReorgMeta.Warnings {
-						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
+						keyCount := historyJob.ReorgMeta.WarningsCount[key]
+						if keyCount == 1 {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						} else {
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
+							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
 					}
 				}
@@ -1137,6 +1197,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 		})
 	}
 
+	if variable.EnableMDL.Load() && !toConcurrentDDL {
+		return errors.New("can not disable concurrent ddl when metadata lock is enabled")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	d.waiting.Store(true)
@@ -1156,6 +1220,69 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	}
 	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
+}
+
+// SwitchMDL enables MDL or disable DDL.
+func (d *ddl) SwitchMDL(enable bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+
+	// Disable MDL for test.
+	if enable && !variable.DefTiDBEnableConcurrentDDL {
+		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+		sess, err := d.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
+			return nil
+		}
+		defer d.sessPool.put(sess)
+		se := newSession(sess)
+		_, err = se.execute(ctx, sql, "disableMDL")
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
+		}
+		return nil
+	}
+
+	isEnableBefore := variable.EnableMDL.Load()
+	if isEnableBefore == enable {
+		return nil
+	}
+
+	// Check if there is any DDL running.
+	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	se := newSession(sess)
+	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
+	if err != nil {
+		return err
+	}
+	if len(rows) != 0 {
+		return errors.New("please wait for all jobs done")
+	}
+
+	variable.EnableMDL.Store(enable)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		oldEnable, _, err := m.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if oldEnable != enable {
+			err = m.SetMetadataLock(enable)
+		}
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+	return nil
 }
 
 func (d *ddl) wait4Switch(ctx context.Context) error {
@@ -1184,6 +1311,15 @@ type RecoverInfo struct {
 	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*model.DBInfo
+	RecoverTabsInfo []*RecoverInfo
+	DropJobID       int64
+	SnapshotTS      uint64
+	OldSchemaName   model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
@@ -1683,6 +1819,26 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		return i.ID < j.ID
 	})
 	return allJobs, nil
+}
+
+// ScanHistoryDDLJobs get some of the done DDL jobs.
+// When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
+// The result is in descending order by job ID.
+func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
+	var iter meta.LastJobIterator
+	var err error
+	if startJobID == 0 {
+		iter, err = m.GetLastHistoryDDLJobsIterator()
+	} else {
+		if limit == 0 {
+			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
+		}
+		iter, err = m.GetHistoryDDLJobsIterator(startJobID)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.GetLastJobs(limit, nil)
 }
 
 // GetHistoryJobByID return history DDL job by ID.

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -71,7 +73,7 @@ func TestTableForeignKey(t *testing.T) {
 	failSQL = "alter table t4 modify column d bigint;"
 	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
 	tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
-	tk.MustExec("alter table t4 drop foreign key d")
+	tk.MustExec("alter table t4 drop foreign key fk_1")
 	tk.MustExec("alter table t4 modify column d bigint;")
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
@@ -157,7 +159,7 @@ func TestAddNotNullColumnWhileInsertOnDupUpdate(t *testing.T) {
 }
 
 func TestTransactionOnAddDropColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
@@ -380,8 +382,51 @@ func TestAlterTableWithValidation(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
 }
 
+func TestCreateTableWithInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+	info := []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("t"),
+	}}
+
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return false
+	})))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+
+	var id int64
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		id, err = m.GenGlobalID()
+		return err
+	})
+
+	require.NoError(t, err)
+	info = []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("tt"),
+	}}
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return true
+	})))
+	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tt'").Rows()[0][0].(string)
+	require.True(t, ok)
+	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, idGenNum, id)
+}
+
 func TestBatchCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
@@ -600,9 +645,10 @@ func TestWriteLocal(t *testing.T) {
 }
 
 func TestLockTables(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, time.Microsecond*500)
+	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -834,7 +880,7 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 }
 
 func TestAddColumn2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")

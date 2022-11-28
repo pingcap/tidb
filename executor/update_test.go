@@ -423,7 +423,7 @@ func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex var
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update upk set b = b + 1 where a between 1 and 2")
 	require.Equal(t, 2, getPresumeExistsCount(t, tk.Session()))
-	_, err := tk.Exec("update upk set a = 3, b = 3 where a between 1 and 2")
+	err := tk.ExecToErr("update upk set a = 3, b = 3 where a between 1 and 2")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit")
 }
@@ -454,8 +454,9 @@ func TestOutOfRangeWithUnsigned(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(ts int(10) unsigned NULL DEFAULT NULL)`)
 	tk.MustExec(`insert into t values(1)`)
-	_, err := tk.Exec("update t set ts = IF(ts < (0 - ts), 1,1) where ts>0")
-	require.Equal(t, "[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'", err.Error())
+	tk.MustGetErrMsg(
+		"update t set ts = IF(ts < (0 - ts), 1,1) where ts>0",
+		"[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'")
 }
 
 func TestIssue21447(t *testing.T) {

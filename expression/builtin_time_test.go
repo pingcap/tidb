@@ -15,8 +15,10 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -846,7 +848,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		f, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(6)))
 		require.NoError(t, err)
@@ -856,7 +858,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		mt = v.GetMysqlTime()
 		require.True(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		resetStmtContext(ctx)
 		_, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(8)))
@@ -2504,7 +2506,7 @@ func TestTimestampAdd(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		unit     string
-		interval int64
+		interval float64
 		date     interface{}
 		expect   string
 	}{
@@ -2512,11 +2514,22 @@ func TestTimestampAdd(t *testing.T) {
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
 		{"DAY", 28768, 0, ""},
+		{"QUARTER", 3, "1995-05-01", "1996-02-01 00:00:00"},
+		{"SECOND", 1.1, "1995-05-01", "1995-05-01 00:00:01.100000"},
+		{"SECOND", -1, "1995-05-01", "1995-04-30 23:59:59"},
+		{"SECOND", -1.1, "1995-05-01", "1995-04-30 23:59:58.900000"},
+		{"SECOND", 9.9999e-6, "1995-05-01", "1995-05-01 00:00:00.000009"},
+		{"SECOND", 9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"SECOND", -9.9999e-6, "1995-05-01", "1995-04-30 23:59:59.999991"},
+		{"SECOND", -9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
+		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
 	}
 
 	fc := funcs[ast.TimestampAdd]
 	for _, test := range tests {
-		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewFloat64Datum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(ctx, datumsToConstants(dat))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2745,7 +2758,7 @@ func TestConvertTz(t *testing.T) {
 		{"2021-10-31 02:59:59", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:59:59"},
 		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
 		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
-		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, ""},
+		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, "2021-03-28 01:00:00"},
 		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
 		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 	}
@@ -3100,4 +3113,18 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, interval)
 	}
+}
+
+func TestCurrentTso(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBCurrentTso]
+	f, err := fc.getFunction(mock.NewContext(), datumsToConstants(nil))
+	require.NoError(t, err)
+	resetStmtContext(ctx)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	n := v.GetInt64()
+	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	require.Equal(t, itso, n, v.Kind())
 }

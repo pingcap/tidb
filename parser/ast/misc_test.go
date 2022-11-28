@@ -75,7 +75,11 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.PrivElem{},
 		&ast.VariableAssignment{Value: valueExpr},
 		&ast.KillStmt{},
-		&ast.DropStatsStmt{Table: &ast.TableName{}},
+		&ast.DropStatsStmt{
+			Tables: []*ast.TableName{
+				{},
+			},
+		},
 		&ast.ShutdownStmt{},
 	}
 
@@ -241,7 +245,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_MERGE_JOIN(t1,t2)", "INL_MERGE_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
-		{"ORDERED_HASH_JOIN(t1,t2)", "ORDERED_HASH_JOIN(`t1`, `t2`)"},
+		{"HASH_JOIN_BUILD(t1)", "HASH_JOIN_BUILD(`t1`)"},
+		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
