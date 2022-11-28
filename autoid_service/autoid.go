@@ -405,12 +405,30 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 
-	if req.N == 0 && val.base != 0 {
-		base := val.base
+	if req.N == 0 {
+		if val.base != 0 {
+			return &autoid.AutoIDResponse{
+				Min: val.base,
+				Max: val.base,
+			}, nil
+		}
+		// This item is not initialized, get the data from remote.
+		var currentEnd int64
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
+		err := kv.RunInNewTxn(ctx, s.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).RowID()
+			var err1 error
+			currentEnd, err1 = idAcc.Get()
+			if err1 != nil {
+				return err1
+			}
+			val.end = currentEnd
+			return nil
+		})
 		return &autoid.AutoIDResponse{
-			Min: base,
-			Max: base,
-		}, nil
+			Min: currentEnd,
+			Max: currentEnd,
+		}, err
 	}
 
 	val.Lock()
