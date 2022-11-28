@@ -1062,11 +1062,14 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 	if len(path.Ranges) < 1 {
 		return false
 	}
-	if path.Index.HasPrefixIndex() {
-		return false
-	}
-	if !path.IsIntHandlePath && !path.Index.Unique {
-		return false
+	if path.Index != nil {
+		if path.Index.HasPrefixIndex() || !path.Index.Unique {
+			return false
+		}
+	} else {
+		if !path.IsIntHandlePath {
+			return false
+		}
 	}
 	idxColsLen := len(path.Index.Columns)
 	for _, ran := range path.Ranges {
@@ -1077,7 +1080,6 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 	allRangeIsPoint := true
 	for _, ran := range path.Ranges {
 		if !ran.IsPointNonNullable(ds.ctx) {
-			// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
 			allRangeIsPoint = false
 			break
 		}
