@@ -81,6 +81,8 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 		"select /*+ use_index_merge(t1, ia, ibc, id) */ * from t1 where a = 10 and b = 20 and c < 30 and d in (2,5)")
 	tk.MustExec("create definer='root'@'localhost' view v as " +
 		"select * from t1 where a = 10 and b = 20 and c < 30 and d in (2,5)")
+	tk.MustExec("create definer='root'@'localhost' view v1 as " +
+		"select * from t1 where a = 10 and b = 20")
 	tk.MustExec("create table t2(a int, b int, c int, d int, e int, index ia(a), index ibc(b, c), index id(d), index ie(e))" +
 		"partition by range columns (c, d) (" +
 		"partition p0 values less than (10, 20)," +

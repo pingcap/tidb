@@ -76,6 +76,20 @@
         "Warning": null
       },
       {
+        "SQL": "select /*+ qb_name(v, v1@sel_1 .@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v1 where c < 30 and d in (2,5)",
+        "Plan": [
+          "IndexMerge 0.97 root partition:p0,p1,p2 type: intersection",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
+          "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
+          "└─TableRowIDScan(Probe) 0.97 cop[tikv] table:t1 keep order:false"
+        ],
+        "Result": [
+          "10 20 5 5 3"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select /*+ use_index_merge(t2, ia, ibc, id, ie) */ * from t2 where a > 10 and b = 20 and c < 35 and d < 45 and e = 100",
         "Plan": [
           "IndexMerge 0.89 root partition:p0,p1,p2 type: intersection",
