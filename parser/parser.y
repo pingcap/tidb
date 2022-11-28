@@ -634,6 +634,8 @@ import (
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
+	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
+    passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -767,8 +769,6 @@ import (
 	reset                      "RESET"
 	regions                    "REGIONS"
 	region                     "REGION"
-	failedLoginAttempts        "FAILED_LOGIN_ATTEMPTS"
-	passwordLockTime           "PASSWORD_LOCK_TIME"
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
