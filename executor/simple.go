@@ -144,7 +144,6 @@ func (e *baseExecutor) clearSysSession(ctx context.Context, sctx sessionctx.Cont
 	sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
 	sctx.(pools.Resource).Close()
 	return
-
 }
 
 // Next implements the Executor Next interface.
