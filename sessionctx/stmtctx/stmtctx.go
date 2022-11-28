@@ -56,6 +56,82 @@ type SQLWarn struct {
 	Err   error
 }
 
+<<<<<<< HEAD
+=======
+type jsonSQLWarn struct {
+	Level  string        `json:"level"`
+	SQLErr *terror.Error `json:"err,omitempty"`
+	Msg    string        `json:"msg,omitempty"`
+}
+
+// MarshalJSON implements the Marshaler.MarshalJSON interface.
+func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
+	w := &jsonSQLWarn{
+		Level: warn.Level,
+	}
+	e := errors.Cause(warn.Err)
+	switch x := e.(type) {
+	case *terror.Error:
+		// Omit outter errors because only the most inner error matters.
+		w.SQLErr = x
+	default:
+		w.Msg = e.Error()
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON implements the Unmarshaler.UnmarshalJSON interface.
+func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
+	var w jsonSQLWarn
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	warn.Level = w.Level
+	if w.SQLErr != nil {
+		warn.Err = w.SQLErr
+	} else {
+		warn.Err = errors.New(w.Msg)
+	}
+	return nil
+}
+
+// ReferenceCount indicates the reference count of StmtCtx.
+type ReferenceCount int32
+
+const (
+	// ReferenceCountIsFrozen indicates the current StmtCtx is resetting, it'll refuse all the access from other sessions.
+	ReferenceCountIsFrozen int32 = -1
+	// ReferenceCountNoReference indicates the current StmtCtx is not accessed by other sessions.
+	ReferenceCountNoReference int32 = 0
+)
+
+// TryIncrease tries to increase the reference count.
+// There is a small chance that TryIncrease returns true while TryFreeze and
+// UnFreeze are invoked successfully during the execution of TryIncrease.
+func (rf *ReferenceCount) TryIncrease() bool {
+	refCnt := atomic.LoadInt32((*int32)(rf))
+	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+	return refCnt != ReferenceCountIsFrozen
+}
+
+// Decrease decreases the reference count.
+func (rf *ReferenceCount) Decrease() {
+	for refCnt := atomic.LoadInt32((*int32)(rf)); !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+}
+
+// TryFreeze tries to freeze the StmtCtx to frozen before resetting the old StmtCtx.
+func (rf *ReferenceCount) TryFreeze() bool {
+	return atomic.LoadInt32((*int32)(rf)) == ReferenceCountNoReference && atomic.CompareAndSwapInt32((*int32)(rf), ReferenceCountNoReference, ReferenceCountIsFrozen)
+}
+
+// UnFreeze unfreeze the frozen StmtCtx thus the other session can access this StmtCtx.
+func (rf *ReferenceCount) UnFreeze() {
+	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
+}
+
+>>>>>>> f8a6bde954 (*: add a reference count for StmtCtx (#39368))
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
