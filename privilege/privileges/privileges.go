@@ -904,19 +904,19 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
-	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
 		return parserErr
 	}
 	passwordLocking.FailedLoginCount = failedLoginCount
 
 	autoLockedLastChanged, parserErr := PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
-	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
 		return parserErr
 	}
 	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 
 	autoAccountLock, parserErr := PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
-	if parserErr != nil && strings.Index(parserErr.Error(), "user_attributes not found") == -1 {
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
 		return parserErr
 	}
 	passwordLocking.AutoAccountLocked = autoAccountLock

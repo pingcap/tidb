@@ -3058,14 +3058,13 @@ func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, f
 
 func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64) error {
 	var ua []userAttributes
-	if err := json.Unmarshal([]byte(rs), &ua); err == nil {
-		require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
-		require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
-		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
-		return nil
-	} else {
+	if err := json.Unmarshal([]byte(rs), &ua); err != nil {
 		return err
 	}
+	require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
+	require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
+	require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+	return nil
 }
 
 func encodePassword(password string) []byte {
