@@ -9,8 +9,10 @@ go_library(
         "//parser/mysql",
         "//types",
         "//util",
+        "//util/logutil",
         "//util/memory",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
