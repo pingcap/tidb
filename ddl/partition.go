@@ -2386,9 +2386,9 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
+		tbl, err2 := getTable(d.store, job.SchemaID, tblInfo)
+		if err2 != nil {
+			return ver, errors.Trace(err2)
 		}
 		// TODO: If table has global indexes, we need reorg to clean up them.
 		// and then add the new partition ids back...
@@ -2403,19 +2403,20 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, err
 		}
 
-		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
+		firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
 		failpoint.Inject("reorgPartWriteReorgReplacedPartIDsFail", func(val failpoint.Value) {
 			if val.(bool) {
-				err = errors.New("Injected error by reorgPartWriteReorgReplacedPartIDsFail")
+				err2 = errors.New("Injected error by reorgPartWriteReorgReplacedPartIDsFail")
 			}
 		})
-		if err != nil {
-			return ver, err
+		if err2 != nil {
+			return ver, err2
 		}
 		newDefs := getReorganizedDefinitions(tblInfo.Partition, firstPartIdx, lastPartIdx, idMap)
 
 		// From now on, use the new definitions, but keep the Adding and Dropping for double write
 		tblInfo.Partition.Definitions = newDefs
+		tblInfo.Partition.Num = uint64(len(newDefs))
 
 		// TODO: How do we handle the table schema change for Adding and Dropping Definitions?
 

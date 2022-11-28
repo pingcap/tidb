@@ -5073,10 +5073,11 @@ type TestReorgDDLCallback struct {
 }
 
 func (tc *TestReorgDDLCallback) OnChanged(err error) error {
+	err = tc.TestDDLCallback.OnChanged(err)
 	<-tc.syncChan
 	// We want to wait here
 	<-tc.syncChan
-	return tc.TestDDLCallback.OnChanged(err)
+	return err
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
@@ -5122,7 +5123,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	oldInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	wait <- true
 	wait <- true
-	// This reads the new schema (fully
+	// This reads the new schema (in StateDeleteReorganization)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"14 14 14",
@@ -5138,9 +5139,19 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	require.Equal(t, 4, rows)
 	wait <- true
 	syncOnChanged <- true
-	// TODO: Check status here as well
-	syncOnChanged <- true
-	require.NoError(t, <-alterErr)
+	// This reads the new schema (Schema update completed)
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"12 12 21",
+		"14 14 14",
+		"15 15 15",
+		"16 16 16"))
+	oldInfoSchema = newInfoSchema
+	newInfoSchema = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-oldInfoSchema.SchemaMetaVersion())
+	tbl, err = oldInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	partDef = tbl.Meta().Partition.Definitions[1]
+	require.Equal(t, "p1a", partDef.Name.O)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5155,6 +5166,8 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	syncOnChanged <- true
+	require.NoError(t, <-alterErr)
 }
 
 func TestReorgPartitionFailConcurrent(t *testing.T) {
