@@ -1121,6 +1121,7 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 	}
 	ctx, cancelFunc := context.WithCancel(ctx)
 	timer := time.NewTimer(maxTime)
+	defer timer.Stop()
 	resultChan := make(chan error)
 	startTime := time.Now()
 	go runSQL(ctx, sctx, sql, resultChan)
