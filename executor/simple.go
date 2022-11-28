@@ -141,9 +141,8 @@ func (e *baseExecutor) clearSysSession(ctx context.Context, sctx sessionctx.Cont
 	if sctx == nil {
 		return
 	}
-	sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
 	sctx.(pools.Resource).Close()
-	return
 }
 
 // Next implements the Executor Next interface.
