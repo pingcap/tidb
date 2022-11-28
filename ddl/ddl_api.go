@@ -2709,6 +2709,14 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
 	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gap := oracle.GetTimeFromTS(nowTS).Sub(time.Now()).Abs()
+	if gap > 1*time.Second {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
+	}
 	job := &model.Job{
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
@@ -2721,9 +2729,9 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			variable.Off, /* tidb_super_read_only */
 			0,            /* totalRegions */
 			0,            /* startTS */
-			0 /* newCommitTS */},
+			0 /* commitTS */},
 	}
-	err := d.DoDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
