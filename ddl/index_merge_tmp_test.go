@@ -289,8 +289,7 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		err := originalCallback.OnChanged(nil)
-		assert.NoError(t, err)
+		var err error
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

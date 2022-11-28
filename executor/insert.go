@@ -268,9 +268,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
 			// of value, So if return a key we check and skip deleted key.
-			rowVal := val[:len(val)-1]
-			if bytes.Equal(rowVal, tables.DeleteMarkerUnique) {
-				continue
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				rowVal := val[:len(val)-1]
+				if bytes.Equal(rowVal, tables.DeleteMarkerUnique) {
+					continue
+				}
 			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
