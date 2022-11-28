@@ -17,7 +17,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/parser"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1115,7 +1115,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	require.Equal(t, "0", row.GetString(0))
 }
 
-func TestAddDigest2BindInfo(t *testing.T) {
+func TestUpgradeVersion104(t *testing.T) {
 	bindCases := []bindTestStruct{
 		{
 			originWithDB: "select * from `test` . `t` where `a` > ?",
