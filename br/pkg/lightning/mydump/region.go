@@ -31,7 +31,8 @@ import (
 )
 
 const (
-	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+	tableRegionSizeWarningThreshold           int64 = 1024 * 1024 * 1024
+	compressedTableRegionSizeWarningThreshold int64 = 410 * 1024 * 1024 // 0.4 * tableRegionSizeWarningThreshold
 	// the increment ratio of large CSV file size threshold by `region-split-size`
 	largeCSVLowerThresholdRation = 10
 	// TableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
@@ -316,7 +317,13 @@ func MakeSourceFileRegion(
 		},
 	}
 
-	if fi.FileMeta.Compression == CompressionNone && fi.FileMeta.FileSize > tableRegionSizeWarningThreshold {
+	regionTooBig := false
+	if fi.FileMeta.Compression == CompressionNone {
+		regionTooBig = tableRegion.Size() > tableRegionSizeWarningThreshold
+	} else {
+		regionTooBig = fi.FileMeta.FileSize > compressedTableRegionSizeWarningThreshold
+	}
+	if regionTooBig {
 		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
