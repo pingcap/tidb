@@ -674,6 +674,12 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 		}
 	}
 
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.SchemaByTable(tableInfo); ok {
+			return tbl, true
+		}
+	}
+
 	return ts.InfoSchema.SchemaByTable(tableInfo)
 }
 
