@@ -2007,10 +2007,10 @@ func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
 	tk.MustExec("insert into t2 values (1)")
 	res := tk.MustQuery("explain analyze insert ignore into t3 values (1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 1, 1), (5, 2, 1), (6, 2, 1)")
 	explain := getExplainResult(res)
-	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.* fk_num: 3.*", explain, "")
+	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
 	res = tk.MustQuery("explain analyze insert ignore into t3 values (7, null, null), (8, null, null)")
 	explain = getExplainResult(res)
-	require.NotContains(t, explain, "fk_check", explain, "")
+	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
 }
 
 func getExplainResult(res *testkit.Result) string {
@@ -2115,6 +2115,11 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"└─Foreign_Key_Check_. 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
+			sql: "explain analyze insert ignore into t2 values (10),(11),(12);",
+			plan: "Insert_.* fk_check.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t1 total:0s, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
 			sql: "explain analyze update t2 set id=id+2 where id >1",
 			plan: "Update_.* 0 root  time:.*, loops:1.*" +
 				"├─TableReader_.*" +
@@ -2203,6 +2208,13 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
 				"├─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze insert ignore into t6 values (1,1,10)",
+			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5 total:0s, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:0s, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
 		},
 		{
 			sql: "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1",

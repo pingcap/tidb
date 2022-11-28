@@ -1056,8 +1056,7 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.Merge(stats.Clone())
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
-	stats.FKCheckStats = &executor.FKCheckRuntimeStats{Keys: 20}
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s, fk_num: 20}", stats.String())
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {

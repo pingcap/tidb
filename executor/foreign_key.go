@@ -145,11 +145,16 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
-	return &FKCheckExec{
+	e := &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
 		fkValueHelper: helper,
-	}, nil
+	}
+	if sctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		e.stats = &FKCheckRuntimeStats{}
+		sctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkCheck.ID(), e.stats)
+	}
+	return e, nil
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -191,10 +196,6 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 }
 
 func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
-	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		fkc.stats = &FKCheckRuntimeStats{}
-		fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.FKCheck.ID(), fkc.stats)
-	}
 	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
 		return nil
 	}
