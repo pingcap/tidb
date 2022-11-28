@@ -613,6 +613,8 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	ttl                   "TTL"
+	ttlEnable             "TTL_ENABLE"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -752,6 +754,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	statsLocked                "STATS_LOCKED"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
@@ -914,6 +917,8 @@ import (
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
+	LockStatsStmt              "Lock statistic statement"
+	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
@@ -963,7 +968,7 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
-	AlterTablePartitionOpt                 "Alter table partition option"
+	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
@@ -1507,7 +1512,7 @@ Start:
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
  *******************************************************************************************/
 AlterTableStmt:
-	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt AlterTablePartitionOpt
+	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt AlterTableSpecSingleOpt
 	{
 		specs := $5.([]*ast.AlterTableSpec)
 		if $6 != nil {
@@ -1666,7 +1671,8 @@ StatsOptionsOpt:
 		$$ = &ast.StatsOptionsSpec{Default: false, StatsOptions: $3}
 	}
 
-AlterTablePartitionOpt:
+// Some spec can only have one, but not in a list
+AlterTableSpecSingleOpt:
 	PartitionOpt
 	{
 		if $1 != nil {
@@ -1729,6 +1735,12 @@ AlterTablePartitionOpt:
 			Tp:             ast.AlterTablePartitionOptions,
 			PartitionNames: []model.CIStr{model.NewCIStr($2)},
 			Options:        $3.([]*ast.TableOption),
+		}
+	}
+|	"REMOVE" "TTL"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableRemoveTTL,
 		}
 	}
 
@@ -4776,21 +4788,25 @@ DropRoleStmt:
 	}
 
 DropStatsStmt:
-	"DROP" "STATS" TableName
+	"DROP" "STATS" TableNameList
 	{
-		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+		$$ = &ast.DropStatsStmt{Tables: $3.([]*ast.TableName)}
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("DROP STATS ... PARTITION ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:          $3.(*ast.TableName),
+			Tables:         []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
 		}
 	}
 |	"DROP" "STATS" TableName "GLOBAL"
 	{
+		yylex.AppendError(ErrWarnDeprecatedSyntax.FastGenByArgs("DROP STATS ... GLOBAL", "DROP STATS ..."))
+		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
-			Table:         $3.(*ast.TableName),
+			Tables:        []*ast.TableName{$3.(*ast.TableName)},
 			IsGlobalStats: true,
 		}
 	}
@@ -6384,6 +6400,8 @@ UnReservedKeyword:
 |	"NONCLUSTERED"
 |	"PRESERVE"
 |	"TOKEN_ISSUER"
+|	"TTL"
+|	"TTL_ENABLE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6414,6 +6432,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"STATS_LOCKED"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
@@ -11090,6 +11109,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"STATS_LOCKED"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsLocked, Table: &ast.TableName{Name: model.NewCIStr("STATS_TABLE_LOCKED"), Schema: model.NewCIStr(mysql.SystemDB)}}
+	}
 |	"HISTOGRAMS_IN_FLIGHT"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
@@ -11382,6 +11405,8 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
+|	LockStatsStmt
+|	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
@@ -11746,6 +11771,27 @@ TableOption:
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+	}
+|	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
+	{
+		$$ = &ast.TableOption{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
+			Value:         ast.NewValueExpr($6, parser.charset, parser.collation),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $7.(ast.TimeUnitType)},
+		}
+	}
+|	"TTL_ENABLE" EqOpt stringLit
+	{
+		onOrOff := strings.ToLower($3)
+		if onOrOff == "on" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
+		} else if onOrOff == "off" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: false}
+		} else {
+			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
+			return 1
+		}
 	}
 
 ForceOpt:
@@ -13851,6 +13897,7 @@ ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 DryRunOptions:
 	{
@@ -13926,6 +13973,22 @@ LoadStatsStmt:
 	{
 		$$ = &ast.LoadStatsStmt{
 			Path: $3,
+		}
+	}
+
+LockStatsStmt:
+	"LOCK" "STATS" TableNameList
+	{
+		$$ = &ast.LockStatsStmt{
+			Tables: $3.([]*ast.TableName),
+		}
+	}
+
+UnlockStatsStmt:
+	"UNLOCK" "STATS" TableNameList
+	{
+		$$ = &ast.UnlockStatsStmt{
+			Tables: $3.([]*ast.TableName),
 		}
 	}
 
@@ -14264,7 +14327,8 @@ RowStmt:
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *			| 'file_name'
- *		| LOAD 'file_name']
+ *		| LOAD 'file_name'
+ *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
 	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
@@ -14369,6 +14433,21 @@ PlanReplayerStmt:
 			Where:   nil,
 			OrderBy: nil,
 			Limit:   nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Capture:    true,
+			SQLDigest:  $4,
+			PlanDigest: $5,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
 		}
 
 		$$ = x

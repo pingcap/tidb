@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
+	"golang.org/x/exp/slices"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -49,6 +50,10 @@ type AccessPath struct {
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
+	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
+	// It's only valid for a IndexMerge path.
+	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
+	IndexMergeIsIntersection bool
 
 	StoreType kv.StoreType
 
@@ -64,6 +69,41 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+}
+
+// Clone returns a deep copy of the original AccessPath.
+// Note that we rely on the Expression.Clone(), (*IndexInfo).Clone() and (*Range).Clone() in this method, so there are
+// some fields like FieldType are not deep-copied.
+func (path *AccessPath) Clone() *AccessPath {
+	ret := &AccessPath{
+		Index:                    path.Index.Clone(),
+		FullIdxCols:              CloneCols(path.FullIdxCols),
+		FullIdxColLens:           slices.Clone(path.FullIdxColLens),
+		IdxCols:                  CloneCols(path.IdxCols),
+		IdxColLens:               slices.Clone(path.IdxColLens),
+		ConstCols:                slices.Clone(path.ConstCols),
+		Ranges:                   CloneRanges(path.Ranges),
+		CountAfterAccess:         path.CountAfterAccess,
+		CountAfterIndex:          path.CountAfterIndex,
+		AccessConds:              CloneExprs(path.AccessConds),
+		EqCondCount:              path.EqCondCount,
+		EqOrInCondCount:          path.EqOrInCondCount,
+		IndexFilters:             CloneExprs(path.IndexFilters),
+		TableFilters:             CloneExprs(path.TableFilters),
+		IndexMergeIsIntersection: path.IndexMergeIsIntersection,
+		PartialIndexPaths:        nil,
+		StoreType:                path.StoreType,
+		IsDNFCond:                path.IsDNFCond,
+		IsIntHandlePath:          path.IsIntHandlePath,
+		IsCommonHandlePath:       path.IsCommonHandlePath,
+		Forced:                   path.Forced,
+		IsSingleScan:             path.IsSingleScan,
+		IsUkShardIndexPath:       path.IsUkShardIndexPath,
+	}
+	for _, partialPath := range path.PartialIndexPaths {
+		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
+	}
+	return ret
 }
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.

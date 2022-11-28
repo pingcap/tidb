@@ -395,6 +395,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	beginOpt := time.Now()
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	// TODO: capture plan replayer here if it matches sql and plan digest
+
 	sctx.GetSessionVars().DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
@@ -441,7 +443,11 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 		return nil, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
-	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	if exec, ok := p.(*core.Execute); ok && exec.PrepStmt != nil {
+		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(exec.PrepStmt.VisitInfos)
+	} else {
+		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
+	}
 	return p, nil
 }
 

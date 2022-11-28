@@ -4535,6 +4535,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
+
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4663,6 +4664,28 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"46 46",
 		"57 57"))
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+}
+
+func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "modColPartRename"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
 }
 
 func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {

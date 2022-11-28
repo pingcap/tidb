@@ -1738,8 +1738,6 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

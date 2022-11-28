@@ -915,24 +915,31 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		probeKeys = append(probeKeys, cols1[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		concurrency:       uint(testCase.concurrency),
-		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
-		isOuterJoin:       false,
+		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		hashJoinCtx: &hashJoinCtx{
+			joinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
+			isOuterJoin:     false,
+			useOuterToBuild: testCase.useOuterToBuild,
+			concurrency:     uint(testCase.concurrency),
+		},
+		probeSideTupleFetcher: &probeSideTupleFetcher{
+			probeSideExec: outerExec,
+		},
+		probeWorkers:      make([]probeWorker, testCase.concurrency),
 		buildKeys:         joinKeys,
 		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
-		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
-		useOuterToBuild:   testCase.useOuterToBuild,
 	}
 
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
-	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+		e.probeWorkers[i].workerID = i
+		e.probeWorkers[i].sessCtx = e.ctx
+		e.probeWorkers[i].hashJoinCtx = e.hashJoinCtx
+		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
 			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)

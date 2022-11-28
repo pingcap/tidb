@@ -197,7 +197,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		Tails:        []PhysicalPlan{tail},
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -879,11 +879,6 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
-}
-
-// SetSCtx Context implements Plan Set Context interface.
-func (p *basePlan) SetSCtx(ctx sessionctx.Context) {
-	p.ctx = ctx
 }
 
 // buildPlanTrace implements Plan

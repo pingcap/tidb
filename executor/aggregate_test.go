@@ -1088,6 +1088,14 @@ func TestIssue10608(t *testing.T) {
 	tk.MustExec("insert into t values(508931), (508932)")
 	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+
+	tk.MustExec("CREATE TABLE `t49`(`c0` char(1) DEFAULT '1',  `c2` char(1) DEFAULT NULL,  UNIQUE KEY `c2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t49` VALUES ('0','0'),('0','1');")
+	tk.MustExec("CREATE TABLE `t0` (`c0` blob DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t0` VALUES (_binary ']'),(_binary '777926278'),(_binary '0.2136404982804636'),(_binary '1901362489'),(_binary '1558203848'),(''),(_binary '1830406335'),(''),(_binary '0'),(NULL),(_binary '601930250'),(_binary '1558203848'),(_binary '-122008948'),(_binary '-2053608489'),(_binary 'hb/vt  <7'),(_binary 'RC&2*'),(_binary '1'),(_binary '-1722334316'),(_binary '1830406335'),(_binary '1372126029'),(_binary '882291196'),(NULL),(_binary '-399693596');")
+	tk.MustExec("CREATE ALGORITHM=TEMPTABLE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v0` (`c0`, `c1`, `c2`) AS SELECT NULL AS `NULL`,`t49`.`c2` AS `c2`,(((CASE _UTF8MB4'I되EkfIO퀶' WHEN NULL THEN `t49`.`c0` WHEN `t49`.`c2` THEN `t0`.`c0` ELSE (CASE `t49`.`c0` WHEN _UTF8MB4'%' THEN 1035293362 ELSE _UTF8MB4',' END) END))<<(`t49`.`c0`)) AS `(((CASE 'I되EkfIO퀶' WHEN NULL THEN t49.c0 WHEN t49.c2 THEN t0.c0 ELSE (CASE t49.c0 WHEN '%' THEN 1035293362 ELSE ',' END ) END ))<<(t49.c0))` FROM (`t0`) JOIN `t49` WHERE TRUE;")
+	tk.MustQuery("SELECT /*+ STREAM_AGG()*/v0.c0 FROM t49, v0 LEFT OUTER JOIN t0 ON ('Iw') GROUP BY true;").
+		Check(testkit.Rows("<nil>"))
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
@@ -1642,11 +1650,11 @@ func TestIssue26885(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
 	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
-	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
 	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 
 	tk.MustExec("alter table t1 add index idx(c1); ")
-	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
 	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
