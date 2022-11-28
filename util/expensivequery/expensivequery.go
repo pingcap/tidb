@@ -111,5 +111,9 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
 func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo, msg string) {
-	logutil.BgLogger().Warn(msg, util.GenLogFields(costTime, info, true)...)
+	fields := util.GenLogFields(costTime, info, true)
+	if fields == nil {
+		return
+	}
+	logutil.BgLogger().Warn(msg, fields...)
 }
