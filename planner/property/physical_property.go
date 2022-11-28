@@ -202,9 +202,6 @@ type PhysicalProperty struct {
 	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
-
-	// InLock indicates the Plan is under LogicalLock
-	InLock bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -351,7 +348,6 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
-		InLock:                p.InLock,
 	}
 	return prop
 }

@@ -392,13 +392,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
-	if _, ok := p.self.(*LogicalLock); ok {
-		newProp.InLock = true
-		defer func() {
-			newProp.InLock = false
-		}()
-	}
-
 	var plansFitsProp, plansNeedEnforce []PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
@@ -921,8 +914,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 
 		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		if path.StoreType == kv.TiFlash {
-			if ds.isPointGetPath(path) && prop.InLock {
+		if path.StoreType == kv.TiFlash && ds.isPointGetPath(path) {
+			if _, ok := ds.ctx.GetSessionVars().StmtCtx.LockTableIDs[ds.table.Meta().ID]; ok {
 				continue
 			}
 		}
