@@ -17,6 +17,7 @@ package tables
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/opentracing/opentracing-go"
@@ -519,6 +520,10 @@ const (
 
 // KeyExistInTempIndex is used to check the unique key exist status in temp index.
 func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (tempIndexKeyState, kv.Handle, error) {
+	// Only check temp index key.
+	if !tablecodec.IsTempIndexKey(key) {
+		return KeyInTempIndexUnknown, nil, nil
+	}
 	value, err := txn.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
 		return KeyInTempIndexNotExist, nil, nil
@@ -527,6 +532,10 @@ func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, di
 		return KeyInTempIndexUnknown, nil, err
 	}
 
+	// Since KeyExistInTempIndex only accept temp index key, so the value length should great than 1 for key version.
+	if len(value) < 1 {
+		return KeyInTempIndexUnknown, nil, errors.New("temp index value length should great than 1")
+	}
 	length := len(value)
 	// Firstly, we will remove the last byte of key version.
 	// It should be TempIndexKeyTypeBackfill or TempIndexKeyTypeMerge.
