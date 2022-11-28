@@ -1500,7 +1500,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			probeNAKeyColIdx: probeNAKeColIdx,
 		}
 	}
-	e.buildWorker.buildSideExec = buildSideExec
+	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec = buildKeyColIdx, buildNAKeyColIdx, buildSideExec
 	e.hashJoinCtx.isNullAware = isNAJoin
 	executorCountHashJoinExec.Inc()
 
