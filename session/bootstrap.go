@@ -2090,6 +2090,66 @@ func upgradeToVer104(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
+
+	h := &bindinfo.BindHandle{}
+	bindMap := make(map[string][7]string)
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+
+	mustExecute(s, h.LockBindInfoSQL())
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	var rs sqlexec.RecordSet
+	rs, err = s.ExecuteInternal(ctx, `SELECT original_sql, bind_sql, status, charset, collation, source FROM mysql.bind_info
+			WHERE source != 'builtin'`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer104 error", zap.Error(err))
+	}
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = rs.Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer104 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			sqlDigest := parser.DigestNormalized(row.GetString(0))
+			bindMap[row.GetString(0)] = [7]string{
+				row.GetString(0),
+				row.GetString(1),
+				row.GetString(2),
+				row.GetString(3),
+				row.GetString(4),
+				row.GetString(5),
+				sqlDigest.String(),
+			}
+		}
+	}
+	terror.Call(rs.Close)
+
+	for _, strs := range bindMap {
+		mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET sql_digest = %s, update_time = %s WHERE "+
+			"original_sql = %s AND bind_sql = %s AND status = %s AND charset = %s AND collation = %s AND source = %s",
+			expression.Quote(strs[6]),
+			expression.Quote(now.String()),
+			expression.Quote(strs[0]),
+			expression.Quote(strs[1]),
+			expression.Quote(strs[2]),
+			expression.Quote(strs[3]),
+			expression.Quote(strs[4]),
+			expression.Quote(strs[5]),
+		))
+	}
 }
 
 func writeOOMAction(s Session) {

@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser"
 	"strconv"
 	"strings"
 	"testing"
@@ -1112,4 +1113,54 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	row = chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "0", row.GetString(0))
+}
+
+func TestAddDigest2BindInfo(t *testing.T) {
+	bindCases := []bindTestStruct{
+		{
+			originWithDB: "select * from `test` . `t` where `a` > ?",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t` WHERE `a` > 1",
+		},
+		{
+			originWithDB: "select count ( ? ) , max ( `a` ) from `test` . `t` group by `b`",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idx`)*/ count(1),max(`a`) FROM `test`.`t` GROUP BY `b`",
+		},
+		{
+			originWithDB: "select * from `test` . `t` where `a` = ?",
+			bindWithDB:   "SELECT * FROM `test`.`t` WHERE `a` = \\'ab\\'",
+		},
+	}
+
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+	for _, bindCase := range bindCases {
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual', '', '')",
+			bindCase.originWithDB,
+			bindCase.bindWithDB,
+		)
+		mustExec(t, se, sql)
+		r := mustExec(t, se, `select original_sql, bind_sql, sql_digest from mysql.bind_info where source != 'builtin'`)
+		req := r.NewChunk(nil)
+		require.NoError(t, r.Next(ctx, req))
+		row := req.GetRow(0)
+		require.Equal(t, bindCase.originWithDB, row.GetString(0))
+		require.Equal(t, "", row.GetString(2)) // sql digest should be ""
+		require.NoError(t, r.Close())
+
+		upgradeToVer104(se, version103)
+
+		r = mustExec(t, se, `select original_sql, bind_sql, sql_digest from mysql.bind_info where source != 'builtin'`)
+		req = r.NewChunk(nil)
+		require.NoError(t, r.Next(ctx, req))
+		row = req.GetRow(0)
+		require.Equal(t, bindCase.originWithDB, row.GetString(0))
+		digest := parser.DigestNormalized(row.GetString(0))
+		require.Equal(t, digest.String(), row.GetString(2)) // sql digest should equal
+		require.NoError(t, r.Close())
+		sql = fmt.Sprintf("delete from mysql.bind_info where original_sql = '%s'", bindCase.originWithDB)
+		mustExec(t, se, sql)
+	}
 }
