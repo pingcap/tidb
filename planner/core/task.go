@@ -1050,7 +1050,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			return nil, false
 		}
 		finalTblScanPlan := copTsk.tablePlan
-		if len(finalTblScanPlan.Children()) > 0 {
+		for len(finalTblScanPlan.Children()) > 0 {
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)

@@ -310,9 +310,6 @@ func TestListPartitionPruner(t *testing.T) {
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
-		if tt == "select * from t1 where (id = 1 and a = 1) or a is null" {
-			fmt.Println("1")
-		}
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
