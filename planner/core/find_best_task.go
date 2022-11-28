@@ -1062,14 +1062,19 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 	if len(path.Ranges) < 1 {
 		return false
 	}
-	if path.Index != nil {
-		if path.Index.HasPrefixIndex() || !path.Index.Unique {
+	for _, ran := range path.Ranges {
+		if !ran.IsPointNonNullable(ds.ctx) {
 			return false
 		}
-	} else {
-		if !path.IsIntHandlePath {
-			return false
-		}
+	}
+	if path.IsIntHandlePath {
+		return true
+	}
+	if path.Index == nil {
+		return false
+	}
+	if path.Index.HasPrefixIndex() || !path.Index.Unique {
+		return false
 	}
 	idxColsLen := len(path.Index.Columns)
 	for _, ran := range path.Ranges {
@@ -1077,14 +1082,7 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 			return false
 		}
 	}
-	allRangeIsPoint := true
-	for _, ran := range path.Ranges {
-		if !ran.IsPointNonNullable(ds.ctx) {
-			allRangeIsPoint = false
-			break
-		}
-	}
-	return allRangeIsPoint
+	return true
 }
 
 func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
