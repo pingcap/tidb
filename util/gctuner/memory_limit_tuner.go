@@ -112,6 +112,7 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	var memoryLimit = t.calcMemoryLimit(t.GetPercentage())
 	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
+		memoryLimit = initGOMemoryLimitValue
 	} else {
 		t.isTuning.Store(true)
 	}
@@ -126,6 +127,9 @@ func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	return memoryLimit
 }
 
+var initGOMemoryLimitValue int64
+
 func init() {
+	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
 }
