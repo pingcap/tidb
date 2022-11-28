@@ -53,10 +53,6 @@ func (s *Session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 		return nil, err
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
 	if rs == nil {
 		return nil, nil
 	}
