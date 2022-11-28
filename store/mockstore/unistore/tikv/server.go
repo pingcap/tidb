@@ -223,11 +223,19 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
+		if req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
+			resp.Results = []*kvrpcpb.PessimisticLockKeyResult{
+				{
+					Type: kvrpcpb.PessimisticLockKeyResultType_LockResultFailed,
+				},
+			}
+		}
 		return resp, nil
 	}
 	if result.WakeupSleepTime == lockwaiter.WakeUpThisWaiter {
-		if req.Force {
+		if req.Force || req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 			req.WaitTimeout = lockwaiter.LockNoWait
+			resp = &kvrpcpb.PessimisticLockResponse{}
 			_, err := svr.mvccStore.PessimisticLock(reqCtx, req, resp)
 			resp.Errors, resp.RegionError = convertToPBErrors(err)
 			if err == nil {
