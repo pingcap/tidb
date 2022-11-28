@@ -60,7 +60,6 @@ func (c *countStarRewriter) optimize(ctx context.Context, p LogicalPlan, opt *lo
 }
 
 func (c *countStarRewriter) countStarRewriter(p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	// match pattern agg(count(*)) -> datasource
 	c.matchPatternAndRewrite(p)
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
