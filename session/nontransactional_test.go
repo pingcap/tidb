@@ -883,6 +883,10 @@ func TestNonTransactionalWithJoin(t *testing.T) {
 	// BATCH ON t2.id LIMIT 10000 insert into t1 select id, name from t2 inner join t3 on t2.id = t3.id;
 	// insert into t1 select id, name from t2 inner join t3 on t2.id = t3.id where t2.id between 1 and 10000
 
+	// replace
+	// BATCH ON t1.id LIMIT 10000 replace into t3
+	// 	select * from t1 left join t2 on t1.id = t2.id;
+
 	// update
 	// BATCH ON t1.id LIMIT 10000 update t1 join t2 on t1.a=t2.a set t1.a=t1.a*1000;
 	// update t1 join t2 on t1.a=t2.a set t1.a=t1.a*1000 where t1.id between 1 and 10000;
@@ -897,7 +901,7 @@ func TestNonTransactionalWithJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, v1 int, v2 int, key (id))")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
 	tk.MustExec("create table t2(id int, v int, key i1(id))")
 	tk.MustExec("create table t3(id int, v int, key i1(id))")
 	tk.MustExec("insert into t2 values (1, 2), (2, 3), (3, 4)")
@@ -921,6 +925,10 @@ func TestNonTransactionalWithJoin(t *testing.T) {
 
 	tk.MustExec("batch limit 1 delete t2 from t2 join t3 on t2.id=t3.id")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("3 4"))
+
+	tk.MustExec("insert into t2 values (1, 11), (2, 22)")
+	tk.MustExec("batch limit 1 replace into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11 800", "2 22 1000"))
 }
 
 func TestAnomalousNontransactionalDML(t *testing.T) {

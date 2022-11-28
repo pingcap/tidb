@@ -17,7 +17,7 @@ package core
 import (
 	"fmt"
 	"math"
-	"strings"
+	"strconv"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -29,6 +29,11 @@ import (
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// GetPlanCost returns the cost of this plan.
+func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	return getPlanCost(p, taskType, option)
+}
 
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
@@ -57,7 +62,7 @@ func (p *basePhysicalPlan) getPlanCostVer2(taskType property.TaskType, option *P
 		p.planCostVer2 = sumCostVer2(childCosts...)
 	}
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -79,7 +84,7 @@ func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *
 
 	p.planCostVer2 = sumCostVer2(filterCost, childCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -103,7 +108,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 
 	p.planCostVer2 = sumCostVer2(childCost, divCostVer2(projCost, concurrency))
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -120,7 +125,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -149,7 +154,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -174,7 +179,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 
 	p.planCostVer2 = divCostVer2(sumCostVer2(childCost, netCost), concurrency)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -209,7 +214,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 		p.planCostVer2 = divCostVer2(p.planCostVer2, 1000000000)
 	}
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -255,7 +260,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	doubleReadRows := math.Max(indexRows, 1)
 	doubleReadCPUCost := newCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
-		"double-read-cpu(%v*%v)", doubleReadRows, cpuFactor)
+		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
@@ -271,7 +276,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	}
 
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -316,7 +321,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 
 	p.planCostVer2 = sumCostVer2(tableSideCost, sumIndexSideCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -351,15 +356,15 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	if !spill {
 		sortMemCost = newCostVer2(option, memFactor,
 			rows*rowSize*memFactor.Value,
-			"sortMem(%v*%v*%v)", rows, rowSize, memFactor)
+			func() string { return fmt.Sprintf("sortMem(%v*%v*%v)", rows, rowSize, memFactor) })
 		sortDiskCost = zeroCostVer2
 	} else {
 		sortMemCost = newCostVer2(option, memFactor,
 			float64(memQuota)*memFactor.Value,
-			"sortMem(%v*%v)", memQuota, memFactor)
+			func() string { return fmt.Sprintf("sortMem(%v*%v)", memQuota, memFactor) })
 		sortDiskCost = newCostVer2(option, diskFactor,
 			rows*rowSize*diskFactor.Value,
-			"sortDisk(%v*%v*%v)", rows, rowSize, diskFactor)
+			func() string { return fmt.Sprintf("sortDisk(%v*%v*%v)", rows, rowSize, diskFactor) })
 	}
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
@@ -369,7 +374,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	p.planCostVer2 = sumCostVer2(childCost, sortCPUCost, sortMemCost, sortDiskCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -390,7 +395,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	topNCPUCost := orderCostVer2(option, rows, N, p.ByItems, cpuFactor)
 	topNMemCost := newCostVer2(option, memFactor,
 		N*rowSize*memFactor.Value,
-		"topMem(%v*%v*%v)", N, rowSize, memFactor)
+		func() string { return fmt.Sprintf("topMem(%v*%v*%v)", N, rowSize, memFactor) })
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -399,7 +404,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	p.planCostVer2 = sumCostVer2(childCost, topNCPUCost, topNMemCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -422,7 +427,7 @@ func (p *PhysicalStreamAgg) getPlanCostVer2(taskType property.TaskType, option *
 
 	p.planCostVer2 = sumCostVer2(childCost, aggCost, groupCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -441,8 +446,8 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
-	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, p.GroupByItems, cpuFactor, memFactor)
-	hashProbeCost := hashProbeCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
+	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
+	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -451,7 +456,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 
 	p.planCostVer2 = sumCostVer2(childCost, divCostVer2(sumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -481,7 +486,7 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 
 	p.planCostVer2 = sumCostVer2(leftChildCost, rightChildCost, filterCost, groupCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -509,10 +514,10 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
-	buildHashCost := hashBuildCostVer2(option, buildRows, buildRowSize, cols2Exprs(buildKeys), cpuFactor, memFactor)
+	buildHashCost := hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(buildKeys)), cpuFactor, memFactor)
 
 	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
-	probeHashCost := hashProbeCostVer2(option, probeRows, cols2Exprs(probeKeys), cpuFactor)
+	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
 
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -531,7 +536,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, option *PlanCostOption, indexJoinType int) (costVer2, error) {
@@ -557,7 +562,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	}
 	buildTaskCost := newCostVer2(option, cpuFactor,
 		buildRows*10*cpuFactor.Value,
-		"cpu(%v*10*%v)", buildRows, cpuFactor)
+		func() string { return fmt.Sprintf("cpu(%v*10*%v)", buildRows, cpuFactor) })
 
 	probeFilterCost := filterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
 	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
@@ -568,11 +573,11 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	var hashTableCost costVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
-		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, cols2Exprs(p.RightJoinKeys), cpuFactor, memFactor)
+		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
 	case 2: // IndexMergeJoin
 		hashTableCost = newZeroCostVer2(traceCost(option))
 	default: // IndexJoin
-		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, cols2Exprs(p.LeftJoinKeys), cpuFactor, memFactor)
+		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
 	}
 
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
@@ -584,7 +589,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -631,7 +636,7 @@ func (p *PhysicalApply) getPlanCostVer2(taskType property.TaskType, option *Plan
 
 	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, probeCost, probeFilterCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -652,7 +657,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 	}
 	p.planCostVer2 = divCostVer2(sumCostVer2(childCosts...), concurrency)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -682,7 +687,7 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 
 	p.planCostVer2 = sumCostVer2(childCost, netCost)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -701,7 +706,7 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	p.planCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -721,41 +726,44 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 
 	p.planCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
 	p.planCostInit = true
-	return p.planCostVer2.label(p), nil
+	return p.planCostVer2, nil
 }
 
 func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor costVer2Factor) costVer2 {
+	if rowSize < 1 {
+		rowSize = 1
+	}
 	return newCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
-		rows*math.Log2(math.Max(1, rowSize))*scanFactor.Value,
-		"scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor)
+		rows*math.Log2(rowSize)*scanFactor.Value,
+		func() string { return fmt.Sprintf("scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor) })
 }
 
 func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, netFactor,
 		rows*rowSize*netFactor.Value,
-		"net(%v*rowsize(%v)*%v)", rows, rowSize, netFactor)
+		func() string { return fmt.Sprintf("net(%v*rowsize(%v)*%v)", rows, rowSize, netFactor) })
 }
 
 func filterCostVer2(option *PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(filters)
 	return newCostVer2(option, cpuFactor,
 		rows*numFuncs*cpuFactor.Value,
-		"cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor)
+		func() string { return fmt.Sprintf("cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor) })
 }
 
 func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.AggFuncDesc, cpuFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, cpuFactor,
 		// TODO: consider types of agg-funcs
 		rows*float64(len(aggFuncs))*cpuFactor.Value,
-		"agg(%v*aggs(%v)*%v)", rows, len(aggFuncs), cpuFactor)
+		func() string { return fmt.Sprintf("agg(%v*aggs(%v)*%v)", rows, len(aggFuncs), cpuFactor) })
 }
 
 func groupCostVer2(option *PlanCostOption, rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := numFunctions(groupItems)
 	return newCostVer2(option, cpuFactor,
 		rows*numFuncs*cpuFactor.Value,
-		"group(%v*cols(%v)*%v)", rows, numFuncs, cpuFactor)
+		func() string { return fmt.Sprintf("group(%v*cols(%v)*%v)", rows, numFuncs, cpuFactor) })
 }
 
 func numFunctions(exprs []expression.Expression) float64 {
@@ -779,35 +787,35 @@ func orderCostVer2(option *PlanCostOption, rows, N float64, byItems []*util.ByIt
 	}
 	exprCost := newCostVer2(option, cpuFactor,
 		rows*float64(numFuncs)*cpuFactor.Value,
-		"exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor)
+		func() string { return fmt.Sprintf("exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor) })
 	orderCost := newCostVer2(option, cpuFactor,
 		rows*math.Log2(N)*cpuFactor.Value,
-		"orderCPU(%v*log(%v)*%v)", rows, N, cpuFactor)
+		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, N, cpuFactor) })
 	return sumCostVer2(exprCost, orderCost)
 }
 
-func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize float64, keys []expression.Expression, cpuFactor, memFactor costVer2Factor) costVer2 {
+func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize, nKeys float64, cpuFactor, memFactor costVer2Factor) costVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
 	hashKeyCost := newCostVer2(option, cpuFactor,
-		buildRows*float64(len(keys))*cpuFactor.Value,
-		"hashkey(%v*%v*%v)", buildRows, len(keys), cpuFactor)
+		buildRows*nKeys*cpuFactor.Value,
+		func() string { return fmt.Sprintf("hashkey(%v*%v*%v)", buildRows, nKeys, cpuFactor) })
 	hashMemCost := newCostVer2(option, memFactor,
 		buildRows*buildRowSize*memFactor.Value,
-		"hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor)
+		func() string { return fmt.Sprintf("hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor) })
 	hashBuildCost := newCostVer2(option, cpuFactor,
 		buildRows*cpuFactor.Value,
-		"hashbuild(%v*%v)", buildRows, cpuFactor)
+		func() string { return fmt.Sprintf("hashbuild(%v*%v)", buildRows, cpuFactor) })
 	return sumCostVer2(hashKeyCost, hashMemCost, hashBuildCost)
 }
 
-func hashProbeCostVer2(option *PlanCostOption, probeRows float64, keys []expression.Expression, cpuFactor costVer2Factor) costVer2 {
+func hashProbeCostVer2(option *PlanCostOption, probeRows, nKeys float64, cpuFactor costVer2Factor) costVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
 	hashKeyCost := newCostVer2(option, cpuFactor,
-		probeRows*float64(len(keys))*cpuFactor.Value,
-		"hashkey(%v*%v*%v)", probeRows, len(keys), cpuFactor)
+		probeRows*nKeys*cpuFactor.Value,
+		func() string { return fmt.Sprintf("hashkey(%v*%v*%v)", probeRows, nKeys, cpuFactor) })
 	hashProbeCost := newCostVer2(option, cpuFactor,
 		probeRows*cpuFactor.Value,
-		"hashprobe(%v*%v)", probeRows, cpuFactor)
+		func() string { return fmt.Sprintf("hashprobe(%v*%v)", probeRows, cpuFactor) })
 	return sumCostVer2(hashKeyCost, hashProbeCost)
 }
 
@@ -815,7 +823,7 @@ func hashProbeCostVer2(option *PlanCostOption, probeRows float64, keys []express
 func doubleReadCostVer2(option *PlanCostOption, numTasks float64, requestFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, requestFactor,
 		numTasks*requestFactor.Value,
-		"doubleRead(tasks(%v)*%v)", numTasks, requestFactor)
+		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
 }
 
 type costVer2Factor struct {
@@ -975,19 +983,14 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 	return exprs
 }
 
-type costVer2 struct {
-	cost        float64
-	trace       bool               // Whether to trace the cost calculation.
+type costTrace struct {
 	factorCosts map[string]float64 // map[factorName]cost, used to calibrate the cost model
 	formula     string             // It used to trace the cost calculation.
 }
 
-func (c costVer2) label(p PhysicalPlan) costVer2 {
-	if !c.trace {
-		return c
-	}
-	c.formula = p.ExplainID().String()
-	return c
+type costVer2 struct {
+	cost  float64
+	trace *costTrace
 }
 
 func traceCost(option *PlanCostOption) bool {
@@ -999,65 +1002,63 @@ func traceCost(option *PlanCostOption) bool {
 
 func newZeroCostVer2(trace bool) (ret costVer2) {
 	if trace {
-		ret.trace = true
-		ret.factorCosts = make(map[string]float64)
-		ret.formula = "0"
+		ret.trace = &costTrace{make(map[string]float64), ""}
 	}
 	return
 }
 
-func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64,
-	formulaFormat string, formulaArgs ...any) costVer2 {
-	ret := newZeroCostVer2(traceCost(option))
+func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, lazyFormula func() string) (ret costVer2) {
 	ret.cost = cost
-	if ret.trace {
-		ret.factorCosts[factor.Name] = cost
-		ret.formula = fmt.Sprintf(formulaFormat, formulaArgs...)
+	if traceCost(option) {
+		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace.factorCosts[factor.Name] = cost
+		ret.trace.formula = lazyFormula()
 	}
 	return ret
 }
 
-func sumCostVer2(costs ...costVer2) costVer2 {
+func sumCostVer2(costs ...costVer2) (ret costVer2) {
 	if len(costs) == 0 {
-		return newZeroCostVer2(false)
+		return
 	}
-	ret := newZeroCostVer2(costs[0].trace)
-	var subFormulas []string
-	for _, c := range costs {
+	for i, c := range costs {
 		ret.cost += c.cost
-		if ret.trace {
-			for factor, factorCost := range c.factorCosts {
-				ret.factorCosts[factor] += factorCost
+		if c.trace != nil {
+			if i == 0 { // init
+				ret.trace = &costTrace{make(map[string]float64), ""}
 			}
-			subFormulas = append(subFormulas, fmt.Sprintf("(%v)", c.formula))
+			for factor, factorCost := range c.trace.factorCosts {
+				ret.trace.factorCosts[factor] += factorCost
+			}
+			if ret.trace.formula != "" {
+				ret.trace.formula += " + "
+			}
+			ret.trace.formula += "(" + c.trace.formula + ")"
 		}
-	}
-	if ret.trace {
-		ret.formula = strings.Join(subFormulas, " + ")
 	}
 	return ret
 }
 
-func divCostVer2(cost costVer2, denominator float64) costVer2 {
-	ret := newZeroCostVer2(cost.trace)
+func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 	ret.cost = cost.cost / denominator
-	if ret.trace {
-		for f, c := range cost.factorCosts {
-			ret.factorCosts[f] = c / denominator
+	if cost.trace != nil {
+		ret.trace = &costTrace{make(map[string]float64), ""}
+		for f, c := range cost.trace.factorCosts {
+			ret.trace.factorCosts[f] = c / denominator
 		}
-		ret.formula = fmt.Sprintf("(%v)/%v", cost.formula, denominator)
+		ret.trace.formula = "(" + cost.trace.formula + ")/" + strconv.FormatFloat(denominator, 'f', 2, 64)
 	}
 	return ret
 }
 
-func mulCostVer2(cost costVer2, scale float64) costVer2 {
-	ret := newZeroCostVer2(cost.trace)
+func mulCostVer2(cost costVer2, scale float64) (ret costVer2) {
 	ret.cost = cost.cost * scale
-	if ret.trace {
-		for f, c := range cost.factorCosts {
-			ret.factorCosts[f] = c * scale
+	if cost.trace != nil {
+		ret.trace = &costTrace{make(map[string]float64), ""}
+		for f, c := range cost.trace.factorCosts {
+			ret.trace.factorCosts[f] = c * scale
 		}
-		ret.formula = fmt.Sprintf("(%v)*%v", cost.formula, scale)
+		ret.trace.formula = "(" + cost.trace.formula + ")*" + strconv.FormatFloat(scale, 'f', 2, 64)
 	}
 	return ret
 }

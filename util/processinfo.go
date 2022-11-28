@@ -44,6 +44,7 @@ type ProcessInfo struct {
 	ExpensiveLogTime      time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
+	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
