@@ -1588,6 +1588,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
 		StmtCtx:               s.sessionVars.StmtCtx,
+		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,

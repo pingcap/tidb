@@ -1349,13 +1349,6 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
-			Path:            "log4",
-			NumberOfEntries: 5,
-			Length:          100,
-			Cf:              stream.WriteCF,
-			Type:            backuppb.FileType_Put,
-			RegionId:        2,
-		}, {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          800,
@@ -1394,15 +1387,13 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 		applyFunc,
 	)
 
-	require.Equal(t, runCount, 5)
-	require.Equal(t, totalKVCount, int64(30))
+	require.Equal(t, totalKVCount, int64(25))
 	require.Equal(t,
 		logs,
 		[][]string{
 			{"log2"},
 			{"log5", "log6"},
 			{"log3"},
-			{"log4"},
 			{"log1"},
 		},
 	)
