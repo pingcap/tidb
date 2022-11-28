@@ -1058,7 +1058,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	ttlworker.NewJobManager(do.sysSessionPool).Start()
+	ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool).Start()
 	return nil
 }
 

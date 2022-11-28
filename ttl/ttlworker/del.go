@@ -23,10 +23,16 @@ import (
 	"go.uber.org/zap"
 )
 
+type delRetryInfo struct {
+	task         *delTask
+	retryBatches [][][]types.Datum
+}
+
 type delTask struct {
-	tbl    *ttl.PhysicalTable
-	expire time.Time
-	keys   [][]types.Datum
+	tbl     *ttl.PhysicalTable
+	expire  time.Time
+	keys    [][]types.Datum
+	statics *taskStatics
 }
 
 type delWorker struct {
@@ -44,7 +50,7 @@ func newDelWorker(ch <-chan *delTask, sessPool sessionPool) (w *delWorker) {
 }
 
 func (w *delWorker) delLoop() error {
-	se, err := getWorkerSession(w.sessPool)
+	se, err := getSession(w.sessPool)
 	if err != nil {
 		return err
 	}

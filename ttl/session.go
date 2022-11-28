@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -64,6 +65,47 @@ func (s *Session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 	}()
 
 	return sqlexec.DrainRecordSet(ctx, rs, 8)
+}
+
+func (s *Session) RunInTxn(ctx context.Context, fn func() error) (err error) {
+	if _, err = s.ExecuteSQL(ctx, "BEGIN"); err != nil {
+		return err
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			_, err = s.ExecuteSQL(ctx, "ROLLBACK")
+			terror.Log(err)
+		}
+	}()
+
+	if err = fn(); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
+}
+
+func (s *Session) ExecuteSQLWithTTLCheck(ctx context.Context, tbl *PhysicalTable, sql string) (result [][]types.Datum, retryable bool, err error) {
+	err = s.RunInTxn(ctx, func() error {
+		// TODO: check schema
+		rows, execErr := s.ExecuteSQL(ctx, sql)
+		// TODO: check retryable err
+		if execErr != nil {
+			return execErr
+		}
+
+		result = make([][]types.Datum, len(rows))
+		for i, row := range rows {
+			result[i] = row.GetDatumRow(tbl.KeyFieldTypes)
+		}
+
+		return nil
+	})
+
+	return
 }
 
 func (s *Session) Close() {

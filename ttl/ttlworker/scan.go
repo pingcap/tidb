@@ -15,10 +15,10 @@
 package ttlworker
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/ttl"
 	"github.com/pingcap/tidb/types"
@@ -26,12 +26,18 @@ import (
 	"go.uber.org/zap"
 )
 
+type taskStatics struct {
+	TotalRows   atomic.Uint64
+	SuccessRows atomic.Uint64
+	ErrorRows   atomic.Uint64
+}
+
 type scanTask struct {
 	tbl        *ttl.PhysicalTable
-	par        model.PartitionDefinition
 	expire     time.Time
 	rangeStart []types.Datum
 	rangeEnd   []types.Datum
+	statics    *taskStatics
 }
 
 type scanWorker struct {
@@ -77,7 +83,7 @@ func (w *scanWorker) ScheduleTask(task *scanTask) bool {
 }
 
 func (w *scanWorker) scanLoop() error {
-	se, err := getWorkerSession(w.sessionPool)
+	se, err := getSession(w.sessionPool)
 	if err != nil {
 		return err
 	}
@@ -90,7 +96,9 @@ func (w *scanWorker) scanLoop() error {
 		case msg := <-w.ch:
 			switch task := msg.(type) {
 			case *scanTask:
-				w.executeScanTask(se, task)
+				if err = w.executeScanTask(se, task); err != nil {
+					terror.Log(err)
+				}
 			default:
 				terror.Log(errors.Errorf("Cannot handle msg with type: %T", msg))
 			}
@@ -98,7 +106,7 @@ func (w *scanWorker) scanLoop() error {
 	}
 }
 
-func (w *scanWorker) executeScanTask(se *ttl.Session, task *scanTask) {
+func (w *scanWorker) executeScanTask(se *ttl.Session, task *scanTask) error {
 	defer func() {
 		w.Lock()
 		defer w.Unlock()
@@ -108,41 +116,63 @@ func (w *scanWorker) executeScanTask(se *ttl.Session, task *scanTask) {
 	expire := task.expire.In(se.Sctx.GetSessionVars().TimeZone)
 	generator, err := ttl.NewScanQueryGenerator(task.tbl, expire, task.rangeStart, task.rangeEnd)
 	if err != nil {
-		terror.Log(err)
-		return
+		return err
 	}
 
 	limit := 5
 	lastResult := make([][]types.Datum, 0, limit)
+
+	sql := ""
+	retryTimes := 0
 	for w.Status() == workerStatusRunning {
-		sql, err := generator.NextSQL(lastResult, limit)
-		if err != nil {
-			terror.Log(err)
-			time.Sleep(10 * time.Second)
-			continue
+		if totalRows := w.task.statics.TotalRows.Load(); totalRows > 1000 {
+			errRows := w.task.statics.ErrorRows.Load()
+			if float64(errRows)/float64(totalRows) > 0.6 {
+				return errors.Errorf("failed")
+			}
 		}
 
+		if _, err = se.ExecuteSQL(w.ctx, "set @@time_zone = @@global.time_zone"); err != nil {
+			return err
+		}
+		generator.SetTimeZone(se.Sctx.GetSessionVars().TimeZone)
+
 		if sql == "" {
-			return
+			sql, err = generator.NextSQL(lastResult, limit)
+			if sql == "" || err != nil {
+				return err
+			}
 		}
 
 		logutil.BgLogger().Info("TTL scan query", zap.String("sql", sql))
-		rows, err := se.ExecuteSQL(w.ctx, sql)
+		rows, retryable, err := se.ExecuteSQLWithTTLCheck(w.ctx, w.task.tbl, sql)
 		if err != nil {
+			if !retryable || retryTimes >= 3 {
+				return err
+			}
+			retryTimes += 1
+			time.Sleep(time.Second * 10)
 			terror.Log(err)
-			time.Sleep(10 * time.Second)
 			continue
 		}
 
-		lastResult = lastResult[:0]
-		for _, row := range rows {
-			lastResult = append(lastResult, row.GetDatumRow(w.task.tbl.KeyFieldTypes))
+		sql = ""
+		retryTimes = 0
+		w.task.statics.TotalRows.Add(uint64(len(rows)))
+		deleteTask := &delTask{
+			tbl:     task.tbl,
+			expire:  task.expire,
+			keys:    rows,
+			statics: w.task.statics,
 		}
+		lastResult = rows
 
-		w.del <- &delTask{
-			tbl:    task.tbl,
-			expire: task.expire,
-			keys:   lastResult,
+		select {
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		case w.del <- deleteTask:
+			continue
 		}
 	}
+	return nil
 }

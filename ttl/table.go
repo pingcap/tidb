@@ -47,7 +47,7 @@ type PhysicalTable struct {
 }
 
 func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, par *model.PartitionDefinition) (*PhysicalTable, error) {
-	t := &PhysicalTable{ID: tbl.ID, Schema: schema, PartitionDef: par}
+	t := &PhysicalTable{ID: tbl.ID, Schema: schema, TableInfo: tbl, PartitionDef: par}
 	if par != nil {
 		t.ID = par.ID
 	}

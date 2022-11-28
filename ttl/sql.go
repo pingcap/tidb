@@ -331,6 +331,10 @@ func NewScanQueryGenerator(tbl *PhysicalTable, expire time.Time, rangeStart []ty
 	}, nil
 }
 
+func (g *ScanQueryGenerator) SetTimeZone(tz *time.Location) {
+	g.expire = g.expire.In(tz)
+}
+
 // NextSQL creates next sql of the scan task
 func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.exhausted {

@@ -19,6 +19,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
+	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -129,6 +134,7 @@ func (m *JobManager) rescheduleJobs(se *ttl.Session, tables *ttlTables) {
 	defer func() {
 		for _, job := range tables.RunningJobs {
 			if job.Done() {
+				logutil.BgLogger().Info("JobFinished", zap.String("table", job.tbl.Name.O))
 				terror.Log(tables.FinishJob(m.ctx, se, job))
 			}
 		}
@@ -142,7 +148,7 @@ func (m *JobManager) rescheduleJobs(se *ttl.Session, tables *ttlTables) {
 	localJobs := tables.LocalJobs()
 	tbls := tables.ReadyForNewJobTables(se.Sctx.GetSessionVars())
 	jobInfos := tables.ReadyForResumeJobs(se.Sctx.GetSessionVars())
-	for len(idleScanWorkers) > 0 && (len(tbls) > 0 || len(jobs) > 0) {
+	for len(idleScanWorkers) > 0 && (len(tbls) > 0 || len(localJobs) > 0) {
 		var job *ttlJob
 		var err error
 		switch {
@@ -171,6 +177,7 @@ func (m *JobManager) rescheduleJobs(se *ttl.Session, tables *ttlTables) {
 			}
 			idleWorker := idleScanWorkers[0]
 			idleScanWorkers = idleScanWorkers[1:]
+			logutil.BgLogger().Info("ScheduleTask", zap.String("table", task.tbl.Name.O))
 			idleWorker.ScheduleTask(task)
 		}
 	}
@@ -196,6 +203,18 @@ type ttlJob struct {
 	nextPoll int
 }
 
+func newTTLJob(t *ttl.PhysicalTable) *ttlJob {
+	return &ttlJob{
+		tbl: t,
+		tasks: []*scanTask{
+			{
+				tbl:    t,
+				expire: time.Now().Add(time.Minute),
+			},
+		},
+	}
+}
+
 func (t *ttlJob) Done() bool {
 	t.Lock()
 	defer t.Unlock()
@@ -216,7 +235,8 @@ func (t *ttlJob) PollNextScanTask() (*scanTask, bool) {
 
 type ttlTables struct {
 	instanceID          string
-	RunningJobs         map[int]*ttlJob
+	RunningJobs         map[int64]*ttlJob
+	runningJobsList     []*ttlJob
 	Tables              *ttl.InfoSchemaTables
 	TablesTryUpdateTime time.Time
 	TablesUpdateTime    time.Time
@@ -229,6 +249,8 @@ type ttlTables struct {
 func newTTLTables(instanceID string) *ttlTables {
 	return &ttlTables{
 		instanceID:          instanceID,
+		RunningJobs:         make(map[int64]*ttlJob),
+		runningJobsList:     make([]*ttlJob, 0),
 		Tables:              ttl.NewInfoSchemaTables(),
 		TablesTryUpdateTime: time.UnixMilli(0),
 		TablesUpdateTime:    time.UnixMilli(0),
@@ -267,8 +289,20 @@ func (ts *ttlTables) UpdateTableStates(ctx context.Context, se *ttl.Session) err
 }
 
 func (ts *ttlTables) CreateNewJob(ctx context.Context, se *ttl.Session, tblID int64) (*ttlJob, error) {
-	// TODO:
-	return nil, nil
+	if _, ok := ts.RunningJobs[tblID]; ok {
+		return nil, errors.New("exist")
+	}
+
+	tbl, ok := ts.Tables.GetByID(tblID)
+	if !ok {
+		return nil, errors.New("not exists")
+	}
+
+	job := newTTLJob(tbl)
+	ts.RunningJobs[tblID] = job
+	ts.runningJobsList = append(ts.runningJobsList, job)
+
+	return job, nil
 }
 
 func (ts *ttlTables) ResumeJob(ctx context.Context, se *ttl.Session, tblID int64, jobID string) (*ttlJob, error) {
@@ -277,13 +311,30 @@ func (ts *ttlTables) ResumeJob(ctx context.Context, se *ttl.Session, tblID int64
 }
 
 func (ts *ttlTables) FinishJob(ctx context.Context, se *ttl.Session, job *ttlJob) error {
-	// TODO:
+	idx := -1
+	for i, j := range ts.runningJobsList {
+		if j.tbl.ID == job.tbl.ID {
+			idx = i
+		}
+	}
+
+	if idx >= 0 {
+		ts.runningJobsList = append(ts.runningJobsList[0:idx], ts.runningJobsList[idx+1:]...)
+		delete(ts.RunningJobs, job.tbl.ID)
+	}
+
 	return nil
 }
 
 func (ts *ttlTables) ReadyForNewJobTables(sessVars *variable.SessionVars) []*ttl.PhysicalTable {
-	// TODO:
-	return nil
+	tbls := make([]*ttl.PhysicalTable, 0)
+	ts.Tables.Foreach(func(t *ttl.PhysicalTable) bool {
+		if _, ok := ts.RunningJobs[t.ID]; !ok {
+			tbls = append(tbls, t)
+		}
+		return true
+	})
+	return tbls
 }
 
 func (ts *ttlTables) ReadyForResumeJobs(sessVars *variable.SessionVars) []*ttl.JobInfo {
@@ -292,6 +343,5 @@ func (ts *ttlTables) ReadyForResumeJobs(sessVars *variable.SessionVars) []*ttl.J
 }
 
 func (ts *ttlTables) LocalJobs() []*ttlJob {
-	// TODO:
-	return nil
+	return ts.runningJobsList
 }

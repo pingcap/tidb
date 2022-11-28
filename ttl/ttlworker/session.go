@@ -55,21 +55,7 @@ func getSession(pool sessionPool) (*ttl.Session, error) {
 		},
 	}
 
-	return se, nil
-}
-
-func getWorkerSession(pool sessionPool) (*ttl.Session, error) {
-	se, err := getSession(pool)
-	if err != nil {
-		return nil, err
-	}
-
 	if _, err = se.ExecuteSQL(context.Background(), "commit"); err != nil {
-		se.Close()
-		return nil, err
-	}
-
-	if _, err = se.ExecuteSQL(context.Background(), "set @@time_zone=(select @@global.time_zone)"); err != nil {
 		se.Close()
 		return nil, err
 	}
