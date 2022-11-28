@@ -352,8 +352,14 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		record.Bindings[i].UpdateTime = now
 
 		if record.Bindings[i].SQLDigest == "" {
-			_, sqlDigestWithoutDB := parser.NormalizeDigest(record.OriginalSQL)
-			record.Bindings[i].SQLDigest = sqlDigestWithoutDB.String()
+			parser4binding := parser.New()
+			var originNode ast.StmtNode
+			originNode, err = parser4binding.ParseOneStmt(record.OriginalSQL, record.Bindings[i].Charset, record.Bindings[i].Collation)
+			if err != nil {
+				return err
+			}
+			_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, record.Db, record.OriginalSQL))
+			record.Bindings[i].SQLDigest = sqlDigestWithDB.String()
 		}
 		// Insert the BindRecord to the storage.
 		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
@@ -904,14 +910,13 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
-		_, sqlDigestWithoutDB := parser.NormalizeDigest(bindableStmt.Query)
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Enabled,
 			Charset:   charset,
 			Collation: collation,
 			Source:    Capture,
-			SQLDigest: sqlDigestWithoutDB.String(),
+			SQLDigest: digest.String(),
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})

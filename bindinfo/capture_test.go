@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"fmt"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"strings"
 	"testing"
 
@@ -1012,7 +1013,11 @@ func TestCaptureHints(t *testing.T) {
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res), 1)                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
-		_, sqlDigestWithoutDB := parser.NormalizeDigest(capCase.query)      // test sqlDigest if exists after add columns to mysql.bind_info
-		require.Equal(t, res[0][9], sqlDigestWithoutDB.String())
+		// test sql digest
+		parser4binding := parser.New()
+		originNode, err := parser4binding.ParseOneStmt(capCase.query, "utf8mb4", "utf8mb4_general_ci")
+		require.NoError(t, err)
+		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", capCase.query))
+		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }

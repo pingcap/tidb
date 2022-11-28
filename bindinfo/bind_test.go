@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"strconv"
 	"testing"
 
@@ -1295,7 +1296,11 @@ func TestBindSQLDigest(t *testing.T) {
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res[0]), 11)
-		_, sqlDigestWithoutDB := parser.NormalizeDigest(c.origin) // test sqlDigest if exists after add columns to mysql.bind_info
-		require.Equal(t, res[0][9], sqlDigestWithoutDB.String())
+
+		parser4binding := parser.New()
+		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
+		require.NoError(t, err)
+		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }
