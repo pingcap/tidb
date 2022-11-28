@@ -1044,7 +1044,12 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 			zap.String("SQL", bindableStmt.Query), zap.Error(err))
 	}
 	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
-	hintNode, err := parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	var hintNode ast.StmtNode
+	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		logutil.BgLogger().Debug("[sql-bind] parse bind SQL failed in create binding from history",
+			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+	}
 	normdOrigSQL, _ := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
