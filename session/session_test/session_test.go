@@ -1574,8 +1574,8 @@ func TestKVVars(t *testing.T) {
 	require.Nil(t, failpoint.Enable("tikvclient/probeSetVars", `return(true)`))
 	tk.MustExec("select * from kvvars where a = 1")
 	require.Nil(t, failpoint.Disable("tikvclient/probeSetVars"))
-	require.True(t, transaction.SetSuccess)
-	transaction.SetSuccess = false
+	require.True(t, transaction.SetSuccess.Load())
+	transaction.SetSuccess.Store(false)
 }
 
 func TestTxnRetryErrMsg(t *testing.T) {
