@@ -1405,7 +1405,7 @@ func TestViewHintWithBinding(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop table if exists t, t1, t2, t3")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
