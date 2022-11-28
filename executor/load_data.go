@@ -81,7 +81,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *LoadDataExec) Close() error {
 	if e.runtimeStats != nil && e.loadDataInfo != nil && e.loadDataInfo.stats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.loadDataInfo.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.loadDataInfo.stats)
 	}
 	return nil
 }

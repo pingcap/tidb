@@ -434,7 +434,7 @@ func (e *UpdateExec) Close() error {
 		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return e.children[0].Close()
 }

@@ -704,7 +704,7 @@ func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context
 // Close implements Exec Close interface.
 func (e *IndexMergeReaderExecutor) Close() error {
 	if e.stats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.finished == nil {
 		return nil

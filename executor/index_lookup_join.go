@@ -765,7 +765,7 @@ func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
 	if e.stats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()

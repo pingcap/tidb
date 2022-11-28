@@ -245,7 +245,7 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.stats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.isUnparallelExec {
 		var firstErr error

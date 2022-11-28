@@ -194,7 +194,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)

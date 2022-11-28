@@ -716,7 +716,7 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
 	if e.runtimeStats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.runtimeStats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.runtimeStats)
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()

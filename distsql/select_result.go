@@ -455,7 +455,7 @@ func (r *selectResult) Close() error {
 		r.memConsume(-respSize)
 	}
 	if r.stats != nil {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+		defer r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 	}
 	return r.resp.Close()
 }
