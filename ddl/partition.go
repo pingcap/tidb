@@ -2461,7 +2461,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.DDLState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// How to handle this?
-		// Seems to only trigger asyncron update of statistics. Should it actually be syncronous?
+		// Seems to only trigger asynchronous update of statistics.
+		// Should it actually be synchronous?
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionReorganizePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}

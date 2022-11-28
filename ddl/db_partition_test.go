@@ -121,10 +121,11 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		all.vals = append(all.vals, it.Value())
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
-			tblId, kv, _ := tablecodec.DecodeRecordKey(it.Key())
+			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
+			require.Equal(t, pid, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.BgLogger().Info("Record",
-				zap.Int64("pid", tblId),
+				zap.Int64("pid", tblID),
 				zap.Stringer("key", kv),
 				zap.Strings("values", vals))
 		} else if tablecodec.IsIndexKey(it.Key()) {
