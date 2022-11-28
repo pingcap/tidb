@@ -5500,6 +5500,24 @@ func TestReorgPartitionRollback(t *testing.T) {
 	noNewTablesAfter(t, ctx, tbl)
 }
 
+func TestReorgPartitionData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartData"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`SET @@session.sql_mode = default`)
+	tk.MustExec(`create table t (a int PRIMARY KEY AUTO_INCREMENT, b varchar(255), c int, d datetime, key (b), key (c,b)) partition by range (a) (partition p1 values less than (0), partition p1M values less than (1000000))`)
+	tk.MustContainErrMsg(`insert into t values (0, "Zero value!", 0, '2022-02-30')`, "[table:1292]Incorrect datetime value: '2022-02-30' for column 'd' at row 1")
+	tk.MustExec(`SET @@session.sql_mode = 'ALLOW_INVALID_DATES,NO_AUTO_VALUE_ON_ZERO'`)
+	tk.MustExec(`insert into t values (0, "Zero value!", 0, '2022-02-30')`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
+	tk.MustExec(`SET @@session.sql_mode = default`)
+	tk.MustExec(`alter table t reorganize partition p1M into (partition p0 values less than (1), partition p2M values less than (2000000))`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
+}
+
 // TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
 
 // How to test rollback?

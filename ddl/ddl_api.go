@@ -3864,16 +3864,6 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	// TODO:
-	// 1 Check everything is OK
-	//   only allow for RANGE and LIST partitioning
-	//   existing partitions can be found
-	//     existing partitions is in a continues RANGE if range partitioning
-	//   New partitions does not collide with non-touched partitions (different for RANGE vs LIST)
-	// 2 Create the new partitions
-	//   Including placement etc.
-	// 3 create a DDL job for it (including implementing the ddl_worker counter part...
-
 	// Various checks
 	switch pi.Type {
 	// Only supporting RANGE/LIST
@@ -3907,6 +3897,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// and we want to have the regions prepared before that.
 	d.preSplitAndScatter(ctx, meta, partInfo)
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -3916,12 +3907,10 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.PartitionNames, partInfo},
 		ReorgMeta: &model.DDLReorgMeta{
-			// We should not depend on SQL Mode (TODO: check vs MySQL for zero date etc.)
-			SQLMode:       mysql.ModeNone,
+			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			// We should not evaluate any new values? (TODO: Check with virtual/generated columns with indexes?)
-			Location: &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
 
