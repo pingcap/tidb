@@ -323,7 +323,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
-	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
