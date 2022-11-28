@@ -101,6 +101,42 @@ func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ReferenceCount indicates the reference count of StmtCtx.
+type ReferenceCount int32
+
+const (
+	// ReferenceCountIsFrozen indicates the current StmtCtx is resetting, it'll refuse all the access from other sessions.
+	ReferenceCountIsFrozen int32 = -1
+	// ReferenceCountNoReference indicates the current StmtCtx is not accessed by other sessions.
+	ReferenceCountNoReference int32 = 0
+)
+
+// TryIncrease tries to increase the reference count.
+// There is a small chance that TryIncrease returns true while TryFreeze and
+// UnFreeze are invoked successfully during the execution of TryIncrease.
+func (rf *ReferenceCount) TryIncrease() bool {
+	refCnt := atomic.LoadInt32((*int32)(rf))
+	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+	return refCnt != ReferenceCountIsFrozen
+}
+
+// Decrease decreases the reference count.
+func (rf *ReferenceCount) Decrease() {
+	for refCnt := atomic.LoadInt32((*int32)(rf)); !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+}
+
+// TryFreeze tries to freeze the StmtCtx to frozen before resetting the old StmtCtx.
+func (rf *ReferenceCount) TryFreeze() bool {
+	return atomic.LoadInt32((*int32)(rf)) == ReferenceCountNoReference && atomic.CompareAndSwapInt32((*int32)(rf), ReferenceCountNoReference, ReferenceCountIsFrozen)
+}
+
+// UnFreeze unfreeze the frozen StmtCtx thus the other session can access this StmtCtx.
+func (rf *ReferenceCount) UnFreeze() {
+	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -109,37 +145,38 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
-	NoZeroDate             bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	TruncateAsWarning      bool
-	OverflowAsWarning      bool
-	InShowWarning          bool
-	UseCache               bool
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	AllowInvalidDate       bool
-	IgnoreNoPartition      bool
-	SkipPlanCache          bool
-	IgnoreExplainIDSuffix  bool
-	SkipUTF8Check          bool
-	SkipASCIICheck         bool
-	SkipUTF8MB4Check       bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue               bool
+	DDLJobID                      int64
+	InInsertStmt                  bool
+	InUpdateStmt                  bool
+	InDeleteStmt                  bool
+	InSelectStmt                  bool
+	InLoadDataStmt                bool
+	InExplainStmt                 bool
+	InCreateOrAlterStmt           bool
+	InSetSessionStatesStmt        bool
+	InPreparedPlanBuilding        bool
+	IgnoreTruncate                bool
+	IgnoreZeroInDate              bool
+	NoZeroDate                    bool
+	DupKeyAsWarning               bool
+	BadNullAsWarning              bool
+	DividedByZeroAsWarning        bool
+	TruncateAsWarning             bool
+	OverflowAsWarning             bool
+	ErrAutoincReadFailedAsWarning bool
+	InShowWarning                 bool
+	UseCache                      bool
+	BatchCheck                    bool
+	InNullRejectCheck             bool
+	AllowInvalidDate              bool
+	IgnoreNoPartition             bool
+	SkipPlanCache                 bool
+	IgnoreExplainIDSuffix         bool
+	SkipUTF8Check                 bool
+	SkipASCIICheck                bool
+	SkipUTF8MB4Check              bool
+	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -296,8 +333,6 @@ type StatementContext struct {
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh chan StatsLoadResult
-		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
-		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -340,6 +375,8 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 }

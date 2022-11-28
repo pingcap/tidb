@@ -96,6 +96,12 @@ type RetryInfo struct {
 	LastRcReadTS           uint64
 }
 
+// ReuseChunkPool save Alloc object
+type ReuseChunkPool struct {
+	mu    sync.Mutex
+	Alloc chunk.Allocator
+}
+
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
@@ -736,6 +742,11 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
+
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
@@ -1035,6 +1046,10 @@ type SessionVars struct {
 
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
+
+	// CDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	CDCWriteSource uint64
+
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
 
@@ -1164,11 +1179,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
@@ -1287,54 +1299,40 @@ type SessionVars struct {
 	HookContext
 
 	// MemTracker indicates the memory tracker of current session.
-	MemTracker  *memory.Tracker
-	DiskTracker *memory.Tracker
+	MemTracker *memory.Tracker
+	// MemDBDBFootprint tracks the memory footprint of memdb, and is attached to `MemTracker`
+	MemDBFootprint *memory.Tracker
+	DiskTracker    *memory.Tracker
 
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
 	// ChunkPool Several chunks and columns are cached
-	ChunkPool struct {
-		Lock  sync.Mutex
-		Alloc chunk.Allocator
-	}
+	ChunkPool ReuseChunkPool
 	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
-}
 
-// GetNewChunk Attempt to request memory from the chunk pool
-// thread safety
-func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
-	//Chunk memory pool is not set
-	if s.ChunkPool.Alloc == nil {
-		return chunk.NewChunkWithCapacity(fields, capacity)
-	}
-	s.ChunkPool.Lock.Lock()
-	defer s.ChunkPool.Lock.Unlock()
-	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
-		s.StmtCtx.SetUseChunkAlloc()
-	}
-	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
-	return chk
+	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
+	EnablePlanReplayerCapture bool
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
 // thread safety
-func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
-	if s.ChunkPool.Alloc == nil {
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
+	if pool == nil {
 		return chunk.New(fields, capacity, maxCachesize)
 	}
-	s.ChunkPool.Lock.Lock()
-	defer s.ChunkPool.Lock.Unlock()
-	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
-	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
+	chk := pool.Alloc(fields, capacity, maxCachesize)
 	return chk
 }
 
@@ -1357,8 +1355,19 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 }
 
 // ClearAlloc indicates stop reuse chunk
-func (s *SessionVars) ClearAlloc() {
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
+	if !b {
+		s.ChunkPool.Alloc = nil
+		return
+	}
+
+	// If an error is reported, re-apply for alloc
+	// Prevent the goroutine left before, affecting the execution of the next sql
+	// issuse 38918
+	s.ChunkPool.mu.Lock()
 	s.ChunkPool.Alloc = nil
+	s.ChunkPool.mu.Unlock()
+	*alloc = chunk.NewAllocator()
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1381,9 +1390,17 @@ func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
+	sc := &s.cachedStmtCtx[0]
+	if sc == s.StmtCtx {
+		sc = &s.cachedStmtCtx[1]
+	}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
+	return sc
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1654,12 +1671,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
-		//useChunkAlloc:                 DefTiDBUseAlloc,
-		preUseChunkAlloc: DefTiDBUseAlloc,
-		ChunkPool: struct {
-			Lock  sync.Mutex
-			Alloc chunk.Allocator
-		}{Alloc: nil},
+		preUseChunkAlloc:              DefTiDBUseAlloc,
+		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

@@ -80,8 +80,11 @@ type copTask struct {
 	tblColHists *statistics.HistColl
 	// tblCols stores the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
-	tblCols           []*expression.Column
-	idxMergePartPlans []PhysicalPlan
+	tblCols []*expression.Column
+
+	idxMergePartPlans      []PhysicalPlan
+	idxMergeIsIntersection bool
+
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
@@ -297,12 +300,11 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	return t
 }
 
-func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {
+func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = stats.HistColl.GetAvgRowSizeListInDisk(schema.Columns)
+		size = stats.HistColl.GetAvgRowSizeListInDisk(cols)
 	} else {
 		// Estimate using just the type info.
-		cols := schema.Columns
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
@@ -681,8 +683,9 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	newTask := &rootTask{}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{
-			partialPlans: t.idxMergePartPlans,
-			tablePlan:    t.tablePlan,
+			partialPlans:       t.idxMergePartPlans,
+			tablePlan:          t.tablePlan,
+			IsIntersectionType: t.idxMergeIsIntersection,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)

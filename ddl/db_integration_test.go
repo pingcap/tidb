@@ -2894,17 +2894,23 @@ func TestAutoIncrementTableOption(t *testing.T) {
 	tk.MustExec("create database test_auto_inc_table_opt;")
 	tk.MustExec("use test_auto_inc_table_opt;")
 
-	// Empty auto_inc allocator should not cause error.
-	tk.MustExec("create table t (a bigint primary key clustered) auto_increment = 10;")
-	tk.MustExec("alter table t auto_increment = 10;")
-	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Empty auto_inc allocator should not cause error.
+		tk.MustExec("create table t (a bigint primary key clustered) auto_increment = 10" + str)
+		tk.MustExec("alter table t auto_increment = 10;")
+		tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+		tk.MustExec("drop table t;")
 
-	// Rebase the auto_inc allocator to a large integer should work.
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a));")
-	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
-	tk.MustExec("insert into t values ();")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+		// Rebase the auto_inc allocator to a large integer should work.
+		tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a))" + str)
+		// Set auto_inc to negative is not supported
+		err := tk.ExecToErr("alter table t auto_increment = -1;")
+		require.Error(t, err)
+		tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+		tk.MustExec("drop table t;")
+	}
 }
 
 func TestAutoIncrementForce(t *testing.T) {
@@ -2919,83 +2925,95 @@ func TestAutoIncrementForce(t *testing.T) {
 		require.NoError(t, err)
 		return gid
 	}
-	// Rebase _tidb_row_id.
-	tk.MustExec("create table t (a int);")
-	tk.MustExec("alter table t force auto_increment = 2;")
-	tk.MustExec("insert into t values (1),(2);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
-	// Cannot set next global ID to 0.
-	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
-	tk.MustExec("alter table t force auto_increment = 1;")
-	require.Equal(t, uint64(1), getNextGlobalID())
-	// inserting new rows can overwrite the existing data.
-	tk.MustExec("insert into t values (3);")
-	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 
-	// Rebase auto_increment.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int primary key auto_increment, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	tk.MustExec("insert into t values (100000000, 1);")
-	tk.MustExec("delete from t where a = 100000000;")
-	require.Greater(t, getNextGlobalID(), uint64(100000000))
-	// Cannot set next global ID to 0.
-	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
-	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
-	require.Equal(t, uint64(2), getNextGlobalID())
-	tk.MustExec("insert into t(b) values (2);")
-	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
-
-	// Rebase auto_random.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint primary key auto_random(5));")
-	tk.MustExec("insert into t values ();")
-	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
-	tk.MustExec("insert into t values (100000000);")
-	tk.MustExec("delete from t where a = 100000000;")
-	require.Greater(t, getNextGlobalID(), uint64(100000000))
-	// Cannot set next global ID to 0.
-	tk.MustGetErrCode("alter table t force auto_random_base = 0;", errno.ErrAutoincReadFailed)
-	tk.MustExec("alter table t force auto_random_base = 2;")
-	require.Equal(t, uint64(2), getNextGlobalID())
-	tk.MustExec("insert into t values ();")
-	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
-
-	// Change next global ID.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint primary key auto_increment);")
-	tk.MustExec("insert into t values (1);")
-	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
-	lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
-	for _, b := range bases {
-		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
-		require.Equal(t, b, getNextGlobalID())
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Rebase _tidb_row_id.
+		tk.MustExec("create table t (a int)" + str)
+		tk.MustExec("alter table t force auto_increment = 2;")
+		tk.MustExec("insert into t values (1),(2);")
+		tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
+		// Cannot set next global ID to 0.
+		tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
+		tk.MustExec("alter table t force auto_increment = 1;")
+		require.Equal(t, uint64(1), getNextGlobalID())
+		// inserting new rows can overwrite the existing data.
+		tk.MustExec("insert into t values (3);")
+		require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
+		tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
+		tk.MustExec("drop table if exists t;")
 	}
-	tk.MustExec("insert into t values ();")
-	tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
-	// Force alter unsigned int auto_increment column.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint unsigned primary key auto_increment);")
-	for _, b := range bases {
-		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
-		require.Equal(t, b, getNextGlobalID())
+
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Rebase auto_increment.
+		tk.MustExec("create table t (a int primary key auto_increment, b int)" + str)
+		tk.MustExec("insert into t values (1, 1);")
+		tk.MustExec("insert into t values (100000000, 1);")
+		tk.MustExec("delete from t where a = 100000000;")
+		require.Greater(t, getNextGlobalID(), uint64(100000000))
+		// Cannot set next global ID to 0.
+		tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
+		tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
+		require.Equal(t, uint64(2), getNextGlobalID())
+		tk.MustExec("insert into t(b) values (2);")
+		tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
+		tk.MustExec("drop table if exists t;")
+	}
+
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Rebase auto_random.
+		tk.MustExec("create table t (a bigint primary key auto_random(5))" + str)
 		tk.MustExec("insert into t values ();")
-		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
-		tk.MustExec("delete from t;")
+		tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+		tk.MustExec("insert into t values (100000000);")
+		tk.MustExec("delete from t where a = 100000000;")
+		require.Greater(t, getNextGlobalID(), uint64(100000000))
+		// Cannot set next global ID to 0.
+		tk.MustGetErrCode("alter table t force auto_random_base = 0;", errno.ErrAutoincReadFailed)
+		tk.MustExec("alter table t force auto_random_base = 2;")
+		require.Equal(t, uint64(2), getNextGlobalID())
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
+		tk.MustExec("drop table if exists t;")
 	}
 
-	// Force alter with @@auto_increment_increment and @@auto_increment_offset.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int key auto_increment);")
-	tk.MustExec("set @@auto_increment_offset=2;")
-	tk.MustExec("set @@auto_increment_increment = 11;")
-	tk.MustExec("insert into t values (500);")
-	tk.MustExec("alter table t force auto_increment=100;")
-	tk.MustExec("insert into t values (), ();")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
-	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
-	tk.MustExec("drop table if exists t;")
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Change next global ID.
+		tk.MustExec("create table t (a bigint primary key auto_increment)" + str)
+		tk.MustExec("insert into t values (1);")
+		bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
+		lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
+		for _, b := range bases {
+			fmt.Println("execute alter table force increment to ==", b)
+			tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+			require.Equal(t, b, getNextGlobalID())
+		}
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
+		// Force alter unsigned int auto_increment column.
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a bigint unsigned primary key auto_increment)" + str)
+		for _, b := range bases {
+			tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+			require.Equal(t, b, getNextGlobalID())
+			tk.MustExec("insert into t values ();")
+			tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+			tk.MustExec("delete from t;")
+		}
+		tk.MustExec("drop table if exists t;")
+	}
+
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Force alter with @@auto_increment_increment and @@auto_increment_offset.
+		tk.MustExec("create table t(a int key auto_increment)" + str)
+		tk.MustExec("set @@auto_increment_offset=2;")
+		tk.MustExec("set @@auto_increment_increment = 11;")
+		tk.MustExec("insert into t values (500);")
+		tk.MustExec("alter table t force auto_increment=100;")
+		tk.MustExec("insert into t values (), ();")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
+		tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
+		tk.MustExec("drop table if exists t;")
+	}
 
 	// Check for warning in case we can't set the auto_increment to the desired value
 	tk.MustExec("create table t(a int primary key auto_increment)")
