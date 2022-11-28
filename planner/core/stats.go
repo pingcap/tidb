@@ -627,7 +627,9 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 	return nil
 }
 
-// isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
+// isInIndexMergeHints returns true if the input index name is not excluded by the IndexMerge hints, which means either
+// (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
+// name is specified in the IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	if len(ds.indexMergeHints) == 0 {
 		return true
@@ -645,8 +647,12 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	return false
 }
 
+// indexMergeHintsHasSpecifiedIdx returns true if there's IndexMerge hint, and it has specified index names.
 func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
 	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
+		}
 		if len(hint.indexHint.IndexNames) > 0 {
 			return true
 		}
@@ -654,8 +660,12 @@ func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
 	return false
 }
 
+// indexMergeHintsHasSpecifiedIdx return true if the input index name is specified in the IndexMerge hint.
 func (ds *DataSource) isSpecifiedInIndexMergeHints(name string) bool {
 	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
+		}
 		for _, hintName := range hint.indexHint.IndexNames {
 			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
 				return true
