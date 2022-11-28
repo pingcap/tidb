@@ -42,8 +42,7 @@ type autoIDAccessor struct {
 // Get implements the interface AutoIDAccessor.
 func (a *autoIDAccessor) Get() (int64, error) {
 	m := a.m
-	ret, err := m.txn.HGetInt64(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID))
-	return ret, err
+	return m.txn.HGetInt64(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID))
 }
 
 // Put implements the interface AutoIDAccessor.

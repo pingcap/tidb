@@ -665,7 +665,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	if tblInfo.IsSequence() {
 		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
 	}
-	return NewAllocators(tblInfo.AutoIdCache == 1, allocs...)
+	return NewAllocators(tblInfo.SepAutoInc(), allocs...)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
@@ -910,7 +910,6 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
-
 			newEnd, err1 = idAcc.Inc(tmpStep)
 			return err1
 		})

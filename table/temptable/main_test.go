@@ -87,7 +87,7 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 		State:         model.StatePublic,
 	}
 
-	tbl, err := table.TableFromMeta(autoid.Allocators{}, tblInfo)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
 	require.NoError(is.t, err)
 
 	return tbl, true

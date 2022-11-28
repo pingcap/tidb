@@ -447,7 +447,7 @@ const (
 	TableInfoVersion4 = uint16(4)
 	// TableInfoVersion5 indicates that the auto_increment allocator in TiDB has been separated from
 	// _tidb_rowid allocator when AUTO_ID_CACHE is 1. This version is introduced to preserve the compatibility of old tables:
-	// the tables with version < TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
+	// the tables with version <= TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
 	// Also see https://github.com/pingcap/tidb/issues/982.
 	TableInfoVersion5 = uint16(5)
 
@@ -549,7 +549,7 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 }
 
-// SepAutoInc decides whether rowid and auto_increment id use separate allocator.
+// SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
 }
