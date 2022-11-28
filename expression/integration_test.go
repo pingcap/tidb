@@ -968,6 +968,7 @@ func TestEncryptionBuiltin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root"}
 	ctx := context.Background()
 
 	// for password
@@ -1143,6 +1144,25 @@ func TestEncryptionBuiltin(t *testing.T) {
 	tk.MustQuery("SELECT RANDOM_BYTES(1024);")
 	result = tk.MustQuery("SELECT RANDOM_BYTES(NULL);")
 	result.Check(testkit.Rows("<nil>"))
+
+	// for VALIDATE_PASSWORD_STRENGTH
+	tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary='%s'", "password"))
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustQuery("SELECT validate_password_strength('root')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT validate_password_strength('toor')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT validate_password_strength('ROOT')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('TOOR')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('fooHoHo%1')").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT validate_password_strength('pass')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('password')").Check(testkit.Rows("50"))
+	tk.MustQuery("SELECT validate_password_strength('password0000')").Check(testkit.Rows("50"))
+	tk.MustQuery("SELECT validate_password_strength('password1A#')").Check(testkit.Rows("75"))
+	tk.MustQuery("SELECT validate_password_strength('PA12wrd!#')").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH(REPEAT(\"aA1#\", 26))").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT validate_password_strength(null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT validate_password_strength('null')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH( 0x6E616E646F73617135234552 )").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH(CAST(0xd2 AS BINARY(10)))").Check(testkit.Rows("50"))
 }
 
 func TestOpBuiltin(t *testing.T) {
@@ -3050,6 +3070,30 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test partition table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
+	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	hexKey = tablecodec.EncodeTablePrefix(tbl.Meta().Partition.Definitions[0].ID).String()
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	data = []types.Datum{types.NewIntDatum(100)}
+	hexKey = buildIndexKeyFromData(tbl.Meta().Partition.Definitions[0].ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
 func TestTwoDecimalTruncate(t *testing.T) {
@@ -4932,6 +4976,7 @@ func TestSchemaDMLNotChange(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -7390,6 +7435,29 @@ func TestIssue31569(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestTimestampAddWithFractionalSecond(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a date)")
+	tk.MustExec("insert into t values ('2021-08-20');")
+	tk.MustQuery("select timestampadd(microsecond, 1, a) from t").Check(testkit.Rows("2021-08-20 00:00:00.000001"))
+	tk.MustQuery("select timestampadd(second, 6/4, a) from t").Check(testkit.Rows("2021-08-20 00:00:01.500000"))
+	tk.MustQuery("select timestampadd(second, 9.9999e2, a) from t").Check(testkit.Rows("2021-08-20 00:16:39.990000"))
+	tk.MustQuery("select timestampadd(second, 1, '2021-08-20 00:00:01.0001')").Check(testkit.Rows("2021-08-20 00:00:02.000100"))
+	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00')").Check(testkit.Rows("2021-08-20 00:02:00"))
+	tk.MustQuery("select timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001')").Check(testkit.Rows("2021-08-20 00:02:00.000100"))
+	// overflow
+	tk.MustQuery("SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result").Check(testkit.Rows("<nil>"))
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	for _, warning := range warnings {
+		require.EqualError(t, warning.Err, "[types:1441]Datetime function: datetime field overflow")
+	}
+}
+
 func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7815,4 +7883,17 @@ func TestIfNullParamMarker(t *testing.T) {
 	tk.MustExec(`set @a='1',@b=repeat('x', 80);`)
 	// Should not report 'Data too long for column' error.
 	tk.MustExec(`execute pr1 using @a,@b;`)
+}
+
+func TestIssue39146(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `sun` ( `dest` varchar(10) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into sun values('20231020');")
+	tk.MustExec("set @@sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = on;")
+	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
+	tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
+	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
 }

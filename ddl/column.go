@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/bits"
 	"strings"
@@ -339,6 +340,9 @@ func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo,
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 	if err = checkDropColumnWithForeignKeyConstraintInOwner(d, t, job, tblInfo, colName.L); err != nil {
+		return nil, nil, nil, false, errors.Trace(err)
+	}
+	if err = checkDropColumnWithTTLConfig(tblInfo, colName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
@@ -857,6 +861,9 @@ func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast
 		indexesToRemove := filterIndexesToRemove(changingIdxs, newName, tblInfo)
 		replaceOldIndexes(tblInfo, indexesToRemove)
 	}
+	if tblInfo.TTLInfo != nil {
+		updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, changingCol.Name)
+	}
 	// Move the new column to a correct offset.
 	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 	if err != nil {
@@ -927,6 +934,17 @@ func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model
 			if fk.Cols[i].L == oldCol.L {
 				fk.Cols[i] = newCol
 			}
+		}
+	}
+}
+
+func updateTTLInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+	if oldCol.L == newCol.L {
+		return
+	}
+	if tblInfo.TTLInfo != nil {
+		if tblInfo.TTLInfo.ColumnName.L == oldCol.L {
+			tblInfo.TTLInfo.ColumnName = newCol
 		}
 	}
 }
@@ -1116,11 +1134,11 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
-			zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
-			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
+			zap.Int64("job ID", reorgInfo.Job.ID),
+			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
+			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1473,6 +1491,7 @@ func adjustTableInfoAfterModifyColumn(
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
 	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
 	updateFKInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
+	updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
 	return nil
 }
 
