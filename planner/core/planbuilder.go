@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"math"
 	"strconv"
 	"strings"
@@ -1030,7 +1031,40 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
+func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
+	if bindableStmt == nil {
+		return nil, errors.New("sql digest '" + v.PlanDigest + "' invalid")
+	}
+
+	parser4binding := parser.New()
+	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		logutil.BgLogger().Debug("[sql-bind] parse origin SQL failed in create binding from history",
+			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+	}
+	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	hintNode, err := parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	normdOrigSQL, _ := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: normdOrigSQL,
+		BindSQL:      utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text()),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     hintNode,
+		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
+		Charset:      bindableStmt.Charset,
+		Collation:    bindableStmt.Collation,
+		//SQLDIgest:    sqlDigestWithDB.String(),
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	if v.PlanDigest != "" {
+		return b.buildCreateBindPlanFromPlanDigest(v)
+	}
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 
 	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
@@ -1052,6 +1086,8 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		Charset:      charSet,
 		Collation:    collation,
 	}
+	logutil.BgLogger().Info("sql digest with DB: " + parser.DigestNormalized(p.NormdOrigSQL).String())
+	logutil.BgLogger().Info("sql digest withOUT DB: " + parser.DigestNormalized(parser.Normalize(v.OriginNode.Text())).String())
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }

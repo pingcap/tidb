@@ -298,9 +298,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
-		EraseLastSemicolon(node.OriginNode)
-		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.PlanDigest == "" {
+			EraseLastSemicolon(node.OriginNode)
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
