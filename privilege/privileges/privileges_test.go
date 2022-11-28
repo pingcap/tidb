@@ -2977,6 +2977,8 @@ func TestFailedLoginTracking(t *testing.T) {
 	failedLoginTrackingCase2(t, tk)
 	failedLoginTrackingCase3(t, tk)
 	failedLoginTrackingCase4(t, tk)
+	failedLoginTrackingCase5(t, tk)
+	failedLoginTrackingCase6(t, tk)
 }
 
 func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit) {
@@ -3008,6 +3010,22 @@ func failedLoginTrackingCase4(t *testing.T, tk *testkit.TestKit) {
 	alterAndCheck(t, tk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
 	loadUser(t, tk, 2)
 	checkAuthUser(t, tk, "u6", 0, "N")
+}
+
+func failedLoginTrackingCase5(t *testing.T, tk *testkit.TestKit) {
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 1, "N")
+	alterAndCheck(t, tk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
+	checkAuthUser(t, tk, "u6", 0, "N")
+}
+
+func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit) {
+	failedLoginTrackingCase2(t, tk)
+	changeAutoLockedLastChanged(tk)
+	loadUser(t, tk, 3)
+	checkAuthUser(t, tk, "u6", 3, "Y")
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u6", 1, "N")
 }
 
 func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64) {
