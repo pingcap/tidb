@@ -267,20 +267,8 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	if !historicalStatsEnabled {
 		return nil
 	}
-
-	is := domain.GetDomain(sctx).InfoSchema()
-	tbl, existed := is.TableByID(tableID)
-	if !existed {
-		return errors.Errorf("cannot get table by id %d", tableID)
-	}
-	tblInfo := tbl.Meta()
-	dbInfo, existed := is.SchemaByTable(tblInfo)
-	if !existed {
-		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
-	}
-	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
-	}
+	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
+	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
 	return nil
 }
 

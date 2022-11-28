@@ -119,6 +119,7 @@ type Domain struct {
 	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
+	historicalStatsWorker   *HistoricalStatsWorker
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1586,6 +1587,15 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.C
 	}
 }
 
+// SetupHistoricalStatsWorker setups worker
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+	do.historicalStatsWorker = &HistoricalStatsWorker{
+		tblCH:  make(chan int64, 16),
+		sctx:   ctx,
+		handle: do.StatsHandle(),
+	}
+}
+
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
@@ -1668,6 +1678,31 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				return
 			case <-gcTicker.C:
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+			}
+		}
+	}()
+}
+
+// GetHistoricalStatsWorker gets historical workers
+func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
+	return do.historicalStatsWorker
+}
+
+// StartHistoricalStatsWorker start historical workers running
+func (do *Domain) StartHistoricalStatsWorker() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case tblID := <-do.historicalStatsWorker.tblCH:
+				do.historicalStatsWorker.dumpHistoricalStats(tblID)
 			}
 		}
 	}()
