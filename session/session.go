@@ -2463,6 +2463,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
+	// Rollback even if err is nil.
 	s.rollbackOnError(ctx)
 
 	if err != nil {
