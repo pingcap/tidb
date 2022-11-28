@@ -897,10 +897,10 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	var allMemUsage int64
 	for _, processWorker := range workers {
 		allMemUsage += processWorker.memUsage
-		defer func() {
-			w.indexMerge.memTracker.Consume(-(allMemUsage))
-		}()
 	}
+	defer func() {
+		w.indexMerge.memTracker.Consume(-(allMemUsage))
+	}()
 
 	intersected := make([][]kv.Handle, partCnt)
 	for parTblIdx, hMap := range handleMaps {
