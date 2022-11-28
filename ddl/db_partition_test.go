@@ -4766,9 +4766,6 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"1 1 1",
 		"12 12 21",
 		"23 23 32"))
-	//tk.MustExec(`create table t2 (a int unsigned PRIMARY KEY, b varchar(255))`)
-	//tk.MustExec(`insert into t2 values (1, "1"), (12, "12"),(23,"23"),(34,"34"),(45,"45"),(56,"56")`)
-	//tk.MustExec(`alter table t2 modify b varchar(200) charset latin1`)
 	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -4801,14 +4798,12 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
-	//tk.MustQuery(`explain select * from t where b > "1"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select * from t where b > "1"`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"23 23 32",
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
-	//tk.MustQuery(`explain select * from t where c < 40`).Check(testkit.Rows(""))
 	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
 		"1 1 1",
 		"12 12 21",
@@ -5227,13 +5222,20 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
 	// Test reorg of duplicate key
-	beforeSnapshot := false
+	prevState := model.StateNone
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			job.SchemaState == model.StateWriteReorganization &&
 			job.SnapshotVer == 0 &&
-			!beforeSnapshot {
-			beforeSnapshot = true
+			prevState != job.SchemaState {
+			prevState = job.SchemaState
+			<-wait
+			<-wait
+		}
+		if job.Type == model.ActionReorganizePartition &&
+			job.SchemaState == model.StateDeleteReorganization &&
+			prevState != job.SchemaState {
+			prevState = job.SchemaState
 			<-wait
 			<-wait
 		}
@@ -5246,14 +5248,14 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 14`)
 	tk.MustExec(`insert into t values (13, "13", 31),(14,"14b",14),(16, "16",16)`)
-	failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex", `pause`)
+	wait <- true
 	wait <- true
 	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Equal(t, 3, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
+	require.Equal(t, 5, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 15`)
 	tk.MustExec(`insert into t values (11, "11", 11),(15,"15b",15),(17, "17",17)`)
-	failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex")
+	wait <- true
 	require.NoError(t, <-alterErr)
 
 	tk.MustQuery(`select * from t where a between 10 and 22`).Sort().Check(testkit.Rows(""+
