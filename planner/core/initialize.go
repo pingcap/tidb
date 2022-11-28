@@ -597,3 +597,17 @@ func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.stats = stats
 	return &p
 }
+
+// Init initializes FKCheck.
+func (p FKCheck) Init(ctx sessionctx.Context) *FKCheck {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
+	p.stats = &property.StatsInfo{}
+	return &p
+}
+
+// Init initializes FKCascade
+func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
+	p.stats = &property.StatsInfo{}
+	return &p
+}

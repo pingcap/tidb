@@ -614,6 +614,8 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	ttl                   "TTL"
+	ttlEnable             "TTL_ENABLE"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -967,7 +969,7 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
-	AlterTablePartitionOpt                 "Alter table partition option"
+	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
@@ -1511,7 +1513,7 @@ Start:
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
  *******************************************************************************************/
 AlterTableStmt:
-	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt AlterTablePartitionOpt
+	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt AlterTableSpecSingleOpt
 	{
 		specs := $5.([]*ast.AlterTableSpec)
 		if $6 != nil {
@@ -1670,7 +1672,8 @@ StatsOptionsOpt:
 		$$ = &ast.StatsOptionsSpec{Default: false, StatsOptions: $3}
 	}
 
-AlterTablePartitionOpt:
+// Some spec can only have one, but not in a list
+AlterTableSpecSingleOpt:
 	PartitionOpt
 	{
 		if $1 != nil {
@@ -1733,6 +1736,12 @@ AlterTablePartitionOpt:
 			Tp:             ast.AlterTablePartitionOptions,
 			PartitionNames: []model.CIStr{model.NewCIStr($2)},
 			Options:        $3.([]*ast.TableOption),
+		}
+	}
+|	"REMOVE" "TTL"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableRemoveTTL,
 		}
 	}
 
@@ -6392,6 +6401,8 @@ UnReservedKeyword:
 |	"NONCLUSTERED"
 |	"PRESERVE"
 |	"TOKEN_ISSUER"
+|	"TTL"
+|	"TTL_ENABLE"
 |	"DIGEST"
 
 TiDBKeyword:
@@ -11763,6 +11774,27 @@ TableOption:
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
 	}
+|	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
+	{
+		$$ = &ast.TableOption{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
+			Value:         ast.NewValueExpr($6, parser.charset, parser.collation),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $7.(ast.TimeUnitType)},
+		}
+	}
+|	"TTL_ENABLE" EqOpt stringLit
+	{
+		onOrOff := strings.ToLower($3)
+		if onOrOff == "on" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
+		} else if onOrOff == "off" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: false}
+		} else {
+			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
+			return 1
+		}
+	}
 
 ForceOpt:
 	/* empty */
@@ -13876,6 +13908,7 @@ ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 DryRunOptions:
 	{
@@ -14305,7 +14338,8 @@ RowStmt:
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *			| 'file_name'
- *		| LOAD 'file_name']
+ *		| LOAD 'file_name'
+ *		| CAPTURE `sql_digest` `plan_digest`]
  *******************************************************************/
 PlanReplayerStmt:
 	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
@@ -14410,6 +14444,21 @@ PlanReplayerStmt:
 			Where:   nil,
 			OrderBy: nil,
 			Limit:   nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Capture:    true,
+			SQLDigest:  $4,
+			PlanDigest: $5,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
 		}
 
 		$$ = x
