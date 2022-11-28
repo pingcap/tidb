@@ -90,8 +90,9 @@ func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
 	require.NoError(t, err)
 	require.True(t, it.Valid())
 	foundTblID := tablecodec.DecodeTableID(it.Key())
-	// Why are there table IDs >= 0xFFFFFFFFFFFC (281474976710652)
-	require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFFFC, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+	// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
+	// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
+	require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
 }
 
 func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
@@ -5058,6 +5059,18 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 }
 
+type TestReorgDDLCallback struct {
+	*ddl.TestDDLCallback
+	syncChan chan bool
+}
+
+func (tc *TestReorgDDLCallback) OnChanged(err error) error {
+	<-tc.syncChan
+	// We want to wait here
+	<-tc.syncChan
+	return tc.TestDDLCallback.OnChanged(err)
+}
+
 func TestReorgPartitionConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -5073,7 +5086,9 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	syncOnChanged := make(chan bool)
+	defer close(syncOnChanged)
+	hook := &TestReorgDDLCallback{TestDDLCallback: &ddl.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
 	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
@@ -5091,12 +5106,26 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
+	oldInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	wait <- true
-	require.NoError(t, <-alterErr)
+	syncOnChanged <- true
+	// This reads the new schema (fully
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"14 14 14",
 		"15 15 15"))
+	tk.MustExec(`insert into t values (16, "16", 16)`)
+	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-oldInfoSchema.SchemaMetaVersion())
+	tbl, err := oldInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	partDef := tbl.Meta().Partition.Definitions[1]
+	require.Equal(t, "p1", partDef.Name.O)
+	rows := getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.Definitions[1:2])
+	// TODO: This should be 5, not 4 (not the newest row) or 0 (GC already done)!
+	require.Equal(t, 0, rows)
+	syncOnChanged <- true
+	require.NoError(t, <-alterErr)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5183,12 +5212,17 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	}
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
 	wait <- true
-	require.Equal(t, 0, getNumRowsFromAddingPartitions(t, tk, schemaName, "t"))
+	infoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	tbl, err := infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 14`)
 	tk.MustExec(`insert into t values (13, "13", 31),(14,"14b",14),(16, "16",16)`)
 	failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex", `pause`)
 	wait <- true
-	require.Equal(t, 3, getNumRowsFromAddingPartitions(t, tk, schemaName, "t"))
+	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 3, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 15`)
 	tk.MustExec(`insert into t values (11, "11", 11),(15,"15b",15),(17, "17",17)`)
 	failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex")
@@ -5219,15 +5253,12 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 		"17 17 17"))
 }
 
-func getNumRowsFromAddingPartitions(t *testing.T, tk *testkit.TestKit, schemaName, table string) int {
+func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Table, defs []model.PartitionDefinition) int {
 	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
 	pt := tbl.GetPartitionedTable()
 	require.NotNil(t, pt)
 	cnt := 0
-	for _, def := range pt.Meta().Partition.AddingDefinitions {
+	for _, def := range defs {
 		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
 		require.True(t, len(data.keys) == len(data.vals))
 		require.True(t, len(data.keys) == len(data.tp))
@@ -5437,114 +5468,6 @@ func TestReorgPartitionRollback(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, ctx, tbl)
-}
-
-func TestReorgPartitionUpdateNewReadOld(t *testing.T) {
-	// In the transition from WriteReorg -> Public
-	// if client A is on Public and client B on WriteReorg state
-	// (which should be only one version difference, so compatible)
-	// what if client A does a write, then client B cannot se it,
-	// since client A writes to the new set of partitions,
-	// but client B is reading the old set of partitions
-	// TODO: when this test works (i.e. shows an inconsistency)
-	// then add DeleteReorg state where the droppingPartitions are removed
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartUpdateNew"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by list columns (a) ` +
-		`(partition p0 values in (10,11,45),` +
-		` partition p1 values in (20,1,23,56),` +
-		` partition p2 values in (12,34,9))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-
-	// First try without ALTER to see if we can have a scenario
-	// like this:
-	// c1: BEGIN
-	// c2: INSERT -- auto_commit
-	// c1: SELECT and sees the inserted value
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use " + schemaName)
-	tk2.MustExec(`SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED`)
-	tk2.MustExec(`BEGIN`)
-	//tk2.MustQuery(`select * from t where c = 21`).Check(testkit.Rows("12 12 21"))
-	//tk.MustExec(`alter table t add index (c)`)
-	tk.MustExec(`alter table t reorganize partition p1,p2 into (partition p1 values in (1,23,56), partition p2 values in (9,34), partition p3 values in (12,20))`)
-	tk.MustExec(`insert into t values (20, "20", 21)`)
-	tk2.MustQuery(`select * from t where c = 21`).Sort().Check(testkit.Rows("12 12 21", "20 20 21"))
-	tk2.MustExec(`ROLLBACK`)
-
-	if false {
-		tk.MustExec(`alter table t set tiflash replica 1`)
-		tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-			"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  `c` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`),\n" +
-			"  KEY `c` (`c`,`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY LIST COLUMNS(`a`)\n" +
-			"(PARTITION `p0` VALUES IN (10,11,45),\n" +
-			" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
-			" PARTITION `p2` VALUES IN (12,34,9))"))
-
-		tbl := external.GetTableByName(t, tk, schemaName, "t")
-		p := tbl.GetPartitionedTable()
-		for _, pid := range p.GetAllPartitionIDs() {
-			require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
-		}
-		// Reload
-		tbl = external.GetTableByName(t, tk, schemaName, "t")
-		p = tbl.GetPartitionedTable()
-		require.NotNil(t, tbl.Meta().TiFlashReplica)
-		require.True(t, tbl.Meta().TiFlashReplica.Available)
-		pids := p.GetAllPartitionIDs()
-		sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
-		availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
-		sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
-		require.Equal(t, pids, availablePids)
-		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
-		defer func() {
-			err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK")
-			require.NoError(t, err)
-		}()
-		tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23),
-    partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
-		tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-			"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  `c` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`),\n" +
-			"  KEY `c` (`c`,`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY LIST COLUMNS(`a`)\n" +
-			"(PARTITION `p0` VALUES IN (10,11,45),\n" +
-			" PARTITION `p1` VALUES IN (34,2,23),\n" +
-			" PARTITION `p2` VALUES IN (12,56,9),\n" +
-			" PARTITION `p3` VALUES IN (1,8,19))"))
-
-		// TODO: Check how to properly test TiFlash, since this will just change the actual
-		// configuration currently
-		tbl = external.GetTableByName(t, tk, schemaName, "t")
-		p = tbl.GetPartitionedTable()
-		for _, pid := range p.GetAllPartitionIDs() {
-			require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
-		}
-		tbl = external.GetTableByName(t, tk, schemaName, "t")
-		p = tbl.GetPartitionedTable()
-		require.NotNil(t, tbl.Meta().TiFlashReplica)
-		require.True(t, tbl.Meta().TiFlashReplica.Available)
-		for _, pid := range p.GetAllPartitionIDs() {
-			require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
-		}
-	}
 }
 
 // TODO Test with/without PK, indexes, UK, virtual, virtual stored columns

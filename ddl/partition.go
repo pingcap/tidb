@@ -2405,6 +2405,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
+		failpoint.Inject("reorgPartWriteReorgReplacedPartIDsFail", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartWriteReorgReplacedPartIDsFail")
+			}
+		})
 		if err != nil {
 			return ver, err
 		}
@@ -2424,15 +2429,35 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// and the addingDefinitions for handling in the updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartWriteReorgSchemaVersionUpdateFail")
+			}
+		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateNone
+		// TODO: Change ^^ to model.StateDeleteReorganization
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// How to handle this?
+		// TODO: Should the event type really be ActionDropTablePartition and not ReorganizePartition?
+		// Seems to only trigger asyncron update of statistics. Should it actually be syncronous?
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
+		/*
+			case model.StateDeleteReorganization:
+				// Drop the droppingDefinitions and finish the DDL
+				// This state is needed for the case where client A sees the schema
+				// with version of StateWriteReorg and would not see updates of
+				// client B that writes to the new partitions, previously
+				// addingDefinitions, since it would not double write to
+				// the droppingDefinitions during this time
+				// By adding StateDeleteReorg state, client B will write to both
+				// the new (previously addingDefinitions) AND droppingDefinitions
+
+		*/
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
