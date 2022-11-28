@@ -150,8 +150,8 @@ func TestCostModelShowFormula(t *testing.T) {
 		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
 	}
 	require.Equal(t, actual, [][]interface{}{
-		{"TableReader_7", "((Selection_6) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15"},
-		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (TableFullScan_5)"},
+		{"TableReader_7", "(((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
+		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))"},
 		{"  └─TableFullScan_5", "scan(3*logrowsize(32)*tikv_scan_factor(40.7))"},
 	})
 }
