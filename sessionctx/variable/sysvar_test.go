@@ -23,9 +23,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -689,8 +692,8 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
 
-	// Default off
-	require.Equal(t, fastDDL.Value, Off)
+	// Default true
+	require.Equal(t, fastDDL.Value, On)
 
 	// Set to On
 	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableFastReorg, On)
@@ -771,21 +774,21 @@ func TestTiDBServerMemoryLimit(t *testing.T) {
 	// Test tidb_server_memory_limit
 	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
 	// Check default value
-	require.Equal(t, serverMemoryLimit.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
+	require.Equal(t, serverMemoryLimit.Value, DefTiDBServerMemoryLimit)
 
 	// MinValue is 512 MB
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(512*mb, 10), val)
+	require.Equal(t, "512MB", val)
 
 	// Test Close
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(0, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(0, 10), val)
+	require.Equal(t, "0", val)
 
 	// Test MaxValue
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(math.MaxUint64, 10))
@@ -833,4 +836,218 @@ func TestTiDBServerMemoryLimit(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(200*mb, 10), val)
+}
+
+func TestTiDBServerMemoryLimit2(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		err error
+		val string
+	)
+	// Test tidb_server_memory_limit
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
+	// Check default value
+	require.Equal(t, serverMemoryLimit.Value, DefTiDBServerMemoryLimit)
+
+	total := memory.GetMemTotalIgnoreErr()
+	if total > 0 {
+		// Can use percentage format when TiDB can obtain physical memory
+		// Test Percentage Format
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1%")
+		require.NoError(t, err)
+		val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+		require.NoError(t, err)
+		if total/100 > uint64(512<<20) {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), total/100)
+			require.Equal(t, "1%", val)
+		} else {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+			require.Equal(t, "512MB", val)
+		}
+
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "0%")
+		require.Error(t, err)
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "100%")
+		require.Error(t, err)
+
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%")
+		require.NoError(t, err)
+		val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+		require.NoError(t, err)
+		require.Equal(t, "75%", val)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+	}
+	// Test can't obtain physical memory
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/GetMemTotalError", `return(true)`))
+	require.Error(t, mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%"))
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/GetMemTotalError"))
+
+	// Test byteSize format
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1234")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1234567890123")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(1234567890123))
+	require.Equal(t, "1234567890123", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "10KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "12345678KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(12345678<<10))
+	require.Equal(t, "12345678KB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "10MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "700MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(700<<20))
+	require.Equal(t, "700MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "20GB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(20<<30))
+	require.Equal(t, "20GB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "2TB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(2<<40))
+	require.Equal(t, "2TB", val)
+
+	// Test error
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "123aaa123")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "700MBaa")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "a700MB")
+	require.Error(t, err)
+}
+
+func TestTiDBServerMemoryLimitSessMinSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemroyLimitSessMinSize.Value, strconv.FormatInt(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123456")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123456))
+	require.Equal(t, "123456", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "100")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(128))
+	require.Equal(t, "128", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123<<20))
+	require.Equal(t, "128974848", val)
+}
+
+func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitGCTrigger := GetSysVar(TiDBServerMemoryLimitGCTrigger)
+	// Check default value
+	require.Equal(t, serverMemroyLimitGCTrigger.Value, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+	defer func() {
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+		require.NoError(t, err)
+	}()
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "0.8")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.8)
+	require.Equal(t, "0.8", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "90%")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.9)
+	require.Equal(t, "0.9", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "100%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "101%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "99%")
+	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerThreshold, "0.4")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "49%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
+	require.NoError(t, err)
+}
+
+func TestSetAggPushDownGlobally(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptAggPushDown, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
 }

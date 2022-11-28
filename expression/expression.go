@@ -1071,8 +1071,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		// FIXME: JSONUnquote is incompatible with Coprocessor
-		ast.JSONUnquote, ast.JSONContains,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -1154,7 +1153,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
-		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
+		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
 		ast.TimeToSec:
 		switch function.Function.PbCode() {
@@ -1163,6 +1162,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
+			return false
+		}
+		return true
+	case ast.Regexp, ast.RegexpLike:
+		funcCharset, funcCollation := function.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
 		}
 		return true
@@ -1227,7 +1232,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_ExtractDatetime:
+		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
 			return true
 		}
 	case ast.Replace:

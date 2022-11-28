@@ -95,7 +95,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := retTypes(e.children[0])
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	columns := e.children[0].Schema().Columns
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
@@ -190,7 +190,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.tblColPosInfos
 	tblRowMap := make(tableRowMapType)
 	fields := retTypes(e.children[0])
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	memUsageOfChk := int64(0)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -234,12 +234,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	txnState, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	memUsageOfTxnState := txnState.Size()
-	err = t.RemoveRecord(ctx, h, data)
+	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return err
 	}
@@ -247,7 +242,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
-	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }

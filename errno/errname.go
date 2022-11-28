@@ -850,7 +850,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", []int{0}),
 	ErrInvalidJSONCharset:                                    mysql.Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    mysql.Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
-	ErrInvalidJSONPathWildcard:                               mysql.Message("In this situation, path expressions may not contain the * and ** tokens.", nil),
+	ErrInvalidJSONPathMultipleSelection:                      mysql.Message("In this situation, path expressions may not contain the * and ** tokens or range selection.", nil),
 	ErrInvalidJSONContainsPathType:                           mysql.Message("The second argument can only be either 'one' or 'all'.", nil),
 	ErrJSONUsedAsKey:                                         mysql.Message("JSON column '%-.192s' cannot be used in key specification.", nil),
 	ErrJSONDocumentTooDeep:                                   mysql.Message("The JSON document exceeds the maximum depth.", nil),
@@ -1029,6 +1029,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
 	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
 	ErrLazyUniquenessCheckFailure:    mysql.Message("transaction aborted because lazy uniqueness check is enabled and an error occurred: %s", nil),
+	ErrUnsupportedColumnInTTLConfig:  mysql.Message("Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP", nil),
+	ErrTTLColumnCannotDrop:           mysql.Message("Cannot drop column '%-.192s': needed in TTL config", nil),
+	ErrSetTTLEnableForNonTTLTable:    mysql.Message("Cannot set TTL_ENABLE on a table without TTL config", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1072,8 +1075,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
 	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
-	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
-	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrPartitionStatsMissing:       mysql.Message("Build global-level stats failed due to missing partition-level stats: %s", nil),
+	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 

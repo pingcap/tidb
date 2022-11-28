@@ -15,9 +15,13 @@
 package restore
 
 import (
+	"compress/gzip"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -40,8 +44,10 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -653,4 +659,124 @@ func (s *chunkRestoreSuite) TestRestore() {
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
+}
+
+func TestCompressChunkRestore(t *testing.T) {
+	// Produce a mock table info
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	node, err := p.ParseOneStmt(`
+	CREATE TABLE "table" (
+		a INT,
+		b INT,
+		c INT,
+		KEY (b)
+	)
+`, "", "")
+	require.NoError(t, err)
+	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+	core.State = model.StatePublic
+
+	// Write some sample CSV dump
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	fakeDataFiles := make([]mydump.FileInfo, 0)
+
+	csvName := "db.table.1.csv.gz"
+	file, err := os.Create(filepath.Join(fakeDataDir, csvName))
+	require.NoError(t, err)
+	gzWriter := gzip.NewWriter(file)
+
+	var totalBytes int64
+	for i := 0; i < 300; i += 3 {
+		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		require.NoError(t, err)
+		totalBytes += int64(n)
+	}
+
+	err = gzWriter.Close()
+	require.NoError(t, err)
+	err = file.Close()
+	require.NoError(t, err)
+
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        csvName,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
+			SortKey:     "99",
+			FileSize:    totalBytes,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := worker.NewPool(ctx, 5, "io")
+	cfg := config.NewConfig()
+	cfg.Mydumper.BatchSize = 111
+	cfg.App.TableConcurrency = 2
+	cfg.Mydumper.CSV.Header = false
+
+	cr, err := newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	var (
+		id, lastID int
+		offset     int64 = 0
+		rowID      int64 = 0
+	)
+	for id < 100 {
+		offset, rowID = cr.parser.Pos()
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		lastID = id
+		for i := 0; id < 100 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	require.Equal(t, int64(33), rowID)
+
+	// test read starting from compress files' middle
+	chunk = checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: offset},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       offset,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: rowID,
+			RowIDMax:     100,
+		},
+	}
+	cr, err = newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	for id = lastID; id < 300; {
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		for i := 0; id < 300 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	_, rowID = cr.parser.Pos()
+	require.Equal(t, int64(100), rowID)
+	err = cr.parser.ReadRow()
+	require.Equal(t, io.EOF, errors.Cause(err))
 }

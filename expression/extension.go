@@ -21,9 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sem"
@@ -36,8 +38,8 @@ func registerExtensionFunc(def *extension.FunctionDef) error {
 		return errors.New("extension function def is nil")
 	}
 
-	if def.Name == "" {
-		return errors.New("extension function name should not be empty")
+	if err := def.Validate(); err != nil {
+		return err
 	}
 
 	lowerName := strings.ToLower(def.Name)
@@ -85,8 +87,10 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 		return nil, errors.Errorf("unsupported extension function ret type: '%v'", def.EvalTp)
 	}
 
+	maxArgs := len(def.ArgTps)
+	minArgs := maxArgs - def.OptionalArgsLen
 	return &extensionFuncClass{
-		baseFunctionClass: baseFunctionClass{def.Name, len(def.ArgTps), len(def.ArgTps)},
+		baseFunctionClass: baseFunctionClass{def.Name, minArgs, maxArgs},
 		flen:              flen,
 		funcDef:           *def,
 	}, nil
@@ -100,7 +104,7 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps[:len(args)]...)
 	if err != nil {
 		return nil, err
 	}
@@ -110,11 +114,13 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
-	privs := c.funcDef.RequireDynamicPrivileges
-	if semPrivs := c.funcDef.SemRequireDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
-		privs = semPrivs
+	fn := c.funcDef.RequireDynamicPrivileges
+	if fn == nil {
+		return nil
 	}
 
+	semEnabled := sem.IsEnabled()
+	privs := fn(semEnabled)
 	if len(privs) == 0 {
 		return nil
 	}
@@ -125,7 +131,7 @@ func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 	for _, priv := range privs {
 		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
 			msg := priv
-			if !sem.IsEnabled() {
+			if !semEnabled {
 				msg = "SUPER or " + msg
 			}
 			return errSpecificAccessDenied.GenWithStackByArgs(msg)
@@ -179,6 +185,22 @@ func (b *extensionFuncSig) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 	}
 
 	return result, nil
+}
+
+func (b *extensionFuncSig) ConnectionInfo() *variable.ConnectionInfo {
+	return b.ctx.GetSessionVars().ConnectionInfo
+}
+
+func (b *extensionFuncSig) User() *auth.UserIdentity {
+	return b.ctx.GetSessionVars().User
+}
+
+func (b *extensionFuncSig) ActiveRoles() []*auth.RoleIdentity {
+	return b.ctx.GetSessionVars().ActiveRoles
+}
+
+func (b *extensionFuncSig) CurrentDB() string {
+	return b.ctx.GetSessionVars().CurrentDB
 }
 
 func init() {

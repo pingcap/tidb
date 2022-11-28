@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -98,6 +99,7 @@ const (
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		User_attributes			json,
+		Token_issuer			VARCHAR(255),
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -429,11 +431,41 @@ const (
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
+
+	// CreatePlanReplayerStatusTable is a table about plan replayer status
+	CreatePlanReplayerStatusTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_status (
+		sql_digest VARCHAR(128),
+		plan_digest VARCHAR(128),
+		origin_sql TEXT,
+		token VARCHAR(128),
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		fail_reason TEXT,
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`
+
+	// CreatePlanReplayerTaskTable is a table about plan replayer capture task
+	CreatePlanReplayerTaskTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_task (
+		sql_digest VARCHAR(128) NOT NULL,
+		plan_digest VARCHAR(128) NOT NULL,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (sql_digest,plan_digest));`
+
+	// CreateStatsTableLocked stores the locked tables
+	CreateStatsTableLocked = `CREATE TABLE IF NOT EXISTS mysql.stats_table_locked(
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) NOT NULL DEFAULT 0,
+		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
+		PRIMARY KEY (table_id));`
 )
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
+	err := InitMDLVariableForBootstrap(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("init metadata lock error",
+			zap.Error(err))
+	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -635,16 +667,25 @@ const (
 	version94 = 94
 	// version95 add a column `User_attributes` to `mysql.user`
 	version95 = 95
-	// version96 converts server-memory-quota to a sysvar
-	version96 = 96
 	// version97 sets tidb_opt_range_max_size to 0 when a cluster upgrades from some version lower than v6.4.0 to v6.4.0+.
 	// It promises the compatibility of building ranges behavior.
 	version97 = 97
+	// version98 add a column `Token_issuer` to `mysql.user`
+	version98 = 98
+	version99 = 99
+	// version100 converts server-memory-quota to a sysvar
+	version100 = 100
+	// version101 add mysql.plan_replayer_status table
+	version101 = 101
+	// version102 add mysql.plan_replayer_task table
+	version102 = 102
+	// version103 adds the tables mysql.stats_table_locked
+	version103 = 103
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version97
+var currentBootstrapVersion int64 = version103
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -745,8 +786,13 @@ var (
 		upgradeToVer93,
 		upgradeToVer94,
 		upgradeToVer95,
-		upgradeToVer96,
+		// We will redo upgradeToVer96 in upgradeToVer100, it is skipped here.
 		upgradeToVer97,
+		upgradeToVer98,
+		upgradeToVer100,
+		upgradeToVer101,
+		upgradeToVer102,
+		upgradeToVer103,
 	}
 )
 
@@ -818,7 +864,7 @@ func upgrade(s Session) {
 	if ver < version92 {
 		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
 		if err != nil {
-			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
 		}
 		if !useConcurrentDDL {
 			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
@@ -827,8 +873,19 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
+	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+	}
+
+	if isNull {
+		upgradeToVer99Before(s)
+	}
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
+	}
+	if isNull {
+		upgradeToVer99After(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -855,7 +912,7 @@ func upgrade(s Session) {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
+		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
@@ -1949,14 +2006,6 @@ func upgradeToVer95(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
 }
 
-func upgradeToVer96(s Session, ver int64) {
-	if ver >= version96 {
-		return
-	}
-	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
-}
-
 func upgradeToVer97(s Session, ver int64) {
 	if ver >= version97 {
 		return
@@ -1976,6 +2025,58 @@ func upgradeToVer97(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize, 0)
+}
+
+func upgradeToVer98(s Session, ver int64) {
+	if ver >= version98 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99Before(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+}
+
+func upgradeToVer99After(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+	mustExecute(s, sql)
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(true)
+	})
+	terror.MustNil(err)
+}
+
+func upgradeToVer100(s Session, ver int64) {
+	if ver >= version100 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
+func upgradeToVer101(s Session, ver int64) {
+	if ver >= version101 {
+		return
+	}
+	doReentrantDDL(s, CreatePlanReplayerStatusTable)
+}
+
+func upgradeToVer102(s Session, ver int64) {
+	if ver >= version102 {
+		return
+	}
+	doReentrantDDL(s, CreatePlanReplayerTaskTable)
+}
+
+func upgradeToVer103(s Session, ver int64) {
+	if ver >= version103 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsTableLocked)
 }
 
 func writeOOMAction(s Session) {
@@ -2074,6 +2175,12 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
+	//  Create plan_replayer_status table
+	mustExecute(s, CreatePlanReplayerStatusTable)
+	// Create plan_replayer_task table
+	mustExecute(s, CreatePlanReplayerTaskTable)
+	// Create stats_meta_table_locked table
+	mustExecute(s, CreateStatsTableLocked)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
@@ -2095,10 +2202,10 @@ func doDMLWorks(s Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null)`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null)`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value

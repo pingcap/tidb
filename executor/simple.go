@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -783,6 +784,23 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
+	if authOpt == nil || !authOpt.ByAuthString {
+		return false
+	}
+	return authPlugin == mysql.AuthNativePassword ||
+		authPlugin == mysql.AuthTiDBSM3Password ||
+		authPlugin == mysql.AuthCachingSha2Password
+}
+
+func (e *SimpleExec) isValidatePasswordEnabled() bool {
+	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return false
+	}
+	return variable.TiDBOptOn(validatePwdEnable)
+}
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -805,7 +823,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -836,8 +854,16 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
+	tokenIssuer := ""
+	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
+		switch authTokenOption.Type {
+		case ast.TokenIssuer:
+			tokenIssuer = authTokenOption.Value
+		}
+	}
+
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -866,24 +892,44 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
+		if e.isValidatePasswordEnabled() && !s.IsCreateRole {
+			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
+				return variable.ErrNotValidPassword.GenWithStackByArgs()
+			}
+			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
+			}
+		}
 		pwd, ok := spec.EncodedPassword()
 
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
 		}
-		authPlugin := mysql.AuthNativePassword
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
-			authPlugin = spec.AuthOpt.AuthPlugin
-		}
 
 		switch authPlugin {
-		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket:
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken:
 		default:
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
 
+		recordTokenIssuer := tokenIssuer
+		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
+			err := fmt.Errorf("TOKEN_ISSUER is not needed for '%s' user", authPlugin)
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			recordTokenIssuer = ""
+		} else if len(recordTokenIssuer) == 0 && authPlugin == mysql.AuthTiDBAuthToken {
+			err := fmt.Errorf("TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -962,7 +1008,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -977,6 +1023,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+
+	var authTokenOptions []*ast.AuthTokenOrTLSOption
+	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
+		if authTokenOrTLSOption.Type == ast.TokenIssuer {
+			authTokenOptions = append(authTokenOptions, authTokenOrTLSOption)
+		}
+	}
 
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
@@ -1021,6 +1074,23 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
+		type AuthTokenOptionHandler int
+		const (
+			// NoNeedAuthTokenOptions means the final auth plugin is NOT tidb_auth_plugin
+			NoNeedAuthTokenOptions AuthTokenOptionHandler = iota
+			// OptionalAuthTokenOptions means the final auth_plugin is tidb_auth_plugin,
+			// and whether to declare AuthTokenOptions or not is ok.
+			OptionalAuthTokenOptions
+			// RequireAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
+			RequireAuthTokenOptions
+		)
+		authTokenOptionHandler := NoNeedAuthTokenOptions
+		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+			return err
+		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+			authTokenOptionHandler = OptionalAuthTokenOptions
+		}
+
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		type alterField struct {
 			expr  string
@@ -1029,16 +1099,26 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
-				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
 					return err
 				}
-				spec.AuthOpt.AuthPlugin = authplugin
+				spec.AuthOpt.AuthPlugin = curAuthplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
+				authTokenOptionHandler = NoNeedAuthTokenOptions
+			case mysql.AuthTiDBAuthToken:
+				if authTokenOptionHandler != OptionalAuthTokenOptions {
+					authTokenOptionHandler = RequireAuthTokenOptions
+				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
@@ -1061,7 +1141,30 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+		}
+
+		switch authTokenOptionHandler {
+		case NoNeedAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+		case OptionalAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				for _, authTokenOption := range authTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
+			}
+		case RequireAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				for _, authTokenOption := range authTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
+			} else {
+				err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
 		}
 
 		if len(fields) > 0 {
@@ -1533,6 +1636,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
+	if e.isValidatePasswordEnabled() {
+		if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
+			return err
+		}
+	}
 	var pwd string
 	switch authplugin {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
@@ -1706,14 +1814,24 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	var statsIDs []int64
+	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		statsIDs = []int64{s.Table.TableInfo.ID}
+		statsIDs = []int64{s.Tables[0].TableInfo.ID}
 	} else {
-		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
-			return err
-		}
 		if len(s.PartitionNames) == 0 {
-			statsIDs = append(statsIDs, s.Table.TableInfo.ID)
+			for _, table := range s.Tables {
+				partitionStatIds, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				if err != nil {
+					return err
+				}
+				statsIDs = append(statsIDs, partitionStatIds...)
+				statsIDs = append(statsIDs, table.TableInfo.ID)
+			}
+		} else {
+			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
+			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Tables[0].TableInfo, s.PartitionNames); err != nil {
+				return err
+			}
 		}
 	}
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {

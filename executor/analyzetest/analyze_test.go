@@ -975,6 +975,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
@@ -1062,6 +1063,7 @@ func TestSavedPartitionAnalyzeOptions(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2310,7 +2312,11 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 		jobInfo += "table all columns with 256 buckets, 500 topn, 1 samplerate"
 	}
 	// kill auto analyze when it is pending/running/finished
-	for _, status := range []string{"pending", "running", "finished"} {
+	for _, status := range []string{
+		"pending",
+		"running",
+		"finished",
+	} {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
@@ -2576,6 +2582,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2669,6 +2676,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2828,8 +2836,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2841,8 +2849,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
 	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
@@ -2860,6 +2868,7 @@ func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -2895,7 +2904,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
@@ -2905,7 +2914,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
@@ -2914,7 +2923,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2939,6 +2948,7 @@ func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -2964,8 +2974,8 @@ PARTITION BY RANGE ( a ) (
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())

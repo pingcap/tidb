@@ -835,7 +835,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 				var err error
-				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
 				return errors.Trace(err)
 			}); err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2263,10 +2263,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	var rows [][]types.Datum
-	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
-	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
+	var tiFlashStores map[int64]helper.StoreStat
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
@@ -2275,14 +2272,22 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			var progress float64
 			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progress += progressMap[p.ID]
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
+					if err != nil {
+						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+					}
+					progress += progressOfPartition
 				}
 				progress = progress / float64(len(pi.Definitions))
-				progressString := types.TruncateFloatToString(progress, 2)
-				progress, _ = strconv.ParseFloat(progressString, 64)
 			} else {
-				progress = progressMap[tbl.ID]
+				var err error
+				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
+				if err != nil {
+					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+				}
 			}
+			progressString := types.TruncateFloatToString(progress, 2)
+			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
@@ -2602,7 +2607,17 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 						row = append(row, types.NewDatum(nil))
 					}
 				} else {
-					row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
+					switch c.Name.O {
+					case txninfo.MemBufferBytesStr:
+						memDBFootprint := sctx.GetSessionVars().MemDBFootprint
+						var bytesConsumed int64
+						if memDBFootprint != nil {
+							bytesConsumed = memDBFootprint.BytesConsumed()
+						}
+						row = append(row, types.NewDatum(bytesConsumed))
+					default:
+						row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
+					}
 				}
 			}
 			res = append(res, row)

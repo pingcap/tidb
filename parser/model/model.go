@@ -164,6 +164,9 @@ type ColumnInfo struct {
 
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
+	if c == nil {
+		return nil
+	}
 	nc := *c
 	return &nc
 }
@@ -332,6 +335,9 @@ func (c *ColumnInfo) GetTypeDesc() string {
 	}
 	return desc
 }
+
+// EmptyColumnInfoSize is the memory usage of ColumnInfoSize
+const EmptyColumnInfoSize = int64(unsafe.Sizeof(ColumnInfo{}))
 
 // FindColumnInfo finds ColumnInfo in cols by name.
 func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
@@ -542,6 +548,8 @@ type TableInfo struct {
 	StatsOptions *StatsOptions `json:"stats_options"`
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
+
+	TTLInfo *TTLInfo `json:"ttl_info"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -740,6 +748,10 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	for i := range t.ForeignKeys {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	}
+
+	if t.TTLInfo != nil {
+		nt.TTLInfo = t.TTLInfo.Clone()
 	}
 
 	return &nt
@@ -1404,6 +1416,9 @@ type IndexInfo struct {
 
 // Clone clones IndexInfo.
 func (index *IndexInfo) Clone() *IndexInfo {
+	if index == nil {
+		return nil
+	}
 	ni := *index
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
@@ -1727,6 +1742,21 @@ type PolicyInfo struct {
 func (p *PolicyInfo) Clone() *PolicyInfo {
 	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
+// TTLInfo records the TTL config
+type TTLInfo struct {
+	ColumnName      CIStr  `json:"column"`
+	IntervalExprStr string `json:"interval_expr"`
+	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
+	IntervalTimeUnit int  `json:"interval_time_unit"`
+	Enable           bool `json:"enable"`
+}
+
+// Clone clones TTLInfo
+func (t *TTLInfo) Clone() *TTLInfo {
+	cloned := *t
 	return &cloned
 }
 
