@@ -979,7 +979,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -1196,6 +1195,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 			}
 			return nil
 		})
+	}
+
+	if variable.EnableMDL.Load() && !toConcurrentDDL {
+		return errors.New("can not disable concurrent ddl when metadata lock is enabled")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
