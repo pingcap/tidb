@@ -17,7 +17,7 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t1.c2)->Column#5",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
           "    └─Selection 10.00 cop[tikv]  eq(test.t1.c2, \"cd\")",
           "      └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx1(c2) range:[\"c\",\"c\"], keep order:false, stats:pseudo"
         ],
@@ -40,7 +40,7 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t2.c2)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
           "    └─Selection 10.00 cop[tikv]  eq(test.t2.c2, \"cd\")",
           "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx1(c1, c2) keep order:false, stats:pseudo"
         ],
