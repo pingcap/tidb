@@ -1502,8 +1502,8 @@
       {
         "SQL": "explain format = 'brief' SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
         "Plan": [
-          "IndexJoin 13.81 root  inner join, inner:IndexLookUp, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
-          "├─IndexJoin(Build) 12.50 root  inner join, inner:IndexLookUp, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
+          "IndexHashJoin 13.81 root  inner join, inner:IndexLookUp, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
+          "├─IndexHashJoin(Build) 12.50 root  inner join, inner:IndexLookUp, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
           "│ ├─IndexLookUp(Build) 10.00 root  ",
           "│ │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t3, index:keycol(keycol, pad1, pad2) range:[\"c\",\"c\"], keep order:false, stats:pseudo",
           "│ │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
@@ -1522,8 +1522,8 @@
       {
         "SQL": "explain format = 'brief' SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
         "Plan": [
-          "IndexJoin 13.81 root  inner join, inner:IndexLookUp, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
-          "├─IndexJoin(Build) 12.50 root  inner join, inner:IndexLookUp, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
+          "IndexHashJoin 13.81 root  inner join, inner:IndexLookUp, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
+          "├─IndexHashJoin(Build) 12.50 root  inner join, inner:IndexLookUp, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
           "│ ├─IndexLookUp(Build) 10.00 root  ",
           "│ │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t3, index:keycol(keycol, pad1, pad2) range:[\"c\",\"c\"], keep order:false, stats:pseudo",
           "│ │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
