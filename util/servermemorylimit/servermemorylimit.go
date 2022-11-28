@@ -84,7 +84,8 @@ type sessionToBeKilled struct {
 	sessionID      uint64
 	sessionTracker *memory.Tracker
 
-	lastLogTime time.Time
+	killStartTime time.Time
+	lastLogTime   time.Time
 }
 
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
@@ -92,9 +93,12 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
 				if time.Since(s.lastLogTime) > 5*time.Second {
-					logutil.BgLogger().Warn("Memory usage Top1 SQL can't handle the kill signal",
-						zap.String("sql_text", info.Info),
-						zap.Int64("sql_memory_usage", info.MemTracker.BytesConsumed()))
+					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
+						time.Since(s.killStartTime)/time.Second),
+						zap.Uint64("connID", info.ID),
+						zap.String("sql digest", info.Digest),
+						zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
+						zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()))
 					s.lastLogTime = time.Now()
 				}
 				return
@@ -105,6 +109,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)
 		//nolint: all_revive,revive
 		runtime.GC()
+		logutil.BgLogger().Warn("global memory controller killed the top1 memory consumer successfully")
 	}
 
 	if bt == 0 {
@@ -130,11 +135,14 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				IsKilling.Store(true)
 				GlobalMemoryOpsHistoryManager.recordOne(info, killTime, bt, instanceStats.HeapInuse)
 				s.lastLogTime = time.Now()
-				logutil.BgLogger().Warn("tidb-server has the risk of OOM. Try to kill the memory usage Top1 SQL.",
-					zap.String("sql_text", info.Info),
-					zap.Uint64("server_memory_limit", bt),
-					zap.Uint64("heap_in_use", instanceStats.HeapInuse),
-					zap.Int64("sql_memory_usage", info.MemTracker.BytesConsumed()),
+				s.killStartTime = time.Now()
+				logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer",
+					zap.Uint64("connID", info.ID),
+					zap.String("sql digest", info.Digest),
+					zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
+					zap.Uint64("tidb_server_memory_limit", bt),
+					zap.Uint64("heap inuse", instanceStats.HeapInuse),
+					zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()),
 				)
 			}
 		}
