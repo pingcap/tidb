@@ -1191,6 +1191,21 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["ddl:8148"]
+error = '''
+Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+'''
+
+["ddl:8149"]
+error = '''
+Cannot drop column '%-.192s': needed in TTL config
+'''
+
+["ddl:8150"]
+error = '''
+Cannot set TTL_ENABLE on a table without TTL config
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id

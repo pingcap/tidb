@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	parserformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1222,6 +1223,28 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	if tableInfo.TTLInfo != nil {
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes
+		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
+		columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+		timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+
+		restoreCtx.WriteKeyWord(" TTL ")
+		restoreCtx.WritePlain("= ")
+		restoreCtx.WriteName(columnName.String())
+		restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+		err = timeUnit.Restore(restoreCtx)
+		if err != nil {
+			return err
+		}
+		if tableInfo.TTLInfo.Enable {
+			fmt.Fprintf(buf, " TTL_ENABLE = 'ON'")
+		} else {
+			fmt.Fprintf(buf, " TTL_ENABLE = 'OFF'")
+		}
+	}
 	return nil
 }
 
