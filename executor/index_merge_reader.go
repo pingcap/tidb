@@ -806,18 +806,18 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 		if hMap, ok = w.handleMapsPerWorker[task.parTblIdx]; !ok {
 			panic(fmt.Sprintf("cannot find parTblIdx(%d) for worker(id: %d)", task.parTblIdx, w.workerID))
 		}
-		oriCnt := hMap.Len()
+		var deltaRows int64
 		for _, h := range task.handles {
 			if cntPtr, ok := hMap.Get(h); ok {
 				(*cntPtr.(*int))++
 			} else {
 				cnt := 1
 				hMap.Set(h, &cnt)
+				deltaRows++
 			}
 		}
-		newCnt := hMap.Len()
-		if newCnt > oriCnt {
-			w.memTracker.Consume(int64(newCnt-oriCnt) * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
+		if deltaRows > 0 {
+			w.memTracker.Consume(deltaRows * (8 + int64(unsafe.Sizeof(reflect.Pointer))))
 		}
 	}
 	w.wg.Done()
@@ -886,10 +886,15 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	for task := range fetchCh {
 		workers[task.parTblIdx/partCntPerWorker].workerCh <- task
 	}
-	for _, w := range workers {
-		close(w.workerCh)
+	for _, processWorker := range workers {
+		close(processWorker.workerCh)
 	}
 	wg.Wait()
+	defer func() {
+		for _, hMap := range handleMaps {
+			w.indexMerge.memTracker.Consume(-(int64(hMap.Len()) * (8 + int64(unsafe.Sizeof(reflect.Pointer)))))
+		}
+	}()
 
 	intersected := make([][]kv.Handle, partCnt)
 	for parTblIdx, hMap := range handleMaps {
