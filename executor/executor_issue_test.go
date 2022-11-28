@@ -686,9 +686,7 @@ func TestIssue22231(t *testing.T) {
 	tk.MustExec("drop table if exists t_issue_22231")
 
 	tk.MustQuery("SELECT CAST(\"1111111111-\" AS DATE);")
-	tk.MustQuery("SHOW WARNINGS").
-		Check(
-			testkit.Rows("Warning 1292 Incorrect datetime value: '1111111111-'"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '1111111111-'"))
 }
 
 // TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
