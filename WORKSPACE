@@ -27,19 +27,9 @@ go_deps()
 
 go_rules_dependencies()
 
-go_download_sdk(
-    name = "go_sdk",
-    urls = [
-        "http://ats.apps.svc/golang/{}",
-        "http://bazel-cache.pingcap.net:8080/golang/{}",
-        "https://dl.google.com/go/{}",
-        "https://mirrors.aliyun.com/golang/{}",
-    ],
-    version = "1.19.3",
-)
-
 go_register_toolchains(
     nogo = "@//build:tidb_nogo",
+    version = "1.19.3",
 )
 
 gazelle_dependencies()
