@@ -28,11 +28,14 @@ go_deps()
 go_rules_dependencies()
 
 go_download_sdk(
-    name = "tidb_sdk",
+    name = "go_sdk",
     urls = [
+        "http://ats.apps.svc/golang/{}",
+        "http://bazel-cache.pingcap.net:8080/golang/{}",
         "https://mirrors.aliyun.com/golang/{}",
+        "https://dl.google.com/go/{}",
     ],
-    version = "1.19.1",
+    version = "1.19.3",
 )
 
 go_register_toolchains(
