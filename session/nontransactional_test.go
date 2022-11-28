@@ -949,11 +949,25 @@ func TestAnomalousNontransactionalDML(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (4, 4)")
 
-	// FIXME: we should not allow this, where the shard column is the join key
 	tk.MustExec("batch on test.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 1", "4 2", "4 4"))
 
-	// FIXME: and this
-	tk.MustExec("batch on id limit 1 update t set id=id+1")
-	tk.MustQuery("select * from t").Check(testkit.Rows("4 1", "4 2", "4 3"))
+	tk.MustContainErrMsg("batch on id limit 1 update t set id=id+1", "Non-transactional DML, shard column cannot be updated")
+}
+
+func TestAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
+	tk.MustExec("create table t2(id int, v int, key (id))")
+	tk.MustExec("create table t3(id int, v int, key (id))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 20), (4, 40)")
+	tk.MustExec("insert into t3 values (2, 21), (4, 41), (5, 50)")
+	tk.MustExec("update t as t1 set v1 = test.t1.id + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 1", "2 3 2", "3 4 3"))
+
+	tk.MustExec("batch on test.tt2.id limit 1 replace into t select tt2.id, tt2.v, t3.v from t2 as tt2 join t3 on tt2.id=t3.id")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 2 1", "2 20 21", "3 4 3", "4 40 41"))
 }

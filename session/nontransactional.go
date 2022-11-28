@@ -98,12 +98,12 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 		return nil, err
 	}
 
-	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
+	tableName, selectSQL, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := checkConstraintWithShardColumn(stmt, tableName, shardColumnInfo); err != nil {
+	if err := checkConstraintWithShardColumn(se, stmt, tableName, shardColumnInfo, tableSources); err != nil {
 		return nil, err
 	}
 
@@ -132,16 +132,30 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
-func checkConstraintWithShardColumn(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName, shardColumnInfo *model.ColumnInfo) error {
+// we require:
+// (1) in an update statement, shard column cannot be updated
+//
+// Note: this is not a comprehensive check.
+// We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
+func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStmt,
+	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
-		// FIXME: this check is not enough. the table name and schema name of the assignment can be null. But we cannot
-		// simply rely on the column name to judge it.
 		for _, assignment := range s.List {
-			if shardColumnInfo != nil && assignment.Column.Name.L == shardColumnInfo.Name.L &&
-				assignment.Column.Table.L == tableName.Name.L &&
-				assignment.Column.Schema.L == tableName.Schema.L {
-				return errors.New("Non-transactional DML, shard columns cannot be updated")
+			if shardColumnInfo == nil {
+				continue
+			}
+			sameDB := (assignment.Column.Schema.L == tableName.Schema.L) ||
+				(assignment.Column.Schema.L == "" && tableName.Schema.L == se.GetSessionVars().CurrentDB)
+			if !sameDB {
+				continue
+			}
+			sameTable := (assignment.Column.Table.L == tableName.Name.L) || len(tableSources) == 1
+			if !sameTable {
+				continue
+			}
+			if assignment.Column.Name.L == shardColumnInfo.Name.L {
+				return errors.New("Non-transactional DML, shard column cannot be updated")
 			}
 		}
 	default:
@@ -509,29 +523,30 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
+	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional DML, table source not found")
+		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
 	tableSources := make([]*ast.TableSource, 0)
 	tableSources, err := collectTableSourcesInJoin(join, tableSources)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	if len(tableSources) == 0 {
-		return nil, "", nil, errors.New("Non-transactional DML, no tables found in table refs")
+		return nil, "", nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
 	}
 	leftMostTableSource := tableSources[0]
 	leftMostTableName, ok := leftMostTableSource.Source.(*ast.TableName)
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional DML, table name not found")
+		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
 	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableSources, leftMostTableName, leftMostTableSource)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 
 	var sb strings.Builder
@@ -543,7 +558,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 			format.RestoreStringWithoutCharset, &sb),
 		)
 		if err != nil {
-			return nil, "", nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
+			return nil, "", nil, nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
 		}
 	} else {
 		sb.WriteString("TRUE")
@@ -551,7 +566,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumnInfo, nil
+	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 
 func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
@@ -586,17 +601,23 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 				return nil, nil, err
 			}
 		} else if stmt.ShardColumn.Schema.L != "" && stmt.ShardColumn.Table.L != "" && stmt.ShardColumn.Name.L != "" {
-			dbName := stmt.ShardColumn.Schema
-			tableName := stmt.ShardColumn.Table
-			colName := stmt.ShardColumn.Name
+			specifiedDbName := stmt.ShardColumn.Schema
+			specifiedTableName := stmt.ShardColumn.Table
+			specifiedColName := stmt.ShardColumn.Name
 
 			// the specified table must be in the join
 			tableInJoin := false
+			var chosenTableName model.CIStr
 			for _, tableSource := range tableSources {
 				tableSourceName := tableSource.Source.(*ast.TableName)
-				if tableSourceName.Schema.L == dbName.L && tableSourceName.Name.L == tableName.L {
+				tableSourceFinalTableName := tableSource.AsName // precedence: alias name, then table name
+				if tableSourceFinalTableName.O == "" {
+					tableSourceFinalTableName = tableSourceName.Name
+				}
+				if tableSourceName.Schema.L == specifiedDbName.L && tableSourceFinalTableName.L == specifiedTableName.L {
 					tableInJoin = true
 					selectedTableName = tableSourceName
+					chosenTableName = tableSourceName.Name
 					break
 				}
 			}
@@ -604,15 +625,15 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 				return nil, nil,
 					errors.Errorf(
 						"Non-transactional DML, shard column %s.%s.%s is not in the tables involved in the join",
-						dbName.L, tableName.L, colName.L,
+						specifiedDbName.L, specifiedTableName.L, specifiedColName.L,
 					)
 			}
 
-			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(dbName, tableName)
+			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(specifiedDbName, chosenTableName)
 			if err != nil {
 				return nil, nil, err
 			}
-			indexed, shardColumnInfo, err = selectShardColumnByGivenName(colName.L, tbl)
+			indexed, shardColumnInfo, err = selectShardColumnByGivenName(specifiedColName.L, tbl)
 			if err != nil {
 				return nil, nil, err
 			}
