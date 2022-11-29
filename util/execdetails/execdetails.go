@@ -365,6 +365,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	} else {
 		e.procTimes = append(e.procTimes, time.Duration(tmp.consume))
 	}
+	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
 
 // Tp implements the RuntimeStats interface.
