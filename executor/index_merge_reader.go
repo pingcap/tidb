@@ -194,7 +194,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			if err != nil {
 				return nil, err
 			}
-			keyRanges := append(firstKeyRanges, secondKeyRanges...)
+			keyRanges := append(firstKeyRanges.FirstPartitionRange(), secondKeyRanges.FirstPartitionRange()...)
 			ranges = append(ranges, keyRanges)
 			continue
 		}
@@ -202,7 +202,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 		if err != nil {
 			return nil, err
 		}
-		ranges = append(ranges, keyRange)
+		ranges = append(ranges, keyRange.FirstPartitionRange())
 	}
 	return ranges, nil
 }
