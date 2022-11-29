@@ -62,9 +62,9 @@ func (eqh *Handle) Run() {
 				}
 
 				costTime := time.Since(info.Time)
-				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
+				if time.Since(info.ExpensiveLogTime) > 60*time.Second && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info, "expensive_query")
-					info.ExceedExpensiveTimeThresh = true
+					info.ExpensiveLogTime = time.Now()
 				}
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					logutil.BgLogger().Warn("execution timeout, kill it", zap.Duration("costTime", costTime),
