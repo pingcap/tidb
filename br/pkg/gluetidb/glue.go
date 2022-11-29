@@ -353,16 +353,13 @@ func (gs *tidbSession) Upgrude(ctx context.Context, currVersion, targetVersion i
 			return
 		}
 
+		var tblName string
 		// DDL for upgrade includes `alter` and `create`
 		switch stmt := astNode.(type) {
 		case *ast.AlterTableStmt:
-			log.Info("DDL origin table name", zap.Any("table", stmt.Table))
 			stmt.Table.Schema = utils.TemporaryDBName(mysql.SystemDB)
-			log.Info("current table name", zap.Any("table", stmt.Table))
-			tblName := stmt.Table.Name.L
-			log.Info("DDL", zap.String("table", tblName))
+			tblName = stmt.Table.Name.L
 			if _, ok := restoreTblSet[tblName]; !ok {
-				log.Info("DDL filter out", zap.String("table", tblName))
 				return
 			}
 			_, err = s.ExecuteStmt(ctx, stmt)
@@ -375,13 +372,11 @@ func (gs *tidbSession) Upgrude(ctx context.Context, currVersion, targetVersion i
 			execErr = errors.Trace(err)
 			return
 		}
-		log.Info("exec DDL successfully", zap.String("sql", sql))
+		log.Info("exec DDL successfully", zap.String("sql", sql), zap.String("table", tblName))
 		// Do I need to call rs.Next? Confirm whether alter is lazily take effect. TODO
 	}
 
 	mustExecuteInBR := func(s session.Session, sql string, args ...interface{}) {
-		log.Info("In mustExecuteInBR", zap.String("sql", sql))
-
 		parser := parser.New()
 		astNode, err := parser.ParseOneStmt(sql, charset, collate)
 		if err != nil {
@@ -390,16 +385,13 @@ func (gs *tidbSession) Upgrude(ctx context.Context, currVersion, targetVersion i
 			return
 		}
 
+		var tblName string
 		// DML for upgrade includes `update` and `insert`
 		switch stmt := astNode.(type) {
 		case *ast.UpdateStmt:
-			log.Info("DML origin table name", zap.Any("table", stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema))
 			stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema = utils.TemporaryDBName(mysql.SystemDB)
-			log.Info("current table name", zap.Any("table", stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema))
-			tblName := stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.L
-			log.Info("DML", zap.String("table", tblName))
+			tblName = stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.L
 			if _, ok := restoreTblSet[tblName]; !ok {
-				log.Info("DML filter out", zap.String("table", tblName))
 				return
 			}
 			_, err = s.ExecuteStmt(ctx, stmt)
@@ -412,19 +404,19 @@ func (gs *tidbSession) Upgrude(ctx context.Context, currVersion, targetVersion i
 			execErr = errors.Trace(err)
 			return
 		}
-		log.Info("exec DML successfully", zap.String("sql", sql))
+		log.Info("exec DML successfully", zap.String("sql", sql), zap.String("table", tblName))
 	}
 
 	for _, b := range session.BootstrapVersion {
 		if b.Version <= currVersion || b.Version > targetVersion {
 			continue
 		}
-		log.Info("upgrade", zap.Int64("version", b.Version))
 		b.UpgradeFunc(gs.se, currVersion, doReentrantDDLInBR, mustExecuteInBR)
 		if execErr != nil {
 			log.Error("upgrade failed", zap.Error(execErr))
 			return errors.Trace(execErr)
 		}
+		log.Info("upgrade successfully", zap.Int64("version", b.Version))
 	}
 
 	return nil
