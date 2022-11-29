@@ -58,18 +58,19 @@ const (
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
-	FlagPiTRBatchCount = "pitr-batch-count"
-	FlagPiTRBatchSize  = "pitr-batch-size"
+	FlagPiTRBatchCount  = "pitr-batch-count"
+	FlagPiTRBatchSize   = "pitr-batch-size"
+	FlagPiTRConcurrency = "pitr-concurrency"
 
-	defaultPiTRBatchCount           = 16
-	defaultPiTRBatchSize            = 32 * 1024 * 1024
-	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 128
-	maxRestoreBatchSizeLimit        = 10240
-	defaultPDConcurrency            = 1
-	defaultBatchFlushInterval       = 16 * time.Second
-	defaultFlagDdlBatchSize         = 128
-	resetSpeedLimitRetryTimes       = 3
+	defaultPiTRBatchCount     = 8
+	defaultPiTRBatchSize      = 16 * 1024 * 1024
+	defaultRestoreConcurrency = 128
+	defaultPiTRConcurrency    = 16
+	maxRestoreBatchSizeLimit  = 10240
+	defaultPDConcurrency      = 1
+	defaultBatchFlushInterval = 16 * time.Second
+	defaultFlagDdlBatchSize   = 128
+	resetSpeedLimitRetryTimes = 3
 )
 
 const (
@@ -175,6 +176,7 @@ type RestoreConfig struct {
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -206,10 +208,9 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
-	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "")
-	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "")
-	_ = command.Flags().MarkHidden(FlagPiTRBatchCount)
-	_ = command.Flags().MarkHidden(FlagPiTRBatchSize)
+	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
+	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
+	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -242,6 +243,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -370,10 +374,18 @@ func (cfg *RestoreConfig) Adjust() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 {
-		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
-		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
+	if cfg.PitrConcurrency == 0 {
+		cfg.PitrConcurrency = defaultPiTRConcurrency
 	}
+	if cfg.PitrBatchCount == 0 {
+		cfg.PitrBatchCount = defaultPiTRBatchCount
+	}
+	if cfg.PitrBatchSize == 0 {
+		cfg.PitrBatchSize = defaultPiTRBatchSize
+	}
+
+	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
+	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
 
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
