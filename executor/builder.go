@@ -5302,6 +5302,10 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 			}
 			partitionIDs = append(partitionIDs, partitionID)
 		}
+		if b.Ti.PartitionTelemetry == nil {
+			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+		}
+		b.Ti.PartitionTelemetry.UseCompactTablePartition = true
 	}
 
 	return &CompactTableTiFlashExec{
