@@ -102,7 +102,7 @@ type autoIDAccessors struct {
 	access autoIDAccessor
 }
 
-const sepAutoIncVer = model.TableInfoVersion4 + 1
+const sepAutoIncVer = model.TableInfoVersion5
 
 // Get implements the interface AutoIDAccessors.
 func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
