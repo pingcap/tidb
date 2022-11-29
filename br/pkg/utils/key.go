@@ -163,7 +163,7 @@ func CloneSlice[T any](s []T) []T {
 // toClampIn:   |_____| |____|   |________________|
 // result:      |_____| |_|      |______________|
 // we are assuming the arguments are sorted by the start key and no overlaps.
-// you can call CollapseRanges to get key ranges fits this requirements.
+// you can call spans.Collapse to get key ranges fits this requirements.
 // Note: this algorithm is pretty like the `checkIntervalIsSubset`, can we get them together?
 func IntersectAll(s1 []kv.KeyRange, s2 []kv.KeyRange) []kv.KeyRange {
 	currentClamping := 0

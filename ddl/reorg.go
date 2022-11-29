@@ -234,7 +234,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		}
+
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
