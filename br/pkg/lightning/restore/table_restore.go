@@ -814,6 +814,7 @@ func (tr *TableRestore) postProcess(
 		}
 
 		if rc.dupIndicator != nil {
+			tr.logger.Debug("set dupIndicator", zap.Bool("has-duplicate", hasDupe))
 			*rc.dupIndicator = hasDupe
 		}
 
