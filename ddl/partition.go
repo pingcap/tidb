@@ -2276,12 +2276,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Reset original partitions, and keep DroppedDefinitions
 		tblInfo.Partition.Definitions = orgDefs
 
-		// TODO: Why is this not done last, after setting the job.SchemaState?
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
 		// modify placement settings
 		for _, def := range tblInfo.Partition.AddingDefinitions {
 			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
@@ -2340,6 +2334,24 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
+		tblInfo.Partition.DDLState = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Is really both StateDeleteOnly AND StateWriteOnly needed?
+		// If transaction A in WriteOnly inserts row 1 (into both new and old partition set)
+		// and then transaction B in DeleteOnly deletes that row (in both new and old)
+		// does really transaction B need to do the delete in the new partition?
+		// Yes, otherwise it would still be there when the WriteReorg happens,
+		// and WriteReorg would only copy existing rows to the new table, so unless it is
+		// deleted it would result in a ghost row!
+		// What about update then?
+		// Updates do not need to be handled for new partitions in DeleteOnly,
+		// since the correct data would still be available during Reorganize phase.
+		// BUT if the update results in adding in one partition and deleting in another,
+		// THEN the delete must still happen in the new partition set!
 	case model.StateDeleteOnly:
 		// This state is to confirm all servers can not see the new partitions when reorg is running,
 		// so that all deletes will be done in both old and new partitions when in either DeleteOnly
@@ -2375,6 +2387,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		job.SchemaState = model.StateWriteOnly
+		tblInfo.Partition.DDLState = model.StateWriteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteOnly:
@@ -2382,6 +2395,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
+		tblInfo.Partition.DDLState = model.StateWriteReorganization
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
