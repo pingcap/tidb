@@ -21,9 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sem"
@@ -112,11 +114,13 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
-	privs := c.funcDef.RequireDynamicPrivileges
-	if semPrivs := c.funcDef.SemRequireDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
-		privs = semPrivs
+	fn := c.funcDef.RequireDynamicPrivileges
+	if fn == nil {
+		return nil
 	}
 
+	semEnabled := sem.IsEnabled()
+	privs := fn(semEnabled)
 	if len(privs) == 0 {
 		return nil
 	}
@@ -127,7 +131,7 @@ func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 	for _, priv := range privs {
 		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
 			msg := priv
-			if !sem.IsEnabled() {
+			if !semEnabled {
 				msg = "SUPER or " + msg
 			}
 			return errSpecificAccessDenied.GenWithStackByArgs(msg)
@@ -181,6 +185,22 @@ func (b *extensionFuncSig) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 	}
 
 	return result, nil
+}
+
+func (b *extensionFuncSig) ConnectionInfo() *variable.ConnectionInfo {
+	return b.ctx.GetSessionVars().ConnectionInfo
+}
+
+func (b *extensionFuncSig) User() *auth.UserIdentity {
+	return b.ctx.GetSessionVars().User
+}
+
+func (b *extensionFuncSig) ActiveRoles() []*auth.RoleIdentity {
+	return b.ctx.GetSessionVars().ActiveRoles
+}
+
+func (b *extensionFuncSig) CurrentDB() string {
+	return b.ctx.GetSessionVars().CurrentDB
 }
 
 func init() {

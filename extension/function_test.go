@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -68,10 +69,64 @@ var customFunc2 = &extension.FunctionDef{
 	},
 }
 
-func TestInvokeFunc(t *testing.T) {
-	defer func() {
-		extension.Reset()
-	}()
+func TestExtensionFuncCtx(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	invoked := false
+	var user *auth.UserIdentity
+	var currentDB string
+	var activeRoles []*auth.RoleIdentity
+	var conn *variable.ConnectionInfo
+
+	require.NoError(t, extension.Register("test", extension.WithCustomFunctions([]*extension.FunctionDef{
+		{
+			Name:   "custom_get_ctx",
+			EvalTp: types.ETString,
+			EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+				require.False(t, invoked)
+				invoked = true
+				user = ctx.User()
+				currentDB = ctx.CurrentDB()
+				activeRoles = ctx.ActiveRoles()
+				conn = ctx.ConnectionInfo()
+				return "done", false, nil
+			},
+		},
+	})))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user u1@localhost")
+	tk.MustExec("create role r1")
+	tk.MustExec("grant r1 to u1@localhost")
+	tk.MustExec("grant ALL ON test.* to u1@localhost")
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	tk1.MustExec("set role r1")
+	tk1.MustExec("use test")
+	tk1.Session().GetSessionVars().ConnectionInfo = &variable.ConnectionInfo{
+		ConnectionID: 12345,
+		User:         "u1",
+	}
+
+	tk1.MustQuery("select custom_get_ctx()").Check(testkit.Rows("done"))
+
+	require.True(t, invoked)
+	require.NotNil(t, user)
+	require.Equal(t, *tk1.Session().GetSessionVars().User, *user)
+	require.Equal(t, "test", currentDB)
+	require.NotNil(t, conn)
+	require.Equal(t, *tk1.Session().GetSessionVars().ConnectionInfo, *conn)
+	require.Equal(t, 1, len(activeRoles))
+	require.Equal(t, auth.RoleIdentity{Username: "r1", Hostname: "%"}, *activeRoles[0])
+}
+
+func TestInvokeExtensionFunc(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
 
 	extension.Reset()
 	orgFuncList := expression.GetBuiltinList()
@@ -99,7 +154,7 @@ func TestInvokeFunc(t *testing.T) {
 	require.EqualError(t, tk2.ExecToErr("select custom_func2(1, 2)"), "[expression:1305]FUNCTION test.custom_func2 does not exist")
 }
 
-func TestFuncDynamicArgLen(t *testing.T) {
+func TestExtensionFuncDynamicArgLen(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
@@ -142,10 +197,8 @@ func TestFuncDynamicArgLen(t *testing.T) {
 	require.EqualError(t, tk.ExecToErr("select dynamic_arg_func(1, 2)"), expectedErrMsg)
 }
 
-func TestRegisterFunc(t *testing.T) {
-	defer func() {
-		extension.Reset()
-	}()
+func TestRegisterExtensionFunc(t *testing.T) {
+	defer extension.Reset()
 
 	// nil func
 	extension.Reset()
@@ -213,7 +266,7 @@ func checkFuncList(t *testing.T, orgList []string, customFuncs ...string) {
 	require.Equal(t, checkList, expression.GetBuiltinList())
 }
 
-func TestFuncPrivilege(t *testing.T) {
+func TestExtensionFuncPrivilege(t *testing.T) {
 	defer func() {
 		extension.Reset()
 		sem.Disable()
@@ -230,26 +283,37 @@ func TestFuncPrivilege(t *testing.T) {
 				},
 			},
 			{
-				Name:                     "custom_only_dyn_priv_func",
-				EvalTp:                   types.ETString,
-				RequireDynamicPrivileges: []string{"CUSTOM_DYN_PRIV_1"},
+				Name:   "custom_only_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					return []string{"CUSTOM_DYN_PRIV_1"}
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "abc", false, nil
 				},
 			},
 			{
-				Name:                        "custom_only_sem_dyn_priv_func",
-				EvalTp:                      types.ETString,
-				SemRequireDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				Name:   "custom_only_sem_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					if sem {
+						return []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"}
+					}
+					return nil
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "def", false, nil
 				},
 			},
 			{
-				Name:                        "custom_both_dyn_priv_func",
-				EvalTp:                      types.ETString,
-				RequireDynamicPrivileges:    []string{"CUSTOM_DYN_PRIV_1"},
-				SemRequireDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				Name:   "custom_both_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					if sem {
+						return []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"}
+					}
+					return []string{"CUSTOM_DYN_PRIV_1"}
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "ghi", false, nil
 				},

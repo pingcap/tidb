@@ -588,12 +588,12 @@ INSERT INTO ...;
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
 	tk := testkit.NewTestKit(t, store)
 
-	//check schema
+	// check schema
 	tk.MustQuery(`select COUNT(*) from information_schema.columns
 WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
 		Check(testkit.Rows("1"))
 
-	//check select
+	// check select
 	tk.MustQuery(`select ` + columnName +
 		` from information_schema.slow_query`).Check(testkit.Rows("1"))
 }
@@ -676,8 +676,14 @@ func TestSelectHiddenColumn(t *testing.T) {
 
 func TestFormatVersion(t *testing.T) {
 	// Test for defaultVersions.
-	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	defaultVersions := []string{
+		"5.7.25-TiDB-None",
+		"5.7.25-TiDB-8.0.18",
+		"5.7.25-TiDB-8.0.18-beta.1",
+		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
+		"5.7.25-TiDB-",
+		"5.7.25-TiDB-v4.0.0-TiDB-446"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
 	for i, v := range defaultVersions {
 		version := infoschema.FormatTiDBVersion(v, true)
 		require.Equal(t, defaultRes[i], version)
@@ -1387,16 +1393,19 @@ func TestTiDBTrx(t *testing.T) {
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	sm := &testkit.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
+	memDBTracker.Consume(19)
+	tk.Session().GetSessionVars().MemDBFootprint = memDBTracker
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		EntriesSize:      19,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",
 	}
+
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
 	sm.TxnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
@@ -1413,7 +1422,7 @@ func TestTiDBTrx(t *testing.T) {
 
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
 		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
@@ -1512,6 +1521,10 @@ func TestVariablesInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip test when concurrent DDL is disabled")
+	}
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")

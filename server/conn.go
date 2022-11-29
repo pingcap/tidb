@@ -1121,8 +1121,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
+		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
-		cc.ctx.GetSessionVars().ClearAlloc()
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
@@ -1391,6 +1391,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
 	case mysql.ComStmtPrepare:
+		// For issue 39132, same as ComQuery
+		if len(data) > 0 && data[len(data)-1] == 0 {
+			data = data[:len(data)-1]
+			dataStr = string(hack.String(data))
+		}
 		return cc.handleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
@@ -1864,11 +1869,13 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
-	sc := cc.ctx.GetSessionVars().StmtCtx
+	sessVars := cc.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+		cc.onExtensionSQLParseFailed(sql, err)
 		return err
 	}
 
@@ -1905,14 +1912,30 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
+			for _, stmt := range stmts {
+				cc.onExtensionStmtEnd(stmt, false, err)
+			}
 			return err
 		}
+		metrics.NumOfMultiQueryHistogram.Observe(float64(len(stmts)))
 	}
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
 	var retryable bool
+	var lastStmt ast.StmtNode
+	var expiredStmtTaskID uint64
 	for i, stmt := range stmts {
+		if lastStmt != nil {
+			cc.onExtensionStmtEnd(lastStmt, true, nil)
+		}
+		lastStmt = stmt
+
+		// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+		// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+		// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+		expiredStmtTaskID = sessVars.StmtCtx.TaskID
+
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
@@ -1952,6 +1975,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 		}
 	}
+
+	if lastStmt != nil {
+		cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
+	}
+
 	return err
 }
 

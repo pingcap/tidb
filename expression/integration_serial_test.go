@@ -3766,6 +3766,7 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
 	require.True(t, variable.EnableConcurrentDDL.Load())
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableConcurrentDDL.Load())

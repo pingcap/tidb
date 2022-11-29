@@ -566,6 +566,20 @@ type LoadStats struct {
 	Path string
 }
 
+// LockStats represents a lock stats for table
+type LockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// UnlockStats represents a unlock stats for table
+type UnlockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
@@ -573,6 +587,10 @@ type PlanReplayer struct {
 	Analyze  bool
 	Load     bool
 	File     string
+
+	Capture    bool
+	SQLDigest  string
+	PlanDigest string
 }
 
 // IndexAdvise represents a index advise plan.
@@ -729,7 +747,8 @@ func (e *Explain) RenderResult() error {
 			}
 			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
-				trace, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+				trace := cost.trace
 				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
 				data, err := json.Marshal(trace.factorCosts)
 				if err != nil {
@@ -869,8 +888,8 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl != nil && runtimeStatsColl.ExistsCopStats(explainID) {
 		copStats = runtimeStatsColl.GetCopStats(explainID)
 	}
-	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithLock(p.ID())
-	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithLock(p.ID())
+	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
+	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	return
 }
 
@@ -924,7 +943,9 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
-			costFormula = costVer2.formula
+			if costVer2.trace != nil {
+				costFormula = costVer2.trace.formula
+			}
 		} else {
 			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)

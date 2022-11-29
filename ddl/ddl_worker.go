@@ -1028,7 +1028,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if RunInGoTest {
 			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 			d.mu.RLock()
-			d.mu.hook.OnSchemaStateChanged()
+			d.mu.hook.OnSchemaStateChanged(schemaVer)
 			d.mu.RUnlock()
 		}
 
@@ -1287,6 +1287,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionAlterTTLInfo:
+		ver, err = onTTLInfoChange(d, t, job)
+	case model.ActionAlterTTLRemove:
+		ver, err = onTTLInfoRemove(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
