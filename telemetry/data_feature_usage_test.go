@@ -548,3 +548,21 @@ func TestGlobalMemoryControl(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.EnableGlobalMemoryControl)
 }
+
+func TestIndexMergeUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, 0)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int, c2 int, index idx1(c1), index idx2(c2))")
+	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 and c2 = 1")
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, 1)
+	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 or c2 = 1")
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, 2)
+	tk.MustExec("select /*+ no_index_merge() */ * from t1 where c1 = 1 or c2 = 1")
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, 2)
+}

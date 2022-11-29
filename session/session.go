@@ -148,6 +148,8 @@ var (
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
+
+	telemetryIndexMerge = metrics.TelemetryIndexMerge
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3576,6 +3578,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsageNonRecurCTE.Inc()
 	} else {
 		telemetryCTEUsageNotCTE.Inc()
+	}
+
+	if ti.UseIndexMerge {
+		telemetryIndexMerge.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
