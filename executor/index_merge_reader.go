@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"reflect"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
@@ -799,26 +798,19 @@ type intersectionProcessWorker struct {
 	memTracker          *memory.Tracker
 	batchSize           int
 
-	// When rowDelta == memConsumeBatchSize, Consume(memUsageDelta)
-	memUsageDelta int64
+	// When rowDelta == memConsumeBatchSize, Consume(memUsage)
 	rowDelta      int64
-
-	// For Consume(-totalMemUsage)
-	totalMemUsage int64
+	mapUsageDelta int64
 }
 
 func (w *intersectionProcessWorker) consumeMemDelta() {
-	w.memTracker.Consume(w.memUsageDelta)
-	w.memUsageDelta = 0
+	w.memTracker.Consume(w.mapUsageDelta + w.rowDelta*int64(unsafe.Sizeof(int(0))))
+	w.mapUsageDelta = 0
 	w.rowDelta = 0
 }
 
 func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Context, workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
-	defer func() {
-		if w.rowDelta > 0 {
-			w.consumeMemDelta()
-		}
-	}()
+	defer w.memTracker.Detach()
 
 	for task := range w.workerCh {
 		var ok bool
@@ -842,15 +834,16 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 
 		logutil.BgLogger().Debug("intersectionProcessWorker handle tasks", zap.Int("workerID", w.workerID),
 			zap.Int("task.handles", len(task.handles)), zap.Int64("rowDelta", rowDelta))
-		if rowDelta > 0 {
-			w.rowDelta += rowDelta
-			w.memUsageDelta += mapDelta + (rowDelta * int64(unsafe.Sizeof(reflect.Int64)))
-			w.totalMemUsage += w.memUsageDelta
-		}
+
+		w.mapUsageDelta += mapDelta
+		w.rowDelta += rowDelta
 		if w.rowDelta >= int64(w.batchSize) {
 			w.consumeMemDelta()
 		}
 		failpoint.Inject("testIndexMergeIntersectionWorkerPanic", nil)
+	}
+	if w.rowDelta > 0 {
+		w.consumeMemDelta()
 	}
 
 	// We assume the result of intersection is small, so no need to track memory.
@@ -942,12 +935,14 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	wg := util.WaitGroupWrapper{}
 	errCh := make(chan bool, workerCnt)
 	for i := 0; i < workerCnt; i++ {
+		tracker := memory.NewTracker(w.indexMerge.id, -1)
+		tracker.AttachTo(w.indexMerge.memTracker)
 		worker := &intersectionProcessWorker{
 			workerID:            i,
 			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[*int]),
 			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge:          w.indexMerge,
-			memTracker:          w.indexMerge.memTracker,
+			memTracker:          tracker,
 			batchSize:           batchSize,
 		}
 		wg.RunWithRecover(func() {
@@ -956,11 +951,10 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}, w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh))
 		workers = append(workers, worker)
 	}
-	var processWorkerErr bool
 	for task := range fetchCh {
 		select {
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
-		case processWorkerErr = <-errCh:
+		case <-errCh:
 			break
 		}
 	}
@@ -968,15 +962,6 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		close(processWorker.workerCh)
 	}
 	wg.Wait()
-	if processWorkerErr {
-		return
-	}
-
-	var totalMemUsage int64
-	for _, processWorker := range workers {
-		totalMemUsage += processWorker.totalMemUsage
-	}
-	w.indexMerge.memTracker.Consume(-(totalMemUsage))
 }
 
 func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *indexMergeTableTask, worker string, extraCh chan bool) func(r interface{}) {
