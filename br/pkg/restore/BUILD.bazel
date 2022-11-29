@@ -120,7 +120,7 @@ go_test(
     embed = [":restore"],
     flaky = True,
     race = "on",
-    shard_count = 20,
+    shard_count = 50,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/conn",
