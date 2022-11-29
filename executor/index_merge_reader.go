@@ -830,6 +830,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		var mapDelta int64
 		var rowDelta int64
 		for _, h := range task.handles {
+			// Use *int to avoid Get() again.
 			if cntPtr, ok := hMap.Get(h); ok {
 				(*cntPtr)++
 			} else {
@@ -853,19 +854,19 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	}
 
 	// We assume the result of intersection is small, so no need to track memory.
-	intersecteds := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
+	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
 	for parTblIdx, hMap := range w.handleMapsPerWorker {
 		hMap.Range(func(h kv.Handle, val interface{}) bool {
 			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
-				intersecteds[parTblIdx] = append(intersecteds[parTblIdx], h)
+				intersectedMap[parTblIdx] = append(intersectedMap[parTblIdx], h)
 			}
 			return true
 		})
 	}
 
 	tasks := make([]*indexMergeTableTask, 0, len(w.handleMapsPerWorker))
-	for parTblIdx, intersected := range intersecteds {
+	for parTblIdx, intersected := range intersectedMap {
 		// Split intersected[parTblIdx] to avoid task is too large.
 		for len(intersected) > 0 {
 			length := w.batchSize
