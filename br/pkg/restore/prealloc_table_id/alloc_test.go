@@ -51,6 +51,12 @@ func TestAllocator(t *testing.T) {
 			successfullyAllocated: []int64{},
 			shouldAllocatedTo:     5,
 		},
+		{
+			tableIDs:              []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
+			hasAllocatedTo:        3,
+			successfullyAllocated: []int64{5, 6},
+			shouldAllocatedTo:     7,
+		},
 	}
 
 	run := func(t *testing.T, c Case) {

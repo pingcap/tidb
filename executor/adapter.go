@@ -191,12 +191,13 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive      bool
-	UseRecursive         bool
-	UseMultiSchemaChange bool
-	UesExchangePartition bool
-	PartitionTelemetry   *PartitionTelemetryInfo
-	AccountLockTelemetry *AccountLockTelemetryInfo
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UesExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -214,6 +215,7 @@ type PartitionTelemetryInfo struct {
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
@@ -479,7 +481,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
-		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
 	e, err := a.buildExecutor()
@@ -509,10 +511,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
+		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
+		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {
@@ -607,29 +613,49 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 	return nil
 }
 
+// handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
+//  1. Build delete/update executor for foreign key on delete/update behaviour.
+//     a. Construct delete/update AST. We used to try generated SQL string first and then parse the SQL to get AST,
+//     but we need convert Datum to string, there may be some risks here, since assert_eq(datum_a, parse(datum_a.toString())) may be broken.
+//     so we chose to construct AST directly.
+//     b. Build plan by the delete/update AST.
+//     c. Build executor by the delete/update plan.
+//  2. Execute the delete/update executor.
+//  3. Close the executor.
+//  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
+//  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
-	if len(fkc.fkValues) == 0 {
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
-	e, err := fkc.buildExecutor(ctx)
-	if err != nil || e == nil {
-		return err
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
 	}
-	if err := e.Open(ctx); err != nil {
-		terror.Call(e.Close)
-		return err
-	}
-	err = Next(ctx, e, newFirstChunk(e))
-	if err != nil {
-		return err
-	}
-	// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
-	// then the later fk cascade executors can see the mem-buffer changes.
-	a.Ctx.StmtCommit()
-	return a.handleForeignKeyTrigger(ctx, e, depth+1)
 }
 
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
@@ -684,7 +710,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-		if sc != nil && rs == nil {
+		if handled && sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.Detach()
 			}
@@ -816,7 +842,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	}()
 	var rows []chunk.Row
 	var err error
-	req := newFirstChunk(e)
+	req := tryNewCacheChunk(e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -863,7 +889,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = a.next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, tryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
 	}
@@ -1430,8 +1456,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1604,6 +1630,11 @@ func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	return normalized, planDigest
 }
 
+// GetEncodedPlan returned same as getEncodedPlan
+func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
+	return getEncodedPlan(stmtCtx, genHint)
+}
+
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
@@ -1701,8 +1732,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)

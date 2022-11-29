@@ -744,7 +744,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
 
 	// test variables for cost model ver2
-	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBCostModelVer)))
 	tk.MustExec("set tidb_cost_model_version=3")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '3'"))
 	tk.MustExec("set tidb_cost_model_version=0")
@@ -830,6 +830,20 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 9999")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1024")) // max value is 1024
 
+	// test variable 'tidb_opt_prefix_index_single_scan'
+	// global scope
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_opt_prefix_index_single_scan = 0")
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_prefix_index_single_scan = 1")
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session tidb_opt_prefix_index_single_scan = 0")
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_prefix_index_single_scan = 1")
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1"))
+
 	// test tidb_opt_range_max_size
 	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("67108864"))
 	tk.MustExec("set global tidb_opt_range_max_size = -1")
@@ -839,6 +853,23 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
+
+	// test for password validation
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("8"))
+	tk.MustExec("SET GLOBAL validate_password.length = 3")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("4"))
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 2")
+	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("6"))
+
+	// test tidb_cdc_write_source
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_cdc_write_source = 2")
+	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("2"))
+	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
+	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -1393,14 +1424,11 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
-	tk.MustExec("set @@global.validate_password_number_count=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
+	tk.MustExec("set @@global.validate_password.number_count=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.number_count value: '-1'"))
 
-	tk.MustExec("set @@global.validate_password_length=-1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
-
-	tk.MustExec("set @@global.validate_password_length=8")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@global.validate_password.length=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password.length value: '-1'"))
 
 	err = tk.ExecToErr("set @@tx_isolation=''")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
@@ -2008,4 +2036,39 @@ func TestSetTiFlashFastScanVariable(t *testing.T) {
 
 	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
 	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+}
+
+func TestSetPlanCacheMemoryMonitor(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=1;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
+}
+
+func TestSetChunkReuseVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+
+	// error value
+	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
 }

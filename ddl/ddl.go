@@ -979,7 +979,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -1094,8 +1093,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
 				} else {
 					for key, warning := range historyJob.ReorgMeta.Warnings {
-						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
+						keyCount := historyJob.ReorgMeta.WarningsCount[key]
+						if keyCount == 1 {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						} else {
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
+							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
 					}
 				}
@@ -1193,6 +1197,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 		})
 	}
 
+	if variable.EnableMDL.Load() && !toConcurrentDDL {
+		return errors.New("can not disable concurrent ddl when metadata lock is enabled")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	d.waiting.Store(true)
@@ -1209,20 +1217,40 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	}
 	if err == nil {
 		variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+		logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL))
+	} else {
+		logutil.BgLogger().Warn("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	}
-	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
 }
 
 // SwitchMDL enables MDL or disable DDL.
 func (d *ddl) SwitchMDL(enable bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+
+	// Disable MDL for test.
+	if enable && !variable.DefTiDBEnableConcurrentDDL {
+		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+		sess, err := d.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
+			return nil
+		}
+		defer d.sessPool.put(sess)
+		se := newSession(sess)
+		_, err = se.execute(ctx, sql, "disableMDL")
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
+		}
+		return nil
+	}
+
 	isEnableBefore := variable.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
 
 	// Check if there is any DDL running.
 	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
@@ -1241,7 +1269,22 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
-	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		oldEnable, _, err := m.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if oldEnable != enable {
+			err = m.SetMetadataLock(enable)
+		}
+		return err
+	})
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+		return err
+	}
+	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable))
 	return nil
 }
 

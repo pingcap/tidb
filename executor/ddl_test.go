@@ -1112,63 +1112,23 @@ func TestAutoRandomTableOption(t *testing.T) {
 	require.Contains(t, err.Error(), autoid.AutoRandomRebaseNotApplicable)
 }
 
-// Test filter different kind of allocators.
-// In special ddl type, for example:
-// 1: ActionRenameTable             : it will abandon all the old allocators.
-// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
-// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
-// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
-func TestFilterDifferentAllocators(t *testing.T) {
+func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);")
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 0;")
+	tk.MustGetErrCode("insert into t values (100, 2);", errno.ErrInvalidAutoRandom)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 1;")
+	tk.MustExec("insert into t values (100, 2);")
+	tk.MustQuery("select b from t order by b;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("alter table t modify column a bigint auto_random(6);")
 
-	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(1), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_increment.
-	tk.MustExec("alter table t auto_increment 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(2), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_random.
-	tk.MustExec("alter table t auto_random_base 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(3000000), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rename table.
-	tk.MustExec("rename table t to t1")
-	tk.MustExec("insert into t1 values()")
-	res := tk.MustQuery("select b from t1")
-	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Greater(t, strInt64, int64(3000002))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t1")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Greater(t, orderedHandles[0], int64(3000001))
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint, b bigint auto_random(4, 32), primary key (b, a) clustered)")
+	tk.MustExec("insert into t (a) values (1);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1"))
 }
 
 func TestMaxHandleAddIndex(t *testing.T) {
@@ -1598,4 +1558,59 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+func TestCreateTableWithTTL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 5 DAY TTL_ENABLE = 'ON'"))
+	tk.MustExec("DROP TABLE t")
+
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY", "[ddl:8148]Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_ENABLE = 'ON'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+
+	// when multiple ttl and ttl_enable configs are submitted, only the last one will be handled
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'"))
+	tk.MustExec("DROP TABLE t")
+}
+
+func TestAlterTTLInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY")
+	tk.MustExec("ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'ON'"))
+
+	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL = `wrong_type` + INTERVAL 2 YEAR", "[ddl:8148]Field 'wrong_type' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN updated_at", "[ddl:8149]Cannot drop column 'updated_at': needed in TTL config")
+	tk.MustGetErrMsg("ALTER TABLE t CHANGE updated_at updated_at_new INT", "[ddl:8148]Field 'updated_at_new' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustExec("ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_2` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+
+	tk.MustExec("ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+
+	tk.MustExec("ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 3 YEAR TTL_ENABLE = 'OFF'"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL", "[ddl:8200]Unsupported multi schema change for alter table ttl")
+
+	tk.MustExec("ALTER TABLE t REMOVE TTL")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
 }

@@ -111,16 +111,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client := backup.NewBackupClient(ctx, mgr)
 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
-	if err = client.SetStorage(ctx, backend, &opts); err != nil {
+	if err = client.SetStorageAndCheckNotInUse(ctx, backend, &opts); err != nil {
 		return errors.Trace(err)
 	}
 	err = client.SetLockFile(ctx)
@@ -186,7 +183,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
-	progress := g.StartProgress(ctx, "backup", int64(storeCount), !cfg.LogProgress)
+	progress := g.StartProgress(ctx, "backup", int64(storeCount)*100, !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)

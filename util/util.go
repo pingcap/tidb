@@ -106,6 +106,11 @@ func Str2Int64Map(str string) map[int64]struct{} {
 
 // GenLogFields generate log fields.
 func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
+		return nil
+	}
+	defer info.RefCountOfStmtCtx.Decrease()
+
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
@@ -151,7 +156,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
-	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+	if memTracker := info.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
 	}
 

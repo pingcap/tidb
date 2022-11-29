@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	rpprof "runtime/pprof"
 	"strings"
 	"sync/atomic"
@@ -144,8 +143,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		return
 	}
 	var memoryUsage uint64
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ReadMemStats()
 	if record.isServerMemoryLimitSet {
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
@@ -238,12 +236,12 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 	}
 }
 
-func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
+func getPlanString(info *util.ProcessInfo) string {
 	var buf strings.Builder
-	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	rows := info.PlanExplainRows
+	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
+		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4]))
 	}
 	return buf.String()
 }
@@ -268,21 +266,22 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
-	if len(list) > 10 {
-		list = list[:10]
-	}
 	var buf strings.Builder
 	oomAction := variable.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
-	for i, info := range list {
+	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
+		info := list[i]
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
+		if fields == nil {
+			continue
+		}
 		fields = append(fields, zap.String("tidb_mem_oom_action", oomAction))
 		fields = append(fields, zap.Uint64("tidb_server_memory_limit", serverMemoryLimit))
 		fields = append(fields, zap.Int64("tidb_mem_quota_query", info.OOMAlarmVariablesInfo.SessionMemQuotaQuery))
 		fields = append(fields, zap.Int("tidb_analyze_version", info.OOMAlarmVariablesInfo.SessionAnalyzeVersion))
 		fields = append(fields, zap.Bool("tidb_enable_rate_limit_action", info.OOMAlarmVariablesInfo.SessionEnabledRateLimitAction))
-		fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
+		fields = append(fields, zap.String("current_analyze_plan", getPlanString(info)))
 		for _, field := range fields {
 			switch field.Type {
 			case zapcore.StringType:
@@ -296,6 +295,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 			}
 			buf.WriteString("\n")
 		}
+		totalCnt--
 	}
 	buf.WriteString("\n")
 	return buf
@@ -303,7 +303,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
 	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
+		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
 	}, pinfo)
 }
 

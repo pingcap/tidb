@@ -98,6 +98,10 @@ const (
 	ActionMultiSchemaChange             ActionType = 61
 	ActionFlashbackCluster              ActionType = 62
 	ActionRecoverSchema                 ActionType = 63
+	ActionReorganizePartition           ActionType = 64
+
+	ActionAlterTTLInfo   ActionType = 65
+	ActionAlterTTLRemove ActionType = 67
 )
 
 var actionMap = map[ActionType]string{
@@ -160,7 +164,9 @@ var actionMap = map[ActionType]string{
 	ActionMultiSchemaChange:             "alter table multi-schema change",
 	ActionFlashbackCluster:              "flashback cluster",
 	ActionRecoverSchema:                 "flashback schema",
-
+	ActionReorganizePartition:           "alter table reorganize partition",
+	ActionAlterTTLInfo:                  "alter table ttl",
+	ActionAlterTTLRemove:                "alter table no_ttl",
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
@@ -254,6 +260,19 @@ func (tp ReorgType) NeedMergeProcess() bool {
 	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
+// String implements fmt.Stringer interface.
+func (tp ReorgType) String() string {
+	switch tp {
+	case ReorgTypeTxn:
+		return "txn"
+	case ReorgTypeLitMerge:
+		return "ingest"
+	case ReorgTypeTxnMerge:
+		return "txn-merge"
+	}
+	return ""
+}
+
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`
@@ -297,6 +316,7 @@ type MultiSchemaInfo struct {
 	AddIndexes    []CIStr `json:"-"`
 	DropIndexes   []CIStr `json:"-"`
 	AlterIndexes  []CIStr `json:"-"`
+	ForeignKeys   []CIStr `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
 	PositionColumns []CIStr `json:"-"`
@@ -813,7 +833,8 @@ func (job *Job) IsRollbackable() bool {
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
 	case ActionFlashbackCluster:
-		if job.SchemaState == StateWriteReorganization {
+		if job.SchemaState == StateWriteReorganization ||
+			job.SchemaState == StateWriteOnly {
 			return false
 		}
 	}

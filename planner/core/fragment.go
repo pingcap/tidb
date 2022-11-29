@@ -406,7 +406,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 			return nil, nil, errors.Trace(err)
 		}
 		partitionIDAndRanges[i].ID = pid
-		partitionIDAndRanges[i].KeyRanges = kvRanges
+		partitionIDAndRanges[i].KeyRanges = kvRanges.FirstPartitionRange()
 		allPartitionsIDs[i] = pid
 	}
 	return &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}, allPartitionsIDs, nil
@@ -417,5 +417,5 @@ func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(ts *Physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}, nil
+	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges.FirstPartitionRange()}, nil
 }

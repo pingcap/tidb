@@ -2197,6 +2197,42 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) WhereExpr() ExprNode {
+	if n.Select == nil {
+		return nil
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil
+	}
+	return s.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) SetWhereExpr(e ExprNode) {
+	if n.Select == nil {
+		return
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return
+	}
+	s.Where = e
+}
+
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *InsertStmt) TableRefsJoin() (*Join, bool) {
+	if n.Select == nil {
+		return nil, false
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil, false
+	}
+	return s.From.TableRefs, true
+}
+
 // DeleteStmt is a statement to delete rows from table.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
@@ -2373,10 +2409,9 @@ func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
-func (n *DeleteStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *DeleteStmt) TableRefsJoin() (*Join, bool) {
+	return n.TableRefs.TableRefs, true
 }
 
 const (
@@ -2389,12 +2424,13 @@ type ShardableDMLStmt = interface {
 	StmtNode
 	WhereExpr() ExprNode
 	SetWhereExpr(ExprNode)
-	// TableSource returns the *only* target table source in the statement.
-	TableSource() (table *TableSource, ok bool)
+	// TableRefsJoin returns the table refs in the statement.
+	TableRefsJoin() (refs *Join, ok bool)
 }
 
 var _ ShardableDMLStmt = &DeleteStmt{}
 var _ ShardableDMLStmt = &UpdateStmt{}
+var _ ShardableDMLStmt = &InsertStmt{}
 
 type NonTransactionalDMLStmt struct {
 	dmlNode
@@ -2611,10 +2647,9 @@ func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
-func (n *UpdateStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *UpdateStmt) TableRefsJoin() (*Join, bool) {
+	return n.TableRefs.TableRefs, true
 }
 
 // Limit is the limit clause.
@@ -2700,6 +2735,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowStatsLocked
 	ShowHistogramsInFlight
 	ShowColumnStatsUsage
 	ShowPlugins
@@ -2871,6 +2907,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ShowStatsMeta:
 		ctx.WriteKeyWord("STATS_META")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsLocked:
+		ctx.WriteKeyWord("STATS_LOCKED")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}

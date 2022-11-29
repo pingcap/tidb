@@ -59,26 +59,26 @@ var (
 //
 
 var (
-	mMetaPrefix              = []byte("m")
-	mNextGlobalIDKey         = []byte("NextGlobalID")
-	mSchemaVersionKey        = []byte("SchemaVersionKey")
-	mDBs                     = []byte("DBs")
-	mDBPrefix                = "DB"
-	mTablePrefix             = "Table"
-	mSequencePrefix          = "SID"
-	mSeqCyclePrefix          = "SequenceCycle"
-	mTableIDPrefix           = "TID"
-	mIncIDPrefix             = "IID"
-	mRandomIDPrefix          = "TARID"
-	mBootstrapKey            = []byte("BootstrapKey")
-	mSchemaDiffPrefix        = "Diff"
-	mPolicies                = []byte("Policies")
-	mPolicyPrefix            = "Policy"
-	mPolicyGlobalID          = []byte("PolicyGlobalID")
-	mPolicyMagicByte         = CurrentMagicByteVer
-	mDDLTableVersion         = []byte("DDLTableVersion")
-	mConcurrentDDL           = []byte("concurrentDDL")
-	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
+	mMetaPrefix       = []byte("m")
+	mNextGlobalIDKey  = []byte("NextGlobalID")
+	mSchemaVersionKey = []byte("SchemaVersionKey")
+	mDBs              = []byte("DBs")
+	mDBPrefix         = "DB"
+	mTablePrefix      = "Table"
+	mSequencePrefix   = "SID"
+	mSeqCyclePrefix   = "SequenceCycle"
+	mTableIDPrefix    = "TID"
+	mIncIDPrefix      = "IID"
+	mRandomIDPrefix   = "TARID"
+	mBootstrapKey     = []byte("BootstrapKey")
+	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+	mDDLTableVersion  = []byte("DDLTableVersion")
+	mConcurrentDDL    = []byte("concurrentDDL")
+	mMetaDataLock     = []byte("metadataLock")
 )
 
 const (
@@ -622,37 +622,6 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 	return bytes.Equal(v, []byte("2")), nil
 }
 
-// TSRange store a range time
-type TSRange struct {
-	StartTS uint64
-	EndTS   uint64
-}
-
-// SetFlashbackHistoryTSRange store flashback time range to TiKV
-func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TSRange) error {
-	timeRangeByte, err := json.Marshal(timeRange)
-	if err != nil {
-		return err
-	}
-	return errors.Trace(m.txn.Set(mFlashbackHistoryTSRange, timeRangeByte))
-}
-
-// GetFlashbackHistoryTSRange get flashback time range from TiKV
-func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
-	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
-	if err != nil {
-		return nil, err
-	}
-	if len(timeRangeByte) == 0 {
-		return []TSRange{}, nil
-	}
-	err = json.Unmarshal(timeRangeByte, &timeRange)
-	if err != nil {
-		return nil, err
-	}
-	return timeRange, nil
-}
-
 // SetConcurrentDDL set the concurrent DDL flag.
 func (m *Meta) SetConcurrentDDL(b bool) error {
 	var data []byte
@@ -672,6 +641,29 @@ func (m *Meta) IsConcurrentDDL() (bool, error) {
 	}
 
 	return len(val) == 0 || bytes.Equal(val, []byte("1")), nil
+}
+
+// SetMetadataLock sets the metadata lock.
+func (m *Meta) SetMetadataLock(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return errors.Trace(m.txn.Set(mMetaDataLock, data))
+}
+
+// GetMetadataLock gets the metadata lock.
+func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
+	val, err := m.txn.Get(mMetaDataLock)
+	if err != nil {
+		return false, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return false, true, nil
+	}
+	return bytes.Equal(val, []byte("1")), false, nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,

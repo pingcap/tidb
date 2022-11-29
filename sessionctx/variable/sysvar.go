@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
@@ -165,7 +164,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -301,6 +300,10 @@ var defaultSysVars = []*SysVar{
 		s.MetricSchemaStep = TidbOptInt64(val, DefTiDBMetricSchemaStep)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBCDCWriteSource, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: 15, SetSession: func(s *SessionVars, val string) error {
+		s.CDCWriteSource = uint64(TidbOptInt(val, 0))
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBMetricSchemaRangeDuration, Value: strconv.Itoa(DefTiDBMetricSchemaRangeDuration), skipInit: true, Type: TypeUnsigned, MinValue: 10, MaxValue: 60 * 60 * 60, SetSession: func(s *SessionVars, val string) error {
 		s.MetricSchemaRangeDuration = TidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 		return nil
@@ -348,6 +351,9 @@ var defaultSysVars = []*SysVar{
 			return s.LastPlanReplayerToken, nil
 		},
 	},
+	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
@@ -484,6 +490,86 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordEnable, Value: Off, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: ValidatePasswordPolicy, Value: "MEDIUM", Type: TypeEnum, PossibleValues: []string{"LOW", "MEDIUM", "STRONG"}},
+	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: On, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			numberCount, specialCharCount, mixedCaseCount := PasswordValidtaionNumberCount.Load(), PasswordValidationSpecialCharCount.Load(), PasswordValidationMixedCaseCount.Load()
+			length, err := strconv.ParseInt(normalizedValue, 10, 32)
+			if err != nil {
+				return "", err
+			}
+			if minLength := numberCount + specialCharCount + 2*mixedCaseCount; int32(length) < minLength {
+				return strconv.FormatInt(int64(minLength), 10), nil
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatInt(int64(PasswordValidationLength.Load()), 10), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: ValidatePasswordMixedCaseCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, numberCount, specialCharCount := PasswordValidationLength.Load(), PasswordValidtaionNumberCount.Load(), PasswordValidationSpecialCharCount.Load()
+			mixedCaseCount, err := strconv.ParseInt(normalizedValue, 10, 32)
+			if err != nil {
+				return "", err
+			}
+			if minLength := numberCount + specialCharCount + 2*int32(mixedCaseCount); length < minLength {
+				PasswordValidationLength.Store(minLength)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationMixedCaseCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatInt(int64(PasswordValidationMixedCaseCount.Load()), 10), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, specialCharCount, mixedCaseCount := PasswordValidationLength.Load(), PasswordValidationSpecialCharCount.Load(), PasswordValidationMixedCaseCount.Load()
+			numberCount, err := strconv.ParseInt(normalizedValue, 10, 32)
+			if err != nil {
+				return "", err
+			}
+			if minLength := int32(numberCount) + specialCharCount + 2*mixedCaseCount; length < minLength {
+				PasswordValidationLength.Store(minLength)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidtaionNumberCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatInt(int64(PasswordValidtaionNumberCount.Load()), 10), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: ValidatePasswordSpecialCharCount, Value: "1", Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			length, numberCount, mixedCaseCount := PasswordValidationLength.Load(), PasswordValidtaionNumberCount.Load(), PasswordValidationMixedCaseCount.Load()
+			specialCharCount, err := strconv.ParseInt(normalizedValue, 10, 32)
+			if err != nil {
+				return "", err
+			}
+			if minLength := numberCount + int32(specialCharCount) + 2*mixedCaseCount; length < minLength {
+				PasswordValidationLength.Store(minLength)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			PasswordValidationSpecialCharCount.Store(int32(TidbOptInt64(val, 1)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatInt(int64(PasswordValidationSpecialCharCount.Load()), 10), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -694,6 +780,7 @@ var defaultSysVars = []*SysVar{
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
 	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(topsqlstate.DefTiDBTopSQLEnable), Type: TypeBool, AllowEmpty: true, GlobalConfigName: GlobalConfigEnableTopSQL},
+	{Scope: ScopeGlobal, Name: TiDBSourceID, Value: "1", Type: TypeInt, MinValue: 1, MaxValue: 15, GlobalConfigName: GlobalConfigSourceID},
 	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxTimeSeriesCount, Value: strconv.Itoa(topsqlstate.DefTiDBTopSQLMaxTimeSeriesCount), Type: TypeInt, MinValue: 1, MaxValue: 5000, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(topsqlstate.GlobalState.MaxStatementCount.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
@@ -739,64 +826,69 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatFloat(GOGCTunerThreshold.Load(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
-			if err != nil {
-				return "", err
-			}
+			floatValue := tidbOptFloat64(normalizedValue, DefTiDBGOGCTunerThreshold)
 			globalMemoryLimitTuner := gctuner.GlobalMemoryLimitTuner.GetPercentage()
 			if floatValue < 0 && floatValue > 0.9 {
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
 			}
-			if globalMemoryLimitTuner < floatValue+0.05 {
+			// globalMemoryLimitTuner must not be 0. it will be 0 when tidb_server_memory_limit_gc_trigger is not set during startup.
+			if globalMemoryLimitTuner != 0 && globalMemoryLimitTuner < floatValue+0.05 {
 				return "", errors.New("tidb_gogc_tuner_threshold should be less than tidb_server_memory_limit_gc_trigger - 0.05")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			factor, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return err
-			}
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
+			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
+			}
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: strconv.FormatUint(DefTiDBServerMemoryLimit, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: DefTiDBServerMemoryLimit, Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return memory.ServerMemoryLimit.String(), nil
+			return memory.ServerMemoryLimitOriginText.Load(), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
+			_, str, err := parseMemoryLimit(s, normalizedValue, originalValue)
 			if err != nil {
 				return "", err
 			}
-			if intVal > 0 && intVal < (512<<20) { // 512 MB
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
-				intVal = 512 << 20
-			}
-			return strconv.FormatUint(intVal, 10), nil
+			return str, nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			intVal, err := strconv.ParseUint(val, 10, 64)
+			bt, str, err := parseMemoryLimit(s, val, val)
 			if err != nil {
 				return err
 			}
-			memory.ServerMemoryLimit.Store(intVal)
+			memory.ServerMemoryLimitOriginText.Store(str)
+			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return memory.ServerMemoryLimitSessMinSize.String(), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
-				return "", err
+				bt, str := parseByteSize(normalizedValue)
+				if str != "" {
+					intVal = bt
+				} else {
+					return "", err
+				}
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
@@ -813,20 +905,26 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
-				return "", err
+				perc, str := parsePercentage(normalizedValue)
+				if len(str) != 0 {
+					floatValue = float64(perc) / 100
+				} else {
+					return "", err
+				}
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
-			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
+			if floatValue < 0.51 || floatValue > 1 { // 51% ~ 100%
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
-			if floatValue < gogcTunerThreshold+0.05 {
+			// gogcTunerThreshold must not be 0. it will be 0 when tidb_gogc_tuner_threshold is not set during startup.
+			if gogcTunerThreshold != 0 && floatValue < gogcTunerThreshold+0.05 {
 				return "", errors.New("tidb_server_memory_limit_gc_trigger should be greater than tidb_gogc_tuner_threshold + 0.05")
 			}
 
@@ -939,6 +1037,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheMemoryMonitor, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheMemoryMonitor), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePreparedPlanCacheMemoryMonitor = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		f, err := strconv.ParseFloat(val, 64)
 		if err == nil {
@@ -1008,14 +1110,6 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableNoopVariables.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBAuthSigningCert, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		sessionstates.SetCertPath(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBAuthSigningKey, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		sessionstates.SetKeyPath(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableGCAwareMemoryTrack, Value: BoolToOnOff(DefEnableTiDBGCAwareMemoryTrack), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		memory.EnableGCAwareMemoryTrack.Store(TiDBOptOn(val))
 		return nil
@@ -1038,10 +1132,19 @@ var defaultSysVars = []*SysVar{
 		MemoryUsageAlarmKeepRecordNum.Store(TidbOptInt64(val, DefMemoryUsageAlarmKeepRecordNum))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
+		return strconv.FormatInt(MemoryUsageAlarmKeepRecordNum.Load(), 10), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnablePlanReplayerCapture = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return BoolToOnOff(vars.EnablePlanReplayerCapture), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgRowFormat(TidbOptInt64(val, DefTiDBRowFormatV2))
 		return nil
@@ -1657,7 +1760,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == IntOnly {
 			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
 		}
@@ -1855,6 +1958,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.Itoa(DefTiDBMemQuotaQuery), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemTracker.SetBytesLimit(s.MemQuotaQuery)
 		return nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		intVal := TidbOptInt64(normalizedValue, DefTiDBMemQuotaQuery)
@@ -1931,7 +2035,7 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
 			if !s.ConstraintCheckInPlacePessimistic {
@@ -1951,6 +2055,11 @@ var defaultSysVars = []*SysVar{
 		s.RangeMaxSize = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
+		MinValue: 1, MaxValue: uint64(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota), SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
+			return nil
+		}},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
 		SetSession: func(s *SessionVars, val string) error {
@@ -1958,6 +2067,33 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExternalTS, Value: strconv.FormatInt(DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		ts, err := parseTSFromNumberOrTime(s, val)
+		if err != nil {
+			return err
+		}
+		return SetExternalTimestamp(ctx, ts)
+	}, GetGlobal: func(ctx context.Context, s *SessionVars) (string, error) {
+		ts, err := GetExternalTimestamp(ctx)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(int(ts)), err
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableExternalTSRead = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableReuseCheck = TiDBOptOn(val)
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2074,10 +2210,6 @@ const (
 	BlockEncryptionMode = "block_encryption_mode"
 	// WaitTimeout is the name for 'wait_timeout' system variable.
 	WaitTimeout = "wait_timeout"
-	// ValidatePasswordNumberCount is the name of 'validate_password_number_count' system variable.
-	ValidatePasswordNumberCount = "validate_password_number_count"
-	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
-	ValidatePasswordLength = "validate_password_length"
 	// Version is the name of 'version' system variable.
 	Version = "version"
 	// VersionComment is the name of 'version_comment' system variable.
@@ -2100,8 +2232,6 @@ const (
 	BinlogOrderCommits = "binlog_order_commits"
 	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
 	MasterVerifyChecksum = "master_verify_checksum"
-	// ValidatePasswordCheckUserName is the name for 'validate_password_check_user_name' system variable.
-	ValidatePasswordCheckUserName = "validate_password_check_user_name"
 	// SuperReadOnly is the name for 'super_read_only' system variable.
 	SuperReadOnly = "super_read_only"
 	// SQLNotes is the name for 'sql_notes' system variable.
@@ -2268,4 +2398,21 @@ const (
 	RandSeed2 = "rand_seed2"
 	// SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
 	SQLRequirePrimaryKey = "sql_require_primary_key"
+	// ValidatePasswordEnable turns on/off the validation of password.
+	ValidatePasswordEnable = "validate_password.enable"
+	// ValidatePasswordPolicy specifies the password policy enforced by validate_password.
+	ValidatePasswordPolicy = "validate_password.policy"
+	// ValidatePasswordCheckUserName controls whether validate_password compares passwords to the user name part of
+	// the effective user account for the current session
+	ValidatePasswordCheckUserName = "validate_password.check_user_name"
+	// ValidatePasswordLength specified the minimum number of characters that validate_password requires passwords to have
+	ValidatePasswordLength = "validate_password.length"
+	// ValidatePasswordMixedCaseCount specified the minimum number of lowercase and uppercase characters that validate_password requires
+	ValidatePasswordMixedCaseCount = "validate_password.mixed_case_count"
+	// ValidatePasswordNumberCount specified the minimum number of numeric (digit) characters that validate_password requires
+	ValidatePasswordNumberCount = "validate_password.number_count"
+	// ValidatePasswordSpecialCharCount specified the minimum number of nonalphanumeric characters that validate_password requires
+	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
+	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
+	ValidatePasswordDictionary = "validate_password.dictionary"
 )

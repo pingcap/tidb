@@ -226,8 +226,8 @@ var (
 	ErrInvalidJSONCharset = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONCharset)
 	// ErrInvalidJSONData means invalid JSON data.
 	ErrInvalidJSONData = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONData)
-	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
-	ErrInvalidJSONPathWildcard = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathWildcard)
+	// ErrInvalidJSONPathMultipleSelection means invalid JSON path that contain wildcard characters or range selection.
+	ErrInvalidJSONPathMultipleSelection = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathMultipleSelection)
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
 	ErrInvalidJSONContainsPathType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
 	// ErrJSONDocumentNULLKey means that json's key is null
