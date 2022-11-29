@@ -104,18 +104,22 @@ func (r *mockRows) Rows() []chunk.Row {
 }
 
 type mockSessionPool struct {
-	factory func() pools.Resource
+	t           *testing.T
+	se          *mockSession
+	lastSession *mockSession
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
-	return p.factory(), nil
+	se := *(p.se)
+	p.lastSession = &se
+	return p.lastSession, nil
 }
 
 func (p *mockSessionPool) Put(pools.Resource) {}
 
-func newMockSessionPool(factory func() pools.Resource) sessionPool {
+func newMockSessionPool(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
-		factory: factory,
+		se: newMockSession(t, tbl...),
 	}
 }
 
@@ -129,6 +133,7 @@ type mockSession struct {
 	execErr            error
 	evalExpire         time.Time
 	resetTimeZoneCalls int
+	closed             bool
 }
 
 func newMockSession(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSession {
@@ -144,11 +149,12 @@ func newMockSession(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSession {
 }
 
 func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
-	infoschema.NewSessionTables()
+	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
 }
 
 func (s *mockSession) GetSessionVars() *variable.SessionVars {
+	require.False(s.t, s.closed)
 	if s.sessionVars == nil {
 		s.sessionVars = variable.NewSessionVars(nil)
 		s.sessionVars.TimeZone = time.UTC
@@ -157,6 +163,7 @@ func (s *mockSession) GetSessionVars() *variable.SessionVars {
 }
 
 func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	require.False(s.t, s.closed)
 	if s.executeSQL != nil {
 		return s.executeSQL(ctx, sql, args)
 	}
@@ -164,19 +171,24 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 }
 
 func (s *mockSession) RunInTxn(_ context.Context, fn func() error) (err error) {
+	require.False(s.t, s.closed)
 	return fn()
 }
 
 func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
+	require.False(s.t, s.closed)
 	s.resetTimeZoneCalls++
 	return nil
 }
 
 func (s *mockSession) EvalExpireTime(_ context.Context, _ *ttl.PhysicalTable, _ time.Time) (expire time.Time, err error) {
+	require.False(s.t, s.closed)
 	return s.evalExpire, nil
 }
 
-func (s *mockSession) Close() {}
+func (s *mockSession) Close() {
+	s.closed = true
+}
 
 func TestExecuteSQLWithCheck(t *testing.T) {
 	ctx := context.TODO()

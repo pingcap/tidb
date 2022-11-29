@@ -72,8 +72,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	if err != nil {
 		return t.result(err)
 	}
-	sess := newTableSession(rawSess, t.tbl, t.expire)
+	defer rawSess.Close()
 
+	sess := newTableSession(rawSess, t.tbl, t.expire)
 	generator, err := ttl.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
 	if err != nil {
 		return t.result(err)
@@ -230,7 +231,7 @@ func (w *ttlScanWorker) loop() error {
 func (w *ttlScanWorker) handleScanTask(ctx context.Context, task *ttlScanTask) {
 	result := task.doScan(ctx, w.delCh, w.sessionPool)
 	if result == nil {
-		result = &ttlScanTaskExecResult{task: task}
+		result = task.result(nil)
 	}
 
 	w.baseWorker.Lock()

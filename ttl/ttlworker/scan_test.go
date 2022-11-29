@@ -19,11 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,9 +29,7 @@ type mockScanWorker struct {
 	t        *testing.T
 	delCh    chan *ttlDeleteTask
 	notifyCh chan interface{}
-	is       infoschema.InfoSchema
-	rows     []chunk.Row
-	execErr  error
+	sessPoll *mockSessionPool
 }
 
 func newMockScanWorker(t *testing.T) *mockScanWorker {
@@ -42,18 +37,10 @@ func newMockScanWorker(t *testing.T) *mockScanWorker {
 		t:        t,
 		delCh:    make(chan *ttlDeleteTask),
 		notifyCh: make(chan interface{}, 10),
-		is:       newMockInfoSchema(),
+		sessPoll: newMockSessionPool(t),
 	}
 
-	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, newMockSessionPool(func() pools.Resource {
-		s := newMockSession(t)
-		s.sessionInfoSchema = w.is
-		s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-			return w.rows, w.execErr
-		}
-		return s
-	}))
-
+	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, w.sessPoll)
 	require.Equal(t, workerStatusCreated, w.Status())
 	require.False(t, w.Idle())
 	result, ok := w.PollTaskResult()
@@ -118,12 +105,12 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 }
 
 func (w *mockScanWorker) setOneRowResult(tbl *ttl.PhysicalTable, val ...interface{}) {
-	w.is = newMockInfoSchema(tbl.TableInfo)
-	w.rows = newMockRows(tbl.KeyColumnTypes...).Append(w.t, val...).Rows()
+	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
+	w.sessPoll.se.rows = newMockRows(tbl.KeyColumnTypes...).Append(w.t, val...).Rows()
 }
 
 func (w *mockScanWorker) clearInfoSchema() {
-	w.is = newMockInfoSchema()
+	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema()
 }
 
 func (w *mockScanWorker) stopWithWait() {
