@@ -1330,7 +1330,7 @@ func delayForAsyncCommit() {
 	duration := cfg.SafeWindow + cfg.AllowedClockDrift
 	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
 		zap.Duration("duration", duration))
-	time.Sleep(duration)
+	//time.Sleep(duration)
 }
 
 var (
