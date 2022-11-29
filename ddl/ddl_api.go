@@ -2619,7 +2619,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return nil
 	}
 	jobs.Args = append(jobs.Args, args)
-	jobs.Args = append(jobs.Args, ctx.GetSessionVars().ForeignKeyChecks)
+	// Disable foreign key check when batch create tables.
+	jobs.Args = append(jobs.Args, false)
 
 	err = d.DoDDLJob(ctx, jobs)
 	if err != nil {
