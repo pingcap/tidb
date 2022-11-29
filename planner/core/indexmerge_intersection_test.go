@@ -150,7 +150,6 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 			SQL     string
 			Plan    []string
 			Result  []string
-			Warning []string
 		}
 	)
 	planSuiteData := core.GetIndexMergeSuiteData()
@@ -170,10 +169,10 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+		// Expect no warnings.
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
 }
