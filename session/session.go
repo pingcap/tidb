@@ -2735,8 +2735,8 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 	if err != nil {
 		return passwordLocking, err
 	}
-	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE " + 
-	" USER = %? AND HOST = %? for update`, user, host)
+	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`,
+		user, host)
 	if err != nil {
 		return passwordLocking, err
 	}
