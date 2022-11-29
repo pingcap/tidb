@@ -364,6 +364,23 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 					res.Value = val
 					res.Existence = len(val) != 0
 				}
+			} else if req.ReturnValues {
+				if item != nil {
+					val, err1 := item.ValueCopy(nil)
+					if err1 != nil {
+						return nil, err1
+					}
+					res.Value = val
+					res.Existence = len(val) != 0
+				}
+			} else if req.CheckExistence {
+				if item != nil {
+					val, err1 := item.ValueCopy(nil)
+					if err1 != nil {
+						return nil, err1
+					}
+					res.Existence = len(val) != 0
+				}
 			}
 
 			resp.Results = append(resp.Results, res)
