@@ -2316,8 +2316,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 		PartitionExpr() (*tables.PartitionExpr, error)
 	}
 
-	p := parserPool.Get().(*parser.Parser)
-	defer parserPool.Put(p)
+	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
 	for _, dbInfo := range is.AllSchemas() {
 		for _, t := range is.SchemaTables(dbInfo.Name) {
