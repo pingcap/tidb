@@ -1143,6 +1143,20 @@ func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
 }
 
+// IsTempIndexKey check whether the input key is for a temp index.
+func IsTempIndexKey(indexKey []byte) bool {
+	var (
+		indexIDKey  []byte
+		indexID     int64
+		tempIndexID int64
+	)
+	// Get encoded indexID from key, Add uint64 8 byte length.
+	indexIDKey = indexKey[prefixLen : prefixLen+8]
+	indexID = codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
+	tempIndexID = int64(TempIndexPrefix) | indexID
+	return tempIndexID == indexID
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
 //

@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -569,6 +570,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+// TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -702,6 +704,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
+	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -1585,6 +1588,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
 		StmtCtx:               s.sessionVars.StmtCtx,
+		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
@@ -2446,7 +2450,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	ctx := context.Background()
-	inTxn := s.GetSessionVars().InTxn()
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	if err = s.PrepareTxnCtx(ctx); err != nil {
@@ -2463,12 +2466,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
+	// Rollback even if err is nil.
+	s.rollbackOnError(ctx)
+
 	if err != nil {
 		return
-	}
-	if !inTxn {
-		// We could start a transaction to build the prepare executor before, we should rollback it here.
-		s.RollbackTxn(ctx)
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
@@ -2506,6 +2508,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, nil
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
+	s.SetMemoryFootprintChangeHook()
 	return &s.txn, err
 }
 
@@ -3132,7 +3135,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
+	sessionBindHandle := bindinfo.NewSessionBindHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
@@ -3657,6 +3660,20 @@ func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
+}
+
+// SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
+// Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
+func (s *session) SetMemoryFootprintChangeHook() {
+	hook := func(mem uint64) {
+		if s.sessionVars.MemDBFootprint == nil {
+			tracker := memory.NewTracker(memory.LabelForMemDB, -1)
+			tracker.AttachTo(s.sessionVars.MemTracker)
+			s.sessionVars.MemDBFootprint = tracker
+		}
+		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+	}
+	s.txn.SetMemoryFootprintChangeHook(hook)
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
