@@ -9,14 +9,12 @@
             "id": "Update_4",
             "estRows": "N/A",
             "taskType": "root",
-            "accessObject": "",
             "operatorInfo": "N/A",
             "subOperators": [
               {
                 "id": "IndexReader_7",
                 "estRows": "10.00",
                 "taskType": "root",
-                "accessObject": "",
                 "operatorInfo": "index:IndexRangeScan_6",
                 "subOperators": [
                   {
@@ -24,8 +22,7 @@
                     "estRows": "10.00",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "operatorInfo": "range:[2,2], keep order:false, stats:pseudo",
-                    "subOperators": []
+                    "operatorInfo": "range:[2,2], keep order:false, stats:pseudo"
                   }
                 ]
               }
@@ -40,9 +37,7 @@
             "id": "Insert_1",
             "estRows": "N/A",
             "taskType": "root",
-            "accessObject": "",
-            "operatorInfo": "N/A",
-            "subOperators": []
+            "operatorInfo": "N/A"
           }
         ]
       },
@@ -53,30 +48,26 @@
             "id": "StreamAgg_20",
             "estRows": "1.00",
             "taskType": "root",
-            "accessObject": "",
             "operatorInfo": "funcs:count(Column#8)->Column#3",
             "subOperators": [
               {
                 "id": "TableReader_21",
                 "estRows": "1.00",
                 "taskType": "root",
-                "accessObject": "",
                 "operatorInfo": "data:StreamAgg_8",
                 "subOperators": [
                   {
                     "id": "StreamAgg_8",
                     "estRows": "1.00",
                     "taskType": "cop[tikv]",
-                    "accessObject": "",
-                    "operatorInfo": "funcs:count(1)->Column#8",
+                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#8",
                     "subOperators": [
                       {
                         "id": "TableFullScan_18",
                         "estRows": "10000.00",
                         "taskType": "cop[tikv]",
                         "accessObject": "table:t1",
-                        "operatorInfo": "keep order:false, stats:pseudo",
-                        "subOperators": []
+                        "operatorInfo": "keep order:false, stats:pseudo"
                       }
                     ]
                   }
@@ -93,7 +84,6 @@
             "id": "TableReader_5",
             "estRows": "10000.00",
             "taskType": "root",
-            "accessObject": "",
             "operatorInfo": "data:TableFullScan_4",
             "subOperators": [
               {
@@ -101,8 +91,7 @@
                 "estRows": "10000.00",
                 "taskType": "cop[tikv]",
                 "accessObject": "table:t1",
-                "operatorInfo": "keep order:false, stats:pseudo",
-                "subOperators": []
+                "operatorInfo": "keep order:false, stats:pseudo"
               }
             ]
           }
@@ -116,8 +105,7 @@
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-            "accessObject": "",
-            "executeInfo": "time:201.3µs, loops:1",
+            "executeInfo": "time:3.5ms, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
@@ -127,10 +115,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "accessObject": "",
-                "executeInfo": "time:190µs, loops:1, cop_task: {num: 1, max: 141µs, proc_keys: 0, rpc_num: 1, rpc_time: 124.2µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "executeInfo": "time:3.47ms, loops:1, cop_task: {num: 1, max: 3.38ms, proc_keys: 0, tot_proc: 3ms, rpc_num: 1, rpc_time: 3.34ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
                 "operatorInfo": "index:IndexFullScan_35",
-                "memoryInfo": "166 Bytes",
+                "memoryInfo": "171 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -139,11 +126,10 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:113.7µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:3.3ms, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
-                    "diskInfo": "N/A",
-                    "subOperators": []
+                    "diskInfo": "N/A"
                   }
                 ]
               },
@@ -152,8 +138,7 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "accessObject": "",
-                "executeInfo": "time:8.38µs, loops:1, cop_task: {num: 1, max: 143.6µs, proc_keys: 0, rpc_num: 1, rpc_time: 127.9µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "executeInfo": "time:14µs, loops:1, cop_task: {num: 1, max: 772.9µs, proc_keys: 0, rpc_num: 1, rpc_time: 735.7µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
                 "operatorInfo": "index:IndexFullScan_33",
                 "memoryInfo": "166 Bytes",
                 "diskInfo": "N/A",
@@ -164,11 +149,10 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-                    "executeInfo": "tikv_task:{time:105.3µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:168.4µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
-                    "diskInfo": "N/A",
-                    "subOperators": []
+                    "diskInfo": "N/A"
                   }
                 ]
               }
