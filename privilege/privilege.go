@@ -59,7 +59,7 @@ type Manager interface {
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
 	// VerificationAccountAutoLock Verification Account Auto Lock
-	VerificationAccountAutoLock(user string, host string) (string, error)
+	VerifyAccountAutoLock(user string, host string) (string, error)
 
 	// IsEnableAccountAutoLock Account enable Auto Lock
 	IsEnableAccountAutoLock(user string, host string) bool
