@@ -195,32 +195,14 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)
 
-	// column count mismatch
-	mockedUserTI := userTI.Clone()
-	mockedUserTI.Columns = mockedUserTI.Columns[:len(mockedUserTI.Columns)-1]
-	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   tmpSysDB,
-		Info: mockedUserTI,
-	}})
-	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
-
 	// column order mismatch(success)
-	mockedUserTI = userTI.Clone()
+	mockedUserTI := userTI.Clone()
 	mockedUserTI.Columns[4], mockedUserTI.Columns[5] = mockedUserTI.Columns[5], mockedUserTI.Columns[4]
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
-
-	// missing column
-	mockedUserTI = userTI.Clone()
-	mockedUserTI.Columns[0].Name = model.NewCIStr("new-name")
-	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   tmpSysDB,
-		Info: mockedUserTI,
-	}})
-	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// incompatible column type
 	mockedUserTI = userTI.Clone()
