@@ -742,6 +742,11 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
+
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
@@ -1389,7 +1394,12 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	if sc == s.StmtCtx {
 		sc = &s.cachedStmtCtx[1]
 	}
-	*sc = stmtctx.StatementContext{}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
 	return sc
 }
 
