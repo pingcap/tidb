@@ -265,6 +265,12 @@ type PlanReplayerStmt struct {
 	Stmt    StmtNode
 	Analyze bool
 	Load    bool
+
+	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
+	Capture    bool
+	SQLDigest  string
+	PlanDigest string
+
 	// File is used to store 2 cases:
 	// 1. plan replayer load 'file';
 	// 2. plan replayer dump explain <analyze> 'file'
@@ -282,6 +288,13 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Load {
 		ctx.WriteKeyWord("PLAN REPLAYER LOAD ")
 		ctx.WriteString(n.File)
+		return nil
+	}
+	if n.Capture {
+		ctx.WriteKeyWord("PLAN REPLAYER CAPTURE ")
+		ctx.WriteString(n.SQLDigest)
+		ctx.WriteKeyWord(" ")
+		ctx.WriteString(n.PlanDigest)
 		return nil
 	}
 	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
@@ -3648,9 +3661,13 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteName(n.QBName.String())
 	}
+	if n.HintName.L == "qb_name" && len(n.Tables) == 0 {
+		ctx.WritePlain(")")
+		return nil
+	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3678,6 +3695,16 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain(", ")
 			}
 			ctx.WriteName(index.String())
+		}
+	case "qb_name":
+		if len(n.Tables) > 0 {
+			ctx.WritePlain(", ")
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(". ")
+				}
+				table.Restore(ctx)
+			}
 		}
 	case "use_toja", "use_cascades":
 		if n.HintData.(bool) {

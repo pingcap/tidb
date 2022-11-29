@@ -6297,7 +6297,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -6429,7 +6429,7 @@
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -6916,7 +6916,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -6936,7 +6936,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -6958,7 +6958,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -6980,7 +6980,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7003,7 +7003,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7025,7 +7025,7 @@
           "Projection 1.00 root  test.t1.a, Column#14",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  │   ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │   │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  │   └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7046,8 +7046,8 @@
         "SQL": "select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "│ ├─IndexJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "│ ├─IndexHashJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:max(Column#20)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
           "│ │ │   └─TableReader 3.00 root  data:HashAgg",
@@ -7076,7 +7076,7 @@
         "SQL": "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "Projection 4.69 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
-          "└─IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "└─IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "  ├─HashJoin(Build) 3.75 root  inner join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, Column#13)]",
           "  │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "  │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:max(Column#18)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
@@ -7102,8 +7102,8 @@
         "SQL": "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "│ ├─IndexJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "│ ├─IndexHashJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:max(Column#20)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
           "│ │ │   └─TableReader 3.00 root  data:HashAgg",
@@ -7131,8 +7131,8 @@
         "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "│ ├─IndexJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "│ ├─IndexHashJoin(Build) 3.00 root  inner join, inner:IndexLookUp, outer key:Column#13, inner key:test.t1.a, equal cond:eq(Column#13, test.t1.a), eq(test.t3.b, test.t1.b)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:max(Column#20)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
           "│ │ │   └─TableReader 3.00 root  data:HashAgg",
@@ -7161,7 +7161,7 @@
         "SQL": "select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "│ ├─HashJoin(Build) 3.00 root  inner join, equal:[eq(test.t3.b, test.t1.b)], other cond:gt(test.t1.a, Column#13)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:min(Column#17)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
@@ -7189,7 +7189,7 @@
         "SQL": "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "Projection 4.69 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
-          "└─IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "└─IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "  ├─HashJoin(Build) 3.75 root  inner join, equal:[eq(test.t1.b, test.t3.b)], other cond:gt(test.t1.a, Column#13)",
           "  │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "  │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:min(Column#18)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
@@ -7215,7 +7215,7 @@
         "SQL": "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "│ ├─HashJoin(Build) 3.00 root  inner join, equal:[eq(test.t3.b, test.t1.b)], other cond:gt(test.t1.a, Column#13)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:min(Column#17)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
@@ -7242,7 +7242,7 @@
         "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
         "Plan": [
           "HashJoin 4.69 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "│ ├─HashJoin(Build) 3.00 root  inner join, equal:[eq(test.t3.b, test.t1.b)], other cond:gt(test.t1.a, Column#13)",
           "│ │ ├─Selection(Build) 2.40 root  not(isnull(Column#13))",
           "│ │ │ └─HashAgg 3.00 root  group by:test.t3.b, funcs:min(Column#17)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
@@ -7270,7 +7270,7 @@
         "SQL": "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3)",
         "Plan": [
           "Projection 5.86 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
-          "└─IndexJoin 5.86 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "└─IndexHashJoin 5.86 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "  ├─HashJoin(Build) 4.69 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
           "  │ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "  │ │ └─IndexReader 3.00 root  index:StreamAgg",
@@ -7293,8 +7293,8 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "│ │ └─IndexReader 3.00 root  index:StreamAgg",
           "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
@@ -7313,8 +7313,8 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "│ │ └─IndexReader 3.00 root  index:StreamAgg",
           "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
@@ -7335,8 +7335,8 @@
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "│ │ └─IndexReader 3.00 root  index:StreamAgg",
           "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
@@ -7357,8 +7357,8 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "│ │ └─IndexReader 3.00 root  index:StreamAgg",
           "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
@@ -7379,8 +7379,8 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
           "│ │ └─IndexReader 3.00 root  index:StreamAgg",
           "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
@@ -7726,7 +7726,7 @@
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7739,7 +7739,7 @@
         "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7755,7 +7755,7 @@
         "SQL": "select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7768,7 +7768,7 @@
         "SQL": "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7784,7 +7784,7 @@
         "SQL": "select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7800,7 +7800,7 @@
         "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",
@@ -7816,7 +7816,7 @@
         "SQL": "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
           "Projection 3.75 root  test.t1.a, <nil>->Column#14",
-          "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "└─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
           "  └─IndexReader(Probe) 3.75 root  index:Selection",

@@ -94,9 +94,11 @@ func TestTiflashUsage(t *testing.T) {
 	require.Equal(t, telemetry.CurrentTiflashTableScanCount.String(), "0")
 	require.Equal(t, telemetry.CurrentTiflashTableScanWithFastScanCount.String(), "0")
 
-	tk.MustExec("set session tidb_isolation_read_engines='tiflash';select count(*) from t")
+	tk.MustExec("set session tidb_isolation_read_engines='tiflash';")
+	tk.MustQuery(`select count(*) from t`)
 	tk.MustExec(`set @@session.tiflash_fastscan=ON`)
-	tk.MustExec(`set session tidb_isolation_read_engines="tiflash";select count(*) from test.t`)
+	tk.MustExec(`set session tidb_isolation_read_engines="tiflash";`)
+	tk.MustQuery(`select count(*) from test.t`)
 
 	tk.Session().Close()
 	require.Equal(t, telemetry.CurrentTiflashTableScanCount.String(), "2")
