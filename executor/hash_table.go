@@ -117,7 +117,7 @@ type hashRowContainer struct {
 	chkBuf *chunk.Chunk
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
 	c := &hashRowContainer{
