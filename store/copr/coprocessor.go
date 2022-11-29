@@ -15,7 +15,6 @@
 package copr
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -53,7 +52,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -121,10 +119,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
-			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
-			})
-			if !isSorted {
+			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
@@ -138,8 +133,27 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	})
 
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	var (
+		tasks []*copTask
+		err   error
+	)
+	buildTaskFunc := func(ranges []kv.KeyRange) error {
+		keyRanges := NewKeyRanges(ranges)
+		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		if err != nil {
+			return err
+		}
+		if len(tasks) == 0 {
+			tasks = tasksFromRanges
+			return nil
+		}
+		tasks = append(tasks, tasksFromRanges...)
+		return nil
+	}
+	// Here we build the task by partition, not directly by region.
+	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+	// Keep it split by partition would be more safe.
+	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"
