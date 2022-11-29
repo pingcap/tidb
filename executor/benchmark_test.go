@@ -934,12 +934,14 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	defaultValues := make([]types.Datum, e.buildWorker.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.probeWorkers[i].workerID = i
-		e.probeWorkers[i].sessCtx = e.ctx
-		e.probeWorkers[i].hashJoinCtx = e.hashJoinCtx
-		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
-		e.probeWorkers[i].probeKeyColIdx = probeKeysColIdx
+		e.probeWorkers[i] = &probeWorker{
+			workerID:    i,
+			sessCtx:     e.ctx,
+			hashJoinCtx: e.hashJoinCtx,
+			joiner: newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
+			probeKeyColIdx: probeKeysColIdx,
+		}
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
