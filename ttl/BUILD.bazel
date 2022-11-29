@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl",
     visibility = ["//visibility:public"],
     deps = [
+        "//infoschema",
         "//kv",
         "//parser/ast",
         "//parser/format",
@@ -17,7 +18,7 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//sessionctx",
-        "//sessionctx/variable",
+        "//sessiontxn",
         "//table/tables",
         "//types",
         "//util/chunk",
