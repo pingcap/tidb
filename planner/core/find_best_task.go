@@ -1911,6 +1911,10 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	return is
 }
 
+// isPointGetConditions indicates whether the conditions are point-get-able.
+// eg: create table t(a int, b int,c int unique, primary (a,b))
+// select * from t where a = 1 and b = 1 and c =1;
+// the datasource can access by primary key(a,b) or unique key (c) which are both point-get-able
 func (ds *DataSource) isPointGetConditions() bool {
 	t, _ := ds.is.TableByID(ds.physicalTableID)
 	columns := map[string]struct{}{}
@@ -1948,7 +1952,7 @@ func (ds *DataSource) findPKOrUniqueIndexMatchColumns(columns map[string]struct{
 		if idx.HasPrefixIndex() {
 			continue
 		}
-		if len(idx.Columns) != len(columns) {
+		if len(idx.Columns) > len(columns) {
 			continue
 		}
 		flag := true
