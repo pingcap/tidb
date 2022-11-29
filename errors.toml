@@ -66,6 +66,11 @@ error = '''
 restore met a invalid peer
 '''
 
+["BR:EBS:ErrRestoreRegionWithoutPeer"]
+error = '''
+restore met a region without any peer
+'''
+
 ["BR:EBS:ErrRestoreTotalKVMismatch"]
 error = '''
 restore total tikvs mismatch

@@ -372,6 +372,7 @@ type RecoverRegion struct {
 // 2. build a leader list for all region during the tikv startup
 // 3. get max allocate id
 func (recovery *Recovery) MakeRecoveryPlan() error {
+	storeBalanceScore := make(map[uint64]int, len(recovery.allStores))
 	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
 	var regions = make(map[uint64][]*RecoverRegion, 0)
@@ -410,16 +411,20 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 			}
 		} else {
 			// Generate normal commands.
-			log.Debug("detected valid peer", zap.Uint64("region id", regionId))
-			for i, peer := range peers {
-				log.Debug("make plan", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: i == 0}
-				// sorted by log term -> last index -> commit index in a region
-				if plan.AsLeader {
-					log.Debug("as leader peer", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
-					recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
-				}
+			log.Debug("detected valid region", zap.Uint64("region id", regionId))
+			// calc the leader candidates
+			leaderCandidates, err := LeaderCandidates(peers)
+			if err != nil {
+				log.Warn("region without peer", zap.Uint64("region id", regionId))
+				return errors.Trace(err)
 			}
+
+			// select the leader base on tikv storeBalanceScore
+			leader := SelectRegionLeader(storeBalanceScore, leaderCandidates)
+			log.Debug("as leader peer", zap.Uint64("store id", leader.StoreId), zap.Uint64("region id", leader.RegionId))
+			plan := &recovpb.RecoverRegionRequest{RegionId: leader.RegionId, AsLeader: true}
+			recovery.RecoveryPlan[leader.StoreId] = append(recovery.RecoveryPlan[leader.StoreId], plan)
+			storeBalanceScore[leader.StoreId] += 1
 		}
 	}
 	return nil

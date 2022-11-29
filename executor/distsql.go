@@ -724,6 +724,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {
 		return nil
@@ -808,7 +811,6 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 			indexScanBasicStats: &execdetails.BasicRuntimeStats{},
 			Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -876,7 +878,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
-			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, w.idxLookup.stats.indexScanBasicStats)
+			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(idxID)
 		}
 	}
 	for {
