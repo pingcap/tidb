@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -91,8 +93,9 @@ type Tracker struct {
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
 	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
 	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
-	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
-	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
+	NeedKillReceived    sync.Once
+	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -316,6 +319,7 @@ func (t *Tracker) Detach() {
 		parent.actionMuForSoftLimit.actionOnExceed = nil
 		parent.actionMuForSoftLimit.Unlock()
 		parent.NeedKill.Store(false)
+		parent.NeedKillReceived = sync.Once{}
 	}
 	parent.remove(t)
 	t.mu.Lock()
@@ -449,6 +453,11 @@ func (t *Tracker) Consume(bs int64) {
 	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
 		if sessionRootTracker.NeedKill.Load() {
+			sessionRootTracker.NeedKillReceived.Do(
+				func() {
+					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
+						zap.Uint64("connID", sessionRootTracker.SessionID))
+				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session
