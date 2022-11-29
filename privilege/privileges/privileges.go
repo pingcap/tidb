@@ -361,14 +361,12 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 // Generate AccountAutoLock Error
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
-
 	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
 		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
 		"consecutive failed logins.", user, host, lockTime,
 		remainTime, failedLoginAttempts))
 	return ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host,
 		lockTime, remainTime, failedLoginAttempts)
-
 }
 
 // VerifyAccountAutoLock implements the Manager interface.
