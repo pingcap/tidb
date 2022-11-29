@@ -976,10 +976,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	for _, processWorker := range workers {
 		totalMemUsage += processWorker.totalMemUsage
 	}
-	defer func() {
-		w.indexMerge.memTracker.Consume(-(totalMemUsage))
-	}()
-
+	w.indexMerge.memTracker.Consume(-(totalMemUsage))
 }
 
 func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *indexMergeTableTask, worker string, extraCh chan bool) func(r interface{}) {
