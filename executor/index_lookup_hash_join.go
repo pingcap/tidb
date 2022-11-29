@@ -134,7 +134,6 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.finished.Store(false)
 	return nil
@@ -288,6 +287,9 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 
 // Close implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}

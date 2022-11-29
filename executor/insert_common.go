@@ -1097,7 +1097,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 			for _, fkc := range e.fkChecks {
 				fkc.stats = e.stats.FKCheckStats
 			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}
