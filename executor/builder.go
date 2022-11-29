@@ -4906,7 +4906,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
 	if plan.IndexInfo != nil {
@@ -5302,6 +5301,10 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 			}
 			partitionIDs = append(partitionIDs, partitionID)
 		}
+		if b.Ti.PartitionTelemetry == nil {
+			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+		}
+		b.Ti.PartitionTelemetry.UseCompactTablePartition = true
 	}
 
 	return &CompactTableTiFlashExec{

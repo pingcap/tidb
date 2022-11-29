@@ -85,7 +85,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	}
 
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false))
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -1547,7 +1547,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
 			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.Allocators{alloc}
+				return autoid.NewAllocators(false, alloc)
 			}
 			// If the session is not in a txn, for example, in "show create table", use the original allocator.
 			// Otherwise the would be a nil pointer dereference.
@@ -1557,8 +1557,9 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 
 	// Replace the row id allocator with the one in session variables.
 	sessAlloc := ctx.GetSessionVars().IDAllocator
-	retAllocs := make([]autoid.Allocator, 0, len(t.allocs))
-	copy(retAllocs, t.allocs)
+	allocs := t.allocs.Allocs
+	retAllocs := make([]autoid.Allocator, 0, len(allocs))
+	copy(retAllocs, allocs)
 
 	overwritten := false
 	for i, a := range retAllocs {
@@ -1571,7 +1572,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if !overwritten {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
-	return retAllocs
+	return autoid.NewAllocators(t.allocs.SepAutoInc, retAllocs...)
 }
 
 // Type implements table.Table Type interface.
@@ -1925,7 +1926,7 @@ func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
-	for _, alloc := range allocs {
+	for _, alloc := range allocs.Allocs {
 		if alloc.GetType() == autoid.SequenceType {
 			return alloc, nil
 		}

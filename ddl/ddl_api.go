@@ -2152,7 +2152,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
-	_, err := tables.TableFromMeta(nil, tblInfo)
+	_, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
 	if err != nil {
 		return err
 	}
@@ -2493,7 +2493,13 @@ func (d *ddl) createTableWithInfoPost(
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
 		newEnd := tbInfo.AutoIncID - 1
-		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.RowIDAllocType); err != nil {
+		var allocType autoid.AllocatorType
+		if tbInfo.SepAutoInc() {
+			allocType = autoid.AutoIncrementType
+		} else {
+			allocType = autoid.RowIDAllocType
+		}
+		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -3361,7 +3367,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					}
 					err = d.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
+					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoIncrementType, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
@@ -3492,6 +3498,10 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
 		actionType = model.ActionRebaseAutoID
+	case autoid.AutoIncrementType:
+		actionType = model.ActionRebaseAutoID
+	default:
+		panic(fmt.Sprintf("unimplemented rebase autoid type %s", tp))
 	}
 
 	if !force {
@@ -5202,6 +5212,11 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	tbInfo := tb.Meta()
+	if (newCache == 1 && tbInfo.AutoIdCache != 1) ||
+		(newCache != 1 && tbInfo.AutoIdCache == 1) {
+		return fmt.Errorf("Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different")
 	}
 
 	job := &model.Job{
