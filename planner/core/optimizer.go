@@ -292,6 +292,15 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	finalPlan := postOptimize(sctx, physical)
 
+	if variable.ProcessGeneralLog.Load() && sctx.GetSessionVars().InRestrictedSQL {
+		ok, tiflashTables := hasTiFlashPlan(physical)
+		if ok {
+			logutil.BgLogger().Info("GENERAL_LOG",
+				zap.String("SQL", sctx.GetSessionVars().StmtCtx.OriginalSQL),
+				zap.Any("TiFlashTables", tiflashTables))
+		}
+	}
+
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
@@ -299,6 +308,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
 	return finalPlan, cost, nil
+}
+
+func hasTiFlashPlan(p PhysicalPlan) (ok bool, tables []string) {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true, []string{x.GetTablePlan().ExplainInfo()}
+		default:
+			return false, nil
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				hasPlan, tiflashTables := hasTiFlashPlan(plan)
+				if hasPlan {
+					ok = true
+					tables = append(tables, tiflashTables...)
+				}
+			}
+		}
+	}
+	return
 }
 
 // refineCETrace will adjust the content of CETrace.
