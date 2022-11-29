@@ -57,7 +57,7 @@ func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Stor
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.PrepareFlashbackToVersion(ctx); err != nil {
+	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -304,12 +304,12 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 }
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
-func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
+func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
 	var totalRegions atomic.Uint64
 	totalRegions.Store(0)
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
+		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, startTS, r)
 		totalRegions.Add(uint64(stats.CompletedRegions))
 		return stats, err
 	}
