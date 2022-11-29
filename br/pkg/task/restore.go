@@ -808,9 +808,7 @@ func filterRestoreFiles(
 		}
 		dbs = append(dbs, db)
 		for _, table := range db.Tables {
-			// Add mysql.tidb to the created table slice to allow restore to temporary system table
-			// Is there any hidden danger? TODO
-			if table.Info == nil || (!cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) && table.Info.Name.L != "tidb") {
+			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
 			files = append(files, table.Files...)
