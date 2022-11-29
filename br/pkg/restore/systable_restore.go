@@ -145,7 +145,6 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
-		log.Info("replace into", zap.String("table", tableName.O), zap.String("db", table.DB.Name.O), zap.Bool("match", f.MatchTable(sysDB, tableName.O)))
 		if f.MatchTable(sysDB, tableName.O) {
 			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
@@ -247,7 +246,6 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	}
 
 	if isUnrecoverableTable(tableName) {
-		log.Error("restoring unsupported `mysql` schema table", zap.String("table", tableName))
 		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
 	}
 
