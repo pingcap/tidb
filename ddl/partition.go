@@ -2556,8 +2556,8 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		warningsMap := make(map[errors.ErrorID]*terror.Error)
+		warningsCountMap := make(map[errors.ErrorID]int64)
 		for _, prr := range rowRecords {
 			taskCtx.scanCount++
 

@@ -3842,7 +3842,6 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 	}
 	if pi.Type == model.PartitionTypeRange {
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
-			// Not continues range
 			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
 		}
@@ -3864,9 +3863,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	// Various checks
 	switch pi.Type {
-	// Only supporting RANGE/LIST
 	case model.PartitionTypeRange, model.PartitionTypeList:
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
@@ -3953,6 +3950,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 			if oldGtNew {
 				return errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
+			return nil
 		}
 
 		isUnsigned := isPartExprUnsigned(tblInfo)

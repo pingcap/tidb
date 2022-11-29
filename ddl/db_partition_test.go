@@ -88,11 +88,12 @@ func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
 	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
-	require.True(t, it.Valid())
-	foundTblID := tablecodec.DecodeTableID(it.Key())
-	// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
-	// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-	require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+	if it.Valid() {
+		foundTblID := tablecodec.DecodeTableID(it.Key())
+		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
+		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
+		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+	}
 }
 
 func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
