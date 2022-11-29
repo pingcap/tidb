@@ -2123,7 +2123,7 @@ func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx sessionctx.Con
 
 // Allocators implements table.Table Allocators interface.
 func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.
@@ -2206,7 +2206,7 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.

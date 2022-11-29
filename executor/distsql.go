@@ -243,11 +243,18 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	return err
 }
 
+// TODO: cleanup this method.
 func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, ranges []*ranger.Range, physicalID int64) ([]kv.KeyRange, error) {
+	var (
+		rRanges *kv.KeyRanges
+		err     error
+	)
 	if e.index.ID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
+		rRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
+	} else {
+		rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 	}
-	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+	return rRanges.FirstPartitionRange(), err
 }
 
 // Open implements the Executor Open interface.
@@ -458,9 +465,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	if e.partitionTableMode {
-		if e.keepOrder { // this case should be prevented by the optimizer
-			return errors.New("invalid execution plan: cannot keep order when accessing a partition table by IndexLookUpReader")
-		}
 		e.feedback.Invalidate() // feedback for partition tables is not ready
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
 		for _, p := range e.prunedPartitions {
@@ -472,7 +476,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
 				ranges = e.partitionRangeMap[physicalID]
 			}
-			var kvRange []kv.KeyRange
+			var kvRange *kv.KeyRanges
 			if e.index.ID == -1 {
 				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 			} else {
@@ -481,15 +485,17 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			if err != nil {
 				return err
 			}
-			e.partitionKVRanges = append(e.partitionKVRanges, kvRange)
+			e.partitionKVRanges = append(e.partitionKVRanges, kvRange.FirstPartitionRange())
 		}
 	} else {
 		physicalID := getPhysicalTableID(e.table)
+		var kvRanges *kv.KeyRanges
 		if e.index.ID == -1 {
-			e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
+			kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 		} else {
-			e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+			kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
 		}
+		e.kvRanges = kvRanges.FirstPartitionRange()
 	}
 	return err
 }
