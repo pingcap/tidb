@@ -147,9 +147,9 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
-			SQL     string
-			Plan    []string
-			Result  []string
+			SQL    string
+			Plan   []string
+			Result []string
 		}
 	)
 	planSuiteData := core.GetIndexMergeSuiteData()
