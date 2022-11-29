@@ -2623,6 +2623,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if sandboxMode, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
 		return err
 	} else if sandboxMode {
+		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()
 	}
 	user.AuthUsername = authUser.Username

@@ -1716,11 +1716,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
-	if err != nil {
-		return err
-	}
-	return err
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
