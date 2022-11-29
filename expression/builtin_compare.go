@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -1575,6 +1576,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		// here and skip this refine operation in all other cases for safety.
 		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
 			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			if arg1IsString {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String()))
+			} else { // arg0IsString
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
+			}
 			RemoveMutableConst(ctx, args)
 		} else {
 			return args

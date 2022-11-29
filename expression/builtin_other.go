@@ -166,6 +166,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
 						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
