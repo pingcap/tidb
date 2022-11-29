@@ -2410,3 +2410,22 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		require.Regexp(t, ca.plan, explain)
 	}
 }
+
+func TestForeignKeyRuntimeStats(t *testing.T) {
+	checkStats := executor.FKCheckRuntimeStats{
+		Total: time.Second * 3,
+		Check: time.Second * 2,
+		Lock:  time.Second,
+		Keys:  10,
+	}
+	require.Equal(t, "total:3s, check:2s, lock:1s, foreign_keys:10", checkStats.String())
+	checkStats.Merge(checkStats.Clone())
+	require.Equal(t, "total:6s, check:4s, lock:2s, foreign_keys:20", checkStats.String())
+	cascadeStats := executor.FKCascadeRuntimeStats{
+		Total: time.Second,
+		Keys:  10,
+	}
+	require.Equal(t, "total:1s, foreign_keys:10", cascadeStats.String())
+	cascadeStats.Merge(cascadeStats.Clone())
+	require.Equal(t, "total:2s, foreign_keys:20", cascadeStats.String())
+}

@@ -928,7 +928,7 @@ func (s *FKCascadeRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (s *FKCascadeRuntimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &FKCheckRuntimeStats{
+	newRs := &FKCascadeRuntimeStats{
 		Total: s.Total,
 		Keys:  s.Keys,
 	}
@@ -937,7 +937,7 @@ func (s *FKCascadeRuntimeStats) Clone() execdetails.RuntimeStats {
 
 // Merge implements the RuntimeStats interface.
 func (s *FKCascadeRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*FKCheckRuntimeStats)
+	tmp, ok := other.(*FKCascadeRuntimeStats)
 	if !ok {
 		return
 	}
