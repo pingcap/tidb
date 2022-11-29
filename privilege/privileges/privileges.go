@@ -882,12 +882,8 @@ type PasswordLocking struct {
 // PasswordLockingParser parser PasswordLocking info
 func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSON types.BinaryJSON) error {
 	failedLoginAttempts, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
-	if parserErr != nil {
-		if !strings.Contains(parserErr.Error(), "user_attributes not found") {
-			return parserErr
-		} else {
-			passwordLocking.FailedLoginAttempts = 0
-		}
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
+		return parserErr
 	}
 	passwordLocking.FailedLoginAttempts = failedLoginAttempts
 	if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
@@ -897,12 +893,8 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	lockTime, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
-	if parserErr != nil {
-		if !strings.Contains(parserErr.Error(), "user_attributes not found") {
-			return parserErr
-		} else {
-			passwordLocking.PasswordLockTimeDays = 0
-		}
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
+		return parserErr
 	}
 	passwordLocking.PasswordLockTimeDays = lockTime
 	if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
@@ -912,12 +904,8 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	failedLoginCount, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
-	if parserErr != nil {
-		if !strings.Contains(parserErr.Error(), "user_attributes not found") {
-			return parserErr
-		} else {
-			passwordLocking.FailedLoginCount = 0
-		}
+	if parserErr != nil && !strings.Contains(parserErr.Error(), "user_attributes not found") {
+		return parserErr
 	}
 	passwordLocking.FailedLoginCount = failedLoginCount
 
