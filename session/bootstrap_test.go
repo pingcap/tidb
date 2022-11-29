@@ -115,6 +115,12 @@ func TestBootstrap(t *testing.T) {
 	se, err = CreateSession4Test(store)
 	require.NoError(t, err)
 	doDMLWorks(se)
+	r = mustExec(t, se, "select * from mysql.expr_pushdown_blacklist where name = 'date_add'")
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	se.Close()
 }
 
 func globalVarsCount() int64 {

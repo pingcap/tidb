@@ -286,6 +286,12 @@ func TestTablePartition(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
+
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionComactCnt)
+	tk.MustExec(`alter table pt2 compact partition p0 tiflash replica;`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionComactCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {
