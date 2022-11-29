@@ -175,12 +175,12 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#5, funcs:firstrow(Column#5)->Column#5",
           "└─Union 2.00 root  ",
-          "  ├─HashAgg 1.00 root  funcs:max(test.t.a)->Column#2",
+          "  ├─StreamAgg 1.00 root  funcs:max(test.t.a)->Column#2",
           "  │ └─Limit 1.00 root  offset:0, count:1",
           "  │   └─TableReader 1.00 root  data:Limit",
           "  │     └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "  │       └─TableFullScan 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
-          "  └─HashAgg 1.00 root  funcs:min(test.t.a)->Column#4",
+          "  └─StreamAgg 1.00 root  funcs:min(test.t.a)->Column#4",
           "    └─Limit 1.00 root  offset:0, count:1",
           "      └─TableReader 1.00 root  data:Limit",
           "        └─Limit 1.00 cop[tikv]  offset:0, count:1",
@@ -191,12 +191,12 @@
         "SQL": "explain format = 'brief' select min(a), max(a) from cluster_index_t",
         "Plan": [
           "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─HashAgg(Build) 1.00 root  funcs:max(test.cluster_index_t.a)->Column#5",
+          "├─StreamAgg(Build) 1.00 root  funcs:max(test.cluster_index_t.a)->Column#5",
           "│ └─Limit 1.00 root  offset:0, count:1",
           "│   └─TableReader 1.00 root  data:Limit",
           "│     └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "│       └─TableFullScan 1.00 cop[tikv] table:cluster_index_t keep order:true, desc, stats:pseudo",
-          "└─HashAgg(Probe) 1.00 root  funcs:min(test.cluster_index_t.a)->Column#4",
+          "└─StreamAgg(Probe) 1.00 root  funcs:min(test.cluster_index_t.a)->Column#4",
           "  └─Limit 1.00 root  offset:0, count:1",
           "    └─TableReader 1.00 root  data:Limit",
           "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
@@ -207,12 +207,12 @@
         "SQL": "explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1",
         "Plan": [
           "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─HashAgg(Build) 1.00 root  funcs:max(test.cluster_index_t.b)->Column#5",
+          "├─StreamAgg(Build) 1.00 root  funcs:max(test.cluster_index_t.b)->Column#5",
           "│ └─Limit 1.00 root  offset:0, count:1",
           "│   └─TableReader 1.00 root  data:Limit",
           "│     └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "│       └─TableRangeScan 1.00 cop[tikv] table:cluster_index_t range:[1,1], keep order:true, desc, stats:pseudo",
-          "└─HashAgg(Probe) 1.00 root  funcs:min(test.cluster_index_t.b)->Column#4",
+          "└─StreamAgg(Probe) 1.00 root  funcs:min(test.cluster_index_t.b)->Column#4",
           "  └─Limit 1.00 root  offset:0, count:1",
           "    └─TableReader 1.00 root  data:Limit",
           "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
@@ -222,9 +222,9 @@
       {
         "SQL": "explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1",
         "Plan": [
-          "HashAgg 1.00 root  funcs:min(Column#6)->Column#4, funcs:max(Column#7)->Column#5",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:min(test.cluster_index_t.a)->Column#6, funcs:max(test.cluster_index_t.a)->Column#7",
+          "StreamAgg 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:min(test.cluster_index_t.a)->Column#8, funcs:max(test.cluster_index_t.a)->Column#9",
           "    └─Selection 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
           "      └─TableFullScan 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
         ]
@@ -232,9 +232,9 @@
       {
         "SQL": "explain format = 'brief' select min(b), max(b) from cluster_index_t where b = 1",
         "Plan": [
-          "HashAgg 1.00 root  funcs:min(Column#6)->Column#4, funcs:max(Column#7)->Column#5",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:min(test.cluster_index_t.b)->Column#6, funcs:max(test.cluster_index_t.b)->Column#7",
+          "StreamAgg 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:min(test.cluster_index_t.b)->Column#8, funcs:max(test.cluster_index_t.b)->Column#9",
           "    └─Selection 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
           "      └─TableFullScan 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
         ]
@@ -1723,7 +1723,7 @@
       {
         "SQL": "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#10",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#10",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]",
           "  ├─Selection(Build) 0.80 root  not(isnull(test.t.id)), not(isnull(test.t.value))",
           "  │ └─TopN 1.00 root  test.t.value, offset:0, count:1",
@@ -1754,21 +1754,21 @@
       {
         "SQL": "select count(1) from s1",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#1",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
           "└─TableDual 1.00 root  rows:1"
         ]
       },
       {
         "SQL": "select count(*) from s1",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#1",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
           "└─TableDual 1.00 root  rows:1"
         ]
       },
       {
         "SQL": "select sum(1) from s1",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(1)->Column#1",
+          "StreamAgg 1.00 root  funcs:sum(1)->Column#1",
           "└─TableDual 1.00 root  rows:1"
         ]
       },
@@ -1777,9 +1777,9 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
           "└─Union 2.00 root  ",
-          "  ├─HashAgg 1.00 root  funcs:count(1)->Column#1",
+          "  ├─StreamAgg 1.00 root  funcs:count(1)->Column#1",
           "  │ └─TableDual 1.00 root  rows:1",
-          "  └─HashAgg 1.00 root  funcs:count(1)->Column#2",
+          "  └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
           "    └─TableDual 1.00 root  rows:1"
         ]
       }
@@ -2344,7 +2344,7 @@
           "  └─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─HashAgg(Probe) 10000.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+          "    └─StreamAgg(Probe) 10000.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
           "      └─IndexMerge 30263.46 root  ",
           "        ├─Selection(Build) 33333.33 cop[tikv]  eq(test.t1.c1, test.t2.c3)",
           "        │ └─TableRangeScan 33333333.33 cop[tikv] table:t1 range:[10,+inf], keep order:false, stats:pseudo",
@@ -2413,9 +2413,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t31240;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#6",
           "    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
       },
@@ -2426,9 +2426,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t31240;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#6",
           "    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
       }
@@ -2485,19 +2485,19 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3",
         "Plan": [
-          "HashAgg_12 1.00 77.75 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_13 1.00 47.49 root  index:HashAgg_5",
-          "  └─HashAgg_5 1.00 680.68 cop[tikv]  funcs:count(test.t3._tidb_rowid)->Column#6",
-          "    └─IndexFullScan_11 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_20 1.00 102.69 root  funcs:count(Column#9)->Column#4",
+          "└─IndexReader_21 1.00 52.79 root  index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 760.20 cop[tikv]  funcs:count(test.t3._tidb_rowid)->Column#9",
+          "    └─IndexFullScan_19 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2",
         "Plan": [
-          "HashAgg_14 1.00 82.51 root  funcs:count(Column#5)->Column#4",
-          "└─TableReader_15 1.00 52.25 root  data:HashAgg_6",
-          "  └─HashAgg_6 1.00 752.10 cop[tikv]  funcs:count(test.t2._tidb_rowid)->Column#5",
-          "    └─TableFullScan_12 3.00 681.92 cop[tikv] table:t2 keep order:false"
+          "StreamAgg_26 1.00 107.45 root  funcs:count(Column#7)->Column#4",
+          "└─TableReader_27 1.00 57.55 root  data:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 831.62 cop[tikv]  funcs:count(test.t2._tidb_rowid)->Column#7",
+          "    └─TableFullScan_24 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
@@ -2537,7 +2537,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "HashAgg_8 3.00 209.09 root  group by:test.t2.a, funcs:count(1)->Column#4",
+          "HashAgg_8 3.00 1706.09 root  group by:test.t2.a, funcs:count(1)->Column#4",
           "└─TableReader_17 3.00 58.13 root  data:TableFullScan_16",
           "  └─TableFullScan_16 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
@@ -2545,37 +2545,34 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
-          "HashAgg_12 1.00 45.24 root  funcs:count(Column#5)->Column#4",
-          "└─IndexReader_13 1.00 14.98 root  index:HashAgg_6",
-          "  └─HashAgg_6 1.00 193.06 cop[tikv]  funcs:count(1)->Column#5",
-          "    └─IndexRangeScan_11 0.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+          "StreamAgg_10 1.00 64.98 root  funcs:count(1)->Column#4",
+          "└─IndexReader_15 0.00 15.08 root  index:IndexRangeScan_14",
+          "  └─IndexRangeScan_14 0.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
-          "HashAgg_13 1.00 1981.96 root  funcs:count(Column#6)->Column#4",
-          "└─IndexLookUp_14 1.00 1951.70 root  ",
-          "  ├─IndexRangeScan_11(Build) 0.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─HashAgg_7(Probe) 1.00 257.57 cop[tikv]  funcs:count(test.t3.a)->Column#6",
-          "    └─TableRowIDScan_12 0.00 227.31 cop[tikv] table:t3 keep order:false"
+          "StreamAgg_10 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
+          "└─IndexLookUp_17 0.00 1951.73 root  ",
+          "  ├─IndexRangeScan_15(Build) 0.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_16(Probe) 0.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 where a = 0",
         "Plan": [
-          "HashAgg_17 1.00 89.83 root  funcs:count(Column#5)->Column#4",
-          "└─TableReader_18 1.00 59.57 root  data:HashAgg_7",
-          "  └─HashAgg_7 1.00 861.88 cop[tikv]  funcs:count(1)->Column#5",
-          "    └─Selection_14 0.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
-          "      └─TableFullScan_13 3.00 681.92 cop[tikv] table:t2 keep order:false"
+          "StreamAgg_12 1.00 109.57 root  funcs:count(1)->Column#4",
+          "└─TableReader_21 0.00 59.67 root  data:Selection_20",
+          "  └─Selection_20 0.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
+          "    └─TableFullScan_19 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
-          "HashAgg_9 1.00 552.41 root  funcs:count(1)->Column#7",
-          "└─HashJoin_22 3.00 482.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "StreamAgg_10 1.00 2128.93 root  funcs:count(1)->Column#7",
+          "└─HashJoin_40 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
           "  ├─IndexReader_28(Build) 3.00 45.23 root  index:IndexFullScan_27",
           "  │ └─IndexFullScan_27 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_26(Probe) 3.00 68.11 root  data:Selection_25",
@@ -2586,24 +2583,23 @@
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "HashAgg_34 1.00 61928.14 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader_36 1.00 61897.88 root  data:ExchangeSender_35",
-          "  └─ExchangeSender_35 1.00 928450.64 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_13 1.00 928450.64 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin_33 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "        ├─ExchangeReceiver_22(Build) 3.00 464290.40 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_21 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection_20 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "        │     └─TableFullScan_19 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
-          "        └─Selection_24(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "          └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 keep order:false"
+          "StreamAgg_15 1.00 62053.22 root  funcs:count(1)->Column#7",
+          "└─TableReader_41 3.00 61903.52 root  data:ExchangeSender_40",
+          "  └─ExchangeSender_40 3.00 928447.20 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_37 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver_22(Build) 3.00 464290.40 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_21 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection_20 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan_19 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "      └─Selection_24(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "HashAgg_14 1.00 70137.12 root  funcs:count(1)->Column#10",
-          "└─HashJoin_27 3.00 70066.94 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "StreamAgg_15 1.00 71713.64 root  funcs:count(1)->Column#10",
+          "└─HashJoin_59 3.00 71563.94 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─IndexReader_47(Build) 3.00 45.23 root  index:IndexFullScan_46",
           "  │ └─IndexFullScan_46 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_39(Probe) 3.00 69652.83 root  data:ExchangeSender_38",
@@ -2620,13 +2616,12 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_19 3.00 160743.93 root  CARTESIAN left outer semi join",
-          "├─Selection_38(Build) 0.80 31024.18 root  eq(2, Column#18)",
-          "│ └─HashAgg_52 1.00 30974.28 root  funcs:count(Column#31)->Column#18",
-          "│   └─TableReader_54 1.00 30944.02 root  data:ExchangeSender_53",
-          "│     └─ExchangeSender_53 1.00 464142.64 mpp[tiflash]  ExchangeType: PassThrough",
-          "│       └─HashAgg_43 1.00 464142.64 mpp[tiflash]  funcs:count(test.t1._tidb_rowid)->Column#31",
-          "│         └─TableFullScan_51 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "HashJoin_19 3.00 162261.76 root  CARTESIAN left outer semi join",
+          "├─Selection_38(Build) 0.80 31045.01 root  eq(2, Column#18)",
+          "│ └─StreamAgg_56 1.00 30995.11 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_57 1.00 30945.21 root  data:StreamAgg_44",
+          "│     └─StreamAgg_44 1.00 464146.40 batchCop[tiflash]  funcs:count(test.t1._tidb_rowid)->Column#32",
+          "│       └─TableFullScan_55 3.00 464139.20 batchCop[tiflash] table:t1 keep order:false",
           "└─Projection_20(Probe) 3.00 129648.62 root  1->Column#28",
           "  └─Apply_22 3.00 129648.32 root  CARTESIAN left outer join",
           "    ├─IndexReader_26(Build) 3.00 53.37 root  index:IndexFullScan_25",
@@ -2642,8 +2637,8 @@
       {
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "HashAgg_11 1.00 62478.44 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_16 3.00 62408.26 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "StreamAgg_14 1.00 62557.96 root  funcs:count(1)->Column#7",
+          "└─MergeJoin_26 3.00 62408.26 root  inner join, left key:test.t1.a, right key:test.t2.a",
           "  ├─Sort_24(Build) 3.00 31202.63 root  test.t2.a",
           "  │ └─TableReader_23 3.00 30955.77 root  data:Selection_22",
           "  │   └─Selection_22 3.00 464146.40 cop[tiflash]  not(isnull(test.t2.a))",
@@ -2903,7 +2898,7 @@
       {
         "SQL": "explain format = 'brief' select max(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:max(test.t.a)->Column#3",
+          "StreamAgg 1.00 root  funcs:max(test.t.a)->Column#3",
           "└─TopN 1.00 root  test.t.a:desc, offset:0, count:1",
           "  └─TableReader 1.00 root  data:TopN",
           "    └─TopN 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
@@ -2913,7 +2908,7 @@
       {
         "SQL": "explain format = 'brief' select min(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:min(test.t.a)->Column#3",
+          "StreamAgg 1.00 root  funcs:min(test.t.a)->Column#3",
           "└─Limit 1.00 root  offset:0, count:1",
           "  └─TableReader 1.00 root  data:Limit",
           "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
@@ -2928,7 +2923,7 @@
       {
         "SQL": "explain format = 'brief' select max(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:max(test.t.a)->Column#3",
+          "StreamAgg 1.00 root  funcs:max(test.t.a)->Column#3",
           "└─TopN 1.00 root  test.t.a:desc, offset:0, count:1",
           "  └─TableReader 1.00 root  data:TopN",
           "    └─TopN 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
@@ -2938,7 +2933,7 @@
       {
         "SQL": "explain format = 'brief' select min(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:min(test.t.a)->Column#3",
+          "StreamAgg 1.00 root  funcs:min(test.t.a)->Column#3",
           "└─TopN 1.00 root  test.t.a, offset:0, count:1",
           "  └─TableReader 1.00 root  data:TopN",
           "    └─TopN 1.00 batchCop[tiflash]  test.t.a, offset:0, count:1",
@@ -2953,322 +2948,301 @@
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
-          "      └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#17",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d3_t keep order:false",
+          "      └─HashJoin(Probe) 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d3_t keep order:false",
-          "        └─HashJoin(Probe) 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d2_t keep order:false",
+          "        └─HashJoin(Probe) 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "          ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "          │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "          │     └─TableFullScan 2.00 mpp[tiflash] table:d2_t keep order:false",
-          "          └─HashJoin(Probe) 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
-          "            ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "            │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "            │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "            │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "            └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "              └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "          │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "          └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "      │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
-          "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
+          "      ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "      │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "      │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#17)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#17",
-          "      └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Projection 2.00 mpp[tiflash]  test.d1_t.d1_k",
-          "        │     └─HashAgg 2.00 mpp[tiflash]  group by:test.d1_t.d1_k, funcs:firstrow(test.d1_t.d1_k)->test.d1_t.d1_k",
-          "        │       └─ExchangeReceiver 2.00 mpp[tiflash]  ",
-          "        │         └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "        │           └─HashAgg 2.00 mpp[tiflash]  group by:test.d1_t.d1_k, ",
-          "        │             └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │               └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 2.00 mpp[tiflash]  test.d1_t.d1_k",
+          "      │     └─HashAgg 2.00 mpp[tiflash]  group by:test.d1_t.d1_k, funcs:firstrow(test.d1_t.d1_k)->test.d1_t.d1_k",
+          "      │       └─ExchangeReceiver 2.00 mpp[tiflash]  ",
+          "      │         └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │           └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │             └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 6.40 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 6.40 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t join d1_t on fact_t.d1_k > d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 16.00 mpp[tiflash]  CARTESIAN inner join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 16.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 16.00 mpp[tiflash]  CARTESIAN inner join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k > d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 16.00 mpp[tiflash]  CARTESIAN left outer join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 16.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 16.00 mpp[tiflash]  CARTESIAN left outer join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k > d1_t.d1_k",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 16.00 mpp[tiflash]  CARTESIAN right outer join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
-          "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 16.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 16.00 mpp[tiflash]  CARTESIAN right outer join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
+          "      ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "      │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where d1_k not in (select d1_k from d1_t)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 6.40 mpp[tiflash]  CARTESIAN anti semi join, other cond:eq(test.fact_t.d1_k, test.d1_t.d1_k)",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  CARTESIAN anti semi join, other cond:eq(test.fact_t.d1_k, test.d1_t.d1_k)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       }
     ]
@@ -3517,31 +3491,29 @@
       {
         "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       }
     ]
@@ -3552,35 +3524,33 @@
       {
         "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
-          "        └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
-          "            └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
+          "          └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
-          "        └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
-          "            └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
+          "          └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
         ]
       }
     ]
@@ -3591,35 +3561,33 @@
       {
         "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
-          "        │   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
-          "        └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
-          "            └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "              └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
+          "      │   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
+          "          └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
-          "      └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
-          "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
-          "        │   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
-          "        └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
-          "            └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "              └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.a.id, collate: binary]",
+          "      │   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.b.id, collate: binary]",
+          "          └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
         ]
       }
     ]
@@ -3871,69 +3839,65 @@
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 12.80 root  data:ExchangeSender",
+          "  └─ExchangeSender 12.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 12.80 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "          └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 12.80 root  data:ExchangeSender",
+          "  └─ExchangeSender 12.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 12.80 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "          └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "        │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 12.80 root  data:ExchangeSender",
+          "  └─ExchangeSender 12.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 12.80 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "          └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "        │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
-          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 12.80 root  data:ExchangeSender",
+          "  └─ExchangeSender 12.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 12.80 mpp[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "          └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       }
     ]
@@ -3992,18 +3956,17 @@
           "TableReader 1.00 root  data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#9, test.t2.v1, test.t2.v2",
-          "    └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#16)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "    └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
-          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#16",
-          "            └─HashJoin 1.00 mpp[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
-          "              ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "              │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: binary], [name: test.t3.v2, collate: binary]",
-          "              │   └─TableFullScan 1.00 mpp[tiflash] table:t3 keep order:false",
-          "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
-          "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
-          "                  └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
+          "          └─HashJoin 1.00 mpp[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
+          "            ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: binary], [name: test.t3.v2, collate: binary]",
+          "            │   └─TableFullScan 1.00 mpp[tiflash] table:t3 keep order:false",
+          "            └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
+          "                └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                  └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       }
     ]
@@ -4236,9 +4199,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
           "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#7",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -4247,9 +4210,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
           "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.a, 1), decimal(20,0) BINARY)->Column#7",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -4258,9 +4221,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
           "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#7",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -6154,9 +6117,9 @@
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 10000.00 root  ",
-          "    └─HashAgg 10000.00 root  funcs:sum(Column#8)->Column#7",
-          "      └─TableReader 10000.00 root  data:HashAgg",
-          "        └─HashAgg 10000.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8",
+          "    └─StreamAgg 10000.00 root  funcs:sum(Column#9)->Column#7",
+          "      └─TableReader 10000.00 root  data:StreamAgg",
+          "        └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test.t2.a)->Column#9",
           "          └─Selection 100000.00 cop[tikv]  eq(test.t2.b, test.t1.b)",
           "            └─TableFullScan 100000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
@@ -6209,12 +6172,11 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -6768,33 +6730,30 @@
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#18)->Column#14",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#19)->Column#18",
-          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#19",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#16)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#19)->Column#16",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#19",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#17)->Column#14",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#17",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#15)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t._tidb_rowid)->Column#15",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#18)->Column#14",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#18",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#19",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:sum(Column#16)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#19)->Column#16",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#19",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -7104,33 +7063,30 @@
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#11)->Column#10",
-          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#11",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#11)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#11",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#6",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#9",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t._tidb_rowid)->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#10)->Column#6",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#11)->Column#10",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#11",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:sum(Column#8)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#11)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#11",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -7353,7 +7309,7 @@
       {
         "SQL": "explain format = 'brief' select count(*) from (select a , b from t where false union all select a , c from t1 where false) tt",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#11",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─Union 0.00 root  ",
           "  ├─Projection 0.00 root  test.t.a, cast(test.t.b, double BINARY)->Column#10",
           "  │ └─TableDual 0.00 root  rows:0",
@@ -7603,11 +7559,10 @@
       {
         "SQL": "desc format = 'brief' select count(*) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#6",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t._tidb_rowid)->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -8134,7 +8089,7 @@
       {
         "SQL": "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1",
         "Plan": [
-          "HashAgg 20.00 root  group by:test.t.value, funcs:count(1)->Column#7",
+          "StreamAgg 20.00 root  group by:test.t.value, funcs:count(1)->Column#7",
           "└─TopN 20.00 root  test.t.value, offset:0, count:20",
           "  └─TableReader 20.00 root  data:ExchangeSender",
           "    └─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -9585,9 +9540,9 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -9621,9 +9576,9 @@
       {
         "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─Selection 3.33 cop[tikv]  isnull(test.t1.c2)",
           "      └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
         ],
@@ -9634,12 +9589,11 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
-          "└─IndexLookUp 1.00 root  ",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─IndexLookUp 8.00 root  ",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) 1.00 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─Selection 8.00 cop[tikv]  not(isnull(plus(cast(test.t1.c2, double BINARY), 1)))",
-          "      └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 8.00 cop[tikv]  not(isnull(plus(cast(test.t1.c2, double BINARY), 1)))",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -9648,12 +9602,11 @@
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
-          "└─IndexLookUp 1.00 root  ",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─IndexLookUp 8.00 root  ",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) 1.00 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─Selection 8.00 cop[tikv]  isnull(plus(cast(test.t1.c2, double BINARY), 1))",
-          "      └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 8.00 cop[tikv]  isnull(plus(cast(test.t1.c2, double BINARY), 1))",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1"
@@ -9728,9 +9681,9 @@
       {
         "SQL": "select count(1) from t2 use index(idx) where b is null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
           "    └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo"
         ],
         "Result": [
