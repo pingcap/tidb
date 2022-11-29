@@ -62,7 +62,7 @@ type Manager interface {
 	VerifyAccountAutoLock(user string, host string) (string, error)
 
 	// IsEnableAccountAutoLock Account enable Auto Lock
-	IsEnableAccountAutoLock(user string, host string) bool
+	IsAccountAutoLockEnabled(user string, host string) bool
 
 	// BuildPasswordLockingJSON Build PasswordLocking Json
 	BuildPasswordLockingJSON(failedLoginAttempts int64,
