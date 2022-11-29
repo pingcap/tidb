@@ -40,6 +40,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const notFound = math.MinInt32
+
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
 
@@ -888,6 +890,9 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 		}
 		passwordLocking.FailedLoginAttempts = 0
 	}
+	if failedLoginAttempts == notFound {
+		failedLoginAttempts = 0
+	}
 	passwordLocking.FailedLoginAttempts = failedLoginAttempts
 	if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
 		passwordLocking.FailedLoginAttempts = math.MaxInt16
@@ -902,6 +907,9 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 		}
 		passwordLocking.PasswordLockTimeDays = 0
 	}
+	if lockTime == notFound {
+		lockTime = 0
+	}
 	passwordLocking.PasswordLockTimeDays = lockTime
 	if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
 		passwordLocking.PasswordLockTimeDays = math.MaxInt16
@@ -913,11 +921,17 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	if parserErr != nil && found {
 		return parserErr
 	}
+	if failedLoginCount == notFound {
+		failedLoginCount = 0
+	}
 	passwordLocking.FailedLoginCount = failedLoginCount
 
 	autoLockedLastChanged, found, parserErr := PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if parserErr != nil && found {
 		return parserErr
+	}
+	if autoLockedLastChanged == notFound {
+		failedLoginCount = 0
 	}
 	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 

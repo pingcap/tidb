@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -808,8 +810,13 @@ type passwordOrLockOptionsInfo struct {
 	PasswordLockTime          int64
 	FailedLoginAttemptsChange bool
 	PasswordLockTimeChange    bool
-	PasswordLocking           string
-	AlterPasswordLocking      string
+	// PasswordLocking           string
+	// AlterPasswordLocking      string
+}
+
+type alterUserPasswordLocking struct {
+	FailedLoginAttempts int64
+	PasswordLockTime    int64
 }
 
 func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) {
@@ -822,38 +829,29 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 		case ast.Unlock:
 			info.LockAccount = "N"
 		case ast.FailedLoginAttempts:
-			info.FailedLoginAttempts = option.Count
+			info.FailedLoginAttempts = mathutil.Min(option.Count, math.MaxInt16)
 			info.FailedLoginAttemptsChange = true
 		case ast.PasswordLockTime:
-			info.PasswordLockTime = option.Count
+			info.PasswordLockTime = mathutil.Min(option.Count, math.MaxInt16)
 			info.PasswordLockTimeChange = true
 		case ast.PasswordLockTimeUnbounded:
 			info.PasswordLockTime = -1
 			info.PasswordLockTimeChange = true
 		}
 	}
-	// failedLoginAttempts values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-	// passwordLockTime values of N for each option are in the range from 0 to 32767. A value of 0 disables the option.
-	// -1 (UNBOUNDED) to specify that when an account enters the temporarily locked state, the duration of that state is
-	// unbounded and does not end until the account is unlocked. The conditions under which unlocking occurs are described later.
-	if info.FailedLoginAttempts > math.MaxInt16 {
-		info.FailedLoginAttempts = math.MaxInt16
-	}
-	if info.FailedLoginAttempts < 0 {
-		info.FailedLoginAttempts = 0
-	}
-	if info.PasswordLockTime > math.MaxInt16 {
-		info.PasswordLockTime = math.MaxInt16
-	}
-	if info.PasswordLockTime < -1 {
-		info.PasswordLockTime = -1
-	}
+}
+
+func createUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
 	if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
-		info.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
+		return fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
 			info.FailedLoginAttempts, info.PasswordLockTime)
 	}
+	return ""
+}
+
+func alterUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
 	passwordLockingArray := []string{}
-	if info.LockAccount == "N" {
+	if info.LockAccount == "N" && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
@@ -865,8 +863,88 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
 	}
 	if len(passwordLockingArray) > 0 {
-		info.AlterPasswordLocking = fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
+		return fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
 	}
+	return ""
+}
+
+// {
+// if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
+// 	info.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
+// 		info.FailedLoginAttempts, info.PasswordLockTime)
+// }
+// passwordLockingArray := []string{}
+// if info.LockAccount == "N" {
+// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
+// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
+// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
+// }
+// if info.FailedLoginAttemptsChange {
+// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", info.FailedLoginAttempts))
+// }
+// if info.PasswordLockTimeChange {
+// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
+// }
+// if len(passwordLockingArray) > 0 {
+// 	info.AlterPasswordLocking = fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
+// }
+
+func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
+	alterUserInfo := &alterUserPasswordLocking{0, 0}
+	if pLO.FailedLoginAttemptsChange && pLO.PasswordLockTimeChange {
+		alterUserInfo.FailedLoginAttempts = pLO.FailedLoginAttempts
+		alterUserInfo.PasswordLockTime = pLO.PasswordLockTime
+		return alterUserInfo, nil
+	}
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `SELECT  JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	if err != nil {
+		return nil, err
+	}
+
+	if pLO.FailedLoginAttemptsChange {
+		alterUserInfo.FailedLoginAttempts = pLO.FailedLoginAttempts
+	} else {
+		FailedLoginAttempts := rows[0].GetString(0)
+		if len(FailedLoginAttempts) > 0 {
+			alterUserInfo.FailedLoginAttempts, err = strconv.ParseInt(FailedLoginAttempts, 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			if alterUserInfo.FailedLoginAttempts < 0 {
+				alterUserInfo.FailedLoginAttempts = 0
+			} else {
+				alterUserInfo.FailedLoginAttempts = mathutil.Min(alterUserInfo.FailedLoginAttempts, math.MaxInt16)
+			}
+		} else {
+			alterUserInfo.FailedLoginAttempts = 0
+		}
+	}
+
+	if pLO.PasswordLockTimeChange {
+		alterUserInfo.PasswordLockTime = pLO.PasswordLockTime
+	} else {
+		PasswordLockTime := rows[0].GetString(1)
+		if len(PasswordLockTime) > 0 {
+			alterUserInfo.PasswordLockTime, err = strconv.ParseInt(PasswordLockTime, 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			if alterUserInfo.PasswordLockTime < -1 {
+				alterUserInfo.PasswordLockTime = -1
+			} else {
+				alterUserInfo.PasswordLockTime = mathutil.Min(alterUserInfo.PasswordLockTime, math.MaxInt16)
+			}
+		} else {
+			alterUserInfo.PasswordLockTime = 0
+		}
+	}
+	return alterUserInfo, nil
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
@@ -897,6 +975,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	lockAccount := "N"
 	plInfo := &passwordOrLockOptionsInfo{LockAccount: lockAccount, FailedLoginAttemptsChange: false, PasswordLockTimeChange: false}
 	plInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
+	PasswordLocking := createUserFailedLoginJson(plInfo)
 	if plInfo.LockAccount != "" {
 		lockAccount = plInfo.LockAccount
 	}
@@ -911,11 +990,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
 		}
 		if plInfo.FailedLoginAttemptsChange || plInfo.PasswordLockTimeChange {
-			userAttributes = fmt.Sprintf("{%s,%s}", userAttributes, plInfo.PasswordLocking)
+			userAttributes = fmt.Sprintf("{%s,%s}", userAttributes, PasswordLocking)
 		}
 	} else {
 		if plInfo.FailedLoginAttemptsChange || plInfo.PasswordLockTimeChange {
-			userAttributes = plInfo.PasswordLocking
+			userAttributes = PasswordLocking
 		}
 	}
 	tokenIssuer := ""

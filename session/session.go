@@ -2664,6 +2664,9 @@ func authFailedTracking(s *session, user string, host string) error {
 		return getErr
 	}
 	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1, passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
 		return err
 	}
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
