@@ -7556,6 +7556,40 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	checkMpp(rs)
 }
 
+func TestPointGetWithSelectLock(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a, b));")
+	tk.MustExec("create table t1(c int unique, d int);")
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
+	tk.MustExec("begin;")
+	// assert point get condition with txn commit and tiflash store
+	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 and d = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery("explain select a, b from t where a = 1 for update;")
+	tk.MustQuery("explain select c, d from t1 where c > 1 for update;")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
+	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+	tk.MustExec("commit")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tiflash';")
+	// assert point get condition with auto commit and tiflash store
+	tk.MustQuery("explain select a, b from t where  a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+}
+
 func TestTableRangeFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
