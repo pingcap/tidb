@@ -735,5 +735,4 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 	// TODO: relax this restriction and update the test case.
 	_, err = tk.Exec("alter table t_473 auto_id_cache = 1")
 	require.Error(t, err)
-	return
 }
