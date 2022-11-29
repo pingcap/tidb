@@ -1416,7 +1416,7 @@ func TestExplainForJSON(t *testing.T) {
 
 	j := new([]*core.ExplainInfoForEncode)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	var flatJSONRows []*core.ExplainInfoForEncode
+	flatJSONRows := make([]*core.ExplainInfoForEncode, 0)
 	for _, row := range *j {
 		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 	}

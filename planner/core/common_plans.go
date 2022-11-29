@@ -655,15 +655,15 @@ type ExplainInfoForEncode struct {
 	EstRows             string                  `json:"estRows"`
 	ActRows             string                  `json:"actRows,omitempty"`
 	TaskType            string                  `json:"taskType"`
-	AccessObject        string                  `json:"accessObject"`
+	AccessObject        string                  `json:"accessObject,omitempty"`
 	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
-	OperatorInfo        string                  `json:"operatorInfo"`
+	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
 	EstCost             string                  `json:"estCost,omitempty"`
 	CostFormula         string                  `json:"costFormula,omitempty"`
 	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
 	DiskInfo            string                  `json:"diskInfo,omitempty"`
 	TotalMemoryConsumed string                  `json:"totalMemoryConsumed,omitempty"`
-	SubOperators        []*ExplainInfoForEncode `json:"subOperators"`
+	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
 }
 
 // JSONToString convert json to string
