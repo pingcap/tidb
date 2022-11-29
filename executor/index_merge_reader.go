@@ -921,7 +921,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	partCnt := 1
 	workerCnt := 1
 	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().IndexMergeIntersectionConcurrency()
-	const maxChannelSize int = 1024
+	maxChannelSize := atomic.LoadInt32(&LookupTableTaskChannelSize)
 
 	batchSize := w.indexMerge.ctx.GetSessionVars().IndexLookupSize
 	if w.indexMerge.partitionTableMode {
@@ -939,7 +939,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	})
 
 	workers := make([]*intersectionProcessWorker, 0, workerCnt)
-	wg := sync.WaitGroup{}
+	wg := util.WaitGroupWrapper{}
 	errCh := make(chan bool, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		worker := &intersectionProcessWorker{
@@ -950,17 +950,10 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			memTracker:          w.indexMerge.memTracker,
 			batchSize:           batchSize,
 		}
-		wg.Add(1)
-		go func() {
+		wg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "IndexMergeIntersectionProcessWorker").End()
-			defer wg.Done()
-			util.WithRecovery(
-				func() {
-					worker.doIntersectionPerPartition(ctx, workCh, resultCh, finished)
-				},
-				w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh),
-			)
-		}()
+			worker.doIntersectionPerPartition(ctx, workCh, resultCh, finished)
+		}, w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh))
 		workers = append(workers, worker)
 	}
 	var processWorkerErr bool
