@@ -16,12 +16,16 @@ package ttl
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -36,6 +40,10 @@ type Session interface {
 	ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
 	RunInTxn(ctx context.Context, fn func() error) (err error)
+	// ResetWithGlobalTimeZone resets the session time zone to global time zone
+	ResetWithGlobalTimeZone(ctx context.Context) error
+	// EvalExpireTime returns the expired time
+	EvalExpireTime(ctx context.Context, tbl *PhysicalTable, now time.Time) (expire time.Time, err error)
 	// Close closes the session
 	Close()
 }
@@ -110,6 +118,48 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 
 	success = true
 	return err
+}
+
+// ResetWithGlobalTimeZone resets the session time zone to global time zone
+func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
+	sessVar := s.GetSessionVars()
+	globalTZ, err := sessVar.GetGlobalSystemVar(ctx, variable.TimeZone)
+	if err != nil {
+		return err
+	}
+
+	tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, variable.TimeZone)
+	if err != nil {
+		return err
+	}
+
+	if globalTZ == tz {
+		return nil
+	}
+
+	_, err = s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
+	return err
+}
+
+func (s *session) EvalExpireTime(ctx context.Context, tbl *PhysicalTable, now time.Time) (expire time.Time, err error) {
+	tz := s.GetSessionVars().TimeZone
+
+	expireExpr := tbl.TTLInfo.IntervalExprStr
+	unit := ast.TimeUnitType(tbl.TTLInfo.IntervalTimeUnit)
+
+	var rows []chunk.Row
+	rows, err = s.ExecuteSQL(
+		ctx,
+		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>` to present current time
+		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
+	)
+
+	if err != nil {
+		return
+	}
+
+	tm := rows[0].GetTime(0)
+	return tm.CoreTime().GoTime(tz)
 }
 
 // Close closes the session

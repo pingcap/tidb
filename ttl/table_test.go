@@ -15,10 +15,8 @@
 package ttl_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -127,10 +125,12 @@ func TestNewTTLTable(t *testing.T) {
 			require.Same(t, timeColumn, ttlTbl.TimeColumn)
 
 			if tblInfo.Partition == nil {
+				require.Equal(t, ttlTbl.TableInfo.ID, ttlTbl.ID)
 				require.Equal(t, "", ttlTbl.Partition.L)
 				require.Nil(t, ttlTbl.PartitionDef)
 			} else {
 				def := tblInfo.Partition.Definitions[i]
+				require.Equal(t, def.ID, ttlTbl.ID)
 				require.Equal(t, def.Name.L, ttlTbl.Partition.L)
 				require.Equal(t, def, *(ttlTbl.PartitionDef))
 			}
@@ -157,57 +157,4 @@ func TestNewTTLTable(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestEvalTTLExpireTime(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 day")
-	tk.MustExec("create table test.t2(a int, t datetime) ttl = `t` + interval 3 month")
-
-	tb, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tb.Meta()
-	ttlTbl, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
-	require.NoError(t, err)
-
-	tb2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	tblInfo2 := tb2.Meta()
-	ttlTbl2, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))
-	require.NoError(t, err)
-
-	se := ttl.NewSession(tk.Session(), tk.Session(), nil)
-
-	now := time.UnixMilli(0)
-	tz1, err := time.LoadLocation("Asia/Shanghai")
-	require.NoError(t, err)
-	tz2, err := time.LoadLocation("Europe/Berlin")
-	require.NoError(t, err)
-
-	se.GetSessionVars().TimeZone = tz1
-	tm, err := ttlTbl.EvalExpireTime(context.TODO(), se, now)
-	require.NoError(t, err)
-	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
-	require.Equal(t, "1969-12-31 08:00:00", tm.Format("2006-01-02 15:04:05"))
-	require.Equal(t, tz1.String(), tm.Location().String())
-
-	se.GetSessionVars().TimeZone = tz2
-	tm, err = ttlTbl.EvalExpireTime(context.TODO(), se, now)
-	require.NoError(t, err)
-	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
-	require.Equal(t, "1969-12-31 01:00:00", tm.Format("2006-01-02 15:04:05"))
-	require.Equal(t, tz2.String(), tm.Location().String())
-
-	se.GetSessionVars().TimeZone = tz1
-	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
-	require.NoError(t, err)
-	require.Equal(t, "1969-10-01 08:00:00", tm.Format("2006-01-02 15:04:05"))
-	require.Equal(t, tz1.String(), tm.Location().String())
-
-	se.GetSessionVars().TimeZone = tz2
-	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
-	require.NoError(t, err)
-	require.Equal(t, "1969-10-01 01:00:00", tm.Format("2006-01-02 15:04:05"))
-	require.Equal(t, tz2.String(), tm.Location().String())
 }

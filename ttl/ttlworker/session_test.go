@@ -1,0 +1,313 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ttlworker
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/stretchr/testify/require"
+)
+
+func newMockTTLTbl(t *testing.T, name string) *ttl.PhysicalTable {
+	tblInfo := &model.TableInfo{
+		Name: model.NewCIStr(name),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      model.NewCIStr("time"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeDatetime),
+				State:     model.StatePublic,
+			},
+		},
+		TTLInfo: &model.TTLInfo{
+			ColumnName:       model.NewCIStr("time"),
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitSecond),
+			Enable:           true,
+		},
+		State: model.StatePublic,
+	}
+
+	tbl, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
+	require.NoError(t, err)
+	return tbl
+}
+
+func newMockInfoSchema(tbl ...*model.TableInfo) infoschema.InfoSchema {
+	return infoschema.MockInfoSchema(tbl)
+}
+
+type mockRows struct {
+	fieldTypes []*types.FieldType
+	*chunk.Chunk
+}
+
+func newMockRows(fieldTypes ...*types.FieldType) *mockRows {
+	return &mockRows{
+		fieldTypes: fieldTypes,
+		Chunk:      chunk.NewChunkWithCapacity(fieldTypes, 8),
+	}
+}
+
+func (r *mockRows) Append(t *testing.T, row ...interface{}) *mockRows {
+	require.Equal(t, len(r.fieldTypes), len(row))
+	for i, ft := range r.fieldTypes {
+		tp := ft.GetType()
+		switch tp {
+		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
+			tm, ok := row[i].(time.Time)
+			require.True(t, ok)
+			r.AppendTime(i, types.NewTime(types.FromGoTime(tm.In(time.UTC)), tp, types.DefaultFsp))
+		case mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			val, ok := row[i].(int)
+			require.True(t, ok)
+			r.AppendInt64(i, int64(val))
+		default:
+			require.FailNow(t, "unsupported tp %v", tp)
+		}
+	}
+	return r
+}
+
+func (r *mockRows) Rows() []chunk.Row {
+	rows := make([]chunk.Row, r.NumRows())
+	for i := 0; i < r.NumRows(); i++ {
+		rows[i] = r.GetRow(i)
+	}
+	return rows
+}
+
+type mockSessionPool struct {
+	factory func() pools.Resource
+}
+
+func (p *mockSessionPool) Get() (pools.Resource, error) {
+	return p.factory(), nil
+}
+
+func (p *mockSessionPool) Put(pools.Resource) {}
+
+func newMockSessionPool(factory func() pools.Resource) sessionPool {
+	return &mockSessionPool{
+		factory: factory,
+	}
+}
+
+type mockSession struct {
+	t *testing.T
+	sessionctx.Context
+	sessionVars        *variable.SessionVars
+	sessionInfoSchema  infoschema.InfoSchema
+	executeSQL         func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
+	rows               []chunk.Row
+	execErr            error
+	evalExpire         time.Time
+	resetTimeZoneCalls int
+}
+
+func newMockSession(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSession {
+	tbls := make([]*model.TableInfo, len(tbl))
+	for i, ttlTbl := range tbl {
+		tbls[i] = ttlTbl.TableInfo
+	}
+	return &mockSession{
+		t:                 t,
+		sessionInfoSchema: newMockInfoSchema(tbls...),
+		evalExpire:        time.Now(),
+	}
+}
+
+func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
+	infoschema.NewSessionTables()
+	return s.sessionInfoSchema
+}
+
+func (s *mockSession) GetSessionVars() *variable.SessionVars {
+	if s.sessionVars == nil {
+		s.sessionVars = variable.NewSessionVars(nil)
+		s.sessionVars.TimeZone = time.UTC
+	}
+	return s.sessionVars
+}
+
+func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	if s.executeSQL != nil {
+		return s.executeSQL(ctx, sql, args)
+	}
+	return s.rows, s.execErr
+}
+
+func (s *mockSession) RunInTxn(_ context.Context, fn func() error) (err error) {
+	return fn()
+}
+
+func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
+	s.resetTimeZoneCalls++
+	return nil
+}
+
+func (s *mockSession) EvalExpireTime(_ context.Context, _ *ttl.PhysicalTable, _ time.Time) (expire time.Time, err error) {
+	return s.evalExpire, nil
+}
+
+func (s *mockSession) Close() {}
+
+func TestExecuteSQLWithCheck(t *testing.T) {
+	ctx := context.TODO()
+	tbl := newMockTTLTbl(t, "t1")
+	s := newMockSession(t, tbl)
+	s.execErr = errors.New("mockErr")
+	s.rows = newMockRows(types.NewFieldType(mysql.TypeInt24)).Append(t, 12).Rows()
+	tblSe := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC))
+
+	rows, shouldRetry, err := tblSe.ExecuteSQLWithCheck(ctx, "select 1")
+	require.EqualError(t, err, "mockErr")
+	require.True(t, shouldRetry)
+	require.Nil(t, rows)
+	require.Equal(t, 1, s.resetTimeZoneCalls)
+
+	s.sessionInfoSchema = newMockInfoSchema()
+	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
+	require.EqualError(t, err, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+	require.False(t, shouldRetry)
+	require.Nil(t, rows)
+	require.Equal(t, 2, s.resetTimeZoneCalls)
+
+	s.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
+	s.execErr = nil
+	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
+	require.NoError(t, err)
+	require.False(t, shouldRetry)
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, int64(12), rows[0].GetInt64(0))
+	require.Equal(t, 3, s.resetTimeZoneCalls)
+
+}
+
+func TestValidateTTLWork(t *testing.T) {
+	ctx := context.TODO()
+	tbl := newMockTTLTbl(t, "t1")
+	expire := time.UnixMilli(0).In(time.UTC)
+
+	s := newMockSession(t, tbl)
+	s.execErr = errors.New("mockErr")
+	s.evalExpire = time.UnixMilli(0).In(time.UTC)
+
+	// test table dropped
+	s.sessionInfoSchema = newMockInfoSchema()
+	err := validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
+
+	// test TTL option removed
+	tbl2 := tbl.TableInfo.Clone()
+	tbl2.TTLInfo = nil
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "table 'test.t1' is not a ttl table")
+
+	// test table state not public
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.State = model.StateDeleteOnly
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "table 'test.t1' is not a public table")
+
+	// test table name changed
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.Name = model.NewCIStr("testcc")
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
+
+	// test table id changed
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.ID = 123
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "table id changed")
+
+	// test time column name changed
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.Columns[0] = tbl2.Columns[0].Clone()
+	tbl2.Columns[0].Name = model.NewCIStr("time2")
+	tbl2.TTLInfo.ColumnName = model.NewCIStr("time2")
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "time column name changed")
+
+	// test interval changed and expire time before previous
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.TTLInfo.IntervalExprStr = "10"
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	s.evalExpire = time.UnixMilli(-1)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "expire interval changed")
+
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.TTLInfo.IntervalTimeUnit = int(ast.TimeUnitDay)
+	s.evalExpire = time.UnixMilli(-1)
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "expire interval changed")
+
+	// test for safe meta change
+	tbl2 = tbl.TableInfo.Clone()
+	tbl2.Columns[0] = tbl2.Columns[0].Clone()
+	tbl2.Columns[0].ID += 10
+	tbl2.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDate)
+	tbl2.TTLInfo.IntervalExprStr = "100"
+	s.evalExpire = time.UnixMilli(1000)
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.NoError(t, err)
+
+	// test table partition name changed
+	tp := tbl.TableInfo.Clone()
+	tp.Partition = &model.PartitionInfo{
+		Definitions: []model.PartitionDefinition{
+			{ID: 1023, Name: model.NewCIStr("p0")},
+		},
+	}
+	tbl, err = ttl.NewPhysicalTable(model.NewCIStr("test"), tp, model.NewCIStr("p0"))
+	require.NoError(t, err)
+	tbl2 = tp.Clone()
+	tbl2.Partition = tp.Partition.Clone()
+	tbl2.Partition.Definitions[0].Name = model.NewCIStr("p1")
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")
+
+	// test table partition id changed
+	tbl2 = tp.Clone()
+	tbl2.Partition = tp.Partition.Clone()
+	tbl2.Partition.Definitions[0].ID += 100
+	s.sessionInfoSchema = newMockInfoSchema(tbl2)
+	err = validateTTLWork(ctx, s, tbl, expire)
+	require.EqualError(t, err, "physical id changed")
+}

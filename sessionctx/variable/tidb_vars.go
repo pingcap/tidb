@@ -858,6 +858,10 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
+	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
+	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
 )
 
 // TiDB intentional limits
@@ -1098,6 +1102,10 @@ const (
 	DefTiDBEnableReusechunk                  = true
 	DefTiDBUseAlloc                          = false
 	DefTiDBEnablePlanReplayerCapture         = false
+	DefTiDBTTLJobEnable                      = true
+	DefTiDBTTLScanBatchSize                  = 500
+	DefTiDBTTLScanBatchMaxSize               = 10240
+	DefTiDBTTLScanBatchMinSize               = 1
 )
 
 // Process global variables.
@@ -1161,6 +1169,8 @@ var (
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 )
 
 var (
