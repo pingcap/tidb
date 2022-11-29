@@ -1365,16 +1365,18 @@ func TestViewHintScope(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop view if exists v, v1, v2, v3")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop view if exists v, v1, v2, v3, v4")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
 	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.b from t join (select /*+ stream_agg() */ count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3;")
 
 	var input []string
 	var output []struct {
@@ -1403,7 +1405,7 @@ func TestViewHintWithBinding(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop table if exists t, t1, t2, t3")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")

@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -262,6 +264,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
+			// of value, So if return a key we check and skip deleted key.
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				rowVal := val[:len(val)-1]
+				if bytes.Equal(rowVal, tables.DeleteMarkerUnique) {
+					continue
+				}
+			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
@@ -327,6 +337,9 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
 	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
