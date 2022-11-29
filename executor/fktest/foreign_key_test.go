@@ -2081,3 +2081,29 @@ func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
 }
+
+func TestForeignKeyIssue39419(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, a int, b int, " +
+		"foreign key fk_1 (a) references t1(id) ON DELETE SET NULL ON UPDATE SET NULL, " +
+		"foreign key fk_2 (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	tk.MustExec("update t1 set id=id+10 where id in (1, 3);")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "11", "13"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> 11", "2 2 2", "3 <nil> 13"))
+	tk.MustExec("delete from t1 where id = 2;")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11", "13"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> 11", "3 <nil> 13"))
+
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int, b int, index(id), foreign key fk_2 (b) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("update t1 set id=id+10 where id > 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "12 12", "13 13"))
+}
