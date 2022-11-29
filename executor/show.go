@@ -1529,7 +1529,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	passwordLockTimeDays := rows[0].GetString(5)
 	if len(passwordLockTimeDays) > 0 {
-		passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
+		if passwordLockTimeDays == "-1" {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME UNBOUNDED"
+		} else {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
+		}
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)

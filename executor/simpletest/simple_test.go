@@ -908,6 +908,8 @@ func TestFailedLoginTracking(t *testing.T) {
 	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6 COMMENT 'Something';", "u5", 3, 6, 0, "Something")
 
 	showTestCase1(tk)
+	showTestCase2(tk)
+	showTestCase3(tk)
 }
 
 func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
@@ -920,9 +922,18 @@ func showTestCase1(tk *testkit.TestKit) {
 	tk.MustExec("CREATE USER 'u6'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;")
 	tk.MustQuery(" SHOW CREATE USER 'u6'@'localhost';").Check(
 		testkit.Rows("CREATE USER 'u6'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"))
+}
+
+func showTestCase2(tk *testkit.TestKit) {
 	tk.MustExec("CREATE USER 'u7'@'localhost' IDENTIFIED BY 'password';")
 	tk.MustQuery(" SHOW CREATE USER 'u7'@'localhost';").Check(
 		testkit.Rows("CREATE USER 'u7'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+}
+
+func showTestCase3(tk *testkit.TestKit) {
+	tk.MustExec("CREATE USER 'u8'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;")
+	tk.MustQuery(" SHOW CREATE USER 'u8'@'localhost';").Check(
+		testkit.Rows("CREATE USER 'u8'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
 }
 
 func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64, comment string) {
