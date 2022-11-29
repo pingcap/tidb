@@ -1231,9 +1231,9 @@ func TestAggPushDownEngine(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
-		"└─TableReader 1.00 root  data:HashAgg",
-		"  └─HashAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
+		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
 		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
@@ -6697,7 +6697,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk.MustExec("alter table t32157 cache")
 
 	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-		"HashAgg 1.00 root  funcs:count(1)->Column#8]\n" +
+		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
 			"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[  └─TableReader 10.00 root  data:Selection]\n" +
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
@@ -7965,10 +7965,10 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"HashAgg_12 1.00 root  funcs:count(Column#6)->Column#5",
-		"└─IndexReader_13 1.00 root  index:HashAgg_6",
-		"  └─HashAgg_6 1.00 cop[tikv]  funcs:count(1)->Column#6",
-		"    └─IndexRangeScan_11 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		"StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
+		"└─IndexReader_19 1.00 root  index:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
+		"    └─IndexRangeScan_17 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 }
 
 func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
