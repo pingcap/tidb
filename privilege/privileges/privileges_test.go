@@ -2979,6 +2979,7 @@ func TestFailedLoginTracking(t *testing.T) {
 	failedLoginTrackingCase4(t, tk)
 	failedLoginTrackingCase5(t, tk)
 	failedLoginTrackingCase6(t, tk)
+	failedLoginTrackingCase7(t, tk)
 }
 
 func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit) {
@@ -3026,6 +3027,16 @@ func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit) {
 	checkAuthUser(t, tk, "u6", 3, "Y")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
 	checkAuthUser(t, tk, "u6", 1, "N")
+}
+
+func failedLoginTrackingCase7(t *testing.T, tk *testkit.TestKit) {
+	createAndCheck(tk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u1")
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u1", 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' PASSWORD_LOCK_TIME 6;", "u1", 3, 6, 0)
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, encodePassword("password"), nil))
+	checkAuthUser(t, tk, "u1", 1, "N")
 }
 
 func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64) {
@@ -3090,7 +3101,9 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 	var ua []userAttributes
 	if err := json.Unmarshal(resBuff.Bytes(), &ua); err == nil {
 		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
-		require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
+		if autoAccountLocked != "" {
+			require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
+		}
 	} else {
 		require.NoError(t, err)
 	}
