@@ -791,16 +791,17 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 
 type intersectionProcessWorker struct {
 	// key: parTblIdx, val: HandleMap
+	// Value of MemAwareHandleMap is *int to avoid extra Get().
 	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[*int]
 	workerID            int
 	workerCh            chan *indexMergeTableTask
 	indexMerge          *IndexMergeReaderExecutor
 	memTracker          *memory.Tracker
+	batchSize           int
 
 	// When rowDelta == memConsumeBatchSize, Consume(memUsageDelta)
-	memUsageDelta       int64
-	rowDelta            int64
-	memConsumeBatchSize int
+	memUsageDelta int64
+	rowDelta      int64
 
 	// For Consume(-totalMemUsage)
 	totalMemUsage int64
@@ -812,7 +813,7 @@ func (w *intersectionProcessWorker) consumeMemDelta() {
 	w.rowDelta = 0
 }
 
-func (w *intersectionProcessWorker) doIntersectionPerPartition() {
+func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Context, workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	defer func() {
 		if w.rowDelta > 0 {
 			w.consumeMemDelta()
@@ -823,7 +824,8 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 		var ok bool
 		var hMap *kv.MemAwareHandleMap[*int]
 		if hMap, ok = w.handleMapsPerWorker[task.parTblIdx]; !ok {
-			panic(fmt.Sprintf("cannot find parTblIdx(%d) for worker(id: %d)", task.parTblIdx, w.workerID))
+			hMap = kv.NewMemAwareHandleMap[*int]()
+			w.handleMapsPerWorker[task.parTblIdx] = hMap
 		}
 		var mapDelta int64
 		var rowDelta int64
@@ -844,10 +846,56 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 			w.memUsageDelta += mapDelta + (rowDelta * int64(unsafe.Sizeof(reflect.Int64)))
 			w.totalMemUsage += w.memUsageDelta
 		}
-		if w.rowDelta >= int64(w.memConsumeBatchSize) {
+		if w.rowDelta >= int64(w.batchSize) {
 			w.consumeMemDelta()
 		}
 		failpoint.Inject("testIndexMergeIntersectionWorkerPanic", nil)
+	}
+
+	// We assume the result of intersection is small, so no need to track memory.
+	intersecteds := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
+	for parTblIdx, hMap := range w.handleMapsPerWorker {
+		hMap.Range(func(h kv.Handle, val interface{}) bool {
+			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
+				// Means all partial paths have this handle.
+				intersecteds[parTblIdx] = append(intersecteds[parTblIdx], h)
+			}
+			return true
+		})
+	}
+
+	tasks := make([]*indexMergeTableTask, 0, len(w.handleMapsPerWorker))
+	for parTblIdx, intersected := range intersecteds {
+		// Split intersected[parTblIdx] to avoid task is too large.
+		for len(intersected) > 0 {
+			length := w.batchSize
+			if length > len(intersected) {
+				length = len(intersected)
+			}
+			task := &indexMergeTableTask{
+				lookupTableTask: lookupTableTask{
+					handles: intersected[:length],
+					doneCh:  make(chan error, 1),
+				},
+			}
+			intersected = intersected[length:]
+			if w.indexMerge.partitionTableMode {
+				task.partitionTable = w.indexMerge.prunedPartitions[parTblIdx]
+			}
+			tasks = append(tasks, task)
+			logutil.BgLogger().Debug("intersectionProcessWorker build tasks",
+				zap.Int("parTblIdx", parTblIdx), zap.Int("task.handles", len(task.handles)))
+		}
+	}
+	for _, task := range tasks {
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case workCh <- task:
+			resultCh <- task
+		}
 	}
 }
 
@@ -870,22 +918,17 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 
 	// One goroutine may handle one or multiple partitions.
 	// Max number of partition number is 8192, we use ExecutorConcurrency to avoid too many goroutines.
-	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().IndexMergeIntersectionConcurrency()
 	partCnt := 1
 	workerCnt := 1
-	partCntPerWorker := 1
-
+	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().IndexMergeIntersectionConcurrency()
 	const maxChannelSize int = 1024
+
 	batchSize := w.indexMerge.ctx.GetSessionVars().IndexLookupSize
 	if w.indexMerge.partitionTableMode {
 		partCnt = len(w.indexMerge.prunedPartitions)
 		workerCnt = partCnt
 		if workerCnt > maxWorkerCnt {
 			workerCnt = maxWorkerCnt
-			partCntPerWorker = partCnt / workerCnt
-			if partCnt%workerCnt != 0 {
-				partCntPerWorker++
-			}
 		}
 	}
 	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
@@ -894,25 +937,18 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			panic(fmt.Sprintf("unexpected workerCnt, expect %d, got %d", con, workerCnt))
 		}
 	})
-	handleMaps := make([]*kv.MemAwareHandleMap[*int], 0, partCnt)
+
 	workers := make([]*intersectionProcessWorker, 0, workerCnt)
 	wg := sync.WaitGroup{}
 	errCh := make(chan bool, workerCnt)
 	for i := 0; i < workerCnt; i++ {
-		handleMapsPerWorker := make(map[int]*kv.MemAwareHandleMap[*int], partCntPerWorker)
-		for j := 0; j < partCntPerWorker; j++ {
-			hMap := kv.NewMemAwareHandleMap[*int]()
-			handleMaps = append(handleMaps, hMap)
-			parTblIdx := i*partCntPerWorker + j
-			handleMapsPerWorker[parTblIdx] = hMap
-		}
 		worker := &intersectionProcessWorker{
 			workerID:            i,
-			handleMapsPerWorker: handleMapsPerWorker,
+			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[*int]),
 			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge:          w.indexMerge,
 			memTracker:          w.indexMerge.memTracker,
-			memConsumeBatchSize: batchSize,
+			batchSize:           batchSize,
 		}
 		wg.Add(1)
 		go func() {
@@ -920,7 +956,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			defer wg.Done()
 			util.WithRecovery(
 				func() {
-					worker.doIntersectionPerPartition()
+					worker.doIntersectionPerPartition(ctx, workCh, resultCh, finished)
 				},
 				w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh),
 			)
@@ -930,7 +966,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	var processWorkerErr bool
 	for task := range fetchCh {
 		select {
-		case workers[task.parTblIdx/partCntPerWorker].workerCh <- task:
+		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case processWorkerErr = <-errCh:
 			break
 		}
@@ -951,54 +987,6 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		w.indexMerge.memTracker.Consume(-(totalMemUsage))
 	}()
 
-	// We assume the result of intersection is small, so no need to track memory.
-	intersected := make([][]kv.Handle, partCnt)
-	for parTblIdx, hMap := range handleMaps {
-		hMap.Range(func(h kv.Handle, val interface{}) bool {
-			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
-				// Means all partial paths have this handle.
-				intersected[parTblIdx] = append(intersected[parTblIdx], h)
-			}
-			return true
-		})
-	}
-	tasks := make([]*indexMergeTableTask, 0, partCnt)
-	for parTblIdx := 0; parTblIdx < partCnt; parTblIdx++ {
-		if len(intersected[parTblIdx]) == 0 {
-			continue
-		}
-		// Split intersected[parTblIdx] to avoid task is too large.
-		for len(intersected[parTblIdx]) > 0 {
-			length := batchSize
-			if length > len(intersected[parTblIdx]) {
-				length = len(intersected[parTblIdx])
-			}
-			s := intersected[parTblIdx][:length]
-			intersected[parTblIdx] = intersected[parTblIdx][length:]
-			task := &indexMergeTableTask{
-				lookupTableTask: lookupTableTask{
-					handles: s,
-					doneCh:  make(chan error, 1),
-				},
-			}
-			if w.indexMerge.partitionTableMode {
-				task.partitionTable = w.indexMerge.prunedPartitions[parTblIdx]
-			}
-			tasks = append(tasks, task)
-			logutil.BgLogger().Debug("intersectionProcessWorker build tasks",
-				zap.Int("parTblIdx", parTblIdx), zap.Int("task.handles", len(task.handles)))
-		}
-	}
-	for _, task := range tasks {
-		select {
-		case <-ctx.Done():
-			return
-		case <-finished:
-			return
-		case workCh <- task:
-			resultCh <- task
-		}
-	}
 }
 
 func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *indexMergeTableTask, worker string, extraCh chan bool) func(r interface{}) {
