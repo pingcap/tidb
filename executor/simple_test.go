@@ -131,7 +131,7 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestUserReuseControl(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	rootTK.MustQuery(`show variables like  "password_history"`).Check(testkit.Rows("password_history 0"))
 	rootTK.MustQuery(`show variables like  "password_reuse_interval"`).Check(testkit.Rows("password_reuse_interval 0"))
@@ -152,7 +152,7 @@ func TestUserReuseControl(t *testing.T) {
 }
 
 func TestUserReuseInfo(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	rootTK.MustExec(`CREATE USER testReuse`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> <nil>`))
@@ -204,7 +204,7 @@ func TestUserReuseInfo(t *testing.T) {
 }
 
 func TestUserReuseFunction(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test'`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
@@ -321,7 +321,7 @@ func TestUserReuseFunction(t *testing.T) {
 }
 
 func TestUserReuseMultiuser(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	//alter multi user success
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test', testReuse1 identified by 'test', testReuse2 identified by 'test' PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY`)
@@ -340,7 +340,7 @@ func TestUserReuseMultiuser(t *testing.T) {
 }
 
 func TestUserReuseRename(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5`)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
@@ -354,7 +354,7 @@ func TestUserReuseRename(t *testing.T) {
 }
 
 func TestUserAlterUser(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	rootTK.MustExec(`CREATE USER test1 IDENTIFIED WITH 'mysql_native_password' BY '1234'`)
 	alterUserSQL := `ALTER USER 'test1' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
@@ -369,7 +369,7 @@ func TestUserAlterUser(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	subtk := testkit.NewTestKit(t, store)
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
