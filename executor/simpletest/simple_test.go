@@ -899,13 +899,20 @@ func TestFailedLoginTracking(t *testing.T) {
 	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "u5")
 
-	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;", "u1", 4, 6, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;", "u2", 4, -1, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;", "u3", 3, 6, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;", "u4", 4, 3, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;", "u4", 4, -1, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6;", "u5", 3, 6, 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6 COMMENT 'Something';", "u5", 3, 6, 0, "Something")
+	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6;", "u1",
+		4, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u2'@'localhost' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED;",
+		"u2", 4, -1, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u3'@'localhost' PASSWORD_LOCK_TIME 6;",
+		"u3", 3, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' FAILED_LOGIN_ATTEMPTS 4;",
+		"u4", 4, 3, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME UNBOUNDED;",
+		"u4", 4, -1, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6;",
+		"u5", 3, 6, 0, "")
+	alterAndCheck(t, tk, "ALTER USER 'u5'@'localhost' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 6 COMMENT 'Something';",
+		"u5", 3, 6, 0, "Something")
 
 	showTestCase1(tk)
 	showTestCase2(tk)

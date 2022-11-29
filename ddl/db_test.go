@@ -985,6 +985,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
@@ -1385,6 +1386,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	prepareFn := func() {
@@ -1760,4 +1762,16 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestMDLPutETCDFail(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/putEtcdFailed", `return(true)`))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/putEtcdFailed"))
+	tk.MustExec("alter table t add column b int")
 }

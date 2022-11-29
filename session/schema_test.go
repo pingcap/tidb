@@ -134,6 +134,7 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 	tk1.MustExec("commit")
 
 	// TODO remove this enable after fixing table delta map.
+	tk1.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk1.MustExec("begin pessimistic")
 	tk2.MustExec("alter table t add k int")
