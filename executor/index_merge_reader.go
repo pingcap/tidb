@@ -851,6 +851,9 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition() {
 	}
 }
 
+// For each partition(dynamic mode), a map is used to do intersection. Key of the map is handle, and value is the number of times it occurs.
+// If the value of handle equals the number of partial paths, it should be sent to final_table_scan_worker.
+// To avoid too many goroutines, each intersectionProcessWorker can handle multiple partitions.
 func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	defer func() {
