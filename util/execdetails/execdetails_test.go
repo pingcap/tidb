@@ -109,10 +109,10 @@ func TestString(t *testing.T) {
 			RocksdbBlockReadByte:      100,
 			RocksdbBlockReadDuration:  time.Millisecond,
 		},
-		TimeDetail: util.TimeDetail{
+		DetailsNeedP90: DetailsNeedP90{TimeDetail: util.TimeDetail{
 			ProcessTime: 2*time.Second + 5*time.Millisecond,
 			WaitTime:    time.Second,
-		},
+		}},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
@@ -179,9 +179,11 @@ func TestCopRuntimeStats(t *testing.T) {
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
-	copStats[0].SetRowNum(10)
-	copStats[0].Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2", copStats[0].String())
+	newCopStats := &basicCopRuntimeStats{}
+	newCopStats.SetRowNum(10)
+	newCopStats.Record(time.Second, 10)
+	copStats.Merge(newCopStats)
+	require.Equal(t, "time:1s, loops:2", copStats.String())
 	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -193,7 +195,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	cop.scanDetail.RocksdbKeySkippedCount = 0
 	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
-	str := "tikv_task:{proc max:1s, min:2ns, avg: 500ms, p80:1s, p95:1s, iters:4, tasks:2}, " +
+	str := "tikv_task:{proc max:1s, min:1ns, avg: 500ms, p80:1s, p95:1s, iters:4, tasks:2}, " +
 		"scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
 
@@ -228,9 +230,9 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
-	copStats[0].SetRowNum(10)
-	copStats[0].Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dmfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rough_set_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms}", copStats[0].String())
+	copStats.SetRowNum(10)
+	copStats.Record(time.Second, 10)
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dmfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rough_set_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms}", copStats.String())
 	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dmfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rough_set_index_load_time: 100ms, total_read_time: 3000ms}, total_create_snapshot_time: 50ms}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
@@ -385,17 +387,14 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
-	basic1 := &BasicRuntimeStats{}
-	basic2 := &BasicRuntimeStats{}
-	basic1.Record(time.Second, 20)
-	basic2.Record(time.Second*2, 30)
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
-	stmtStats.RegisterStats(pid, basic1)
-	stmtStats.RegisterStats(pid, basic2)
+	basic1 := stmtStats.GetBasicRuntimeStats(pid)
+	basic2 := stmtStats.GetBasicRuntimeStats(pid)
+	basic1.Record(time.Second, 20)
+	basic2.Record(time.Second*2, 30)
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
-	stmtStats.RegisterStats(pid, concurrency)
 	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
@@ -405,6 +404,7 @@ func TestRootRuntimeStats(t *testing.T) {
 		PrewriteRegionNum: 5,
 		TxnRetry:          2,
 	}
+	stmtStats.RegisterStats(pid, concurrency)
 	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
 		Commit: commitDetail,
 	})
