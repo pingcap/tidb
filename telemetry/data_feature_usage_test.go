@@ -143,7 +143,7 @@ func TestAutoIDNoCache(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoIDNoCache)
-	tk.MustExec("alter table tele_autoid auto_id_cache=0")
+	tk.MustExec("drop table tele_autoid")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.AutoIDNoCache)

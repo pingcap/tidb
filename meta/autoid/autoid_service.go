@@ -236,5 +236,5 @@ func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 }
 
 func (*singlePointAlloc) GetType() AllocatorType {
-	return RowIDAllocType
+	return AutoIncrementType
 }
