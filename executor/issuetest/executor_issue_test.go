@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package issuetest_test
 
 import (
 	"context"
@@ -684,6 +684,9 @@ func TestIssue22231(t *testing.T) {
 	tk.MustQuery("select cast('2020-05-28 23:59:59 00:00:00' as datetime)").Check(testkit.Rows("2020-05-28 23:59:59"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '2020-05-28 23:59:59 00:00:00'"))
 	tk.MustExec("drop table if exists t_issue_22231")
+
+	tk.MustQuery("SELECT CAST(\"1111111111-\" AS DATE);")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '1111111111-'"))
 }
 
 // TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
