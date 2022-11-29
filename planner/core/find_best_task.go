@@ -914,7 +914,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 
 		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		if path.StoreType == kv.TiFlash && ds.isForUpdateRead {
+		if path.StoreType == kv.TiFlash && ds.isForUpdateRead && ds.ctx.GetSessionVars().InTxn() {
 			if ds.isPointGetConditions() {
 				continue
 			}
