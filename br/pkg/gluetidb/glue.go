@@ -323,6 +323,7 @@ func (gs *tidbSession) getTempDBGlobalVariable(dbName, varName string) (string, 
 	if rs == nil {
 		return "", errors.New("Wrong number of Recordset")
 	}
+	//nolint: errcheck
 	defer rs.Close()
 
 	log.Info("get tidb_server_version successfully", zap.String("sql", sql))
