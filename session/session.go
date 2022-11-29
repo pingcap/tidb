@@ -2898,11 +2898,17 @@ func InitMDLVariable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		if isNull {
+			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+			enable = true
+			logutil.BgLogger().Warn("metadata lock is null")
+			err = t.SetMetadataLock(true)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
-	if isNull {
-		return errors.New("metadata lock is null")
-	}
 	variable.EnableMDL.Store(enable)
 	return err
 }
