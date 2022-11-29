@@ -142,7 +142,7 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se *Session, now tim
 	var rows []chunk.Row
 	rows, err = se.ExecuteSQL(
 		ctx,
-		// FROM_UNIXTIME does not support value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>` to present current time
+		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>` to present current time
 		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
 	)
 

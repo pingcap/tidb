@@ -75,6 +75,9 @@ func (s *Session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 		if !success {
 			_, err = s.ExecuteSQL(ctx, "ROLLBACK")
 			terror.Log(err)
+		} else {
+			_, err = s.ExecuteSQL(ctx, "COMMIT")
+			terror.Log(err)
 		}
 	}()
 
