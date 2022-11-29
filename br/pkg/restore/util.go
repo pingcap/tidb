@@ -781,7 +781,7 @@ func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion
 	// by default, the peers[0] to be assign as a leader
 	leader := peers[0]
 	minLeaderStore := storeBalanceScore[leader.StoreId]
-	for _, peer := range peers {
+	for _, peer := range peers[1:] {
 		log.Debug("leader candidate", zap.Int("score", storeBalanceScore[peer.StoreId]), zap.Int("min-score", minLeaderStore), zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
 		if storeBalanceScore[peer.StoreId] < minLeaderStore {
 			minLeaderStore = storeBalanceScore[peer.StoreId]
