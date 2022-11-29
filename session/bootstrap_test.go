@@ -113,7 +113,7 @@ func TestBootstrap(t *testing.T) {
 	// For https://github.com/pingcap/tidb/issues/1096
 	se, err = CreateSession4Test(store)
 	require.NoError(t, err)
-	doDMLWorks(se)
+	doDMLWorks(se, internalMustExecute)
 	r = mustExec(t, se, "select * from mysql.expr_pushdown_blacklist where name = 'date_add'")
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -163,7 +163,7 @@ func TestBootstrapWithError(t *testing.T) {
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-		doDDLWorks(se)
+		doDDLWorks(se, internalMustExecute)
 	}
 
 	dom, err := domap.Get(store)
@@ -529,7 +529,7 @@ func TestUpdateBindInfo(t *testing.T) {
 		)
 		mustExec(t, se, sql)
 
-		upgradeToVer67(se, version66)
+		upgradeToVer67(se, version66, internalDoReentrantDDL, internalMustExecute)
 		r := mustExec(t, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk(nil)
 		require.NoError(t, r.Next(ctx, req))
@@ -568,7 +568,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	upgradeToVer67(se, version66)
+	upgradeToVer67(se, version66, internalDoReentrantDDL, internalMustExecute)
 
 	r := mustExec(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
 	req := r.NewChunk(nil)
@@ -1021,7 +1021,7 @@ func TestUpgradeToVer85(t *testing.T) {
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t3', 'select /*+ use_index(t3, idx_a)*/ * from t3', 'test', 'deleted', '2021-01-07 14:50:58.257', '2021-01-07 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	upgradeToVer85(se, version84)
+	upgradeToVer85(se, version84, internalDoReentrantDDL, internalMustExecute)
 
 	r := mustExec(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
 	req := r.NewChunk(nil)

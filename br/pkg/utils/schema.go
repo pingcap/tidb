@@ -124,3 +124,10 @@ func GetSysDBCIStrName(tempDB model.CIStr) (model.CIStr, bool) {
 	tempDB.L = tempDB.L[len(temporaryDBNamePrefix):]
 	return tempDB, true
 }
+
+func IsTempSysDB(name string) bool {
+	if len(name) <= len(temporaryDBNamePrefix) {
+		return false
+	}
+	return strings.HasPrefix(name, temporaryDBNamePrefix)
+}

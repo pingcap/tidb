@@ -594,3 +594,8 @@ func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool,
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
 }
+
+func (gs *tidbGlueSession) Upgrude(ctx context.Context, currVersion, targetVersion int64, charset, collate string, restoreTblSet map[string]struct{}) error {
+	// TODO
+	return nil
+}

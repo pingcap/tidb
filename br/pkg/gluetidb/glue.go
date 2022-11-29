@@ -5,6 +5,7 @@ package gluetidb
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -12,16 +13,20 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -270,6 +275,13 @@ func (gs *tidbSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
+	if utils.IsTempSysDB(name) {
+		slice := strings.Split(name, ".")
+		if len(slice) < 2 {
+			return "", errors.Trace(errors.New(fmt.Sprintf("not found %s", name)))
+		}
+		return gs.getTempDBGlobalVariable(slice[0], slice[1])
+	}
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
@@ -299,6 +311,123 @@ func (gs *tidbSession) showCreateDatabase(db *model.DBInfo) (string, error) {
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+}
+
+func (gs *tidbSession) getTempDBGlobalVariable(dbName, varName string) (string, error) {
+	sql := fmt.Sprintf("SELECT variable_value from %s.tidb where variable_name=\"%s\";", dbName, varName)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	rs, err := gs.se.ExecuteInternal(ctx, sql)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if rs == nil {
+		return "", errors.New("Wrong number of Recordset")
+	}
+	defer rs.Close()
+
+	log.Info("get tidb_server_version successfully", zap.String("sql", sql))
+	var tidb_server_version string
+	req := rs.NewChunk(nil)
+	it := chunk.NewIterator4Chunk(req)
+	err = rs.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			tidb_server_version = row.GetString(0)
+		}
+		err = rs.Next(ctx, req)
+	}
+	return tidb_server_version, nil
+}
+
+func (gs *tidbSession) Upgrude(ctx context.Context, currVersion, targetVersion int64, charset, collate string, restoreTblSet map[string]struct{}) error {
+	log.Info("upgrade", zap.Int64("currVersion", currVersion), zap.Int64("targetVersion", targetVersion),
+		zap.String("charset", charset), zap.String("collate", collate))
+
+	var execErr error
+	doReentrantDDLInBR := func(s session.Session, sql string, ignorableErrs ...error) {
+		parser := parser.New()
+		astNode, err := parser.ParseOneStmt(sql, charset, collate)
+		if err != nil {
+			log.Error("parse sql statement error", zap.Error(err), zap.String("sql", sql))
+			execErr = errors.Trace(err)
+			return
+		}
+
+		// DDL for upgrade includes `alter` and `create`
+		switch stmt := astNode.(type) {
+		case *ast.AlterTableStmt:
+			log.Info("DDL origin table name", zap.Any("table", stmt.Table))
+			stmt.Table.Schema = utils.TemporaryDBName(mysql.SystemDB)
+			log.Info("current table name", zap.Any("table", stmt.Table))
+			tblName := stmt.Table.Name.L
+			log.Info("DDL", zap.String("table", tblName))
+			if _, ok := restoreTblSet[tblName]; !ok {
+				log.Info("DDL filter out", zap.String("table", tblName))
+				return
+			}
+			_, err = s.ExecuteStmt(ctx, stmt)
+		default:
+			return
+		}
+
+		if err != nil {
+			log.Error("Execute Stmt failed", zap.Error(err))
+			execErr = errors.Trace(err)
+			return
+		}
+		log.Info("exec DDL successfully", zap.String("sql", sql))
+		// Do I need to call rs.Next? Confirm whether alter is lazily take effect. TODO
+	}
+
+	mustExecuteInBR := func(s session.Session, sql string, args ...interface{}) {
+		log.Info("In mustExecuteInBR", zap.String("sql", sql))
+
+		parser := parser.New()
+		astNode, err := parser.ParseOneStmt(sql, charset, collate)
+		if err != nil {
+			log.Error("parse sql statement error", zap.Error(err), zap.String("sql", sql))
+			execErr = errors.Trace(err)
+			return
+		}
+
+		// DML for upgrade includes `update` and `insert`
+		switch stmt := astNode.(type) {
+		case *ast.UpdateStmt:
+			log.Info("DML origin table name", zap.Any("table", stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema))
+			stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema = utils.TemporaryDBName(mysql.SystemDB)
+			log.Info("current table name", zap.Any("table", stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Schema))
+			tblName := stmt.TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.L
+			log.Info("DML", zap.String("table", tblName))
+			if _, ok := restoreTblSet[tblName]; !ok {
+				log.Info("DML filter out", zap.String("table", tblName))
+				return
+			}
+			_, err = s.ExecuteStmt(ctx, stmt)
+		default:
+			return
+		}
+
+		if err != nil {
+			log.Error("Execute Stmt failed", zap.Error(err))
+			execErr = errors.Trace(err)
+			return
+		}
+		log.Info("exec DML successfully", zap.String("sql", sql))
+	}
+
+	for _, b := range session.BootstrapVersion {
+		if b.Version <= currVersion || b.Version > targetVersion {
+			continue
+		}
+		log.Info("upgrade", zap.Int64("version", b.Version))
+		b.UpgradeFunc(gs.se, currVersion, doReentrantDDLInBR, mustExecuteInBR)
+		if execErr != nil {
+			log.Error("upgrade failed", zap.Error(execErr))
+			return errors.Trace(execErr)
+		}
+	}
+
+	return nil
 }
 
 // mockSession is used for test.
@@ -373,6 +502,11 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 		return ret, nil
 	}
 	return "True", nil
+}
+
+func (s *mockSession) Upgrude(ctx context.Context, currVersion, targetVersion int64, charset, collate string, restoreTblSet map[string]struct{}) error {
+	// pass
+	return nil
 }
 
 // MockGlue only used for test

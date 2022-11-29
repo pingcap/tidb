@@ -48,6 +48,7 @@ type Session interface {
 	Close()
 	GetGlobalVariable(name string) (string, error)
 	GetSessionCtx() sessionctx.Context
+	Upgrude(ctx context.Context, currVersion, targetVersion int64, charset, collate string, restoreTblSet map[string]struct{}) error
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly

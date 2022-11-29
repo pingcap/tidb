@@ -928,7 +928,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && SysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -940,7 +940,9 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		if len(ti.Columns) != len(backupTi.Columns) {
+		// skip user table when checking column count
+		// because TODO...
+		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != "user" {
 			log.Error("column count mismatch",
 				zap.Stringer("table", table.Info.Name),
 				zap.Int("col in cluster", len(ti.Columns)),
@@ -959,6 +961,13 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
+				// skip user table...TODO
+				if backupTi.Name.L == "user" {
+					log.Warn("missing column in backup data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					continue
+				}
 				log.Error("missing column in backup data",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))

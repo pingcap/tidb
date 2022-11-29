@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -18,6 +19,8 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
+
+const tidbServerVersionVar = "tidb_server_version"
 
 var statsTables = map[string]struct{}{
 	"stats_buckets":    {},
@@ -48,7 +51,7 @@ var unRecoverableTable = map[string]struct{}{
 // the value part is the filter in SQL where clause which is used to
 // skip clearing or restoring 'cloud_admin'@'%' which is a special
 // user on TiDB Cloud
-var sysPrivilegeTableMap = map[string]string{
+var SysPrivilegeTableMap = map[string]string{
 	"user":          "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
 	"db":            "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
 	"tables_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
@@ -93,9 +96,56 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 		return
 	}
 
+	varName := fmt.Sprintf("%s.%s", temporaryDB.O, tidbServerVersionVar)
+	backupTiDBServerVersion, err := rc.db.se.GetGlobalVariable(varName)
+	if err != nil {
+		log.Error(fmt.Sprintf("failed to GetGlobalVariable %s in backup data", varName), zap.Error(err))
+		return
+	}
+	log.Info("get backup tidb_server_version", zap.String("backupTiDBServerVersion", backupTiDBServerVersion), zap.String("varName", varName))
+
+	clusterTiDBServerVersion, err := rc.db.se.GetGlobalVariable(tidbServerVersionVar)
+	if err != nil {
+		log.Error(fmt.Sprintf("failed to GetGlobalVariable %s in cluster", tidbServerVersionVar), zap.Error(err))
+		return
+	}
+	log.Info("get cluster tidb_server_version", zap.String("clusterTiDBServerVersion", clusterTiDBServerVersion))
+
+	currVersion, err := strconv.ParseInt(backupTiDBServerVersion, 10, 64)
+	if err != nil {
+		log.Fatal("strconv tidb_server_version failed", zap.Error(err))
+		return
+	}
+
+	targetVersion, err := strconv.ParseInt(clusterTiDBServerVersion, 10, 64)
+	if err != nil {
+		log.Fatal("strconv tidb_server_version failed", zap.Error(err))
+		return
+	}
+
+	// Are the charset and collate of the db and table consistent? TODO
+	var charset, collate string
+	for _, table := range originDatabase.Tables {
+		if table.Info.Name.L == "user" {
+			charset = table.Info.Charset
+			collate = table.Info.Collate
+			break
+		}
+	}
+	log.Info("charset and collation in backed up user table", zap.String("charset", charset), zap.String("collate", collate))
+	restoreTblSet := make(map[string]struct{})
+	for tbl := range SysPrivilegeTableMap {
+		restoreTblSet[tbl] = struct{}{}
+	}
+	if err = rc.db.se.Upgrude(ctx, currVersion, targetVersion, charset, collate, restoreTblSet); err != nil {
+		log.Error(fmt.Sprintf("failed to upgrade from version %v to version %v", currVersion, targetVersion), zap.Error(err))
+		return
+	}
+
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
+		log.Info("replace into", zap.String("table", tableName.O), zap.String("db", table.DB.Name.O), zap.Bool("match", f.MatchTable(sysDB, tableName.O)))
 		if f.MatchTable(sysDB, tableName.O) {
 			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
@@ -197,14 +247,15 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	}
 
 	if isUnrecoverableTable(tableName) {
+		log.Error("restoring unsupported `mysql` schema table", zap.String("table", tableName))
 		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
 	}
 
 	if db.ExistingTables[tableName] != nil {
 		whereClause := ""
-		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
+		if rc.fullClusterRestore && SysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereClause = fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
+			whereClause = fmt.Sprintf("WHERE %s", SysPrivilegeTableMap[tableName])
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
@@ -217,8 +268,9 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
 		// target column order may different with source cluster
-		columnNames := make([]string, 0, len(ti.Columns))
-		for _, col := range ti.Columns {
+		clusterTbl := db.ExistingTables[ti.Name.L]
+		columnNames := make([]string, 0, len(clusterTbl.Columns))
+		for _, col := range clusterTbl.Columns {
 			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
 		}
 		colListStr := strings.Join(columnNames, ",")
