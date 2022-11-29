@@ -919,8 +919,8 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 
 	// One goroutine may handle one or multiple partitions.
 	// Max number of partition number is 8192, we use ExecutorConcurrency to avoid too many goroutines.
-	partCnt := 1
-	workerCnt := 1
+	var partCnt int
+	var workerCnt int
 	maxWorkerCnt := w.indexMerge.ctx.GetSessionVars().IndexMergeIntersectionConcurrency()
 	maxChannelSize := atomic.LoadInt32(&LookupTableTaskChannelSize)
 
@@ -931,6 +931,9 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		if workerCnt > maxWorkerCnt {
 			workerCnt = maxWorkerCnt
 		}
+	} else {
+		partCnt = 1
+		workerCnt = 1
 	}
 	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
 		con := val.(int)
