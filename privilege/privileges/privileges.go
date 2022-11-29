@@ -885,10 +885,8 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	if parserErr != nil {
 		if found {
 			return parserErr
-		} else {
-			passwordLocking.FailedLoginAttempts = 0
 		}
-
+		passwordLocking.FailedLoginAttempts = 0
 	}
 	passwordLocking.FailedLoginAttempts = failedLoginAttempts
 	if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
@@ -901,9 +899,8 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	if parserErr != nil {
 		if found {
 			return parserErr
-		} else {
-			passwordLocking.PasswordLockTimeDays = 0
 		}
+		passwordLocking.PasswordLockTimeDays = 0
 	}
 	passwordLocking.PasswordLockTimeDays = lockTime
 	if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
