@@ -4603,28 +4603,30 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#24)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#24",
           "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#23)]",
           "│   ├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#23",
-          "│   │ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#22)]",
-          "│   │   ├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#22",
-          "│   │   │ └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
-          "│   │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │   │   └─TableReader(Probe) 9990.00 root  data:Selection",
-          "│   │   │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "│   │   │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
-          "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   │ └─MergeJoin 12475.01 root  inner join, left key:test.t1.b, right key:test.t.b",
+          "│   │   ├─Sort(Build) 9980.01 root  test.t.b",
+          "│   │   │ └─HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#22)]",
+          "│   │   │   ├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#22",
+          "│   │   │   │ └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "│   │   │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │   │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │   │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   │   │   │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│   │   │   │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│   │   │   │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │   │   └─TableReader(Probe) 9980.01 root  data:Selection",
+          "│   │   │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   │   │       └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   │   └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │     └─TableReader 9990.00 root  data:Selection",
+          "│   │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
           "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
@@ -4639,35 +4641,40 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#24)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#24",
-          "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#23)]",
-          "│   ├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#23",
-          "│   │ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#22)]",
-          "│   │   ├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#22",
-          "│   │   │ └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
-          "│   │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │   │   └─TableReader(Probe) 9990.00 root  data:Selection",
-          "│   │   │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "│   │   │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
-          "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
-          "│     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t1.b, test.t.b)]",
+          "│   ├─MergeJoin(Build) 9980.01 root  inner join, left key:test.t.a, right key:Column#23",
+          "│   │ ├─Sort(Build) 7984.01 root  Column#23",
+          "│   │ │ └─StreamAgg 7984.01 root  group by:test.t.a, funcs:count(1)->Column#23",
+          "│   │ │   └─Sort 12475.01 root  test.t.a",
+          "│   │ │     └─MergeJoin 12475.01 root  inner join, left key:test.t1.b, right key:test.t.b",
+          "│   │ │       ├─Sort(Build) 9980.01 root  test.t.b",
+          "│   │ │       │ └─HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#22)]",
+          "│   │ │       │   ├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#22",
+          "│   │ │       │   │ └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "│   │ │       │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │ │       │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │ │       │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   │ │       │   │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│   │ │       │   │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│   │ │       │   │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │ │       │   └─TableReader(Probe) 9980.01 root  data:Selection",
+          "│   │ │       │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   │ │       │       └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   │ │       └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │ │         └─TableReader 9990.00 root  data:Selection",
+          "│   │ │           └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │ │             └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   │ └─Sort(Probe) 9980.01 root  test.t.a",
+          "│   │   └─TableReader 9980.01 root  data:Selection",
+          "│   │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   │       └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -4892,7 +4899,9 @@
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct"
+        ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
@@ -4932,7 +4941,9 @@
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct"
+        ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;",
@@ -5014,7 +5025,9 @@
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "The qb_name hint qb_v2_2 is unused, please check whether the table list in the qb_name hint qb_v2_2 is correct"
+        ]
       },
       {
         "SQL": "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;",
@@ -5037,36 +5050,34 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name"
+          "The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;",
+        "SQL": "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#13)]",
-          "├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#13",
-          "│ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "│   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "├─StreamAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#13",
+          "│ └─Sort 15593.77 root  test.t2.a",
+          "│   └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│     └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│       ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│       │ └─TableReader 9980.01 root  data:Selection",
+          "│       │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│       │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│       └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│         └─TableReader 9990.00 root  data:Selection",
+          "│           └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│             └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint stream_agg(@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint merge_join(`t`@`qb_v_1`) is ignored due to unknown query block name"
+          "The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct"
         ]
       },
       {
@@ -5099,28 +5110,30 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name"
+          "The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;",
+        "SQL": "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#20)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#20",
           "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#19)]",
-          "│   ├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#19",
-          "│   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "│   │   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "│   │   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "│   ├─StreamAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#19",
+          "│   │ └─Sort 15593.77 root  test.t2.a",
+          "│   │   └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
           "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│   │     └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│   │       ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│   │       │ └─TableReader 9980.01 root  data:Selection",
+          "│   │       │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   │       │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │       └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │         └─TableReader 9990.00 root  data:Selection",
+          "│   │           └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │             └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
           "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
@@ -5133,81 +5146,80 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "The qb_name hint for view only supports to be defined in the first query block",
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint stream_agg(@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint merge_join(`t`@`qb_v_1`) is ignored due to unknown query block name"
+          "The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#13)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#13",
-          "│ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "│ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
           "│   ├─TableReader(Build) 9990.00 root  data:Selection",
           "│   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "│   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "│     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│     ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│     │ └─TableReader 9980.01 root  data:Selection",
+          "│     │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│     └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│       └─TableReader 9990.00 root  data:Selection",
+          "│         └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│           └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name"
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2), qb_name(qb_v_1, v@sel_2 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#13)]",
-          "├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#13",
-          "│ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "│   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "├─StreamAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#13",
+          "│ └─Sort 15593.77 root  test.t2.a",
+          "│   └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│     └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│       ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│       │ └─TableReader 9980.01 root  data:Selection",
+          "│       │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│       │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│       └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│         └─TableReader 9990.00 root  data:Selection",
+          "│           └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│             └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint stream_agg(@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint merge_join(`t`@`qb_v_1`) is ignored due to unknown query block name"
+          "The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#20)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#20",
           "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#19)]",
           "│   ├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#19",
-          "│   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "│   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
           "│   │   ├─TableReader(Build) 9990.00 root  data:Selection",
           "│   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "│   │   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │   └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│   │     ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│   │     │ └─TableReader 9980.01 root  data:Selection",
+          "│   │     │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   │     │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │     └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │       └─TableReader 9990.00 root  data:Selection",
+          "│   │         └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │           └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
           "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
@@ -5219,72 +5231,73 @@
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name"
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_2 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#20)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#20",
-          "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#19)]",
-          "│   ├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#19",
-          "│   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "│   │   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "│   │   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
-          "│     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t1.b, test.t.b)]",
+          "│   ├─MergeJoin(Build) 9980.01 root  inner join, left key:test.t.a, right key:Column#19",
+          "│   │ ├─Sort(Build) 7984.01 root  Column#19",
+          "│   │ │ └─StreamAgg 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#19",
+          "│   │ │   └─Sort 15593.77 root  test.t2.a",
+          "│   │ │     └─HashJoin 15593.77 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "│   │ │       ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │ │       │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   │ │       │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│   │ │       └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "│   │ │         ├─Sort(Build) 9980.01 root  test.t2.b",
+          "│   │ │         │ └─TableReader 9980.01 root  data:Selection",
+          "│   │ │         │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   │ │         │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │ │         └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │ │           └─TableReader 9990.00 root  data:Selection",
+          "│   │ │             └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │ │               └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   │ └─Sort(Probe) 9980.01 root  test.t.a",
+          "│   │   └─TableReader 9980.01 root  data:Selection",
+          "│   │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   │       └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Hint merge_join(`t1`@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint stream_agg(@`qb_v_2`) is ignored due to unknown query block name",
-          "Hint merge_join(`t`@`qb_v_1`) is ignored due to unknown query block name"
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1) */ * from v2;",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2. v1@sel_2 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1), merge_join(t1@qb_v1_2) */ * from v2;",
         "Plan": [
           "HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#27)]",
           "├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#27",
           "│ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#26)]",
           "│   ├─HashAgg(Build) 7984.01 root  group by:test.t.a, funcs:count(1)->Column#26",
-          "│   │ └─HashJoin 12475.01 root  inner join, equal:[eq(test.t.a, Column#25)]",
-          "│   │   ├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#25",
-          "│   │   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "│   │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "│   │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│   │   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "│   │   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│   │   │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
-          "│   │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "│   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "│   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   │     └─TableReader(Probe) 9980.01 root  data:Selection",
-          "│   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   │ └─MergeJoin 12475.01 root  inner join, left key:test.t1.b, right key:test.t.b",
+          "│   │   ├─Sort(Build) 9980.01 root  test.t.b",
+          "│   │   │ └─HashJoin 9980.01 root  inner join, equal:[eq(test.t.a, Column#25)]",
+          "│   │   │   ├─HashAgg(Build) 7984.01 root  group by:test.t2.a, funcs:count(1)->Column#25",
+          "│   │   │   │ └─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "│   │   │   │   ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │   │   │   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   │   │   │   │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│   │   │   │   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "│   │   │   │     ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │   │   │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │   │   │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   │   │   │     └─TableReader(Probe) 9980.01 root  data:Selection",
+          "│   │   │   │       └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   │   │   │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   │   │   └─TableReader(Probe) 9980.01 root  data:Selection",
+          "│   │   │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   │   │       └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   │   └─Sort(Probe) 9990.00 root  test.t1.b",
+          "│   │     └─TableReader 9990.00 root  data:Selection",
+          "│   │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│   │         └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.b, test.t1.b)]",
           "│     ├─TableReader(Build) 9990.00 root  data:Selection",
           "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
@@ -5639,6 +5652,51 @@
         "Warn": [
           "[planner:1815]Join hints are conflict, you can only specify one type of join",
           "[planner:1815]Optimizer aggregation hints are conflicted"
+        ]
+      },
+      {
+        "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;",
+        "Plan": [
+          "HashJoin_41 6944.44 root  CARTESIAN inner join",
+          "├─IndexLookUp_50(Build) 83.33 root  ",
+          "│ ├─IndexRangeScan_47(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
+          "│ └─Selection_49(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
+          "│   └─TableRowIDScan_48 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─IndexLookUp_46(Probe) 83.33 root  ",
+          "  ├─IndexRangeScan_43(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
+          "  └─Selection_45(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
+          "    └─TableRowIDScan_44 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select a from v4 where b < 10)\n\nselect /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;",
+        "Plan": [
+          "HashJoin_41 6944.44 root  CARTESIAN inner join",
+          "├─TableReader_53(Build) 83.33 root  data:Selection_52",
+          "│ └─Selection_52 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.b, 10)",
+          "│   └─TableFullScan_51 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─IndexLookUp_46(Probe) 83.33 root  ",
+          "  ├─IndexRangeScan_43(Build) 250.00 cop[tikv] table:t4, index:idx_a(a) range:(2,8), keep order:false, stats:pseudo",
+          "  └─Selection_45(Probe) 83.33 cop[tikv]  gt(test.t4.b, 3)",
+          "    └─TableRowIDScan_44 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;",
+        "Plan": [
+          "HashJoin_41 6944.44 root  CARTESIAN inner join",
+          "├─IndexLookUp_57(Build) 83.33 root  ",
+          "│ ├─IndexRangeScan_54(Build) 250.00 cop[tikv] table:t4, index:idx_b(b) range:(3,10), keep order:false, stats:pseudo",
+          "│ └─Selection_56(Probe) 83.33 cop[tikv]  gt(test.t4.a, 2)",
+          "│   └─TableRowIDScan_55 250.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─TableReader_45(Probe) 83.33 root  data:Selection_44",
+          "  └─Selection_44 83.33 cop[tikv]  gt(test.t4.a, 2), gt(test.t4.b, 3), lt(test.t4.a, 10), lt(test.t4.a, 8), lt(test.t4.a, 9)",
+          "    └─TableFullScan_43 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct"
         ]
       }
     ]
