@@ -7558,19 +7558,27 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a, b));")
-	tk.MustExec("insert into t values(1,2,3), (4,5,6);")
+	tk.MustExec("create table t(a int, b int, primary key(a, b));")
+	tk.MustExec("create table t1(c int unique, d int);")
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
 	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	tk.MustQuery("explain select a, b from t where a = 1 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 and d = 1 for update;")
 	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
 	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
 	tk.MustExec("commit")
 }
 

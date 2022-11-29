@@ -914,8 +914,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 
 		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		if path.StoreType == kv.TiFlash && ds.isPointGetPath(path) && ds.isForUpdateRead {
-			continue
+		if path.StoreType == kv.TiFlash && ds.isForUpdateRead {
+			if ds.isPointGetConditions() {
+				continue
+			}
 		}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
@@ -1056,33 +1058,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
-}
-
-func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
-	if len(path.Ranges) < 1 {
-		return false
-	}
-	for _, ran := range path.Ranges {
-		if !ran.IsPointNonNullable(ds.ctx) {
-			return false
-		}
-	}
-	if path.IsIntHandlePath {
-		return true
-	}
-	if path.Index == nil {
-		return false
-	}
-	if path.Index.HasPrefixIndex() || !path.Index.Unique {
-		return false
-	}
-	idxColsLen := len(path.Index.Columns)
-	for _, ran := range path.Ranges {
-		if len(ran.LowVal) != idxColsLen {
-			return false
-		}
-	}
-	return true
 }
 
 func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
@@ -1934,6 +1909,62 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	is.stats = stats
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
 	return is
+}
+
+func (ds *DataSource) isPointGetConditions() bool {
+	t, _ := ds.is.TableByID(ds.physicalTableID)
+	columns := map[string]struct{}{}
+	for _, cond := range ds.allConds {
+		s, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		if s.FuncName.L != ast.EQ || (s.FuncName.L == ast.In && len(s.GetArgs()) != 2) {
+			return false
+		}
+		arg0 := s.GetArgs()[0]
+		arg1 := s.GetArgs()[1]
+		_, ok1 := arg0.(*expression.Constant)
+		col, ok2 := arg1.(*expression.Column)
+		if ok1 && ok2 {
+			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
+			continue
+		}
+		col, ok1 = arg0.(*expression.Column)
+		_, ok2 = arg1.(*expression.Constant)
+		if ok1 && ok2 {
+			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
+			continue
+		}
+	}
+	return ds.findPKOrUniqueIndexMatchColumns(columns)
+}
+
+func (ds *DataSource) findPKOrUniqueIndexMatchColumns(columns map[string]struct{}) bool {
+	for _, idx := range ds.tableInfo.Indices {
+		if !idx.Unique && !idx.Primary {
+			continue
+		}
+		if idx.HasPrefixIndex() {
+			continue
+		}
+		if len(idx.Columns) != len(columns) {
+			continue
+		}
+		flag := true
+		for _, idxCol := range idx.Columns {
+			_, ok := columns[idxCol.Name.String()]
+			if !ok {
+				flag = false
+				break
+			}
+		}
+		if !flag {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // convertToTableScan converts the DataSource to table scan.
