@@ -2601,9 +2601,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	enableAutoLock := pm.IsEnableAccountAutoLock(authUser.Username, authUser.Hostname)
+	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
-		passwordLockingJSON, verErr := pm.VerificationAccountAutoLock(authUser.Username, authUser.Hostname)
+		passwordLockingJSON, verErr := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
 		if verErr != nil {
 			return verErr
 		}

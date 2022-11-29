@@ -356,9 +356,9 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
-// VerificationAccountAutoLock implements the Manager interface.
+// VerifyAccountAutoLock implements the Manager interface.
 // Verification Account Auto Lock
-func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (string, error) {
+func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string, error) {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
@@ -383,9 +383,9 @@ func (p *UserPrivileges) VerificationAccountAutoLock(user string, host string) (
 	return "", nil
 }
 
-// IsEnableAccountAutoLock implements the Manager interface.
+// IsAccountAutoLockEnabled implements the Manager interface.
 // Account enable Auto Lock
-func (p *UserPrivileges) IsEnableAccountAutoLock(user string, host string) bool {
+func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
