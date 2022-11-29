@@ -42,9 +42,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// copReadBatchFactor is the factor of batch size of coprocessor read.
-// It multiplies the tidb_ddl_reorg_batch_size to avoid sending too many cop requests for the same handle range.
-const copReadBatchFactor = 10
+// copReadBatchSize is the batch size of coprocessor read.
+// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
+// sending too many cop requests for the same handle range.
+func copReadBatchSize() int {
+	return 10 * int(variable.GetDDLReorgBatchSize())
+}
 
 func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -152,12 +155,12 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		wg:        sync.WaitGroup{},
 		idxBufPool: sync.Pool{
 			New: func() any {
-				return make([]*indexRecord, 0, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
+				return make([]*indexRecord, 0, copReadBatchSize())
 			},
 		},
 		srcChkPool: sync.Pool{
 			New: func() any {
-				return chunk.NewChunkWithCapacity(copCtx.fieldTps, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
+				return chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 			},
 		},
 		binding: generic.NewSyncMap[*[]*indexRecord, *chunk.Chunk](4),
@@ -201,7 +204,7 @@ func (c *copReqSenderPool) close() {
 
 func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
 	ir, chk := c.idxBufPool.Get().([]*indexRecord), c.srcChkPool.Get().(*chunk.Chunk)
-	newCap := int(variable.GetDDLReorgBatchSize()) * copReadBatchFactor
+	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
 		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
 	}
