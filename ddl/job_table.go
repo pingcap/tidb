@@ -252,7 +252,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.once.Store(false)
-					cleanMDLInfo(d.sessPool, job.ID)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 					// Don't have a worker now.
 					return
 				}
@@ -287,7 +287,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 			// the newest schema.
 			waitSchemaChanged(context.Background(), d.ddlCtx, d.lease*2, schemaVer, job)
-			cleanMDLInfo(d.sessPool, job.ID)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 			d.synced(job)
 
 			if RunInGoTest {
