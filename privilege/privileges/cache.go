@@ -690,9 +690,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			passwordLocking := PasswordLocking{}
 			if err := passwordLocking.PasswordLockingParser(bj); err != nil {
-				if !strings.Contains(err.Error(), "user_attributes not found") {
-					return err
-				}
+				return err
 			}
 			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
 			value.PasswordLockTime = passwordLocking.PasswordLockTimeDays

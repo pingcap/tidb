@@ -881,51 +881,55 @@ type PasswordLocking struct {
 
 // PasswordLockingParser parser PasswordLocking info
 func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSON types.BinaryJSON) error {
-	failedLoginAttempts, found, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
+	var found bool
+	var parserErr error
+	passwordLocking.FailedLoginAttempts, found, parserErr =
+		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
 	if parserErr != nil {
 		if found {
 			return parserErr
 		}
 		passwordLocking.FailedLoginAttempts = 0
-	}
-	passwordLocking.FailedLoginAttempts = failedLoginAttempts
-	if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
-		passwordLocking.FailedLoginAttempts = math.MaxInt16
-	} else if passwordLocking.FailedLoginAttempts < 0 {
-		passwordLocking.FailedLoginAttempts = 0
+	} else {
+		if passwordLocking.FailedLoginAttempts > math.MaxInt16 {
+			passwordLocking.FailedLoginAttempts = math.MaxInt16
+		} else if passwordLocking.FailedLoginAttempts < 0 {
+			passwordLocking.FailedLoginAttempts = 0
+		}
 	}
 
-	lockTime, found, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+	passwordLocking.PasswordLockTimeDays, found, parserErr =
+		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if parserErr != nil {
 		if found {
 			return parserErr
 		}
 		passwordLocking.PasswordLockTimeDays = 0
-	}
-	passwordLocking.PasswordLockTimeDays = lockTime
-	if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
-		passwordLocking.PasswordLockTimeDays = math.MaxInt16
-	} else if passwordLocking.PasswordLockTimeDays < -1 {
-		passwordLocking.PasswordLockTimeDays = -1
+	} else {
+		if passwordLocking.PasswordLockTimeDays > math.MaxInt16 {
+			passwordLocking.PasswordLockTimeDays = math.MaxInt16
+		} else if passwordLocking.PasswordLockTimeDays < -1 {
+			passwordLocking.PasswordLockTimeDays = -1
+		}
 	}
 
-	failedLoginCount, found, parserErr := PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
+	passwordLocking.FailedLoginCount, found, parserErr =
+		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
 	if parserErr != nil && found {
 		return parserErr
 	}
-	passwordLocking.FailedLoginCount = failedLoginCount
 
-	autoLockedLastChanged, found, parserErr := PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
+	passwordLocking.AutoLockedLastChanged, found, parserErr =
+		PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if parserErr != nil && found {
 		return parserErr
 	}
-	passwordLocking.AutoLockedLastChanged = autoLockedLastChanged
 
-	autoAccountLock, found, parserErr := PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
+	passwordLocking.AutoAccountLocked, found, parserErr =
+		PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
 	if parserErr != nil && found {
 		return parserErr
 	}
-	passwordLocking.AutoAccountLocked = autoAccountLock
 	return nil
 }
 
