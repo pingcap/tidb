@@ -109,7 +109,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
