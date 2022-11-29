@@ -755,11 +755,7 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
 func tryFallbackToTxnMerge(job *model.Job, err error) error {
 	if job.State != model.JobStateRollingback {
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] fallback to txn-merge backfill process", zap.Error(err))
-		} else {
-			logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process")
-		}
+		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
 		job.RowCount = 0
