@@ -292,8 +292,8 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	finalPlan := postOptimize(sctx, physical)
 
-	if variable.ProcessGeneralLog.Load() && sctx.GetSessionVars().InRestrictedSQL {
-		ok, tiflashTables := hasTiFlashPlan(physical)
+	if variable.ProcessGeneralLog.Load() && !sctx.GetSessionVars().InRestrictedSQL {
+		ok, tiflashTables := hasTiFlashPlan(finalPlan)
 		if ok {
 			logutil.BgLogger().Info("GENERAL_LOG",
 				zap.String("SQL", sctx.GetSessionVars().StmtCtx.OriginalSQL),
@@ -315,9 +315,15 @@ func hasTiFlashPlan(p PhysicalPlan) (ok bool, tables []string) {
 	case *PhysicalTableReader:
 		switch x.StoreType {
 		case kv.TiFlash:
-			return true, []string{x.GetTablePlan().ExplainInfo()}
+			for _, tablePlan := range x.GetTableScans() {
+				tables = append(tables, tablePlan.Table.Name.String())
+			}
+			if len(tables) > 0 {
+				ok = true
+			}
+			return
 		default:
-			return false, nil
+			return
 		}
 	default:
 		if len(p.Children()) > 0 {
