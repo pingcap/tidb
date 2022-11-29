@@ -2236,6 +2236,11 @@ error = '''
 %s is not granted to %s
 '''
 
+["privilege:3957"]
+error = '''
+Access denied for user '%s'@'%s'. Account is blocked for %d day(s) (%d day(s) remaining) due to %d consecutive failed logins.
+'''
+
 ["schema:1007"]
 error = '''
 Can't create database '%-.192s'; database exists
