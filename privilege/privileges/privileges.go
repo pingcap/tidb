@@ -41,6 +41,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const notFound = math.MinInt32
+
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
 

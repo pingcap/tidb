@@ -917,6 +917,12 @@ func TestFailedLoginTracking(t *testing.T) {
 	showTestCase1(tk)
 	showTestCase2(tk)
 	showTestCase3(tk)
+	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0 ")
+	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
+	tk.MustExec("ALTER USER 'u4'@'localhost' account unlock ")
+	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
+	alterAndCheck(t, tk, "ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 6;",
+		"u4", 0, 6, 0, "")
 }
 
 func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
