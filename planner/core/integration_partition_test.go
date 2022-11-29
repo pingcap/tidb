@@ -1458,12 +1458,12 @@ func TestRangeColumnsExpr(t *testing.T) {
 		"TableReader 1.14 root partition:p5,p12 data:Selection",
 		"└─Selection 1.14 cop[tikv]  in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
-	tk.MustQuery(`select * from tref where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
-		"4 10 3",
-		"14 10 4"))
-	tk.MustQuery(`select * from t where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
-		"4 10 3",
-		"14 10 4"))
+	tk.MustQuery(`select * from tref where a in (4,14) and b in (null,10)`).Sort().Check(testkit.Rows(
+		"14 10 4",
+		"4 10 3"))
+	tk.MustQuery(`select * from t where a in (4,14) and b in (null,10)`).Sort().Check(testkit.Rows(
+		"14 10 4",
+		"4 10 3"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
 		"TableReader 3.43 root partition:p1,p5,p6,p11,p12 data:Selection",
 		"└─Selection 3.43 cop[tikv]  in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))",
