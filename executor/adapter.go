@@ -215,6 +215,7 @@ type PartitionTelemetryInfo struct {
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
