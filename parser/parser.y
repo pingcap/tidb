@@ -13897,6 +13897,7 @@ ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 DryRunOptions:
 	{
