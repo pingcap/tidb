@@ -2601,6 +2601,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
+	//Check whether continuous login failure is enabled to lock the account.
+	//If enabled, determine whether to unlock the account and notify TiDB to update the cache
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
 		passwordLockingJSON, verErr := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
@@ -2619,6 +2621,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	}
 	accessDenied, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if connVerifErr != nil {
+		//when user enables the account locking function for consecutive login failures,
+		//the system updates the login failure count and determines whether to lock the account when authentication fails
 		if enableAutoLock && accessDenied {
 			if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 				return trackingErr
@@ -2645,11 +2649,26 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		}
 		return getErr
 	}
+	if passwordLocking.AutoAccountLocked {
+		if passwordLocking.PasswordLockTimeDays == -1 {
+			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+
+		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
+	}
 	pm := privilege.GetPrivilegeManager(s)
-	passwordLockingJSON := pm.BuildSuccessPasswordLockingJSON(user, host, passwordLocking.FailedLoginCount)
-	if passwordLockingJSON != "" {
-		if lockingErr := s.passwordLocking(user, host, passwordLockingJSON); lockingErr != nil {
-			return lockingErr
+	if !(passwordLocking.FailedLoginCount == 0 && !passwordLocking.AutoAccountLocked) {
+		passwordLockingJSON := pm.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
+			passwordLocking.PasswordLockTimeDays)
+		if passwordLockingJSON != "" {
+			if lockingErr := s.passwordLocking(user, host, passwordLockingJSON); lockingErr != nil {
+				if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+					return rollBackErr
+				}
+				return lockingErr
+			}
 		}
 	}
 	return failedLoginTrackingCommit(s)
@@ -2663,7 +2682,11 @@ func authFailedTracking(s *session, user string, host string) error {
 		}
 		return getErr
 	}
-	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1, passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
+	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1,
+		passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
 		return err
 	}
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
@@ -2711,7 +2734,8 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 	if err != nil {
 		return passwordLocking, err
 	}
-	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
+	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE " + 
+	" USER = %? AND HOST = %? for update`, user, host)
 	if err != nil {
 		return passwordLocking, err
 	}
@@ -2737,6 +2761,9 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 
 func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
 	autoAccountLocked := "N"
+	if userFailedLoginAttempts == 0 || passwordLockTimeDays == 0 {
+		return nil
+	}
 	if failedLoginCount >= userFailedLoginAttempts {
 		autoAccountLocked = "Y"
 	}

@@ -69,7 +69,7 @@ type Manager interface {
 		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string
 
 	// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
-	BuildSuccessPasswordLockingJSON(user string, host string, failedLoginCount int64) string
+	BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
