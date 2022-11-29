@@ -20,16 +20,115 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/ttl"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
-func newMockScanWorker(sessFactory func() pools.Resource) (*ttlScanWorker, chan *ttlDeleteTask, chan interface{}) {
-	pool := newMockSessionPool(sessFactory)
-	delCh := make(chan *ttlDeleteTask)
-	notifyStateCh := make(chan interface{}, 10)
-	return newScanWorker(delCh, notifyStateCh, pool), delCh, notifyStateCh
+type mockScanWorker struct {
+	*ttlScanWorker
+	t        *testing.T
+	delCh    chan *ttlDeleteTask
+	notifyCh chan interface{}
+	is       infoschema.InfoSchema
+	rows     []chunk.Row
+	execErr  error
+}
+
+func newMockScanWorker(t *testing.T) *mockScanWorker {
+	w := &mockScanWorker{
+		t:        t,
+		delCh:    make(chan *ttlDeleteTask),
+		notifyCh: make(chan interface{}, 10),
+		is:       newMockInfoSchema(),
+	}
+
+	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, newMockSessionPool(func() pools.Resource {
+		s := newMockSession(t)
+		s.sessionInfoSchema = w.is
+		s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+			return w.rows, w.execErr
+		}
+		return s
+	}))
+
+	require.Equal(t, workerStatusCreated, w.Status())
+	require.False(t, w.Idle())
+	result, ok := w.PollTaskResult()
+	require.False(t, ok)
+	require.Nil(t, result)
+	return w
+}
+
+func (w *mockScanWorker) checkWorkerStatus(status workerStatus, idle bool, curTask *ttlScanTask) {
+	require.Equal(w.t, status, w.status)
+	require.Equal(w.t, idle, w.Idle())
+	require.Same(w.t, curTask, w.CurrentTask())
+}
+
+func (w *mockScanWorker) checkPollResult(exist bool, err string) {
+	curTask := w.CurrentTask()
+	r, ok := w.PollTaskResult()
+	require.Equal(w.t, exist, ok)
+	if !exist {
+		require.Nil(w.t, r)
+	} else {
+		require.NotNil(w.t, r)
+		require.NotNil(w.t, r.task)
+		require.Same(w.t, curTask, r.task)
+		if err == "" {
+			require.NoError(w.t, r.err)
+		} else {
+			require.EqualError(w.t, r.err, err)
+		}
+	}
+}
+
+func (w *mockScanWorker) waitNotifyScanTaskEnd() *scanTaskExecEndMsg {
+	select {
+	case msg := <-w.notifyCh:
+		endMsg, ok := msg.(*scanTaskExecEndMsg)
+		require.True(w.t, ok)
+		require.NotNil(w.t, endMsg.result)
+		require.Same(w.t, w.CurrentTask(), endMsg.result.task)
+		return endMsg
+	case <-time.After(10 * time.Second):
+		require.FailNow(w.t, "timeout")
+	}
+
+	require.FailNow(w.t, "")
+	return nil
+}
+
+func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
+	select {
+	case del := <-w.delCh:
+		require.NotNil(w.t, del)
+		require.NotNil(w.t, del.statistics)
+		require.NotEqual(w.t, 0, len(del.rows))
+		return del
+	case <-time.After(10 * time.Second):
+		require.FailNow(w.t, "timeout")
+	}
+
+	require.FailNow(w.t, "")
+	return nil
+}
+
+func (w *mockScanWorker) setOneRowResult(tbl *ttl.PhysicalTable, val ...interface{}) {
+	w.is = newMockInfoSchema(tbl.TableInfo)
+	w.rows = newMockRows(tbl.KeyColumnTypes...).Append(w.t, val...).Rows()
+}
+
+func (w *mockScanWorker) clearInfoSchema() {
+	w.is = newMockInfoSchema()
+}
+
+func (w *mockScanWorker) stopWithWait() {
+	w.Stop()
+	require.NoError(w.t, w.WaitStopped(context.TODO(), 10*time.Second))
 }
 
 func TestScanWorkerSchedule(t *testing.T) {
@@ -38,76 +137,44 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
+	w := newMockScanWorker(t)
+	w.setOneRowResult(tbl, 7)
+	defer w.stopWithWait()
+
 	task := &ttlScanTask{
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
 	}
-	w, delCh, notifyCh := newMockScanWorker(func() pools.Resource {
-		s := newMockSession(t, tbl)
-		s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-			return newMockRows(tbl.KeyColumnTypes...).Append(t, 7).Rows(), nil
-		}
-		return s
-	})
 
-	defer func() {
-		w.Stop()
-		require.NoError(t, w.WaitStopped(context.TODO(), time.Second*10))
-	}()
-
-	require.Equal(t, workerStatusCreated, w.Status())
-	require.False(t, w.Idle())
-	err := w.Schedule(task)
-	require.False(t, w.Idle())
-	require.Nil(t, w.CurrentTask())
-	require.EqualError(t, err, "worker is not running")
+	require.EqualError(t, w.Schedule(task), "worker is not running")
+	w.checkWorkerStatus(workerStatusCreated, false, nil)
+	w.checkPollResult(false, "")
 
 	w.Start()
-	defer w.Stop()
-	require.Equal(t, workerStatusRunning, w.Status())
-	require.True(t, w.Idle())
-	require.Nil(t, w.CurrentTask())
+	w.checkWorkerStatus(workerStatusRunning, true, nil)
+	w.checkPollResult(false, "")
 
 	require.NoError(t, w.Schedule(task))
-	require.False(t, w.Idle())
-	require.Same(t, w.CurrentTask(), task)
+	w.checkWorkerStatus(workerStatusRunning, false, task)
+	w.checkPollResult(false, "")
 
-	err = w.Schedule(task)
-	require.EqualError(t, err, "a task is running")
-	result, ok := w.PollTaskResult()
-	require.False(t, ok)
-	require.Nil(t, result)
-	select {
-	case del := <-delCh:
-		require.Equal(t, 1, len(del.rows))
-		require.Equal(t, int64(7), del.rows[0][0].GetInt64())
-	case <-time.After(time.Minute):
-		require.FailNow(t, "timeout")
-	}
+	require.EqualError(t, w.Schedule(task), "a task is running")
+	w.checkWorkerStatus(workerStatusRunning, false, task)
+	w.checkPollResult(false, "")
 
-	select {
-	case msg := <-notifyCh:
-		require.Equal(t, 0, len(notifyCh))
-		endMsg, ok := msg.(*scanTaskExecEndMsg)
-		require.True(t, ok)
-		require.NotNil(t, endMsg.result)
-		require.Nil(t, endMsg.result.err)
-		require.Same(t, task, endMsg.result.task)
+	del := w.pollDelTask()
+	require.Equal(t, 1, len(del.rows))
+	require.Equal(t, 1, len(del.rows[0]))
+	require.Equal(t, int64(7), del.rows[0][0].GetInt64())
 
-		require.False(t, w.Idle())
-		require.Same(t, w.CurrentTask(), task)
-
-		err = w.Schedule(task)
-		require.EqualError(t, err, "the result of previous task has not been polled")
-
-		result, ok = w.PollTaskResult()
-		require.True(t, ok)
-		require.Same(t, endMsg.result, result)
-	case <-time.After(time.Minute):
-		require.FailNow(t, "timeout")
-	}
-	require.Equal(t, workerStatusRunning, w.Status())
+	msg := w.waitNotifyScanTaskEnd()
+	require.Same(t, task, msg.result.task)
+	require.NoError(t, msg.result.err)
+	w.checkWorkerStatus(workerStatusRunning, false, task)
+	w.checkPollResult(true, "")
+	w.checkWorkerStatus(workerStatusRunning, true, nil)
+	w.checkPollResult(false, "")
 }
 
 func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
@@ -116,41 +183,28 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
+	w := newMockScanWorker(t)
+	w.clearInfoSchema()
+	defer w.stopWithWait()
+
 	task := &ttlScanTask{
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
 	}
-	w, _, notifyCh := newMockScanWorker(func() pools.Resource {
-		s := newMockSession(t)
-		s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-			return nil, nil
-		}
-		return s
-	})
-
-	defer func() {
-		w.Stop()
-		require.NoError(t, w.WaitStopped(context.TODO(), time.Second*10))
-	}()
 
 	w.Start()
+	w.checkWorkerStatus(workerStatusRunning, true, nil)
+	w.checkPollResult(false, "")
+
 	require.NoError(t, w.Schedule(task))
+	w.checkWorkerStatus(workerStatusRunning, false, task)
+	w.checkPollResult(false, "")
 
-	select {
-	case msg := <-notifyCh:
-		require.Equal(t, 0, len(notifyCh))
-		endMsg, ok := msg.(*scanTaskExecEndMsg)
-		require.True(t, ok)
-		require.NotNil(t, endMsg.result)
-		require.EqualError(t, endMsg.result.err, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
-		require.Same(t, task, endMsg.result.task)
-
-		result, ok := w.PollTaskResult()
-		require.True(t, ok)
-		require.Same(t, endMsg.result, result)
-	case <-time.After(time.Second * 2):
-		require.FailNow(t, "timeout")
-	}
-	require.Equal(t, workerStatusRunning, w.Status())
+	msg := w.waitNotifyScanTaskEnd()
+	require.Same(t, task, msg.result.task)
+	require.EqualError(t, msg.result.err, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+	w.checkWorkerStatus(workerStatusRunning, false, task)
+	w.checkPollResult(true, msg.result.err.Error())
+	w.checkWorkerStatus(workerStatusRunning, true, nil)
 }
