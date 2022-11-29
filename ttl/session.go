@@ -18,37 +18,59 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Session is used to execute queries for TTL case
-type Session struct {
-	Sctx    sessionctx.Context
-	SQLExec sqlexec.SQLExecutor
-	CloseFn func()
+type Session interface {
+	sessionctx.Context
+	// SessionInfoSchema returns information schema of current session
+	SessionInfoSchema() infoschema.InfoSchema
+	// ExecuteSQL executes the sql
+	ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
+	// RunInTxn executes the specified function in a txn
+	RunInTxn(ctx context.Context, fn func() error) (err error)
+	// Close closes the session
+	Close()
 }
 
-// GetSessionVars returns the sessionVars
-func (s *Session) GetSessionVars() *variable.SessionVars {
-	if s.Sctx != nil {
-		return s.Sctx.GetSessionVars()
+type session struct {
+	sessionctx.Context
+	sqlExec sqlexec.SQLExecutor
+	closeFn func()
+}
+
+// NewSession creates a new Session
+func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func()) Session {
+	return &session{
+		Context: sctx,
+		sqlExec: sqlExec,
+		closeFn: closeFn,
 	}
-	return nil
+}
+
+// SessionInfoSchema returns information schema of current session
+func (s *session) SessionInfoSchema() infoschema.InfoSchema {
+	if s.Context == nil {
+		return nil
+	}
+	return sessiontxn.GetTxnManager(s.Context).GetTxnInfoSchema()
 }
 
 // ExecuteSQL executes the sql
-func (s *Session) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-	if s.SQLExec == nil {
+func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	if s.sqlExec == nil {
 		return nil, errors.New("session is closed")
 	}
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
-	rs, err := s.SQLExec.ExecuteInternal(ctx, sql, args...)
+	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +87,7 @@ func (s *Session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 }
 
 // RunInTxn executes the specified function in a txn
-func (s *Session) RunInTxn(ctx context.Context, fn func() error) (err error) {
+func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 	if _, err = s.ExecuteSQL(ctx, "BEGIN"); err != nil {
 		return err
 	}
@@ -90,12 +112,12 @@ func (s *Session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 	return err
 }
 
-// Close closed the session
-func (s *Session) Close() {
-	if s.CloseFn != nil {
-		s.CloseFn()
-		s.Sctx = nil
-		s.SQLExec = nil
-		s.CloseFn = nil
+// Close closes the session
+func (s *session) Close() {
+	if s.closeFn != nil {
+		s.closeFn()
+		s.Context = nil
+		s.sqlExec = nil
+		s.closeFn = nil
 	}
 }

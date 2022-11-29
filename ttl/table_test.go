@@ -177,10 +177,7 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	ttlTbl2, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))
 	require.NoError(t, err)
 
-	se := &ttl.Session{
-		Sctx:    tk.Session(),
-		SQLExec: tk.Session(),
-	}
+	se := ttl.NewSession(tk.Session(), tk.Session(), nil)
 
 	now := time.UnixMilli(0)
 	tz1, err := time.LoadLocation("Asia/Shanghai")
@@ -188,27 +185,27 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	tz2, err := time.LoadLocation("Europe/Berlin")
 	require.NoError(t, err)
 
-	se.Sctx.GetSessionVars().TimeZone = tz1
+	se.GetSessionVars().TimeZone = tz1
 	tm, err := ttlTbl.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
 	require.Equal(t, "1969-12-31 08:00:00", tm.Format("2006-01-02 15:04:05"))
 	require.Equal(t, tz1.String(), tm.Location().String())
 
-	se.Sctx.GetSessionVars().TimeZone = tz2
+	se.GetSessionVars().TimeZone = tz2
 	tm, err = ttlTbl.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
 	require.Equal(t, "1969-12-31 01:00:00", tm.Format("2006-01-02 15:04:05"))
 	require.Equal(t, tz2.String(), tm.Location().String())
 
-	se.Sctx.GetSessionVars().TimeZone = tz1
+	se.GetSessionVars().TimeZone = tz1
 	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, "1969-10-01 08:00:00", tm.Format("2006-01-02 15:04:05"))
 	require.Equal(t, tz1.String(), tm.Location().String())
 
-	se.Sctx.GetSessionVars().TimeZone = tz2
+	se.GetSessionVars().TimeZone = tz2
 	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, "1969-10-01 01:00:00", tm.Format("2006-01-02 15:04:05"))

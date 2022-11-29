@@ -133,7 +133,7 @@ func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
 }
 
 // EvalExpireTime returns the expired time
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se *Session, now time.Time) (expire time.Time, err error) {
+func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se Session, now time.Time) (expire time.Time, err error) {
 	tz := se.GetSessionVars().TimeZone
 
 	expireExpr := t.TTLInfo.IntervalExprStr

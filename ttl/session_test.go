@@ -28,10 +28,7 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	se := &Session{
-		Sctx:    tk.Session(),
-		SQLExec: tk.Session(),
-	}
+	se := NewSession(tk.Session(), tk.Session(), nil)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
