@@ -263,10 +263,6 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
-	if doubleReadRows <= 1 {
-		// prefer to use IndexLookup if double-read data-size is very small
-		doubleReadTasks = 0
-	}
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
 	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
@@ -452,7 +448,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 	startCost := newCostVer2(option, cpuFactor,
-		10*3*cpuFactor.Value,
+		10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
@@ -539,7 +535,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
 	} else { // TiDB HashJoin
 		startCost := newCostVer2(option, cpuFactor,
-			10*3*cpuFactor.Value,
+			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 		p.planCostVer2 = sumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
