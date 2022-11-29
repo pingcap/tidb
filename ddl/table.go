@@ -1341,6 +1341,7 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
 					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
 					tblInfo.TiFlashReplica.Available = false
+					logutil.BgLogger().Info("TiFlash replica become unavailable", zap.Int64("tableID", tblInfo.ID), zap.Int64("partitionID", id))
 					break
 				}
 			}
@@ -1350,6 +1351,9 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Errorf("unknown physical ID %v in table %v", physicalID, tblInfo.Name.O)
 	}
 
+	if tblInfo.TiFlashReplica.Available {
+		logutil.BgLogger().Info("TiFlash replica available", zap.Int64("tableID", tblInfo.ID))
+	}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

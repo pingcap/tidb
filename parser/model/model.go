@@ -548,6 +548,8 @@ type TableInfo struct {
 	StatsOptions *StatsOptions `json:"stats_options"`
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
+
+	TTLInfo *TTLInfo `json:"ttl_info"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -746,6 +748,10 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	for i := range t.ForeignKeys {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	}
+
+	if t.TTLInfo != nil {
+		nt.TTLInfo = t.TTLInfo.Clone()
 	}
 
 	return &nt
@@ -1736,6 +1742,21 @@ type PolicyInfo struct {
 func (p *PolicyInfo) Clone() *PolicyInfo {
 	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
+// TTLInfo records the TTL config
+type TTLInfo struct {
+	ColumnName      CIStr  `json:"column"`
+	IntervalExprStr string `json:"interval_expr"`
+	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
+	IntervalTimeUnit int  `json:"interval_time_unit"`
+	Enable           bool `json:"enable"`
+}
+
+// Clone clones TTLInfo
+func (t *TTLInfo) Clone() *TTLInfo {
+	cloned := *t
 	return &cloned
 }
 
