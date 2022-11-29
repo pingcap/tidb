@@ -541,7 +541,7 @@ func (tr *TableRestore) restoreEngine(
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
-			remainChunkCnt = float64(chunk.FinishedSize()) / float64(chunk.TotalSize())
+			remainChunkCnt = float64(chunk.UnfinishedSize()) / float64(chunk.TotalSize())
 			if metrics != nil {
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 			}
