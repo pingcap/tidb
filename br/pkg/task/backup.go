@@ -48,13 +48,13 @@ const (
 	flagRemoveSchedulers = "remove-schedulers"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
-	flagNoCheckpoint     = "no-checkpoint"
+	flagUseCheckpoint    = "use-checkpoint"
 
 	flagGCTTL = "gcttl"
 
 	defaultBackupConcurrency = 4
 	maxBackupConcurrency     = 256
-	checkpointDefaultGCTTL   = 15 * 3600 // 15 hours
+	checkpointDefaultGCTTL   = 72 * 60 // 72 minutes
 )
 
 const (
@@ -133,8 +133,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
 	_ = flags.MarkHidden(flagUseBackupMetaV2)
 
-	flags.Bool(flagNoCheckpoint, false, "not use checkpoint")
-	_ = flags.MarkHidden(flagNoCheckpoint)
+	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
+	_ = flags.MarkHidden(flagUseCheckpoint)
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -159,7 +159,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	noCheckpoint, err := flags.GetBool(flagNoCheckpoint)
+	noCheckpoint, err := flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -341,9 +341,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// after version check, check the cluster whether support checkpoint mode
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
-		if err != nil {
-			return errors.Trace(err)
-		}
+		log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
+		cfg.UseCheckpoint = false
 	}
 	var statsHandle *handle.Handle
 	if !skipStats {
@@ -419,7 +418,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
 			return
 		}
-		log.Info("start to remove gc-safepoint.")
+		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
@@ -429,7 +428,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 				zap.Error(err),
 			)
 		}
-		log.Info("finish removing gc-safepoint.")
+		log.Info("finish removing gc-safepoint keeper")
 	}()
 	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
