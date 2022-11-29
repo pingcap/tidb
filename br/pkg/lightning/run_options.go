@@ -30,6 +30,7 @@ type options struct {
 	promFactory       promutil.Factory
 	promRegistry      promutil.Registry
 	logger            log.Logger
+	dupIndicator      *bool
 }
 
 type Option func(*options)
@@ -79,5 +80,12 @@ func WithPromRegistry(r promutil.Registry) Option {
 func WithLogger(logger *zap.Logger) Option {
 	return func(o *options) {
 		o.logger = log.Logger{Logger: logger}
+	}
+}
+
+// WithDupIndicator sets a *bool to indicate duplicate detection has found duplicate data.
+func WithDupIndicator(b *bool) Option {
+	return func(o *options) {
+		o.dupIndicator = b
 	}
 }
