@@ -712,7 +712,6 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		}
 		pid = partitionIDs[0]
 		physTbl := tbl.GetPartition(pid)
-
 		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
