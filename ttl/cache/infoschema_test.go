@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,18 +37,19 @@ func TestInfoSchemaCache(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
 	tk := testkit.NewTestKitWithSession(t, store, sctx)
+	se := session.NewSession(sctx, sctx, func() {})
 
 	isc := cache.NewInfoSchemaCache(time.Hour)
 
 	// test should update
 	assert.True(t, isc.ShouldUpdate())
-	assert.NoError(t, isc.Update(sctx))
+	assert.NoError(t, isc.Update(se))
 	assert.False(t, isc.ShouldUpdate())
 
 	// test new tables are synced
 	assert.Equal(t, 0, len(isc.Tables))
 	tk.MustExec("create table test.t(created_at datetime) ttl = created_at + INTERVAL 5 YEAR")
-	assert.NoError(t, isc.Update(sctx))
+	assert.NoError(t, isc.Update(se))
 	assert.Equal(t, 1, len(isc.Tables))
 	for _, table := range isc.Tables {
 		assert.Equal(t, "t", table.TableInfo.Name.L)
@@ -62,7 +64,7 @@ func TestInfoSchemaCache(t *testing.T) {
 			partition p1 values less than (2000)
 		)
 	`)
-	assert.NoError(t, isc.Update(sctx))
+	assert.NoError(t, isc.Update(se))
 	assert.Equal(t, 2, len(isc.Tables))
 	partitions := []string{}
 	for id, table := range isc.Tables {
