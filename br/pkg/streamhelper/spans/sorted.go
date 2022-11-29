@@ -54,6 +54,20 @@ func NewFullWith(initSpans []Span, init Value) *ValuedFull {
 
 // Merge merges a new interval into the span set. The value of overlapped
 // part with other spans would be "merged" by the `join` function.
+// An example:
+/*
+|___________________________________________________________________________|
+^-----------------^-----------------^-----------------^---------------------^
+|      c = 42     |      c = 43     |     c = 45      |      c = 41         |
+                       ^--------------------------^
+                 merge(|          c = 44          |)
+Would Give:
+|___________________________________________________________________________|
+^-----------------^----^------------^-------------^---^---------------------^
+|      c = 42     | 43 |   c = 44   |     c = 45      |      c = 41         |
+                                    |-------------|
+                                    Unchanged, because 44 < 45.
+*/
 func (f *ValuedFull) Merge(val Valued) {
 	overlaps := make([]Valued, 0, 16)
 	f.overlapped(val.Key, &overlaps)

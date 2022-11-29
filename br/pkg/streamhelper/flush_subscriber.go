@@ -21,29 +21,37 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// FlushSubscriber maintains the state of subscribing to the cluster.
 type FlushSubscriber struct {
 	dialer  LogBackupService
 	cluster TiKVClusterMeta
 
-	clients      map[uint64]*subscription
+	// Current connections.
+	subscriptions map[uint64]*subscription
+	// The output channel.
 	eventsTunnel chan spans.Valued
-	masterCtx    context.Context
+	// The background context for subscribes.
+	masterCtx context.Context
 }
 
+// SubscriberConfig is a config which cloud be applied into the subscriber.
 type SubscriberConfig func(*FlushSubscriber)
 
+// WithMasterContext sets the "master context" for the subscriber,
+// that context would be the "background" context for every subtasks created by the subscription manager.
 func WithMasterContext(ctx context.Context) SubscriberConfig {
 	return func(fs *FlushSubscriber) { fs.masterCtx = ctx }
 }
 
+// NewSubscriber creates a new subscriber via the environment and optional configs.
 func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...SubscriberConfig) *FlushSubscriber {
 	subs := &FlushSubscriber{
 		dialer:  dialer,
 		cluster: cluster,
 
-		clients:      map[uint64]*subscription{},
-		eventsTunnel: make(chan spans.Valued, 1024),
-		masterCtx:    context.Background(),
+		subscriptions: map[uint64]*subscription{},
+		eventsTunnel:  make(chan spans.Valued, 1024),
+		masterCtx:     context.Background(),
 	}
 
 	for _, c := range config {
@@ -53,6 +61,7 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 	return subs
 }
 
+// UpdateStoreTopology fetches the current store topology and try to adapt the subscription state with it.
 func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 	stores, err := f.cluster.Stores(ctx)
 	if err != nil {
@@ -61,10 +70,10 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 	storeSet := map[uint64]struct{}{}
 	for _, store := range stores {
-		sub, ok := f.clients[store.ID]
+		sub, ok := f.subscriptions[store.ID]
 		if !ok {
 			f.addSubscription(ctx, store)
-			f.clients[store.ID].connect(f.masterCtx, f.dialer)
+			f.subscriptions[store.ID].connect(f.masterCtx, f.dialer)
 		} else if sub.storeBootAt != store.BootAt {
 			sub.storeBootAt = store.BootAt
 			sub.connect(f.masterCtx, f.dialer)
@@ -72,7 +81,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 		storeSet[store.ID] = struct{}{}
 	}
 
-	for id := range f.clients {
+	for id := range f.subscriptions {
 		_, ok := storeSet[id]
 		if !ok {
 			f.removeSubscription(id)
@@ -84,7 +93,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
 	log.Info("[log backup flush subscriber] Clearing.")
-	for id := range f.clients {
+	for id := range f.subscriptions {
 		f.removeSubscription(id)
 	}
 }
@@ -100,7 +109,7 @@ func (f *FlushSubscriber) Drop() {
 // Note that the handler may cannot handle the pending errors, at that time,
 // you can fetch the errors via `PendingErrors` call.
 func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
-	for id, sub := range f.clients {
+	for id, sub := range f.subscriptions {
 		err := sub.loadError()
 		if err != nil {
 			retry := f.canBeRetried(err)
@@ -112,6 +121,7 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 	}
 }
 
+// Events returns the output channel of the events.
 func (f *FlushSubscriber) Events() <-chan spans.Valued {
 	return f.eventsTunnel
 }
@@ -141,8 +151,14 @@ func spawnJoinable(f func()) joinHandle {
 	return c
 }
 
+// subscription is the state of subscription of one store.
+// initially, it is IDLE, where cancel == nil.
+// once `connect` called, it goto CONNECTED, where cancel != nil and err == nil.
+// once some error (both foreground or background) happens, it goto ERROR, where err != nil.
 type subscription struct {
-	cancel     context.CancelFunc
+	// the handle to cancel the worker goroutine.
+	cancel context.CancelFunc
+	// the handle to wait until the worker goroutine exits.
 	background joinHandle
 	errMu      sync.Mutex
 	err        error
@@ -252,15 +268,15 @@ func (s *subscription) listenOver(cli eventStream) {
 }
 
 func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
-	f.clients[toStore.ID] = newSubscription(toStore, f.eventsTunnel)
+	f.subscriptions[toStore.ID] = newSubscription(toStore, f.eventsTunnel)
 }
 
 func (f *FlushSubscriber) removeSubscription(toStore uint64) {
-	subs, ok := f.clients[toStore]
+	subs, ok := f.subscriptions[toStore]
 	if ok {
 		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
 		subs.close()
-		delete(f.clients, toStore)
+		delete(f.subscriptions, toStore)
 	}
 }
 
@@ -273,6 +289,7 @@ func decodeKey(key []byte) []byte {
 	_, data, err := codec.DecodeBytes(key, nil)
 	if err != nil {
 		log.Warn("the key from TiKV isn't encoded properly", logutil.Key("key", key), logutil.ShortError(err))
+		return key
 	}
 	return data
 }
@@ -290,7 +307,7 @@ func (f *FlushSubscriber) canBeRetried(err error) bool {
 
 func (f *FlushSubscriber) PendingErrors() error {
 	var allErr error
-	for _, s := range f.clients {
+	for _, s := range f.subscriptions {
 		if err := s.loadError(); err != nil {
 			allErr = multierr.Append(allErr, errors.Annotatef(err, "store %d has error", s.storeID))
 		}
