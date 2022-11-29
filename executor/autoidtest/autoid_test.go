@@ -736,33 +736,4 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 	_, err = tk.Exec("alter table t_473 auto_id_cache = 1")
 	require.Error(t, err)
 	return
-
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+100),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val), fmt.Sprintf("%d", val+100)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+101),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
-
-	// alter table from auto_id_cache=1 to default will discard the IDs cached by the autoid service.
-	// This is because they are two component and TiDB can't tell the autoid service to "save position and exit".
-	tk.MustExec("alter table t_473 auto_id_cache = 20000")
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+4100),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
-
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1",
-		fmt.Sprintf("%d", val),
-		fmt.Sprintf("%d", val+100),
-		fmt.Sprintf("%d", val+4100)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+24100),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
 }
