@@ -12,22 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache_test
+package cache
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"time"
 )
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+type baseCache struct {
+	interval time.Duration
+
+	updateTime time.Time
+}
+
+func newBaseCache(interval time.Duration) baseCache {
+	return baseCache{
+		interval: interval,
 	}
-	goleak.VerifyTestMain(m, opts...)
+}
+
+// ShouldUpdate returns whether this cache needs update
+func (bc *baseCache) ShouldUpdate() bool {
+	return time.Since(bc.updateTime) > bc.interval
+}
+
+// SetInterval sets the interval of updating cache
+func (bc *baseCache) SetInterval(interval time.Duration) {
+	bc.interval = interval
 }
