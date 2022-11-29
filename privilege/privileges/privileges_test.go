@@ -3110,8 +3110,9 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 }
 
 func selectSQL(user string) string {
-	userAttributesSQL := "SELECT user_attributes from mysql.user WHERE USER = 'REUSER' AND HOST = 'localhost' for update"
-	return strings.Replace(userAttributesSQL, "REUSER", user, -1)
+	userAttributesSQL := new(strings.Builder)
+	sqlexec.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update;", user)
+	return userAttributesSQL.String()
 }
 
 type userAttributes struct {
