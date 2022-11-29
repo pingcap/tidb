@@ -204,7 +204,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			if err != nil {
 				return nil, err
 			}
-			keyRanges := append(firstKeyRanges, secondKeyRanges...)
+			keyRanges := append(firstKeyRanges.FirstPartitionRange(), secondKeyRanges.FirstPartitionRange()...)
 			ranges = append(ranges, keyRanges)
 			continue
 		}
@@ -212,7 +212,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 		if err != nil {
 			return nil, err
 		}
-		ranges = append(ranges, keyRange)
+		ranges = append(ranges, keyRange.FirstPartitionRange())
 	}
 	return ranges, nil
 }
@@ -484,7 +484,6 @@ func (e *IndexMergeReaderExecutor) initRuntimeStats() {
 		e.stats = &IndexMergeRuntimeStat{
 			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -715,6 +714,9 @@ func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context
 
 // Close implements Exec Close interface.
 func (e *IndexMergeReaderExecutor) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.finished == nil {
 		return nil
 	}
@@ -1015,8 +1017,7 @@ func (w *partialIndexWorker) fetchHandles(
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.stats != nil {
 		if w.idxID != 0 {
-			basicStats = &execdetails.BasicRuntimeStats{}
-			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.idxID, basicStats)
+			basicStats = w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID)
 		}
 	}
 	for {

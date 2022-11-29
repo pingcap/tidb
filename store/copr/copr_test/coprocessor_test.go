@@ -43,7 +43,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 
 	req := &kv.Request{
 		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z"),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
 		FixedRowCountHint: []int{1, 1, 3, copr.CopSmallTaskRow},
 		Concurrency:       15,
 	}
@@ -57,7 +57,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 
 	req = &kv.Request{
 		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z"),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
 		FixedRowCountHint: []int{1, 1, 3, 3},
 		Concurrency:       15,
 	}
@@ -72,7 +72,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	// cross-region long range
 	req = &kv.Request{
 		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         copr.BuildKeyRanges("a", "z"),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "z")),
 		FixedRowCountHint: []int{10},
 		Concurrency:       15,
 	}
@@ -86,7 +86,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 
 	req = &kv.Request{
 		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         copr.BuildKeyRanges("a", "z"),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "z")),
 		FixedRowCountHint: []int{copr.CopSmallTaskRow + 1},
 		Concurrency:       15,
 	}
