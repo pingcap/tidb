@@ -357,6 +357,8 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+// GenerateAccountAutoLockErr implements the Manager interface.
+// Generate AccountAutoLock Error
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
 
