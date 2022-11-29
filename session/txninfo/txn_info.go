@@ -161,8 +161,6 @@ type TxnInfo struct {
 	}
 	// How many entries are in MemDB
 	EntriesCount uint64
-	// MemDB used memory
-	EntriesSize uint64
 
 	// The following fields will be filled in `session` instead of `LazyTxn`
 
@@ -207,9 +205,6 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	},
 	MemBufferKeysStr: func(info *TxnInfo) types.Datum {
 		return types.NewDatum(info.EntriesCount)
-	},
-	MemBufferBytesStr: func(info *TxnInfo) types.Datum {
-		return types.NewDatum(info.EntriesSize)
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
 		return types.NewDatum(info.ConnectionID)

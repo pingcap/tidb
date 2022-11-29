@@ -152,7 +152,11 @@ func (sp *singlePointAlloc) resetConn() {
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
 		err := grpcConn.Close()
-		logutil.BgLogger().Info("[autoid client] AllocAutoID grpc error, reconnect", zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Warn("[autoid client] AllocAutoID grpc error, reconnect", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[autoid client] AllocAutoID grpc error, reconnect")
+		}
 	}
 }
 
