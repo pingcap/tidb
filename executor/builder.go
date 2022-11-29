@@ -1400,17 +1400,6 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	return e
 }
 
-func (b *executorBuilder) buildSideEstCount(v *plannercore.PhysicalHashJoin) float64 {
-	buildSide := v.Children()[v.InnerChildIdx]
-	if v.UseOuterToBuild {
-		buildSide = v.Children()[1-v.InnerChildIdx]
-	}
-	if buildSide.Stats().HistColl == nil || buildSide.Stats().HistColl.Pseudo {
-		return 0.0
-	}
-	return buildSide.StatsCount()
-}
-
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1425,6 +1414,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	e := &HashJoinExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		probeSideTupleFetcher: &probeSideTupleFetcher{},
+		probeWorkers:          make([]*probeWorker, v.Concurrency),
+		buildWorker:           &buildWorker{},
 		hashJoinCtx: &hashJoinCtx{
 			isOuterJoin:     v.JoinType.IsOuterJoin(),
 			useOuterToBuild: v.UseOuterToBuild,
@@ -1449,15 +1440,17 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	leftIsBuildSide := true
 
 	e.isNullEQ = v.IsNullEQ
+	var probeKeys, probeNAKeys, buildKeys, buildNAKeys []*expression.Column
+	var buildSideExec Executor
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		if v.InnerChildIdx == 1 {
-			e.buildSideExec, e.buildKeys, e.buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
-			e.probeSideTupleFetcher.probeSideExec, e.probeKeys, e.probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			buildSideExec, buildKeys, buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			e.probeSideTupleFetcher.probeSideExec, probeKeys, probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
 			e.outerFilter = v.LeftConditions
 		} else {
-			e.buildSideExec, e.buildKeys, e.buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
-			e.probeSideTupleFetcher.probeSideExec, e.probeKeys, e.probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			buildSideExec, buildKeys, buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			e.probeSideTupleFetcher.probeSideExec, probeKeys, probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
 			e.outerFilter = v.RightConditions
 			leftIsBuildSide = false
 		}
@@ -1466,30 +1459,48 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
-			e.buildSideExec, e.buildKeys, e.buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
-			e.probeSideTupleFetcher.probeSideExec, e.probeKeys, e.probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			buildSideExec, buildKeys, buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			e.probeSideTupleFetcher.probeSideExec, probeKeys, probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
 			e.outerFilter = v.RightConditions
 		} else {
-			e.buildSideExec, e.buildKeys, e.buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
-			e.probeSideTupleFetcher.probeSideExec, e.probeKeys, e.probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			buildSideExec, buildKeys, buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			e.probeSideTupleFetcher.probeSideExec, probeKeys, probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
 			e.outerFilter = v.LeftConditions
 			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
+			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
 		}
 	}
-	isNAJoin := len(v.LeftNAJoinKeys) > 0
-	e.buildSideEstCount = b.buildSideEstCount(v)
-	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	e.probeWorkers = make([]probeWorker, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.probeWorkers[i].hashJoinCtx = e.hashJoinCtx
-		e.probeWorkers[i].workerID = i
-		e.probeWorkers[i].sessCtx = e.ctx
-		e.probeWorkers[i].joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
+	probeKeyColIdx := make([]int, len(probeKeys))
+	probeNAKeColIdx := make([]int, len(probeNAKeys))
+	buildKeyColIdx := make([]int, len(buildKeys))
+	buildNAKeyColIdx := make([]int, len(buildNAKeys))
+	for i := range buildKeys {
+		buildKeyColIdx[i] = buildKeys[i].Index
 	}
+	for i := range buildNAKeys {
+		buildNAKeyColIdx[i] = buildNAKeys[i].Index
+	}
+	for i := range probeKeys {
+		probeKeyColIdx[i] = probeKeys[i].Index
+	}
+	for i := range probeNAKeys {
+		probeNAKeColIdx[i] = probeNAKeys[i].Index
+	}
+	isNAJoin := len(v.LeftNAJoinKeys) > 0
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	for i := uint(0); i < e.concurrency; i++ {
+		e.probeWorkers[i] = &probeWorker{
+			hashJoinCtx:      e.hashJoinCtx,
+			workerID:         i,
+			sessCtx:          e.ctx,
+			joiner:           newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
+			probeKeyColIdx:   probeKeyColIdx,
+			probeNAKeyColIdx: probeNAKeColIdx,
+		}
+	}
+	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec = buildKeyColIdx, buildNAKeyColIdx, buildSideExec
 	e.hashJoinCtx.isNullAware = isNAJoin
 	executorCountHashJoinExec.Inc()
 
