@@ -45,6 +45,7 @@ go_library(
         "stat.go",
         "table.go",
         "table_lock.go",
+        "ttl.go",
     ],
     importpath = "github.com/pingcap/tidb/ddl",
     visibility = [
@@ -195,6 +196,7 @@ go_test(
         "table_split_test.go",
         "table_test.go",
         "tiflash_replica_test.go",
+        "ttl_test.go",
     ],
     embed = [":ddl"],
     flaky = True,

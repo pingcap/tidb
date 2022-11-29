@@ -2115,6 +2115,11 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 		}
 	}
+	if tbInfo.TTLInfo != nil {
+		if err := checkTTLInfoValid(ctx, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	return nil
 }
@@ -2192,6 +2197,10 @@ func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
+	}
+
+	if referTblInfo.TTLInfo != nil {
+		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
 	return &tblInfo, nil
 }
@@ -3000,6 +3009,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+	var handledTTLOrTTLEnable bool
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
@@ -3036,6 +3047,23 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
 			}
+		case ast.TableOptionTTL, ast.TableOptionTTLEnable:
+			if handledTTLOrTTLEnable {
+				continue
+			}
+
+			ttlInfo, ttlEnable, err := getTTLInfoInOptions(options)
+			if err != nil {
+				return err
+			}
+			// It's impossible that `ttlInfo` and `ttlEnable` are all nil, because we have met this option.
+			// After exclude the situation `ttlInfo == nil && ttlEnable != nil`, we could say `ttlInfo != nil`
+			if ttlInfo == nil && ttlEnable != nil {
+				return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			}
+
+			tbInfo.TTLInfo = ttlInfo
+			handledTTLOrTTLEnable = true
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -3227,6 +3255,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
+		var handledTTLOrTTLEnable bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
@@ -3363,6 +3392,20 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						Name: model.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
+				case ast.TableOptionTTL, ast.TableOptionTTLEnable:
+					var ttlInfo *model.TTLInfo
+					var ttlEnable *bool
+
+					if handledTTLOrTTLEnable {
+						continue
+					}
+					ttlInfo, ttlEnable, err = getTTLInfoInOptions(spec.Options)
+					if err != nil {
+						return err
+					}
+					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable)
+
+					handledTTLOrTTLEnable = true
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -3406,6 +3449,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
+		case ast.AlterTableRemoveTTL:
+			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
+			err = d.AlterTableRemoveTTL(sctx, ident)
 		default:
 			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
@@ -4238,6 +4284,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	// Check the column with TTL config
+	err = checkDropColumnWithTTLConfig(tblInfo, colName.L)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
 		return false, dbterror.ErrUnsupportedPKHandle
@@ -4722,6 +4773,13 @@ func GetModifiableColumnJob(
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if t.Meta().TTLInfo != nil {
+		// the column referenced by TTL should be a time type
+		if t.Meta().TTLInfo.ColumnName.L == originalColName.L && !types.IsTypeTime(newCol.ColumnInfo.FieldType.GetType()) {
+			return nil, errors.Trace(dbterror.ErrUnsupportedColumnInTTLConfig.GenWithStackByArgs(newCol.ColumnInfo.Name.O))
+		}
 	}
 
 	var newAutoRandBits uint64
@@ -5260,6 +5318,98 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// AlterTableTTLInfoOrEnable submit ddl job to change table info according to the ttlInfo, or ttlEnable
+// at least one of the `ttlInfo` or `ttlEnable` should be not nil.
+// When `ttlInfo` is nil, and `ttlEnable` is not, it will use the original `.TTLInfo` in the table info and modify the
+// `.Enable`. If the `.TTLInfo` in the table info is empty, this function will return an error.
+// When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
+func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	tblInfo := tb.Meta().Clone()
+	tableID := tblInfo.ID
+	tableName := tblInfo.Name.L
+
+	var job *model.Job
+	if ttlInfo != nil {
+		tblInfo.TTLInfo = ttlInfo
+		err = checkTTLInfoValid(ctx, tblInfo)
+		if err != nil {
+			return err
+		}
+		job = &model.Job{
+			SchemaID:   schema.ID,
+			TableID:    tableID,
+			SchemaName: schema.Name.L,
+			TableName:  tableName,
+			Type:       model.ActionAlterTTLInfo,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{ttlInfo, ttlEnable},
+		}
+	} else {
+		if tblInfo.TTLInfo == nil {
+			return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+		}
+
+		job = &model.Job{
+			SchemaID:   schema.ID,
+			TableID:    tableID,
+			SchemaName: schema.Name.L,
+			TableName:  tableName,
+			Type:       model.ActionAlterTTLInfo,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{ttlInfo, ttlEnable},
+		}
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error {
+	is := d.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	tblInfo := tb.Meta().Clone()
+	tableID := tblInfo.ID
+	tableName := tblInfo.Name.L
+
+	if tblInfo.TTLInfo != nil {
+		job := &model.Job{
+			SchemaID:   schema.ID,
+			TableID:    tableID,
+			SchemaName: schema.Name.L,
+			TableName:  tableName,
+			Type:       model.ActionAlterTTLRemove,
+			BinlogInfo: &model.HistoryInfo{},
+		}
+		err = d.DoDDLJob(ctx, job)
+		err = d.callHookOnChanged(job, err)
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
