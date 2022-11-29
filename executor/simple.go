@@ -815,8 +815,11 @@ type passwordOrLockOptionsInfo struct {
 }
 
 type alterUserPasswordLocking struct {
-	FailedLoginAttempts int64
-	PasswordLockTime    int64
+	FailedLoginAttempts            int64
+	PasswordLockTime               int64
+	FailedLoginAttemptsNotFound    bool
+	PasswordLockTimeChangeNotFound bool
+	commentIsNull                  bool
 }
 
 func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) {
@@ -842,24 +845,22 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 }
 
 func createUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
-	if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
+	if (info.FailedLoginAttemptsChange || info.PasswordLockTimeChange) && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
 		return fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
 			info.FailedLoginAttempts, info.PasswordLockTime)
 	}
 	return ""
 }
 
-func alterUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
+func alterUserFailedLoginJson(info *alterUserPasswordLocking, lockAccount string) string {
 	passwordLockingArray := []string{}
-	if info.LockAccount == "N" && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
+	if lockAccount == "N" && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
 	}
-	if info.FailedLoginAttemptsChange {
+	if info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0 {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", info.FailedLoginAttempts))
-	}
-	if info.PasswordLockTimeChange {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
 	}
 	if len(passwordLockingArray) > 0 {
@@ -868,36 +869,11 @@ func alterUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
 	return ""
 }
 
-// {
-// if info.FailedLoginAttemptsChange || info.PasswordLockTimeChange {
-// 	info.PasswordLocking = fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
-// 		info.FailedLoginAttempts, info.PasswordLockTime)
-// }
-// passwordLockingArray := []string{}
-// if info.LockAccount == "N" {
-// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", info.LockAccount))
-// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
-// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
-// }
-// if info.FailedLoginAttemptsChange {
-// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", info.FailedLoginAttempts))
-// }
-// if info.PasswordLockTimeChange {
-// 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.PasswordLockTime))
-// }
-// if len(passwordLockingArray) > 0 {
-// 	info.AlterPasswordLocking = fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
-// }
-
 func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
-	alterUserInfo := &alterUserPasswordLocking{0, 0}
-	if pLO.FailedLoginAttemptsChange && pLO.PasswordLockTimeChange {
-		alterUserInfo.FailedLoginAttempts = pLO.FailedLoginAttempts
-		alterUserInfo.PasswordLockTime = pLO.PasswordLockTime
-		return alterUserInfo, nil
-	}
+	alterUserInfo := &alterUserPasswordLocking{0, 0, false, false, false}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT  JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	sqlexec.MustFormatSQL(sql, `SELECT  JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
+	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))          FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return nil, err
@@ -923,6 +899,7 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 			}
 		} else {
 			alterUserInfo.FailedLoginAttempts = 0
+			alterUserInfo.FailedLoginAttemptsNotFound = true
 		}
 	}
 
@@ -942,9 +919,37 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 			}
 		} else {
 			alterUserInfo.PasswordLockTime = 0
+			alterUserInfo.PasswordLockTimeChangeNotFound = true
 		}
 	}
+	if len(rows[0].GetString(2)) > 0 {
+		alterUserInfo.commentIsNull = false
+	} else {
+		alterUserInfo.commentIsNull = true
+	}
 	return alterUserInfo, nil
+}
+
+// If FailedLoginAttempts = 0 and PasswordLockTime = 0 delete Password_locking info
+func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
+	if alterUser.FailedLoginAttemptsNotFound && alterUser.PasswordLockTimeChangeNotFound {
+		return nil
+	}
+	if alterUser.FailedLoginAttempts != 0 || alterUser.PasswordLockTime != 0 {
+		return nil
+	}
+	sql := new(strings.Builder)
+	if alterUser.commentIsNull {
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL `, mysql.SystemDB, mysql.UserTable)
+	} else {
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
+	}
+	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, name)
+	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
@@ -1220,7 +1225,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
-
+		restrictedCtx, err := e.getSysSession()
+		if err != nil {
+			return err
+		}
+		defer e.releaseSysSession(ctx, restrictedCtx)
+		sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		type alterField struct {
 			expr  string
@@ -1264,22 +1274,29 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"account_locked=%?", lockAccount})
 		}
 
+		alterUserPassword, err := readUserAttributes(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
+		if err != nil {
+			return err
+		}
+		AlterPasswordLocking := alterUserFailedLoginJson(alterUserPassword, lockAccount)
+
 		if s.CommentOrAttributeOption != nil {
+			alterUserPassword.commentIsNull = false
 			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 				newAttributesStr = fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value)
 			} else {
 				newAttributesStr = fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value)
 			}
-			if plOptions.AlterPasswordLocking != "" {
-				newAttributesStr = fmt.Sprintf("{%s,%s}", newAttributesStr, plOptions.AlterPasswordLocking)
+			if AlterPasswordLocking != "" {
+				newAttributesStr = fmt.Sprintf("{%s,%s}", newAttributesStr, AlterPasswordLocking)
 			} else {
 				newAttributesStr = fmt.Sprintf("{%s}", newAttributesStr)
 			}
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		} else {
-			if plOptions.AlterPasswordLocking != "" {
-				newAttributesStr := fmt.Sprintf("{%s}", plOptions.AlterPasswordLocking)
+			if AlterPasswordLocking != "" {
+				newAttributesStr := fmt.Sprintf("{%s}", AlterPasswordLocking)
 				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 			}
 		}
@@ -1317,13 +1334,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			}
 			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
+			fmt.Println("sql :", sql.String())
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 				continue
 			}
 		}
-
+		err = deleteFailedLogin(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, alterUserPassword)
+		if err != nil {
+			failedUsers = append(failedUsers, spec.User.String())
+			continue
+		}
 		if len(privData) > 0 {
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
