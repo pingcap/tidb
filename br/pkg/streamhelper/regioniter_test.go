@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,7 @@ func (c constantRegions) String() string {
 func (c constantRegions) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {
 	result := make([]streamhelper.RegionWithLeader, 0, limit)
 	for _, region := range c {
-		if overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, kv.KeyRange{StartKey: region.Region.StartKey, EndKey: region.Region.EndKey}) && len(result) < limit {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, kv.KeyRange{StartKey: region.Region.StartKey, EndKey: region.Region.EndKey}) && len(result) < limit {
 			result = append(result, region)
 		} else if bytes.Compare(region.Region.StartKey, key) > 0 {
 			break
