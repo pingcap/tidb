@@ -60,43 +60,43 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())
 	}
-	mustExecute(se, "use test")
+	internalMustExecute(se, "use test")
 	return se, domain, store
 }
 
 func prepareBenchData(se Session, colType string, valueFormat string, valueCount int) {
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, index idx (col))", colType))
-	mustExecute(se, "begin")
+	internalMustExecute(se, "drop table if exists t")
+	internalMustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, index idx (col))", colType))
+	internalMustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
-		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+		internalMustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
 	}
-	mustExecute(se, "commit")
+	internalMustExecute(se, "commit")
 }
 
 func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
-	mustExecute(se, "begin")
+	internalMustExecute(se, "drop table if exists t")
+	internalMustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
+	internalMustExecute(se, "begin")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < valueCount; i++ {
 		if i%1000 == 0 {
-			mustExecute(se, "commit")
-			mustExecute(se, "begin")
+			internalMustExecute(se, "commit")
+			internalMustExecute(se, "begin")
 		}
-		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, r.Intn(valueCount))+")")
+		internalMustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, r.Intn(valueCount))+")")
 	}
-	mustExecute(se, "commit")
+	internalMustExecute(se, "commit")
 }
 
 func prepareJoinBenchData(se Session, colType string, valueFormat string, valueCount int) {
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
-	mustExecute(se, "begin")
+	internalMustExecute(se, "drop table if exists t")
+	internalMustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
+	internalMustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
-		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+		internalMustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
 	}
-	mustExecute(se, "commit")
+	internalMustExecute(se, "commit")
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
@@ -261,8 +261,8 @@ func BenchmarkPointGet(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, "create table t (pk int primary key)")
-	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	internalMustExecute(se, "create table t (pk int primary key)")
+	internalMustExecute(se, "insert t values (61),(62),(63),(64)")
 	b.ResetTimer()
 	alloc := chunk.NewAllocator()
 	for i := 0; i < b.N; i++ {
@@ -288,8 +288,8 @@ func BenchmarkBatchPointGet(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, "create table t (pk int primary key)")
-	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	internalMustExecute(se, "create table t (pk int primary key)")
+	internalMustExecute(se, "insert t values (61),(62),(63),(64)")
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -314,8 +314,8 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, "create table t (pk int primary key)")
-	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	internalMustExecute(se, "create table t (pk int primary key)")
+	internalMustExecute(se, "insert t values (61),(62),(63),(64)")
 
 	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
 	if err != nil {
@@ -446,12 +446,12 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
+	internalMustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
+	internalMustExecute(se, "drop table if exists t")
+	internalMustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
+		internalMustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
 	}
 	b.StopTimer()
 }
@@ -463,11 +463,11 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, "create table t (pk int primary key, col int)")
+	internalMustExecute(se, "drop table if exists t")
+	internalMustExecute(se, "create table t (pk int primary key, col int)")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
+		internalMustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
 	}
 	b.StopTimer()
 }
@@ -561,7 +561,7 @@ func BenchmarkPartitionPruning(b *testing.B) {
 		st.Close()
 	}()
 
-	mustExecute(se, `create table t (id int, dt datetime)
+	internalMustExecute(se, `create table t (id int, dt datetime)
 partition by range (to_days(dt)) (
 partition p0 values less than (737515),
 partition p1 values less than (737516),
@@ -1626,7 +1626,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format("2006-01-02"))
 	}
 	build.WriteString("partition p1023 values less than maxvalue)")
-	mustExecute(se, build.String())
+	internalMustExecute(se, build.String())
 	alloc := chunk.NewAllocator()
 	_, err := se.Execute(ctx, "analyze table t")
 	if err != nil {
@@ -1657,7 +1657,7 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	}()
 
 	alloc := chunk.NewAllocator()
-	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
+	internalMustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where id = 2330")
@@ -1683,7 +1683,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	}()
 
 	alloc := chunk.NewAllocator()
-	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
+	internalMustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where id = 2330")
@@ -1722,21 +1722,21 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
-	mustExecute(se, `set @@tmp_table_size = 1000000000`)
-	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
-	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	internalMustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
+	internalMustExecute(se, `set @@tmp_table_size = 1000000000`)
+	internalMustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
+	internalMustExecute(se, `create table src (id int, dt varchar(512))`)
 	for i := 0; i < 100; i++ {
-		mustExecute(se, "begin")
+		internalMustExecute(se, "begin")
 		for lines := 0; lines < 100; lines++ {
-			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+			internalMustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
 		}
-		mustExecute(se, "commit")
+		internalMustExecute(se, "commit")
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mustExecute(se, "insert into tmp select * from src")
+		internalMustExecute(se, "insert into tmp select * from src")
 	}
 	b.StopTimer()
 }
@@ -1750,7 +1750,7 @@ func BenchmarkCompileStmt(b *testing.B) {
 		st.Close()
 	}()
 
-	mustExecute(se, `CREATE TABLE item1 (
+	internalMustExecute(se, `CREATE TABLE item1 (
   a varchar(200) DEFAULT NULL,
   b varchar(480) DEFAULT NULL,
   c varchar(200) DEFAULT NULL,
@@ -1830,7 +1830,7 @@ func BenchmarkCompileStmt(b *testing.B) {
   y2 datetime DEFAULT NULL,
   z2 datetime DEFAULT NULL)`)
 
-	mustExecute(se, `CREATE TABLE item2 like item1`)
+	internalMustExecute(se, `CREATE TABLE item2 like item1`)
 
 	stmtID, _, _, err := se.PrepareStmt("insert into item2 select * from item1 where a1 = ?")
 	if err != nil {

@@ -691,7 +691,7 @@ var currentBootstrapVersion int64 = version103
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
 
 var (
-	// Used to upgrade system tables
+	// BootstrapVersion is used to upgrade system tables.
 	BootstrapVersion = []struct {
 		Version     int64
 		UpgradeFunc func(Session, int64, func(s Session, sql string, ignorableErrs ...error), func(s Session, sql string, args ...interface{}))

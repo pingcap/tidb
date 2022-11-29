@@ -928,7 +928,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && SysPrivilegeTableMap[table.Info.Name.L] != "" {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -940,8 +940,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		// skip user table when checking column count
-		// because TODO...
+		// skip checking the number of columns in mysql.user table,
+		// because higher versions of TiDB may add new columns.
 		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != "user" {
 			log.Error("column count mismatch",
 				zap.Stringer("table", table.Info.Name),
@@ -961,7 +961,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip user table...TODO
+				// skip when the backed up mysql.user table is missing columns.
 				if backupTi.Name.L == "user" {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),

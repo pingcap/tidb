@@ -51,7 +51,7 @@ var unRecoverableTable = map[string]struct{}{
 // the value part is the filter in SQL where clause which is used to
 // skip clearing or restoring 'cloud_admin'@'%' which is a special
 // user on TiDB Cloud
-var SysPrivilegeTableMap = map[string]string{
+var sysPrivilegeTableMap = map[string]string{
 	"user":          "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
 	"db":            "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
 	"tables_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
@@ -134,7 +134,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	}
 	log.Info("charset and collation in backed up user table", zap.String("charset", charset), zap.String("collate", collate))
 	restoreTblSet := make(map[string]struct{})
-	for tbl := range SysPrivilegeTableMap {
+	for tbl := range sysPrivilegeTableMap {
 		restoreTblSet[tbl] = struct{}{}
 	}
 	if err = rc.db.se.Upgrude(ctx, currVersion, targetVersion, charset, collate, restoreTblSet); err != nil {
@@ -253,9 +253,9 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 
 	if db.ExistingTables[tableName] != nil {
 		whereClause := ""
-		if rc.fullClusterRestore && SysPrivilegeTableMap[tableName] != "" {
+		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereClause = fmt.Sprintf("WHERE %s", SysPrivilegeTableMap[tableName])
+			whereClause = fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
