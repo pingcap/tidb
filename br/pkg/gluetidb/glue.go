@@ -278,7 +278,7 @@ func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	if utils.IsTempSysDB(name) {
 		slice := strings.Split(name, ".")
 		if len(slice) < 2 {
-			return "", errors.Trace(errors.New(fmt.Sprintf("not found %s", name)))
+			return "", errors.Trace(fmt.Errorf("not found %s", name))
 		}
 		return gs.getTempDBGlobalVariable(slice[0], slice[1])
 	}
