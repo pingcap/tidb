@@ -137,7 +137,7 @@ func (e *baseExecutor) releaseSysSession(ctx context.Context, sctx sessionctx.Co
 }
 
 // Environment variable changes to close this Resource
-func (e *baseExecutor) clearSysSession(ctx context.Context, sctx sessionctx.Context) {
+func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
 	}
@@ -1383,7 +1383,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.getSysSession()
-	defer e.clearSysSession(ctx, sysSession)
+	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
@@ -2083,7 +2083,7 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
-	defer e.clearSysSession(ctx, sysSession)
+	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}

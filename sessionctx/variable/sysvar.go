@@ -1137,20 +1137,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: PasswordReuseHistory, Value: strconv.Itoa(DefPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(PasswordHistory.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		num, err := strconv.ParseInt(val, 10, 64)
-		if err == nil {
-			PasswordHistory.Store(num)
-		}
-		return err
+		PasswordHistory.Store(TidbOptInt64(val, DefPasswordReuseHistory))
+		return nil
 	}},
 	{Scope: ScopeGlobal, Name: PasswordReuseTime, Value: strconv.Itoa(DefPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		num, err := strconv.ParseInt(val, 10, 64)
-		if err == nil {
-			PasswordReuseInterval.Store(num)
-		}
-		return err
+		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
+		return nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
