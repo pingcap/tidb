@@ -1654,7 +1654,7 @@ func upgradeToVer67(s Session, ver int64) {
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
 	for original, bind := range bindMap {
-		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s, '', '')",
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source) VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
 			expression.Quote(original),
 			expression.Quote(bind.bindSQL),
 			expression.Quote(bind.status),
@@ -2085,7 +2085,7 @@ func upgradeToVer103(s Session, ver int64) {
 }
 
 func upgradeToVer104(s Session, ver int64) {
-	if ver > version104 {
+	if ver >= version104 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
