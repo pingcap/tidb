@@ -72,17 +72,21 @@ func (s *Session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 
 	success := false
 	defer func() {
-		if success {
-			_, err = s.ExecuteSQL(ctx, "COMMIT")
-			terror.Log(err)
-		} else {
+		if !success {
 			_, err = s.ExecuteSQL(ctx, "ROLLBACK")
 			terror.Log(err)
 		}
 	}()
 
-	err = fn()
-	success = err == nil
+	if err = fn(); err != nil {
+		return err
+	}
+
+	if _, err = s.ExecuteSQL(ctx, "COMMIT"); err != nil {
+		return err
+	}
+
+	success = true
 	return err
 }
 
