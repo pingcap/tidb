@@ -64,9 +64,15 @@ func TestValuedEquals(t *testing.T) {
 			inputB:   []spans.Valued{s("0001", "0003", 1), s("0004", "", 1)},
 			required: false,
 		},
+		{
+			inputA:   []spans.Valued{s("0001", "0004", 1), s("0001", "0002", 1)},
+			inputB:   []spans.Valued{s("0001", "0002", 1), s("0001", "0004", 1)},
+			required: true,
+		},
 	}
 	run := func(t *testing.T, c Case) {
 		require.Equal(t, c.required, spans.ValuedSetEquals(c.inputA, c.inputB))
+		require.Equal(t, c.required, spans.ValuedSetEquals(c.inputB, c.inputA))
 	}
 
 	for i, c := range cases {

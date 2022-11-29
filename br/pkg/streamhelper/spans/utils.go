@@ -45,7 +45,11 @@ func Collapse(length int, getRange func(int) Span) []Span {
 	}
 
 	sort.Slice(frs, func(i, j int) bool {
-		return bytes.Compare(frs[i].StartKey, frs[j].StartKey) < 0
+		start := bytes.Compare(frs[i].StartKey, frs[j].StartKey)
+		if start != 0 {
+			return start < 0
+		}
+		return utils.CompareBytesExt(frs[i].EndKey, true, frs[j].EndKey, true) < 0
 	})
 
 	result := make([]Span, 0, len(frs))
@@ -81,10 +85,18 @@ func ValuedSetEquals(xs, ys []Valued) bool {
 	}
 
 	sort.Slice(xs, func(i, j int) bool {
-		return bytes.Compare(xs[i].Key.StartKey, xs[j].Key.StartKey) < 0
+		start := bytes.Compare(xs[i].Key.StartKey, xs[j].Key.StartKey)
+		if start != 0 {
+			return start < 0
+		}
+		return utils.CompareBytesExt(xs[i].Key.EndKey, true, xs[j].Key.EndKey, true) < 0
 	})
 	sort.Slice(ys, func(i, j int) bool {
-		return bytes.Compare(ys[i].Key.StartKey, ys[j].Key.StartKey) < 0
+		start := bytes.Compare(ys[i].Key.StartKey, ys[j].Key.StartKey)
+		if start != 0 {
+			return start < 0
+		}
+		return utils.CompareBytesExt(ys[i].Key.EndKey, true, ys[j].Key.EndKey, true) < 0
 	})
 
 	xi := 0

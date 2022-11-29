@@ -204,6 +204,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagPredicatePushDown
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
+	b.optFlag |= flagCountStarRewriter
 
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
@@ -5019,7 +5020,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	for qbName, viewQbNameHint := range qbNameMap4View {
 		// Check whether the view hint belong the current view or its nested views.
 		selectOffset := -1
-		qbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
