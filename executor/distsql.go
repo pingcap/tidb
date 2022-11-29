@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,14 +65,18 @@ var (
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize int32 = 50
 
+type rowWithID struct {
+	rowID int // rowId represents the handle index for every row. Only used when keep order.
+	row   chunk.Row
+}
+
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
-	handles []kv.Handle
-	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
-	rows    []chunk.Row
-	idxRows *chunk.Chunk
-	cursor  int
+	handles    []kv.Handle
+	rowsWithID []*rowWithID
+	idxRows    *chunk.Chunk
+	cursor     int
 
 	doneCh chan error
 
@@ -104,17 +107,12 @@ type lookupTableTask struct {
 	memTracker *memory.Tracker
 }
 
-func (task *lookupTableTask) Len() int {
-	return len(task.rows)
-}
-
-func (task *lookupTableTask) Less(i, j int) bool {
-	return task.rowIdx[i] < task.rowIdx[j]
-}
-
-func (task *lookupTableTask) Swap(i, j int) {
-	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
-	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
+func (t *lookupTableTask) getRows() []chunk.Row {
+	rows := make([]chunk.Row, 0, len(t.rowsWithID))
+	for i := range t.rowsWithID {
+		rows = append(rows, t.rowsWithID[i].row)
+	}
+	return rows
 }
 
 // Closeable is a interface for closeable structures.
@@ -774,9 +772,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
-			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
+		// The input of method is different. So make copy
+		rows := resultTask.getRows()
+		if resultTask.cursor < len(rows) {
+			numToAppend := mathutil.Min(len(rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
+			req.AppendRows(rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
 			if req.IsFull() {
 				return nil
@@ -786,7 +786,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
+	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rowsWithID) {
 		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
@@ -1323,7 +1323,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
-	task.rows = make([]chunk.Row, 0, handleCnt)
+	task.rowsWithID = make([]*rowWithID, 0, handleCnt)
 	for {
 		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
@@ -1339,36 +1339,35 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memTracker.Consume(memUsage)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			task.rows = append(task.rows, row)
+			rowID := 0
+			if w.keepOrder {
+				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+				if err != nil {
+					return err
+				}
+				rowIDx, _ := task.indexOrder.Get(handle)
+				rowID = rowIDx.(int)
+			}
+			task.rowsWithID = append(task.rowsWithID, &rowWithID{row: row, rowID: rowID})
 		}
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
-	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+	memUsage = int64(cap(task.rowsWithID)) * int64(unsafe.Sizeof(rowWithID{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
-		task.rowIdx = make([]int, 0, len(task.rows))
-		for i := range task.rows {
-			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
-			if err != nil {
-				return err
-			}
-			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
-		}
-		memUsage = int64(cap(task.rowIdx) * 4)
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
-		sort.Sort(task)
+		slices.SortFunc(task.rowsWithID, func(i, j *rowWithID) bool {
+			return i.rowID < j.rowID
+		})
 	}
 
-	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
+	if handleCnt != len(task.rowsWithID) && !util.HasCancelled(ctx) &&
 		!w.idxLookup.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
-			for _, row := range task.rows {
-				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+			for _, rowWithID := range task.rowsWithID {
+				handle, err := w.idxLookup.getHandle(rowWithID.row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
 				}
@@ -1384,7 +1383,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				Sctx: w.idxLookup.ctx,
 			}).ReportLookupInconsistent(ctx,
 				handleCnt,
-				len(task.rows),
+				len(task.rowsWithID),
 				missHds,
 				task.handles,
 				nil,

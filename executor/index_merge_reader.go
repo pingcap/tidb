@@ -654,9 +654,10 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		if resultTask == nil {
 			return nil
 		}
-		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, e.maxChunkSize-req.NumRows())
-			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
+		row := resultTask.getRows()
+		if resultTask.cursor < len(row) {
+			numToAppend := mathutil.Min(len(row)-resultTask.cursor, e.maxChunkSize-req.NumRows())
+			req.AppendRows(row[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
 			if req.NumRows() >= e.maxChunkSize {
 				return nil
@@ -666,7 +667,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 }
 
 func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
+	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rowsWithID) {
 		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
@@ -960,7 +961,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
-	task.rows = make([]chunk.Row, 0, handleCnt)
+	task.rowsWithID = make([]*rowWithID, 0, handleCnt)
 	for {
 		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
@@ -976,15 +977,15 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 		task.memTracker.Consume(memUsage)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			task.rows = append(task.rows, row)
+			task.rowsWithID = append(task.rowsWithID, &rowWithID{row: row})
 		}
 	}
 
-	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+	memUsage = int64(cap(task.rowsWithID)) * int64(unsafe.Sizeof(rowWithID{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
-	if handleCnt != len(task.rows) && len(w.tblPlans) == 1 {
-		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
+	if handleCnt != len(task.rowsWithID) && len(w.tblPlans) == 1 {
+		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rowsWithID))
 	}
 	return nil
 }
