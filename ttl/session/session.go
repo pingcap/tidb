@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package session
 
 import (
 	"context"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,24 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
+
+// Pool is the pool for session
+type Pool interface {
+	Get() (pools.Resource, error)
+	Put(resource pools.Resource)
+}
+
+// GetSession gets a session from the pool
+func GetSession(pool Pool) (Session, error) {
+	resource, err := pool.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewSession(resource.(sessionctx.Context), resource.(sqlexec.SQLExecutor), func() {
+		pool.Put(resource)
+	}), nil
+}
 
 // Session is used to execute queries for TTL case
 type Session interface {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package session_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +29,7 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	se := NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
