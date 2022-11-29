@@ -224,7 +224,8 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	} else {
 		// Use TLS first.
 		driverCfg.AllowFallbackToPlaintext = true
-		driverCfg.TLS = &tls.Config{ // #nosec G402
+		/* #nosec G402 */
+		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
 			MinVersion:         tls.VersionTLS10,
 		}
