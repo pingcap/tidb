@@ -365,12 +365,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 
 	if r.stats == nil {
-		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
 			backoffSleep: make(map[string]time.Duration),
 			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
 		}
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
@@ -460,6 +458,9 @@ func (r *selectResult) Close() error {
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
 		r.memConsume(-respSize)
+	}
+	if r.stats != nil {
+		defer r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 	}
 	return r.resp.Close()
 }
