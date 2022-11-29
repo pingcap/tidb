@@ -2722,7 +2722,7 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gap := oracle.GetTimeFromTS(nowTS).Sub(time.Now()).Abs()
+	gap := time.Until(oracle.GetTimeFromTS(nowTS)).Abs()
 	if gap > 1*time.Second {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
 	}
