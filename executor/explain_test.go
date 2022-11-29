@@ -517,7 +517,7 @@ func TestIssue35105(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }
 
-func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res plannercore.JSONSlice) {
+func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res []*plannercore.ExplainInfoForEncode) {
 	if j == nil {
 		return
 	}
@@ -563,9 +563,9 @@ func TestExplainJSON(t *testing.T) {
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
-		j := new(plannercore.JSONSlice)
+		j := new([]*plannercore.ExplainInfoForEncode)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-		var flatJSONRows plannercore.JSONSlice
+		var flatJSONRows []*plannercore.ExplainInfoForEncode
 		for _, row := range *j {
 			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 		}
@@ -587,9 +587,9 @@ func TestExplainJSON(t *testing.T) {
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
 
-		j := new(plannercore.JSONSlice)
+		j := new([]*plannercore.ExplainInfoForEncode)
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-		var flatJSONRows plannercore.JSONSlice
+		var flatJSONRows []*plannercore.ExplainInfoForEncode
 		for _, row := range *j {
 			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 		}

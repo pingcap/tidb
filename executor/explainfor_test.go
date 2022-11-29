@@ -1414,9 +1414,9 @@ func TestExplainForJSON(t *testing.T) {
 	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
 
-	j := new(core.JSONSlice)
+	j := new([]*core.ExplainInfoForEncode)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	var flatJSONRows core.JSONSlice
+	var flatJSONRows []*core.ExplainInfoForEncode
 	for _, row := range *j {
 		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 	}
@@ -1441,9 +1441,9 @@ func TestExplainForJSON(t *testing.T) {
 	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
 	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
 
-	j = new(core.JSONSlice)
+	j = new([]*core.ExplainInfoForEncode)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	flatJSONRows = core.JSONSlice{}
+	flatJSONRows = []*core.ExplainInfoForEncode{}
 	for _, row := range *j {
 		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 	}

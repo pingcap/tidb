@@ -1121,14 +1121,14 @@ func TestJSONPlanInExplain(t *testing.T) {
 	var input []string
 	var output []struct {
 		SQL      string
-		JSONPlan core.JSONSlice
+		JSONPlan []*core.ExplainInfoForEncode
 	}
 	planSuiteData := core.GetJSONPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, test := range input {
 		resJSON := tk.MustQuery(test).Rows()
-		res := core.JSONSlice{}
+		var res []*core.ExplainInfoForEncode
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
 		for j, expect := range output[i].JSONPlan {
 			require.Equal(t, expect.ID, res[j].ID)

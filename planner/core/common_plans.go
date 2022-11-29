@@ -666,11 +666,8 @@ type ExplainInfoForEncode struct {
 	SubOperators        []*ExplainInfoForEncode `json:"subOperators"`
 }
 
-// JSONSlice store JSONExplainRows
-type JSONSlice []*ExplainInfoForEncode
-
-// ToString convert json to string
-func (j *JSONSlice) ToString() (string, error) {
+// JSONToString convert json to string
+func JSONToString(j []*ExplainInfoForEncode) (string, error) {
 	byteBuffer := bytes.NewBuffer([]byte{})
 	encoder := json.NewEncoder(byteBuffer)
 	// avoid wrongly embedding
@@ -695,7 +692,6 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	JSON        JSONSlice
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -839,15 +835,15 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
-		e.explainFlatPlanInJSONFormat(flat)
-		if e.Analyze && len(e.JSON) > 0 &&
+		encodes := e.explainFlatPlanInJSONFormat(flat)
+		if e.Analyze && len(encodes) > 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-			jsonRow := e.JSON[0]
+			encodeRoot := encodes[0]
 			tracker := e.SCtx().GetSessionVars().MemTracker
-			jsonRow.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
+			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		if str, err := e.JSON.ToString(); err == nil {
+		if str, err := JSONToString(encodes); err == nil {
 			e.Rows = append(e.Rows, []string{str})
 		} else {
 			return err
@@ -872,16 +868,17 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 	}
 }
 
-func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) {
+func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	// flat.Main[0] must be the root node of tree
-	e.JSON = append(e.JSON, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
+	encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
 
 	for _, cte := range flat.CTEs {
-		e.JSON = append(e.JSON, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
 	}
+	return
 }
 
 func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
