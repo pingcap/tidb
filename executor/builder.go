@@ -4262,32 +4262,37 @@ type kvRangeBuilderFromRangeAndPartition struct {
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
-	ret := make([][]kv.KeyRange, 0, len(h.partitions))
+	ret := make([][]kv.KeyRange, len(h.partitions))
 	pids := make([]int64, 0, len(h.partitions))
-	for _, p := range h.partitions {
+	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
+		pids = append(pids, pid)
 		meta := p.Meta()
+		if len(ranges) == 0 {
+			continue
+		}
 		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, nil, err
 		}
-		pids = append(pids, pid)
-		ret = append(ret, kvRange)
+		ret[i] = kvRange.AppendSelfTo(ret[i])
 	}
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
-	//nolint: prealloc
-	var ret []kv.KeyRange
-	for _, p := range h.partitions {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error) {
+	ret := make([][]kv.KeyRange, len(h.partitions))
+	if len(ranges) == 0 {
+		return ret, nil
+	}
+	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
 		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, err
 		}
-		ret = append(ret, kvRange...)
+		ret[i] = kvRange.AppendSelfTo(ret[i])
 	}
 	return ret, nil
 }
@@ -4334,7 +4339,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
@@ -4357,6 +4362,8 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		} else {
 			b.SetTableHandles(getPhysicalTableID(e.table), handles)
 		}
+	} else {
+		b.SetKeyRanges(nil)
 	}
 	return builder.buildTableReaderBase(ctx, e, b)
 }
@@ -4545,6 +4552,9 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, lookUpContents []*indexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
+	if len(ranges) == 0 {
+		return []kv.KeyRange{}, nil
+	}
 	lastPos := len(ranges[0].LowVal) - 1
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpDatumRanges := make([]*ranger.Range, 0, len(lookUpContents))
@@ -4557,7 +4567,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		}
 		if cwc == nil {
 			// Index id is -1 means it's a common handle.
-			var tmpKvRanges []kv.KeyRange
+			var tmpKvRanges *kv.KeyRanges
 			var err error
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{tableID}, ranges)
@@ -4567,7 +4577,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			if err != nil {
 				return nil, err
 			}
-			kvRanges = append(kvRanges, tmpKvRanges...)
+			kvRanges = tmpKvRanges.AppendSelfTo(kvRanges)
 			continue
 		}
 		nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
@@ -4604,9 +4614,11 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	}
 	// Index id is -1 means it's a common handle.
 	if indexID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tableID}, tmpDatumRanges)
+		tmpKeyRanges, err := distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tableID}, tmpDatumRanges)
+		return tmpKeyRanges.FirstPartitionRange(), err
 	}
-	return distsql.IndexRangesToKVRangesWithInterruptSignal(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil, memTracker, interruptSignal)
+	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil, memTracker, interruptSignal)
+	return tmpKeyRanges.FirstPartitionRange(), err
 }
 
 func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
