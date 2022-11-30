@@ -1,0 +1,4 @@
+CREATE TABLE tbl01 (
+    id INTEGER PRIMARY KEY,
+    val VARCHAR(64)
+);
