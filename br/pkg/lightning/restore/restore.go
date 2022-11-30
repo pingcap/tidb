@@ -264,7 +264,7 @@ type ControllerParam struct {
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
-	// DupIndicator can expose the duplicate detection result to the caller
+	// DupIndicator can expose the duplicate detection result to the caller (dm)
 	DupIndicator *atomic.Bool
 }
 
