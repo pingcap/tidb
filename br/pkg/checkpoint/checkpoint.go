@@ -319,14 +319,14 @@ func (r *CheckpointRunner) flushMeta(ctx context.Context, errCh chan error) erro
 
 // start a goroutine to flush the meta, which is sent from `checkpoint looper`, to the external storage
 func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.WaitGroup) chan error {
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	wg.Add(1)
 	flushWorker := func(ctx context.Context, errCh chan error) {
 		defer wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
-
+				return
 			case meta, ok := <-r.metaCh:
 				if !ok {
 					log.Info("stop checkpoint flush worker")
@@ -414,7 +414,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 
 		// use the first item's group-key and sub-range-key as the filename
 		if len(fname) == 0 {
-			fname = append([]byte(group.GroupKey+".."), group.Groups[0].StartKey...)
+			fname = append(append([]byte(group.GroupKey), '.', '.'), group.Groups[0].StartKey...)
 		}
 
 		// Flush the metaFile to storage
