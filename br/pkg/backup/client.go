@@ -290,10 +290,12 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 		ranges = ranger.FullIntRange(false)
 	}
 
+	retRanges := make([]kv.KeyRange, 0, 1+len(tbl.Indices))
 	kvRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tblID}, tbl.IsCommonHandle, ranges, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	retRanges = kvRanges.AppendSelfTo(retRanges)
 
 	for _, index := range tbl.Indices {
 		if index.State != model.StatePublic {
@@ -304,9 +306,9 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		kvRanges = append(kvRanges, idxRanges...)
+		retRanges = idxRanges.AppendSelfTo(retRanges)
 	}
-	return kvRanges, nil
+	return retRanges, nil
 }
 
 // BuildBackupRangeAndSchema gets KV range and schema of tables.
