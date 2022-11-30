@@ -219,6 +219,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 }
 
 func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
+	var err1 error
 	// WriteOnlyTable: insert t values (6, 6)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
@@ -229,7 +230,11 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if err != nil {
+	if ddl.IsEnableFastReorg() {
+		// Need check temp index also.
+		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
+	}
+	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
@@ -248,10 +253,18 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if err != nil {
+	if ddl.IsEnableFastReorg() {
+		// Need check temp index also.
+		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
+	}
+	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
-	err = checkIndexExists(ctx, publicTbl, 7, 7, false)
+	if ddl.IsEnableFastReorg() {
+		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
+	} else {
+		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -281,7 +294,11 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if err != nil {
+		if ddl.IsEnableFastReorg() {
+			// Need check temp index also.
+			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
+		}
+		if err != nil && err1 != nil {
 			return errors.Trace(err)
 		}
 	}
