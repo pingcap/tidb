@@ -15,9 +15,10 @@
 package chunk
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"strconv"
 )
 
 // Row represents a row of data, can be used to access values.
@@ -118,7 +119,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 	return r.GetDatumRowWithBuffer(fields, datumRow)
 }
 
-// GetDatumRowWithBuffer
+// GetDatumRowWithBuffer gets datum using the buffer datumRow.
 func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
 	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
 		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
@@ -133,7 +134,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
-// GetDatumWithBuffer implements the chunk.Row interface.
+// GetDatumWithBuffer gets datum using the buffer d.
 func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
