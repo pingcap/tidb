@@ -20,8 +20,8 @@ func factor(n int) float64 {
 	return 2.0 / float64(n+1)
 }
 
-// ExponentialAverageMeasurement is an exponential average measurement implementation.
-type ExponentialAverageMeasurement struct {
+// ExponentialAverage is an exponential average measurement implementation.
+type ExponentialAverage struct {
 	value        float64
 	sum          float64
 	window       int
@@ -31,19 +31,19 @@ type ExponentialAverageMeasurement struct {
 	mu sync.RWMutex
 }
 
-// NewExponentialAverageMeasurement will create a new ExponentialAverageMeasurement
-func NewExponentialAverageMeasurement(
+// NewExponentialAverage will create a new ExponentialAverage
+func NewExponentialAverage(
 	window int,
 	warmupWindow int,
-) *ExponentialAverageMeasurement {
-	return &ExponentialAverageMeasurement{
+) *ExponentialAverage {
+	return &ExponentialAverage{
 		window:       window,
 		warmupWindow: warmupWindow,
 	}
 }
 
 // Add a single sample and update the internal state.
-func (m *ExponentialAverageMeasurement) Add(value float64) {
+func (m *ExponentialAverage) Add(value float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.count < m.warmupWindow {
@@ -57,7 +57,7 @@ func (m *ExponentialAverageMeasurement) Add(value float64) {
 }
 
 // Get the current value.
-func (m *ExponentialAverageMeasurement) Get() float64 {
+func (m *ExponentialAverage) Get() float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.value
