@@ -8,6 +8,7 @@ go_library(
         "static.go",
         "task.go",
         "task_manage.go",
+        "task_manage_scheduler.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool",
     visibility = ["//visibility:public"],

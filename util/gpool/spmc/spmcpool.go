@@ -71,7 +71,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
-		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](),
+		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](size),
 		options:     opts,
 	}
 	result.SetName(name)
@@ -255,14 +255,6 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 	p.consumerFunc = consumerFunc
 }
 
-func (p *Pool[T, U, C, CT, TF]) addNewTask(tid uint64) {
-	p.taskManager.CreatTask(tid)
-}
-
-func (p *Pool[T, U, C, CT, TF]) addNewTaskMeta(tid uint64, task *pooltask.TaskBox[T, U, C, CT, TF]) {
-	p.taskManager.AddSubTask(tid, task)
-}
-
 // AddProduceBySlice is to add Produce by a slice.
 // Producer need to return ErrProducerClosed when to exit.
 func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
@@ -271,9 +263,10 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
+
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
-	p.addNewTask(taskID)
+	p.taskManager.CreatTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -281,7 +274,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		}
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
 		p.addWaitingTask()
-		p.addNewTaskMeta(taskID, &taskBox)
+		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -327,7 +320,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	p.addNewTask(taskID)
+	p.taskManager.CreatTask(taskID, int32(opt.Concurrency))
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
 	for i := 0; i < opt.Concurrency; i++ {
@@ -337,7 +330,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		}
 		p.addWaitingTask()
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
-		p.addNewTaskMeta(taskID, &taskBox)
+		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
 	go func() {
