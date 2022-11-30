@@ -1092,10 +1092,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				BasicRuntimeStats:     e.runtimeStats,
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
-				FKCheckStats:          &FKCheckRuntimeStats{},
-			}
-			for _, fkc := range e.fkChecks {
-				fkc.stats = e.stats.FKCheckStats
 			}
 		}
 		return true
@@ -1299,7 +1295,6 @@ type InsertRuntimeStat struct {
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 	FKCheckTime     time.Duration
-	FKCheckStats    *FKCheckRuntimeStats
 }
 
 func (e *InsertRuntimeStat) String() string {
@@ -1341,10 +1336,8 @@ func (e *InsertRuntimeStat) String() string {
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
-		if e.FKCheckStats != nil && e.FKCheckStats.Keys > 0 {
-			buf.WriteString(fmt.Sprintf(", fk_check: %v, fk_num: %v",
-				execdetails.FormatDuration(e.FKCheckTime),
-				e.FKCheckStats.Keys))
+		if e.FKCheckTime > 0 {
+			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
@@ -1375,10 +1368,6 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
-	}
-	if e.FKCheckStats != nil {
-		fkCheckStats := *e.FKCheckStats
-		newRs.FKCheckStats = &fkCheckStats
 	}
 	return newRs
 }
