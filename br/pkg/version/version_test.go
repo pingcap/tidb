@@ -228,6 +228,29 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.NoError(t, err)
+		require.Error(t, CheckCheckpointSupport())
+	}
+
+	{
+		build.ReleaseVersion = "v6.0.0-rc.2"
+		mock.getAllStores = func() []*metapb.Store {
+			// TiKV v6.0.0-rc.1 with BR v6.0.0-rc.2 is ok
+			return []*metapb.Store{{Version: "v6.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+		require.Error(t, CheckCheckpointSupport())
+	}
+
+	{
+		build.ReleaseVersion = "v6.5.0-rc.2"
+		mock.getAllStores = func() []*metapb.Store {
+			// TiKV v6.5.0-rc.1 with BR v6.5.0-rc.2 is ok
+			return []*metapb.Store{{Version: "v6.5.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+		require.NoError(t, CheckCheckpointSupport())
 	}
 
 	{
