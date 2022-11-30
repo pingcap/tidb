@@ -155,6 +155,13 @@ var (
 			Name:      "flashback_cluster_usage",
 			Help:      "Counter of usage of flashback cluster",
 		})
+	TelemetryIndexMergeUsage = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "index_merge_usage",
+			Help:      "Counter of usage of index merge",
+		})
 	TelemetryCompactPartitionCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -394,5 +401,24 @@ func GetDDLUsageCounter() DDLUsageCounter {
 	return DDLUsageCounter{
 		AddIndexIngestUsed:   readCounter(TelemetryAddIndexIngestCnt),
 		FlashbackClusterUsed: readCounter(TelemetryFlashbackClusterCnt),
+	}
+}
+
+// IndexMergeUsageCounter records the usages of IndexMerge feature.
+type IndexMergeUsageCounter struct {
+	IndexMergeUsed int64 `json:"index_merge_used"`
+}
+
+// Sub returns the difference of two counters.
+func (i IndexMergeUsageCounter) Sub(rhs IndexMergeUsageCounter) IndexMergeUsageCounter {
+	return IndexMergeUsageCounter{
+		IndexMergeUsed: i.IndexMergeUsed - rhs.IndexMergeUsed,
+	}
+}
+
+// GetIndexMergeCounter gets the IndexMerge usage counter.
+func GetIndexMergeCounter() IndexMergeUsageCounter {
+	return IndexMergeUsageCounter{
+		IndexMergeUsed: readCounter(TelemetryIndexMergeUsage),
 	}
 }

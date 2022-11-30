@@ -339,7 +339,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2",
         "Plan": [
-          "IndexMerge 2.00 root  ",
+          "IndexMerge 2.00 root  type: union",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -348,7 +348,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, A, B) */ * from t where a = 1 or b = 2",
         "Plan": [
-          "IndexMerge 2.00 root  ",
+          "IndexMerge 2.00 root  type: union",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -386,7 +386,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)",
         "Plan": [
-          "IndexMerge 0.02 root  ",
+          "IndexMerge 0.02 root  type: union",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
           "└─Selection(Probe) 0.02 cop[tikv]  eq(test.t.b, 1)",
@@ -942,7 +942,7 @@
         "SQL": "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
         "Plan": [
           "PartitionUnion 59.97 root  ",
-          "├─IndexMerge 19.99 root  ",
+          "├─IndexMerge 19.99 root  type: union",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -959,11 +959,11 @@
         "SQL": "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
         "Plan": [
           "PartitionUnion 33.00 root  ",
-          "├─IndexMerge 11.00 root  ",
+          "├─IndexMerge 11.00 root  type: union",
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p0 range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexMerge 11.00 root  ",
+          "├─IndexMerge 11.00 root  type: union",
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
@@ -1094,7 +1094,7 @@
       {
         "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
         "Plan": [
-          "IndexMerge 3.00 root  ",
+          "IndexMerge 3.00 root  type: union",
           "├─TableRangeScan(Build) 3.00 cop[tikv] table:t1 range:[1,+inf], keep order:false",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false",
           "└─TableRowIDScan(Probe) 3.00 cop[tikv] table:t1 keep order:false"
@@ -1108,7 +1108,7 @@
       {
         "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3",
         "Plan": [
-          "IndexMerge 1.67 root  ",
+          "IndexMerge 1.67 root  type: union",
           "├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
           "└─TableRowIDScan(Probe) 1.67 cop[tikv] table:t1 keep order:false"
@@ -1338,7 +1338,7 @@
       {
         "SQL": "select * from pt where id = 4 or c < 7",
         "Plan": [
-          "IndexMerge_11 3330.01 root partition:all ",
+          "IndexMerge_11 3330.01 root partition:all type: union",
           "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
           "├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
           "└─TableRowIDScan_10(Probe) 3330.01 cop[tikv] table:pt keep order:false, stats:pseudo"
@@ -1347,7 +1347,7 @@
       {
         "SQL": "select * from pt where id > 4 or c = 7",
         "Plan": [
-          "IndexMerge_11 3340.00 root partition:all ",
+          "IndexMerge_11 3340.00 root partition:all type: union",
           "├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
           "└─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
@@ -1487,7 +1487,7 @@
         "SQL": "explain format = 'brief' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(test.t1.key1)->Column#10",
-          "└─IndexMerge 0.02 root  ",
+          "└─IndexMerge 0.02 root  type: union",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:i4(key4) range:[42,42], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:i1(key1) range:[4,4], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 0.02 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
@@ -2211,7 +2211,7 @@
         "Plan": [
           "Projection 15.99 root  1->Column#5",
           "└─Selection 15.99 root  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(from_base64(to_base64(test.t1.c1)), \"ab\")))",
-          "  └─IndexMerge 19.99 root  ",
+          "  └─IndexMerge 19.99 root  type: union",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -2225,7 +2225,7 @@
         "Plan": [
           "Projection 17.99 root  1->Column#5",
           "└─Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
-          "  └─IndexMerge 19.99 root  ",
+          "  └─IndexMerge 19.99 root  type: union",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -2239,7 +2239,7 @@
         "Plan": [
           "Projection 15.99 root  1->Column#6",
           "└─Selection 15.99 root  or(eq(test.tt1.c1, \"de\"), and(eq(test.tt1.c2, \"10\"), eq(from_base64(to_base64(test.tt1.c3)), \"10\")))",
-          "  └─IndexMerge 19.99 root  ",
+          "  └─IndexMerge 19.99 root  type: union",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt1, index:idx_0(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
           "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt1, index:idx_1(c2, c3) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:tt1 keep order:false, stats:pseudo"
@@ -2253,7 +2253,7 @@
         "Plan": [
           "Projection 2.40 root  1->Column#3",
           "└─Selection 2.40 root  or(eq(test.tt2.c1, -3896405), and(in(test.tt2.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(test.tt2.pk, var_string(20)), 5)), double BINARY))))",
-          "  └─IndexMerge 3.00 root  ",
+          "  └─IndexMerge 3.00 root  type: union",
           "    ├─IndexRangeScan(Build) 1.00 cop[tikv] table:tt2, index:c1(c1) range:[-3896405,-3896405], keep order:false, stats:pseudo",
           "    ├─TableRangeScan(Build) 2.00 cop[tikv] table:tt2 range:[1,1], [53330,53330], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tt2 keep order:false, stats:pseudo"
@@ -2267,7 +2267,7 @@
         "Plan": [
           "Projection 5098.44 root  1->Column#5",
           "└─Selection 2825.66 root  or(lt(test.tt3.c1, -10), and(lt(test.tt3.c2, 10), eq(reverse(cast(test.tt3.c3, var_string(20))), \"2\")))",
-          "  └─IndexMerge 5542.21 root  ",
+          "  └─IndexMerge 5542.21 root  type: union",
           "    ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tt3, index:c1(c1) range:[-inf,-10), keep order:false, stats:pseudo",
           "    ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tt3, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:tt3 keep order:false, stats:pseudo"
@@ -2302,7 +2302,7 @@
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─StreamAgg(Probe) 10000.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
-          "      └─IndexMerge 63.35 root  ",
+          "      └─IndexMerge 63.35 root  type: union",
           "        ├─Selection(Build) 10000.00 cop[tikv]  eq(10, test.t2.c3)",
           "        │ └─TableRangeScan 10000.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
           "        ├─Selection(Build) 80000.00 cop[tikv]  eq(1, test.t2.c3)",
@@ -2324,7 +2324,7 @@
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─StreamAgg(Probe) 10000.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
-          "      └─IndexMerge 63.35 root  ",
+          "      └─IndexMerge 63.35 root  type: union",
           "        ├─Selection(Build) 10000.00 cop[tikv]  eq(10, test.t2.c3)",
           "        │ └─TableRangeScan 10000.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
           "        ├─Selection(Build) 80000.00 cop[tikv]  eq(1, test.t2.c3)",
@@ -2345,7 +2345,7 @@
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─StreamAgg(Probe) 10000.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
-          "      └─IndexMerge 30263.46 root  ",
+          "      └─IndexMerge 30263.46 root  type: union",
           "        ├─Selection(Build) 33333.33 cop[tikv]  eq(test.t1.c1, test.t2.c3)",
           "        │ └─TableRangeScan 33333333.33 cop[tikv] table:t1 range:[10,+inf], keep order:false, stats:pseudo",
           "        ├─Selection(Build) 80000.00 cop[tikv]  eq(1, test.t2.c3)",
@@ -2367,7 +2367,7 @@
           "  │ └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:true, stats:pseudo",
           "  └─StreamAgg(Probe) 10000.00 root  funcs:min(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11",
           "    └─Projection 11.05 root  test.tt2.c_decimal, cast(isnull(test.tt2.c_decimal), decimal(20,0) BINARY)->Column#15",
-          "      └─IndexMerge 11.05 root  ",
+          "      └─IndexMerge 11.05 root  type: union",
           "        ├─Selection(Build) 10.00 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
           "        │ └─IndexRangeScan 10000.00 cop[tikv] table:tt2, index:c_decimal(c_decimal) range:[9.060000,9.060000], keep order:false, stats:pseudo",
           "        ├─Selection(Build) 33233.33 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
@@ -2390,7 +2390,7 @@
           "  │ └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:true, stats:pseudo",
           "  └─StreamAgg(Probe) 10000.00 root  funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11",
           "    └─Projection 17.91 root  test.tt2.c_decimal, cast(isnull(test.tt2.c_decimal), decimal(20,0) BINARY)->Column#15",
-          "      └─IndexMerge 17.91 root  ",
+          "      └─IndexMerge 17.91 root  type: union",
           "        ├─Selection(Build) 10000.00 cop[tikv]  lt(7, test.tt1.c_decimal)",
           "        │ └─TableRangeScan 10000.00 cop[tikv] table:tt2 range:[7,7], keep order:false, stats:pseudo",
           "        ├─Selection(Build) 33333.33 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
@@ -6066,7 +6066,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(t5@qb_v4, idx_a, idx_b) */ * from v4;",
         "Plan": [
-          "IndexMerge 5548.89 root  ",
+          "IndexMerge 5548.89 root  type: union",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 5548.89 cop[tikv] table:t5 keep order:false, stats:pseudo"
@@ -6076,7 +6076,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(@qb_v4 t5, idx_b, idx_a) */ * from v4;",
         "Plan": [
-          "IndexMerge 5548.89 root  ",
+          "IndexMerge 5548.89 root  type: union",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 5548.89 cop[tikv] table:t5 keep order:false, stats:pseudo"
@@ -8160,7 +8160,7 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)",
         "Plan": [
-          "IndexMerge 8.00 root  ",
+          "IndexMerge 8.00 root  type: union",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
           "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
@@ -8171,7 +8171,7 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 8.00 root  ",
+          "IndexMerge 8.00 root  type: union",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
           "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
@@ -8182,7 +8182,7 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 8.00 root  ",
+          "IndexMerge 8.00 root  type: union",
           "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
           "├─Selection(Build) 1.00 cop[tikv]  1",
@@ -8194,7 +8194,7 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)",
         "Plan": [
-          "IndexMerge 0.29 root  ",
+          "IndexMerge 0.29 root  type: union",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
           "└─Selection(Probe) 0.29 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b, var_string(20))), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a, var_string(20))), 1)))",
