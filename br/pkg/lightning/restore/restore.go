@@ -227,7 +227,7 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
-	dupIndicator   *bool
+	dupIndicator   *atomic.Bool
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
@@ -265,7 +265,7 @@ type ControllerParam struct {
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
-	DupIndicator *bool
+	DupIndicator *atomic.Bool
 }
 
 func NewRestoreController(
