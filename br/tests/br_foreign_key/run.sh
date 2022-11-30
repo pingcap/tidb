@@ -44,4 +44,12 @@ check_contains 'count(*): 2'
 run_sql "select count(*) from $DB.t2;"
 check_contains 'count(*): 2'
 
+run_sql "select id, a, b from $DB.t2;"
+check_contains 'id: 1'
+check_contains 'id: 3'
+check_contains 'a: NULL'
+check_contains 'b: 11'
+check_contains 'b: 13'
+check_contains 'b: 14'
+
 run_sql "drop schema $DB"
