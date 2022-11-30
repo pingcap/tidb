@@ -13213,7 +13213,7 @@ SetBindingStmt:
 	{
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
-			SQLDigest: 		   $7,
+			SQLDigest:         $7,
 		}
 
 		$$ = x

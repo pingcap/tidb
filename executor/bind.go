@@ -121,15 +121,10 @@ func (e *SQLBindExec) setBindingStatus() error {
 }
 
 func (e *SQLBindExec) setBindingStatusByDigest() error {
-	//var bindInfo *bindinfo.Binding
-	//if e.bindSQL != "" {
-	//	bindInfo = &bindinfo.Binding{
-	//		BindSQL:   e.bindSQL,
-	//		Charset:   e.charset,
-	//		Collation: e.collation,
-	//	}
-	//}
-	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatusByDigest(e.normdOrigSQL, e.newStatus, e.SQLDigest)
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatusByDigest(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
