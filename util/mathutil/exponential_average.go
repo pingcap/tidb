@@ -32,7 +32,7 @@ func NewExponentialMovingAverage(
 	factor float64,
 	warmupWindow int,
 ) *ExponentialMovingAverage {
-	if factor >= 1 || factor == 0 {
+	if factor >= 1 || factor <= 0 {
 		panic("factor must be (0, 1)")
 	}
 	return &ExponentialMovingAverage{
