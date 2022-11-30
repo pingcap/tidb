@@ -92,6 +92,7 @@ type copReqSenderPool struct {
 	results   generic.SyncMap[int, struct{}]
 
 	ctx     context.Context
+	cancel  context.CancelFunc
 	copCtx  *copContext
 	startTS uint64
 
@@ -124,7 +125,7 @@ func (c *copReqSender) run() {
 			zap.Int("id", task.id), zap.String("task", task.String()))
 		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
-			p.sendResult(c.ctx, idxRecResult{id: task.id, err: err})
+			p.sendResult(idxRecResult{id: task.id, err: err})
 			return
 		}
 		var done bool
@@ -133,11 +134,11 @@ func (c *copReqSender) run() {
 			idxRec, srcChk := p.getIndexRecordsAndChunks()
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
-				p.sendResult(c.ctx, idxRecResult{id: task.id, err: err})
+				p.sendResult(idxRecResult{id: task.id, err: err})
 				return
 			}
 			total += len(idxRec)
-			p.sendResult(c.ctx, idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total})
+			p.sendResult(idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total})
 		}
 	}
 }
@@ -150,11 +151,13 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		idxBufPool <- make([]*indexRecord, 0, copReadBatchFactor*variable.GetDDLReorgBatchSize())
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, int(copReadBatchFactor*variable.GetDDLReorgBatchSize()))
 	}
+	poolCtx, cancel := context.WithCancel(ctx)
 	return &copReqSenderPool{
 		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
 		results:    generic.NewSyncMap[int, struct{}](10),
-		ctx:        ctx,
+		ctx:        poolCtx,
+		cancel:     cancel,
 		copCtx:     copCtx,
 		startTS:    startTS,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
@@ -168,9 +171,9 @@ func (c *copReqSenderPool) sendTask(task *reorgBackfillTask) {
 	c.tasksCh <- task
 }
 
-func (c *copReqSenderPool) sendResult(ctx context.Context, result idxRecResult) {
+func (c *copReqSenderPool) sendResult(result idxRecResult) {
 	select {
-	case <-ctx.Done():
+	case <-c.ctx.Done():
 	case c.resultsCh <- result:
 	}
 }
@@ -202,6 +205,7 @@ func (c *copReqSenderPool) close() {
 	for _, w := range c.senders {
 		w.cancel()
 	}
+	c.cancel()
 	c.wg.Wait()
 	close(c.resultsCh)
 	close(c.idxBufPool)
@@ -408,7 +412,7 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		return nil, false, errors.Trace(err)
 	}
 	if chk.NumRows() == 0 {
-		return buf, true, nil
+		return buf, true, result.Close()
 	}
 	iter := chunk.NewIterator4Chunk(chk)
 	err = table.FillVirtualColumnValue(c.virtualColFieldTps, c.virtualColOffsets, c.expColInfos, c.colInfos, c.sessCtx, chk)
