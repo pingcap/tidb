@@ -782,7 +782,7 @@ func (e *Explain) RenderResult() error {
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
-			if e.Analyze {
+			if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatROW {
 				row := e.Rows[0]
 				tracker := e.SCtx().GetSessionVars().MemTracker
 				maxConsumedGCAware, bytesConsumeGCAware := tracker.MaxConsumedGCAware()
