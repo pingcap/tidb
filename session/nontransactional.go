@@ -141,13 +141,13 @@ func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStm
 	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
-		if err := checkUpdateShardColumn(se, s.List, shardColumnInfo, tableName, tableSources); err != nil {
+		if err := checkUpdateShardColumn(se, s.List, shardColumnInfo, tableName, tableSources, true); err != nil {
 			return err
 		}
 	case *ast.InsertStmt:
 		// FIXME: is it possible to happen?
 		// `insert into t select * from t on duplicate key update id = id + 1` will return an ambiguous column error?
-		if err := checkUpdateShardColumn(se, s.OnDuplicate, shardColumnInfo, tableName, tableSources); err != nil {
+		if err := checkUpdateShardColumn(se, s.OnDuplicate, shardColumnInfo, tableName, tableSources, false); err != nil {
 			return err
 		}
 	default:
@@ -157,7 +157,7 @@ func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStm
 
 // shard column should not be updated.
 func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
-	tableName *ast.TableName, tableSources []*ast.TableSource) error {
+	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
 	for _, tableSource := range tableSources {
@@ -175,7 +175,7 @@ func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColu
 		if !sameDB {
 			continue
 		}
-		sameTable := (assignment.Column.Table.L == aliasedShardColumnTableName) || len(tableSources) == 1
+		sameTable := (assignment.Column.Table.L == aliasedShardColumnTableName) || (isUpdate && len(tableSources) == 1)
 		if !sameTable {
 			continue
 		}
