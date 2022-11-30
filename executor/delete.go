@@ -175,8 +175,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 			return err
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		_, exist := tblRowMap[info.TblID].Get(handle)
-		memDelta := tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		row, exist := tblRowMap[info.TblID].Get(handle)
+		if !exist {
+			row = make([]types.Datum, info.End-info.Start)
+		}
+		for i, d := range joinedRow[info.Start:info.End] {
+			d.Copy(&row[i])
+		}
+		memDelta := tblRowMap[info.TblID].Set(handle, row)
 		if !exist {
 			memDelta += types.EstimatedMemUsage(joinedRow, 1)
 			memDelta += int64(handle.ExtraMemSize())
@@ -192,6 +198,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	fields := retTypes(e.children[0])
 	chk := tryNewCacheChunk(e.children[0])
 	memUsageOfChk := int64(0)
+	joinedDatumRowBuffer := make([]types.Datum, len(fields))
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
@@ -206,13 +213,13 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
-			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
-			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			joinedDatumRowBuffer = joinedChunkRow.GetDatumRowWithBuffer(fields, joinedDatumRowBuffer)
+			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRowBuffer)
 			if err != nil {
 				return err
 			}
 		}
-		chk = chunk.Renew(chk, e.maxChunkSize)
+		chk = tryNewCacheChunk(e.children[0])
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)
