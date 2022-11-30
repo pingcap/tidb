@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"strconv"
 	"strings"
 	"time"
@@ -43,31 +44,6 @@ func genKeyExistsError(name string, value string, err error) error {
 		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
 	}
 	return kv.ErrKeyExists.FastGenByArgs(value, name)
-}
-
-func printableASCII(b byte) bool {
-	if b >= 0 && b < 32 || b > 127 {
-		return false
-	}
-
-	return true
-}
-
-// fmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func fmtNonASCIIPrintableCharToHex(str string) string {
-	var b bytes.Buffer
-	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
-		if printableASCII(str[i]) {
-			b.WriteByte(str[i])
-			continue
-		}
-
-		b.WriteString(`\x`)
-		// turns non-printable-ASCII character into hex-string
-		b.WriteString(fmt.Sprintf("%02X", str[i]))
-	}
-	return b.String()
 }
 
 func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
@@ -125,8 +101,8 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if col.Length > 0 && len(str) > col.Length {
 			str = str[:col.Length]
 		}
-		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) {
-			str = fmtNonASCIIPrintableCharToHex(str)
+		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) || types.IsTypeBit(&tblInfo.Columns[col.Offset].FieldType) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		valueStr = append(valueStr, str)
 	}
@@ -164,8 +140,8 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
 		}
-		if types.IsBinaryStr(colInfo[i].Ft) {
-			str = fmtNonASCIIPrintableCharToHex(str)
+		if types.IsBinaryStr(colInfo[i].Ft) || types.IsTypeBit(colInfo[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		valueStr = append(valueStr, str)
 	}
