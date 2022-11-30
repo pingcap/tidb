@@ -9,6 +9,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -55,10 +56,12 @@ func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
 	}
 	r := make([]Store, 0, len(res))
 	for _, re := range res {
-		r = append(r, Store{
-			BootAt: uint64(re.StartTimestamp),
-			ID:     re.GetId(),
-		})
+		if !engine.IsTiFlash(re) {
+			r = append(r, Store{
+				BootAt: uint64(re.StartTimestamp),
+				ID:     re.GetId(),
+			})
+		}
 	}
 	return r, nil
 }
