@@ -204,6 +204,8 @@ func (c *copReqSenderPool) close() {
 	}
 	c.wg.Wait()
 	close(c.resultsCh)
+	close(c.idxBufPool)
+	close(c.srcChkPool)
 }
 
 func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
