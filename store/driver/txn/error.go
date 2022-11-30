@@ -20,6 +20,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -33,9 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
-	"strconv"
-	"strings"
-	"time"
 )
 
 func genKeyExistsError(name string, value string, err error) error {
