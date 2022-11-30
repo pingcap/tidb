@@ -158,7 +158,7 @@ func (c *bindCache) GetBindRecordBySQLDigest(hash string) (*BindRecord, error) {
 		return nil, errors.New("more than 1 binding matched")
 	}
 	if len(bindings) == 0 || len(bindings[0].Bindings) == 0 {
-		return nil, errors.New("sql digest ` " + hash + "` is invalid")
+		return nil, errors.New("can't find any binding for `" + hash + "`")
 	}
 	return bindings[0], nil
 }

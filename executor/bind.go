@@ -90,6 +90,9 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) dropSQLBindByDigest() error {
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		err := handle.DropBindRecordByDigest(e.sqlDigest)
