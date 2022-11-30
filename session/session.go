@@ -150,6 +150,8 @@ var (
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
+
+	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -2898,11 +2900,17 @@ func InitMDLVariable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		if isNull {
+			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+			enable = true
+			logutil.BgLogger().Warn("metadata lock is null")
+			err = t.SetMetadataLock(true)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
-	if isNull {
-		return errors.New("metadata lock is null")
-	}
 	variable.EnableMDL.Store(enable)
 	return err
 }
@@ -3580,6 +3588,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsageNonRecurCTE.Inc()
 	} else {
 		telemetryCTEUsageNotCTE.Inc()
+	}
+
+	if ti.UseIndexMerge {
+		telemetryIndexMerge.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
