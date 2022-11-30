@@ -2167,7 +2167,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─Point_Get_.*" +
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
 				"  └─Update_.*" +
-				"    ├─Batch_Point_Get_.*" +
+				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.*",
 		},
 		{
@@ -2180,7 +2180,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
 				"  └─Update_.*" +
-				"    ├─Batch_Point_Get_.*" +
+				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
 		},
 		// Test foreign key use index.
@@ -2201,7 +2201,8 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		},
 		{
 			sql: "explain analyze delete from t3 where id in (2,3)",
-			plan: "Delete_.*├─Batch_Point_Get_.*" +
+			plan: "Delete_.*" +
+				"├─Batch_Point_Get_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
 		},
 		{

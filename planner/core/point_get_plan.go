@@ -533,10 +533,8 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 		return nil
 	}
 
-	if !ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
-		ctx.GetSessionVars().PlanID = 0
-		ctx.GetSessionVars().PlanColumnID = 0
-	}
+	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
