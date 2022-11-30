@@ -547,18 +547,18 @@ func TestExplainJSON(t *testing.T) {
 		"select * from t1 where t1.id < (select sum(t2.id) from t2 where t2.id = t1.id)",
 	}
 	// test syntax
-	tk.MustExec("explain format = 'json' select * from t1")
-	tk.MustExec("explain format = json select * from t1")
-	tk.MustExec("explain format = 'JSON' select * from t1")
-	tk.MustExec("explain format = JSON select * from t1")
-	tk.MustExec("explain analyze format = 'json' select * from t1")
-	tk.MustExec("explain analyze format = json select * from t1")
-	tk.MustExec("explain analyze format = 'JSON' select * from t1")
-	tk.MustExec("explain analyze format = JSON select * from t1")
+	tk.MustExec("explain format = 'tidb_json' select * from t1")
+	tk.MustExec("explain format = tidb_json select * from t1")
+	tk.MustExec("explain format = 'TIDB_JSON' select * from t1")
+	tk.MustExec("explain format = TIDB_JSON select * from t1")
+	tk.MustExec("explain analyze format = 'tidb_json' select * from t1")
+	tk.MustExec("explain analyze format = tidb_json select * from t1")
+	tk.MustExec("explain analyze format = 'TIDB_JSON' select * from t1")
+	tk.MustExec("explain analyze format = TIDB_JSON select * from t1")
 
 	// explain
 	for _, sql := range cases {
-		jsonForamt := "explain format = json " + sql
+		jsonForamt := "explain format = tidb_json " + sql
 		rowForamt := "explain format = row " + sql
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()
@@ -582,7 +582,7 @@ func TestExplainJSON(t *testing.T) {
 
 	// explain analyze
 	for _, sql := range cases {
-		jsonForamt := "explain analyze format = json " + sql
+		jsonForamt := "explain analyze format = tidb_json " + sql
 		rowForamt := "explain analyze format = row " + sql
 		resJSON := tk.MustQuery(jsonForamt).Rows()
 		resRow := tk.MustQuery(rowForamt).Rows()

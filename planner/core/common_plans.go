@@ -747,8 +747,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"hint"}
 	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
-	case format == types.ExplainFormatJSON:
-		fieldNames = []string{"JSON"}
+	case format == types.ExplainFormatTiDBJSON:
+		fieldNames = []string{"TiDB_JSON"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -836,7 +836,7 @@ func (e *Explain) RenderResult() error {
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
 		e.Rows = append(e.Rows, []string{str})
-	case types.ExplainFormatJSON:
+	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
 		encodes := e.explainFlatPlanInJSONFormat(flat)
 		if e.Analyze && len(encodes) > 0 &&

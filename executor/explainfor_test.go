@@ -1412,7 +1412,7 @@ func TestExplainForJSON(t *testing.T) {
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
-	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
 
 	j := new([]*core.ExplainInfoForEncode)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
@@ -1439,7 +1439,7 @@ func TestExplainForJSON(t *testing.T) {
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
-	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
 
 	j = new([]*core.ExplainInfoForEncode)
 	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
@@ -1462,8 +1462,8 @@ func TestExplainForJSON(t *testing.T) {
 		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
 	}
 	// test syntax
-	tk2.MustExec(fmt.Sprintf("explain format = 'json' for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = json for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = 'JSON' for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = JSON for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
 }
