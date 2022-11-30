@@ -2583,7 +2583,7 @@ func (rc *Client) SaveSchemas(
 
 	schemas := TidyOldSchemas(sr)
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
-	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
