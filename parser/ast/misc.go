@@ -1953,13 +1953,18 @@ func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DISABLED ")
 	}
 	ctx.WriteKeyWord("FOR ")
-	if err := n.OriginNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if n.HintedNode != nil {
-		ctx.WriteKeyWord(" USING ")
-		if err := n.HintedNode.Restore(ctx); err != nil {
+	if n.OriginNode == nil {
+		ctx.WriteKeyWord("SQL DIGEST ")
+		ctx.WriteString(n.SQLDigest)
+	} else {
+		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
+		}
+		if n.HintedNode != nil {
+			ctx.WriteKeyWord(" USING ")
+			if err := n.HintedNode.Restore(ctx); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -1971,17 +1976,20 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
-	origNode, ok := n.OriginNode.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.OriginNode = origNode.(StmtNode)
-	if n.HintedNode != nil {
-		hintedNode, ok := n.HintedNode.Accept(v)
+	if n.OriginNode != nil {
+		// OriginNode is nil means we set binding stmt by sql digest
+		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.HintedNode = hintedNode.(StmtNode)
+		n.OriginNode = origNode.(StmtNode)
+		if n.HintedNode != nil {
+			hintedNode, ok := n.HintedNode.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.HintedNode = hintedNode.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
