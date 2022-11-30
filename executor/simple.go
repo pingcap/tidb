@@ -1211,8 +1211,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	return rows[0].GetInt64(0), nil
 }
 
-func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context) (bool, error) {
+func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (bool, error) {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1289,7 +1288,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	// The maximum number of saves has not been exceeded
 	// There are too many retention days, and it is impossible to time out in one's lifetime
 	if (passwordNum <= passwordReuse.passwordHistory) || (passwordReuse.passwordReuseInterval > math.MaxInt32) {
-		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail, passwordReuse, sctx)
+		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail)
 		return passChecking, canDeleteNum, err
 	}
 
