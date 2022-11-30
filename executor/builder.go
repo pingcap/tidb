@@ -3969,6 +3969,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
+		isIntersection:           v.IsIntersectionType,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
