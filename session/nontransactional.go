@@ -158,7 +158,6 @@ func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStm
 // shard column should not be updated.
 func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
 	tableName *ast.TableName, tableSources []*ast.TableSource) error {
-
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
 	for _, tableSource := range tableSources {
