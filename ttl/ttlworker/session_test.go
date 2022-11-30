@@ -64,32 +64,34 @@ func newMockInfoSchema(tbl ...*model.TableInfo) infoschema.InfoSchema {
 }
 
 type mockRows struct {
+	t          *testing.T
 	fieldTypes []*types.FieldType
 	*chunk.Chunk
 }
 
-func newMockRows(fieldTypes ...*types.FieldType) *mockRows {
+func newMockRows(t *testing.T, fieldTypes ...*types.FieldType) *mockRows {
 	return &mockRows{
+		t:          t,
 		fieldTypes: fieldTypes,
 		Chunk:      chunk.NewChunkWithCapacity(fieldTypes, 8),
 	}
 }
 
-func (r *mockRows) Append(t *testing.T, row ...interface{}) *mockRows {
-	require.Equal(t, len(r.fieldTypes), len(row))
+func (r *mockRows) Append(row ...interface{}) *mockRows {
+	require.Equal(r.t, len(r.fieldTypes), len(row))
 	for i, ft := range r.fieldTypes {
 		tp := ft.GetType()
 		switch tp {
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
 			tm, ok := row[i].(time.Time)
-			require.True(t, ok)
+			require.True(r.t, ok)
 			r.AppendTime(i, types.NewTime(types.FromGoTime(tm.In(time.UTC)), tp, types.DefaultFsp))
 		case mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			val, ok := row[i].(int)
-			require.True(t, ok)
+			require.True(r.t, ok)
 			r.AppendInt64(i, int64(val))
 		default:
-			require.FailNow(t, "unsupported tp %v", tp)
+			require.FailNow(r.t, "unsupported tp %v", tp)
 		}
 	}
 	return r
@@ -141,10 +143,13 @@ func newMockSession(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSession {
 	for i, ttlTbl := range tbl {
 		tbls[i] = ttlTbl.TableInfo
 	}
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.TimeZone = time.UTC
 	return &mockSession{
 		t:                 t,
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		evalExpire:        time.Now(),
+		sessionVars:       sessVars,
 	}
 }
 
@@ -155,10 +160,6 @@ func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
 
 func (s *mockSession) GetSessionVars() *variable.SessionVars {
 	require.False(s.t, s.closed)
-	if s.sessionVars == nil {
-		s.sessionVars = variable.NewSessionVars(nil)
-		s.sessionVars.TimeZone = time.UTC
-	}
 	return s.sessionVars
 }
 
@@ -195,7 +196,7 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	s := newMockSession(t, tbl)
 	s.execErr = errors.New("mockErr")
-	s.rows = newMockRows(types.NewFieldType(mysql.TypeInt24)).Append(t, 12).Rows()
+	s.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 	tblSe := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC))
 
 	rows, shouldRetry, err := tblSe.ExecuteSQLWithCheck(ctx, "select 1")

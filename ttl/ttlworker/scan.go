@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
+var (
 	scanTaskExecuteSQLMaxRetry      = 5
 	scanTaskExecuteSQLRetryInterval = 2 * time.Second
 )
@@ -56,11 +56,8 @@ func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
 	return &ttlScanTaskExecResult{task: t, err: err}
 }
 
-func (t *ttlScanTask) getDatumRows(datums [][]types.Datum, rows []chunk.Row) [][]types.Datum {
-	if cap(datums) < len(rows) {
-		datums = make([][]types.Datum, 0, len(rows))
-	}
-	datums = datums[:len(rows)]
+func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
+	datums := make([][]types.Datum, len(rows))
 	for i, row := range rows {
 		datums[i] = row.GetDatumRow(t.tbl.KeyColumnTypes)
 	}
@@ -102,7 +99,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
 		if sqlErr != nil {
-			needRetry := retryable && retryTimes <= scanTaskExecuteSQLMaxRetry
+			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry
 			logutil.BgLogger().Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
@@ -125,8 +122,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		retrySQL = ""
 		retryTimes = 0
-		lastResult = t.getDatumRows(lastResult, rows)
-		if len(lastResult) == 0 {
+		lastResult = t.getDatumRows(rows)
+		if len(rows) == 0 {
 			continue
 		}
 
@@ -216,7 +213,10 @@ func (w *ttlScanWorker) loop() error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case msg := <-w.baseWorker.ch:
+		case msg, ok := <-w.baseWorker.ch:
+			if !ok {
+				return nil
+			}
 			switch task := msg.(type) {
 			case *ttlScanTask:
 				w.handleScanTask(ctx, task)
