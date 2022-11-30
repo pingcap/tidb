@@ -171,7 +171,8 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 // To check (1), we need
 // (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
 // (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
-// 		the mutations, thus ignored.
+//
+//	the mutations, thus ignored.
 func checkIndexKeys(
 	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
 	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,

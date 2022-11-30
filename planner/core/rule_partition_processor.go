@@ -47,15 +47,17 @@ const FullRange = -1
 // Used by static partition prune mode.
 //
 // create table t (id int) partition by range (id)
-//   (partition p1 values less than (10),
-//    partition p2 values less than (20),
-//    partition p3 values less than (30))
+//
+//	(partition p1 values less than (10),
+//	 partition p2 values less than (20),
+//	 partition p3 values less than (30))
 //
 // select * from t is equal to
 // select * from (union all
-//      select * from p1 where id < 10
-//      select * from p2 where id < 20
-//      select * from p3 where id < 30)
+//
+//	select * from p1 where id < 10
+//	select * from p2 where id < 20
+//	select * from p3 where id < 30)
 //
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
