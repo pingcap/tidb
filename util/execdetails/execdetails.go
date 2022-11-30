@@ -625,11 +625,14 @@ type RootRuntimeStats struct {
 
 // NewRootRuntimeStats returns a new RootRuntimeStats
 func NewRootRuntimeStats() *RootRuntimeStats {
-	return &RootRuntimeStats{basic: &BasicRuntimeStats{}}
+	return &RootRuntimeStats{}
 }
 
 // GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
+	if e.basic == nil {
+		return 0
+	}
 	return e.basic.rows
 }
 
@@ -642,8 +645,7 @@ func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []Runt
 func (e *RootRuntimeStats) String() string {
 	basic, groups := e.MergeStats()
 	strs := make([]string, 0, len(groups)+1)
-	basicStr := basic.String()
-	if len(basicStr) > 0 {
+	if basic != nil {
 		strs = append(strs, basic.String())
 	}
 	for _, group := range groups {
@@ -669,7 +671,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	if e == nil || (e.consume == 0 && e.loop == 0) {
+	if e == nil {
 		return ""
 	}
 	var str strings.Builder
