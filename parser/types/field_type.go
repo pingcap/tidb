@@ -77,6 +77,16 @@ func (ft *FieldType) IsDecimalValid() bool {
 	return true
 }
 
+// IsVarLengthType Determine whether the column type is a variable-length type
+func (ft *FieldType) IsVarLengthType() bool {
+	switch ft.tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
+}
+
 // GetType returns the type of the FieldType.
 func (ft *FieldType) GetType() byte {
 	return ft.tp

@@ -74,6 +74,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggPartialConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggFinalConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, DefExecutorConcurrency, vars.IndexMergeIntersectionConcurrency())
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
 	require.Equal(t, DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())

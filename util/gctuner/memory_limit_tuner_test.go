@@ -15,7 +15,6 @@
 package gctuner
 
 import (
-	"math"
 	"runtime"
 	"runtime/debug"
 	"testing"
@@ -76,10 +75,9 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	checkNextGCEqualMemoryLimit := func() {
 		runtime.ReadMemStats(r)
 		nextGC := r.NextGC
-		memoryLimit := GlobalMemoryLimitTuner.calcMemoryLimit()
-		// In golang source, nextGC = memoryLimit - three parts memory. So check 90%~100% here.
+		memoryLimit := GlobalMemoryLimitTuner.calcMemoryLimit(GlobalMemoryLimitTuner.GetPercentage())
+		// In golang source, nextGC = memoryLimit - three parts memory.
 		require.True(t, nextGC < uint64(memoryLimit))
-		require.True(t, nextGC > uint64(memoryLimit)/10*9)
 	}
 
 	memory600mb := allocator.alloc(600 << 20)
@@ -91,7 +89,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	require.True(t, gcNum < getNowGCNum())
 	// Test waiting for reset
 	time.Sleep(500 * time.Millisecond)
-	require.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
+	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage), debug.SetMemoryLimit(-1))
 	gcNum = getNowGCNum()
 	memory100mb := allocator.alloc(100 << 20)
 	time.Sleep(100 * time.Millisecond)
@@ -102,7 +100,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	runtime.GC()
 	// Trigger GC in 80% again
 	time.Sleep(500 * time.Millisecond)
-	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(), debug.SetMemoryLimit(-1))
+	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(GlobalMemoryLimitTuner.GetPercentage()), debug.SetMemoryLimit(-1))
 	time.Sleep(100 * time.Millisecond)
 	gcNum = getNowGCNum()
 	checkNextGCEqualMemoryLimit()

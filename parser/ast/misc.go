@@ -1872,6 +1872,7 @@ type DropBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
+	SQLDigest   string
 }
 
 func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -1882,13 +1883,18 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SESSION ")
 	}
 	ctx.WriteKeyWord("BINDING FOR ")
-	if err := n.OriginNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if n.HintedNode != nil {
-		ctx.WriteKeyWord(" USING ")
-		if err := n.HintedNode.Restore(ctx); err != nil {
+	if n.OriginNode == nil {
+		ctx.WriteKeyWord("SQL DIGEST ")
+		ctx.WriteString(n.SQLDigest)
+	} else {
+		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
+		}
+		if n.HintedNode != nil {
+			ctx.WriteKeyWord(" USING ")
+			if err := n.HintedNode.Restore(ctx); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -1900,17 +1906,20 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
-	origNode, ok := n.OriginNode.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.OriginNode = origNode.(StmtNode)
-	if n.HintedNode != nil {
-		hintedNode, ok := n.HintedNode.Accept(v)
+	if n.OriginNode != nil {
+		//  OriginNode is nil means we build drop binding by sql digest
+		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.HintedNode = hintedNode.(StmtNode)
+		n.OriginNode = origNode.(StmtNode)
+		if n.HintedNode != nil {
+			hintedNode, ok := n.HintedNode.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.HintedNode = hintedNode.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
