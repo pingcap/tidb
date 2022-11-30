@@ -2692,7 +2692,7 @@ func authFailedTracking(s *session, user string, host string) error {
 		return getErr
 	}
 	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1,
-		passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays); err != nil {
+		passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays, passwordLocking.AutoAccountLocked); err != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
 			return rollBackErr
 		}
@@ -2768,7 +2768,15 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 	}
 }
 
-func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
+func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64, lockstatus bool) error {
+	if lockstatus {
+		if passwordLockTimeDays == -1 {
+			return privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+		lds := strconv.FormatInt(passwordLockTimeDays, 10)
+		return privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host, lds, lds)
+	}
 	autoAccountLocked := "N"
 	autoLockedLastChanged := ""
 	if userFailedLoginAttempts == 0 || passwordLockTimeDays == 0 {
