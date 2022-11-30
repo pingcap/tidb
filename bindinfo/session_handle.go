@@ -97,9 +97,23 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	return nil
 }
 
+// DropBindRecordByDigest drop BindRecord in the cache.
+func (h *SessionHandle) DropBindRecordByDigest(sqlDigest string) error {
+	oldRecord, err := h.GetBindRecordBySQLDigest(sqlDigest)
+	if err != nil {
+		return err
+	}
+	return h.DropBindRecord(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+}
+
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
+}
+
+// GetBindRecordBySQLDigest return all BindMeta corresponding to sqlDigest.
+func (h *SessionHandle) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
+	return h.ch.GetBindRecordBySQLDigest(sqlDigest)
 }
 
 // GetAllBindRecord return all session bind info.
