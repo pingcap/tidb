@@ -111,7 +111,7 @@ func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord
 	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
 }
 
-// GetBindRecordBySQLDigest return all BindMeta corresponding to hash.
+// GetBindRecordBySQLDigest return all BindMeta corresponding to sqlDigest.
 func (h *SessionHandle) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
 	return h.ch.GetBindRecordBySQLDigest(sqlDigest)
 }
