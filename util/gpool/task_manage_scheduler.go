@@ -13,3 +13,14 @@
 // limitations under the License.
 
 package gpool
+
+// Boost is to increase the concurrency of task.
+func (t *TaskManager[T, U, C, CT, TF]) Boost() {
+	if t.concurrency > t.running.Load() {
+	} else {
+	}
+}
+
+// Decrease is to decrease the concurrency of task.
+func (t *TaskManager[T, U, C, CT, TF]) Decrease() {
+}
