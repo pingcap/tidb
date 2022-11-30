@@ -307,17 +307,20 @@ func TestListPartitionPruner(t *testing.T) {
 	partitionPrunerData.GetTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
+		if tt == "select * from t1 where (id = 1 and a = 1) or a is null" {
+			fmt.Println("1")
+		}
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		result := tk.MustQuery(tt)
+		result := tk.MustQuery(tt).Sort()
 		result.Check(testkit.Rows(output[i].Result...))
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {
-			result.Check(tk2.MustQuery(tt).Rows())
+			result.Check(tk.MustQuery(tt).Sort().Rows())
 			valid = true
 		}
 		require.True(t, valid)
@@ -383,7 +386,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
 		testdata.OnRecord(func() {
 			output[i].SQL = tt.SQL
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
 			// Test for table without index.
 			output[i].Plan = planTree
 			// Test for table with index.
@@ -398,14 +401,14 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
 
 		// compare the result.
-		result := tk.MustQuery(tt.SQL)
+		result := tk.MustQuery(tt.SQL).Sort()
 		idxResult := tk1.MustQuery(tt.SQL)
-		result.Check(idxResult.Rows())
+		result.Check(idxResult.Sort().Rows())
 		result.Check(testkit.Rows(output[i].Result...))
 
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt.SQL, "partition(") {
-			result.Check(tk2.MustQuery(tt.SQL).Rows())
+			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
 			valid = true
 		}
 	}
@@ -424,14 +427,15 @@ type testTablePartitionInfo struct {
 }
 
 // getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
-//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
-//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
-//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
-//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
-//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
-//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
-//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+//	"Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//	"└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//	"  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//	"  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//	"  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//	"  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//	"    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//	"      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
 func getPartitionInfoFromPlan(plan []string) string {
@@ -646,7 +650,7 @@ partition by range (a) (
 	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
 
-//issue 22079
+// issue 22079
 func TestRangePartitionPredicatePruner(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

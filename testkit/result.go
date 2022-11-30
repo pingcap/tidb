@@ -49,6 +49,21 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// AddComment adds the extra comment for the Result's output.
+func (res *Result) AddComment(c string) {
+	res.comment += "\n" + c
+}
+
+// CheckWithFunc asserts the result match the expected results in the way `f` specifies.
+func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
+	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
+
+	for i, resRow := range res.rows {
+		expectedRow := expected[i]
+		res.require.Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
+	}
+}
+
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)

@@ -187,6 +187,12 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 	return builder
 }
 
+// SetPartitionKeyRanges sets the "KeyRangesWithPartition" for "kv.Request".
+func (builder *RequestBuilder) SetPartitionKeyRanges(keyRanges [][]kv.KeyRange) *RequestBuilder {
+	builder.Request.KeyRangesWithPartition = keyRanges
+	return builder
+}
+
 // SetStartTS sets "StartTS" for "kv.Request".
 func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	builder.Request.StartTs = startTS
@@ -286,8 +292,9 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 }
 
 // SetTiDBServerID sets "TiDBServerID" for "kv.Request"
-//   ServerID is a unique id of TiDB instance among the cluster.
-//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+//
+//	ServerID is a unique id of TiDB instance among the cluster.
+//	See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
 	return builder
@@ -330,6 +337,16 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 			visitPhysicalTableID[tableID] = struct{}{}
 		} else {
 			return errors.New("requestBuilder can't decode tableID from keyRange")
+		}
+	}
+	for _, partKeyRanges := range builder.Request.KeyRangesWithPartition {
+		for _, keyRange := range partKeyRanges {
+			tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+			if tableID > 0 {
+				visitPhysicalTableID[tableID] = struct{}{}
+			} else {
+				return errors.New("requestBuilder can't decode tableID from keyRange")
+			}
 		}
 	}
 
@@ -450,9 +467,9 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 // interpreted as an int64 variable.
 //
 // This function does the following:
-// 1. split ranges into two groups as described above.
-// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
-//    one greater than MaxInt64.
+//  1. split ranges into two groups as described above.
+//  2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//     one greater than MaxInt64.
 //
 // if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
