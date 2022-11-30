@@ -100,7 +100,7 @@ const (
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
-    	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
     	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
     	Password_lifetime		SMALLINT UNSIGNED,
 		PRIMARY KEY (Host, User));`
@@ -268,6 +268,8 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		sql_digest varchar(64),
+		plan_digest varchar(64),
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -684,13 +686,15 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
-	// version104 add columns related to password expiration
+	// version104 add `sql_digest` and `plan_digest` to `bind_info`
 	version104 = 104
+	// version105 add columns related to password expiration
+	version105 = 105
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version104
+var currentBootstrapVersion int64 = version105
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -799,6 +803,7 @@ var (
 		upgradeToVer102,
 		upgradeToVer103,
 		upgradeToVer104,
+		upgradeToVer105,
 	}
 )
 
@@ -1572,7 +1577,7 @@ func initBindInfoTable(s Session) {
 }
 
 func insertBuiltinBindInfoRow(s Session) {
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?, "", "")`,
 		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
 	)
 }
@@ -2087,6 +2092,14 @@ func upgradeToVer103(s Session, ver int64) {
 
 func upgradeToVer104(s Session, ver int64) {
 	if ver >= version104 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
+}
+
+func upgradeToVer105(s Session, ver int64) {
+	if ver >= version105 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
