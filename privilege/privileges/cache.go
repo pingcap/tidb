@@ -92,21 +92,24 @@ type baseRecord struct {
 	hostIPNet *net.IPNet
 }
 
-// UserRecord is used to represent a user record in privilege cache.
-type UserRecord struct {
-	baseRecord
-
-	AuthenticationString  string
-	Privileges            mysql.PrivilegeType
-	AccountLocked         bool // A role record when this field is true
-	AuthPlugin            string
-	AuthTokenIssuer       string
-	Email                 string
+type UserAttributesInfo struct {
 	FailedLoginAttempts   int64
 	PasswordLockTime      int64
 	AutoAccountLocked     bool
 	FailedLoginCount      int64
 	AutoLockedLastChanged int64
+}
+
+// UserRecord is used to represent a user record in privilege cache.
+type UserRecord struct {
+	baseRecord
+	UserAttributesInfo
+	AuthenticationString string
+	Privileges           mysql.PrivilegeType
+	AccountLocked        bool // A role record when this field is true
+	AuthPlugin           string
+	AuthTokenIssuer      string
+	Email                string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
