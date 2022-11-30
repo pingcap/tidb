@@ -261,8 +261,6 @@ func TestIndexMergeInTransaction(t *testing.T) {
 		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
 		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
 		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
-		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
-		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows())
 		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows())
 
 		tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
@@ -634,13 +632,13 @@ func TestIndexMergeIntersectionConcurrency(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(3)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
-	// Concurrency only works for dynamic pruning partition table.
+	// Concurrency only works for dynamic pruning partition table, so real concurrency is 1.
 	tk.MustExec("set tidb_partition_prune_mode = 'static'")
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
-	// Concurrency only works for dynamic pruning partition table.
+	// Concurrency only works for dynamic pruning partition table. so real concurrency is 1.
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
