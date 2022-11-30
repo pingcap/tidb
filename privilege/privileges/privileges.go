@@ -512,11 +512,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -525,22 +525,22 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 			}
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
 		if record.AuthPlugin != mysql.AuthSocket {
-			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
+			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword).Error()}
 		}
 	}
 

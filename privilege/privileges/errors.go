@@ -33,9 +33,9 @@ var (
 // ErrUserPasswordFailed struct Contains mysql error
 // compatible mysql error code
 type ErrUserPasswordFailed struct {
-	err error
+	s string
 }
 
 func (e *ErrUserPasswordFailed) Error() string {
-	return e.err.Error()
+	return e.s
 }
