@@ -125,8 +125,9 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if col.Length > 0 && len(str) > col.Length {
 			str = str[:col.Length]
 		}
-
-		str = fmtNonASCIIPrintableCharToHex(str)
+		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) {
+			str = fmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
@@ -163,7 +164,9 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
 		}
-		str = fmtNonASCIIPrintableCharToHex(str)
+		if types.IsBinaryStr(colInfo[i].Ft) {
+			str = fmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
