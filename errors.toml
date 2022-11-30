@@ -461,6 +461,11 @@ error = '''
 update pd error
 '''
 
+["Lightning:PreCheck:ErrCheckCDCPiTR"]
+error = '''
+check TiCDC/PiTR task error
+'''
+
 ["Lightning:PreCheck:ErrCheckCSVHeader"]
 error = '''
 check csv header error
