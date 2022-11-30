@@ -31,8 +31,8 @@ type ExponentialMovingAverage struct {
 	mu sync.RWMutex
 }
 
-// NewExponentialAverage will create a new ExponentialMovingAverage
-func NewExponentialAverage(
+// NewExponentialMovingAverage will create a new ExponentialMovingAverage
+func NewExponentialMovingAverage(
 	factor int,
 	warmupWindow int,
 ) *ExponentialMovingAverage {
