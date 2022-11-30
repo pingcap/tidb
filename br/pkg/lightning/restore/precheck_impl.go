@@ -744,6 +744,8 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		//nolint: errcheck
+		defer ci.etcdCli.Close()
 	}
 
 	errorMsg := make([]string, 0, 2)
