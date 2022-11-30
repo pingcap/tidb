@@ -1177,7 +1177,7 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 	tk.MustExec("use test;")
 
 	tk.MustExec("create table t (a int, b int);")
-	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
+	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 10;",
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
 }
 
