@@ -849,6 +849,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
@@ -1084,6 +1088,8 @@ const (
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	DefTiDBAutoBuildStatsConcurrency             = 1
+	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = false
 	DefTiDBAnalyzePartitionConcurrency           = 1
