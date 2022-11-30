@@ -17,9 +17,16 @@ package addindextest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 )
+
+func init() {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
 
 func initTest(t *testing.T) *suiteContext {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -68,14 +75,27 @@ func TestCreateGenColIndex(t *testing.T) {
 
 func TestCreateMultiColsIndex(t *testing.T) {
 	var coliIDs = [][]int{
-		{1, 4, 7, 10, 13},
-		{2, 5, 8, 11},
-		{3, 6, 9, 12, 15},
+		{1, 4, 7},
+		{2, 5},
+		{3, 6, 9},
 	}
 	var coljIDs = [][]int{
-		{16, 19, 22, 25},
-		{14, 17, 20, 23, 26},
-		{18, 21, 24, 27},
+		{16, 19},
+		{14, 17, 20},
+		{18, 21},
+	}
+
+	if *FullMode {
+		coliIDs = [][]int{
+			{1, 4, 7, 10, 13},
+			{2, 5, 8, 11},
+			{3, 6, 9, 12, 15},
+		}
+		coljIDs = [][]int{
+			{16, 19, 22, 25},
+			{14, 17, 20, 23, 26},
+			{18, 21, 24, 27},
+		}
 	}
 	ctx := initTest(t)
 	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)

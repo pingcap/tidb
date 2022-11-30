@@ -189,12 +189,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				defer e.spillAction.WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
 	for {
-		chk := newFirstChunk(e.children[0])
+		chk := tryNewCacheChunk(e.children[0])
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
@@ -218,7 +218,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 						defer e.spillAction.WaitForTest()
 					}
 				})
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+				e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
 			if err != nil {
@@ -226,6 +226,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	}
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			if e.ctx.GetSessionVars().ConnectionID == 123456 {
+				e.ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
+			}
+		}
+	})
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.Sort()
 		e.partitionList = append(e.partitionList, e.rowChunks)
@@ -427,7 +434,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
-		srcChk := newFirstChunk(e.children[0])
+		srcChk := tryNewCacheChunk(e.children[0])
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
 		err := Next(ctx, e.children[0], srcChk)
@@ -453,7 +460,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := newFirstChunk(e.children[0])
+	childRowChk := tryNewCacheChunk(e.children[0])
 	for {
 		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {

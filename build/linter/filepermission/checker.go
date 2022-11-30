@@ -38,7 +38,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if err != nil {
 				return nil, err
 			}
-			if stat.Mode() != 0644 {
+			if stat.Mode()&0111 != 0 {
 				pass.Reportf(f.Pos(), "[%s] source code file should not have execute permission %s", Name, stat.Mode())
 			}
 		}

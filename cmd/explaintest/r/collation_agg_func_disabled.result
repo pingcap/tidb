@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_agg_func;
 use collation_agg_func;
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);

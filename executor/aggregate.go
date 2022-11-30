@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -245,6 +244,9 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.isUnparallelExec {
 		var firstErr error
 		e.childResult = nil
@@ -301,8 +303,6 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	// If panic here, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
@@ -326,18 +326,19 @@ func (e *HashAggExec) initForUnparallelExec() {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.tmpChkForSpill = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+
+	e.tmpChkForSpill = tryNewCacheChunk(e.children[0])
+	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.id, -1)
-		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
@@ -382,7 +383,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
-			chk:               newFirstChunk(e.children[0]),
+			chk:               tryNewCacheChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -418,6 +419,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
+		groupSet.SetTracker(e.memTracker)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -1132,7 +1134,6 @@ func (e *HashAggExec) initRuntimeStats() {
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
 		e.stats = stats
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -1274,7 +1275,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.baseExecutor)
 
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -1828,7 +1829,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	case types.ETJson:
-		var previousKey, key json.BinaryJSON
+		var previousKey, key types.BinaryJSON
 		if !previousIsNull {
 			previousKey = col.GetJSON(0)
 		}
@@ -1839,7 +1840,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			if e.sameGroup[i] {
 				if isNull == previousIsNull {
-					if !isNull && json.CompareBinary(previousKey, key) != 0 {
+					if !isNull && types.CompareBinaryJSON(previousKey, key) != 0 {
 						e.sameGroup[i] = false
 					}
 				} else {
@@ -1942,6 +1943,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		memory.QueryForceDisk.Add(1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
@@ -1953,6 +1955,3 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*AggSpillDiskAction) SetLogHook(_ func(uint64)) {}

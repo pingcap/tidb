@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_misc;
 use collation_misc;
 create table t1(a varchar(20) charset utf8);

@@ -81,7 +81,8 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 }
 
 type compressReader struct {
-	io.ReadCloser
+	io.Reader
+	io.Closer
 }
 
 // nolint:interfacer
@@ -94,12 +95,18 @@ func newInterceptReader(fileReader ExternalFileReader, compressType CompressType
 		return nil, errors.Trace(err)
 	}
 	return &compressReader{
-		ReadCloser: r,
+		Reader: r,
+		Closer: fileReader,
 	}, nil
 }
 
 func (*compressReader) Seek(_ int64, _ int) (int64, error) {
 	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now")
+}
+
+func (c *compressReader) Close() error {
+	err := c.Closer.Close()
+	return err
 }
 
 type flushStorageWriter struct {

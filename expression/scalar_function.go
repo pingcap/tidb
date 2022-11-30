@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -193,6 +193,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		}
 	}
 	fc, ok := funcs[funcName]
+	if !ok {
+		if extFunc, exist := extensionFuncs.Load(funcName); exist {
+			fc = extFunc.(functionClass)
+			ok = true
+		}
+	}
+
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
@@ -425,7 +432,7 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (t
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
@@ -486,6 +493,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 		}
 	}
 	return true
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
 }
 
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
@@ -590,4 +615,22 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
+
+// MemoryUsage return the memory usage of ScalarFunction
+func (sf *ScalarFunction) MemoryUsage() (sum int64) {
+	if sf == nil {
+		return
+	}
+
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + int64(cap(sf.hashcode))
+	if sf.RetType != nil {
+		sum += sf.RetType.MemoryUsage()
+	}
+	if sf.Function != nil {
+		sum += sf.Function.MemoryUsage()
+	}
+	return sum
 }

@@ -42,8 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, params []expression.Expression) error {
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
@@ -88,7 +87,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
 		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
-		err := Preprocess(sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -116,7 +115,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if err := planCachePreprocess(sctx, isGeneralPlanCache, is, stmt, params); err != nil {
+	if err := planCachePreprocess(ctx, sctx, isGeneralPlanCache, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
 
@@ -216,10 +215,11 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	cachedVal, exist := getValidPlanFromCache(sctx, isGeneralPlanCache, cacheKey, paramTypes)
+	candidate, exist := sctx.GetPlanCache(isGeneralPlanCache).Get(cacheKey, paramTypes)
 	if !exist {
 		return nil, nil, false, nil
 	}
+	cachedVal := candidate.(*PlanCacheValue)
 	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
@@ -261,7 +261,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 	stmtCtx := sessVars.StmtCtx
 
 	planCacheMissCounter.Inc()
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,7 +290,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		putPlanIntoCache(sctx, isGeneralPlanCache, cacheKey, cached)
+		sctx.GetPlanCache(isGeneralPlanCache).Put(cacheKey, cached, paramTypes)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
@@ -302,6 +304,32 @@ func RebuildPlan4CachedPlan(p Plan) error {
 	return rebuildRange(p)
 }
 
+func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		x.Ranges = ranges
+		x.rangeInfo = rangeInfo
+	case *PhysicalIndexScan:
+		x.Ranges = ranges
+		x.rangeInfo = rangeInfo
+	case *PhysicalTableReader:
+		updateRange(x.TablePlans[0], ranges, rangeInfo)
+	case *PhysicalIndexReader:
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
+	case *PhysicalIndexLookUpReader:
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
+	}
+}
+
+// rebuildRange doesn't set mem limit for building ranges. There are two reasons why we don't restrict range mem usage here.
+//  1. The cached plan must be able to build complete ranges under mem limit when it is generated. Hence we can just build
+//     ranges from x.AccessConditions. The only difference between the last ranges and new ranges is the change of parameter
+//     values, which doesn't cause much change on the mem usage of complete ranges.
+//  2. Different parameter values can change the mem usage of complete ranges. If we set range mem limit here, range fallback
+//     may heppen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
+//     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
+//     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
+//     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
 func rebuildRange(p Plan) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
@@ -314,6 +342,12 @@ func rebuildRange(p Plan) error {
 	case *PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(); err != nil {
 			return err
+		}
+		if mutableRange, ok := x.Ranges.(*mutableIndexJoinRange); ok {
+			helper := mutableRange.buildHelper
+			rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
+			innerPlan := x.Children()[x.InnerChildIdx]
+			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
 		}
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
@@ -350,7 +384,7 @@ func rebuildRange(p Plan) error {
 		// if access condition is not nil, which means it's a point get generated by cbo.
 		if x.AccessConditions != nil {
 			if x.IndexInfo != nil {
-				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
+				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
 				if err != nil {
 					return err
 				}
@@ -368,7 +402,7 @@ func rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
+					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
@@ -411,7 +445,7 @@ func rebuildRange(p Plan) error {
 		// if access condition is not nil, which means it's a point get generated by cbo.
 		if x.AccessConditions != nil {
 			if x.IndexInfo != nil {
-				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
+				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
 				if err != nil {
 					return err
 				}
@@ -429,7 +463,7 @@ func rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
+					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
@@ -540,7 +574,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if len(pkCols) > 0 {
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen, 0)
 			if err != nil {
 				return err
 			}
@@ -559,7 +593,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType)
+			ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
 			if err != nil {
 				return err
 			}
@@ -575,7 +609,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 		is.Ranges = ranger.FullRange()
 		return
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
 	}

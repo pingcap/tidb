@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -264,10 +263,10 @@ func TestInFunc(t *testing.T) {
 	duration2 := types.Duration{Duration: 12*time.Hour + 1*time.Minute}
 	duration3 := types.Duration{Duration: 12*time.Hour + 1*time.Second}
 	duration4 := types.Duration{Duration: 12 * time.Hour}
-	json1 := json.CreateBinary("123")
-	json2 := json.CreateBinary("123.1")
-	json3 := json.CreateBinary("123.2")
-	json4 := json.CreateBinary("123.3")
+	json1 := types.CreateBinaryJSON("123")
+	json2 := types.CreateBinaryJSON("123.1")
+	json3 := types.CreateBinaryJSON("123.2")
+	json4 := types.CreateBinaryJSON("123.3")
 	testCases := []struct {
 		args []interface{}
 		res  interface{}

@@ -12,33 +12,38 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 type flushSimulator struct {
-	flushedEpoch uint64
+	flushedEpoch atomic.Uint64
 	enabled      bool
 }
 
-func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
+func (c *flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	if !c.enabled {
 		return nil
 	}
-	if c.flushedEpoch == 0 {
+	if c.flushedEpoch.Load() == 0 {
 		e := errorpb.Error{
 			Message: "not flushed",
 		}
 		return &e
 	}
-	if c.flushedEpoch != requestedEpoch {
+	if c.flushedEpoch.Load() != requestedEpoch {
 		e := errorpb.Error{
 			Message: "flushed epoch not match",
 		}
@@ -47,7 +52,7 @@ func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	return nil
 }
 
-func (c flushSimulator) fork() flushSimulator {
+func (c *flushSimulator) fork() flushSimulator {
 	return flushSimulator{
 		enabled: c.enabled,
 	}
@@ -58,7 +63,7 @@ type region struct {
 	leader     uint64
 	epoch      uint64
 	id         uint64
-	checkpoint uint64
+	checkpoint atomic.Uint64
 
 	fsim flushSimulator
 }
@@ -78,25 +83,15 @@ type fakeCluster struct {
 	onGetClient func(uint64) error
 }
 
-func overlaps(a, b kv.KeyRange) bool {
-	if len(b.EndKey) == 0 {
-		return len(a.EndKey) == 0 || bytes.Compare(a.EndKey, b.StartKey) > 0
-	}
-	if len(a.EndKey) == 0 {
-		return len(b.EndKey) == 0 || bytes.Compare(b.EndKey, a.StartKey) > 0
-	}
-	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
-}
-
 func (r *region) splitAt(newID uint64, k string) *region {
 	newRegion := &region{
-		rng:        kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
-		leader:     r.leader,
-		epoch:      r.epoch + 1,
-		id:         newID,
-		checkpoint: r.checkpoint,
-		fsim:       r.fsim.fork(),
+		rng:    kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
+		leader: r.leader,
+		epoch:  r.epoch + 1,
+		id:     newID,
+		fsim:   r.fsim.fork(),
 	}
+	newRegion.checkpoint.Store(r.checkpoint.Load())
 	r.rng.EndKey = []byte(k)
 	r.epoch += 1
 	r.fsim = r.fsim.fork()
@@ -104,7 +99,7 @@ func (r *region) splitAt(newID uint64, k string) *region {
 }
 
 func (r *region) flush() {
-	r.fsim.flushedEpoch = r.epoch
+	r.fsim.flushedEpoch.Store(r.epoch)
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -148,14 +143,19 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			continue
 		}
 		resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-			Checkpoint: region.checkpoint,
+			Checkpoint: region.checkpoint.Load(),
 			Region: &logbackup.RegionIdentity{
 				Id:           region.id,
 				EpochVersion: region.epoch,
 			},
 		})
 	}
+	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
+}
+
+func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
+	return nil, nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -169,7 +169,7 @@ func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte,
 
 	result := make([]streamhelper.RegionWithLeader, 0, limit)
 	for _, region := range f.regions {
-		if overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := streamhelper.RegionWithLeader{
 				Region: &metapb.Region{
 					Id:       region.id,
@@ -311,13 +311,14 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 		f.updateRegion(r.id, func(r *region) {
 			// The current implementation assumes that the server never returns checkpoint with value 0.
 			// This assumption is true for the TiKV implementation, simulating it here.
-			r.checkpoint += rand.Uint64()%256 + 1
-			if r.checkpoint < minCheckpoint {
-				minCheckpoint = r.checkpoint
+			cp := r.checkpoint.Add(rand.Uint64()%256 + 1)
+			if cp < minCheckpoint {
+				minCheckpoint = cp
 			}
-			r.fsim.flushedEpoch = 0
+			r.fsim.flushedEpoch.Store(0)
 		})
 	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
 	return minCheckpoint
 }
 
@@ -335,11 +336,10 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		stores = append(stores, s)
 	}
 	initialRegion := &region{
-		rng:        kv.KeyRange{},
-		leader:     stores[0].id,
-		epoch:      0,
-		id:         c.idAlloc(),
-		checkpoint: 0,
+		rng:    kv.KeyRange{},
+		leader: stores[0].id,
+		epoch:  0,
+		id:     c.idAlloc(),
 		fsim: flushSimulator{
 			enabled: simEnabled,
 		},
@@ -357,7 +357,14 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 }
 
 func (r *region) String() string {
-	return fmt.Sprintf("%d(%d):[%s,%s);%dL%d", r.id, r.epoch, hex.EncodeToString(r.rng.StartKey), hex.EncodeToString(r.rng.EndKey), r.checkpoint, r.leader)
+	return fmt.Sprintf("%d(%d):[%s,%s);%dL%dF%d",
+		r.id,
+		r.epoch,
+		hex.EncodeToString(r.rng.StartKey),
+		hex.EncodeToString(r.rng.EndKey),
+		r.checkpoint.Load(),
+		r.leader,
+		r.fsim.flushedEpoch.Load())
 }
 
 func (f *fakeStore) String() string {
@@ -371,6 +378,20 @@ func (f *fakeStore) String() string {
 
 func (f *fakeCluster) flushAll() {
 	for _, r := range f.regions {
+		r.flush()
+	}
+}
+
+func (f *fakeCluster) flushAllExcept(keys ...string) {
+outer:
+	for _, r := range f.regions {
+		// Note: can we make it faster?
+		for _, key := range keys {
+			if utils.CompareBytesExt(r.rng.StartKey, false, []byte(key), false) <= 0 &&
+				utils.CompareBytesExt([]byte(key), false, r.rng.EndKey, true) < 0 {
+				continue outer
+			}
+		}
 		r.flush()
 	}
 }
@@ -400,17 +421,23 @@ type testEnv struct {
 	*fakeCluster
 	checkpoint uint64
 	testCtx    *testing.T
+	ranges     []kv.KeyRange
 
 	mu sync.Mutex
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	rngs := t.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
 	tsk := streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name: "whole",
 		},
+		Ranges: rngs,
 	}
 	ch <- tsk
 	return nil

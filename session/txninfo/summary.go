@@ -124,11 +124,11 @@ func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	now := time.Now()
 	startTime := time.UnixMilli(oracle.ExtractPhysical(info.StartTS))
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
 	if now.Sub(startTime) < recorder.minDuration {
 		return
 	}
-	recorder.mu.Lock()
-	defer recorder.mu.Unlock()
 	recorder.summaries.onTrxEnd(info.AllSQLDigests)
 }
 

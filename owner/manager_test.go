@@ -124,9 +124,7 @@ func TestCluster(t *testing.T) {
 		WithInfoCache(ic),
 	)
 
-	go func() {
-		require.NoError(t, d.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d.OwnerManager().CampaignOwner())
 
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -141,9 +139,7 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	go func() {
-		require.NoError(t, d1.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d1.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d1, false)
 	require.False(t, isOwner)
@@ -168,9 +164,7 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic3),
 	)
-	go func() {
-		require.NoError(t, d3.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d3.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d3, false)
 	require.False(t, isOwner)

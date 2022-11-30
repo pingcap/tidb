@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -190,8 +189,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		case mysql.TypeJSON:
 			jsonVal := row.GetJSON(0)
 			bytes := make([]byte, 0)
-			bytes = append(bytes, jsonVal.TypeCode)
-			bytes = append(bytes, jsonVal.Value...)
+			bytes = jsonVal.HashValue(bytes)
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
@@ -217,60 +215,6 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 }
 
 type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType, []*util.ByItems) (memDeltas []int64, err error)
-
-func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
-	memDeltas = make([]int64, 0)
-	m := make(map[string]bool)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		datum := row.GetDatum(0, dataTypes[0])
-		if datum.IsNull() {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-
-		memDelta := int64(0)
-		key, err := datum.ToString()
-		if err != nil {
-			return memDeltas, errors.Errorf("fail to get key - %s", key)
-		}
-		if _, ok := m[key]; ok {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		m[key] = true
-		memDelta += int64(len(key))
-
-		memDelta += aggfuncs.DefInterfaceSize
-		switch dataTypes[1].GetType() {
-		case mysql.TypeLonglong:
-			memDelta += aggfuncs.DefUint64Size
-		case mysql.TypeDouble:
-			memDelta += aggfuncs.DefFloat64Size
-		case mysql.TypeString:
-			val := row.GetString(1)
-			memDelta += int64(len(val))
-		case mysql.TypeJSON:
-			val := row.GetJSON(1)
-			// +1 for the memory usage of the TypeCode of json
-			memDelta += int64(len(val.Value) + 1)
-		case mysql.TypeDuration:
-			memDelta += aggfuncs.DefDurationSize
-		case mysql.TypeDate:
-			memDelta += aggfuncs.DefTimeSize
-		case mysql.TypeNewDecimal:
-			memDelta += aggfuncs.DefMyDecimalSize
-		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].GetType())
-		}
-		memDeltas = append(memDeltas, memDelta)
-	}
-	return memDeltas, nil
-}
 
 type aggMemTest struct {
 	aggTest            aggTest
@@ -547,7 +491,7 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	case mysql.TypeDuration:
 		return func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
 	case mysql.TypeJSON:
-		return func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
+		return func(i int) types.Datum { return types.NewDatum(types.CreateBinaryJSON(int64(i))) }
 	case mysql.TypeEnum:
 		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {

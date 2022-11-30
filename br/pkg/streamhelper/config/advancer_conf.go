@@ -15,7 +15,7 @@ const (
 	flagAdvancingByCache = "advancing-by-cache"
 
 	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 3 * time.Minute
+	DefaultTryAdvanceThreshold  = 108 * time.Second
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4

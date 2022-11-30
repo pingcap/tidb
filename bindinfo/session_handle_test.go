@@ -16,7 +16,6 @@ package bindinfo_test
 
 import (
 	"context"
-	"crypto/tls"
 	"strconv"
 	"testing"
 	"time"
@@ -26,9 +25,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -221,7 +219,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -239,7 +237,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	utilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -276,13 +274,13 @@ func TestShowGlobalBindings(t *testing.T) {
 	require.Len(t, rows, 0)
 	// Simulate existing bindings in the mysql.bind_info.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select * from `spm` . `t0` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select /*+ use_index(`t` `a`)*/ * from `spm` . `t`', 'SPM', 'enabled', '2000-01-03 09:00:00', '2000-01-03 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`', 'SPM', 'enabled', '2000-01-04 09:00:00', '2000-01-04 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 4)
@@ -361,56 +359,15 @@ func TestDefaultDB(t *testing.T) {
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
 }
 
-type mockSessionManager struct {
-	PS []*util.ProcessInfo
-}
-
-func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-func (msm *mockSessionManager) KillAllConnections() {
-}
-
-func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
-}
-
-func (msm *mockSessionManager) ServerID() uint64 {
-	return 1
-}
-
-func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestIssue19836(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	tk := testkit.NewTestKit(t, store)
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key (a));")
@@ -419,9 +376,6 @@ func TestIssue19836(t *testing.T) {
 	tk.MustExec("set @a=1;")
 	tk.MustExec("set @b=2;")
 	tk.MustExec("EXECUTE stmt USING @a, @b;")
-	tk.Session().SetSessionManager(&mockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
-	})
 	explainResult := testkit.Rows(
 		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
 		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"sync"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -197,12 +199,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 	rc := w.getReorgCtx(job)
 	if rc == nil {
-		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
-		// for the later entrances.
-		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-		if lease > 0 {
-			delayForAsyncCommit()
-		}
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
 		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
@@ -238,7 +234,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		}
+
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
@@ -251,12 +252,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return errors.Trace(err)
 		}
 
-		switch reorgInfo.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
-		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
-		}
+		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
@@ -268,7 +264,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
-		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
@@ -283,11 +278,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
-			zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", currentElement.TypeKey),
-			zap.Int64("elementID", currentElement.ID),
-			zap.Int64("totalAddedRowCount", rowCount),
-			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
+			zap.Duration("wait time", waitTimeout),
+			zap.ByteString("element type", currentElement.TypeKey),
+			zap.Int64("element ID", currentElement.ID),
+			zap.Int64("total added row count", rowCount),
+			zap.String("done key", hex.EncodeToString(doneKey)),
 			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
@@ -306,22 +301,30 @@ func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	addedRowCount int64) {
-	if tblInfo == nil || addedRowCount == 0 {
+	if tblInfo == nil {
 		return
 	}
-	totalCount := getTableTotalCount(w, tblInfo)
 	progress := float64(0)
-	if totalCount > 0 {
-		progress = float64(addedRowCount) / float64(totalCount)
-	} else {
-		progress = 1
-	}
-	if progress > 1 {
-		progress = 1
+	if addedRowCount != 0 {
+		totalCount := getTableTotalCount(w, tblInfo)
+		if totalCount > 0 {
+			progress = float64(addedRowCount) / float64(totalCount)
+		} else {
+			progress = 1
+		}
+		if progress > 1 {
+			progress = 1
+		}
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		var label string
+		if reorgInfo.mergingTmpIdx {
+			label = metrics.LblAddIndexMerge
+		} else {
+			label = metrics.LblAddIndex
+		}
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
@@ -373,10 +376,11 @@ func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
 type reorgInfo struct {
 	*model.Job
 
-	StartKey kv.Key
-	EndKey   kv.Key
-	d        *ddlCtx
-	first    bool
+	StartKey      kv.Key
+	EndKey        kv.Key
+	d             *ddlCtx
+	first         bool
+	mergingTmpIdx bool
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
@@ -387,12 +391,14 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
+	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
-		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +
-		"EndHandle:" + tryDecodeToHandleString(r.EndKey) + "," +
+		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
+		"EndKey:" + hex.EncodeToString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
-		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
+		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
+		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
@@ -542,7 +548,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
@@ -558,10 +564,12 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
+		logutil.BgLogger().Info("[ddl] get noop table range",
+			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
-			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
+			zap.String("start key", hex.EncodeToString(startHandleKey)),
+			zap.String("end key", hex.EncodeToString(endHandleKey)),
+			zap.Bool("is empty table", isEmptyTable))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -577,7 +585,8 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
+	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -600,7 +609,9 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		})
 
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -614,18 +625,26 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		} else {
 			tb = tbl.(table.PhysicalTable)
 		}
-		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if mergingTmpIdx {
+			start, end = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|elements[0].ID)
+		} else {
+			start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", tryDecodeToHandleString(start)),
-			zap.String("endHandle", tryDecodeToHandleString(end)))
+			zap.String("startKey", hex.EncodeToString(start)),
+			zap.String("endKey", hex.EncodeToString(end)))
 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
+		err = rh.RemoveDDLReorgHandle(job, elements)
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
@@ -665,6 +684,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
+	info.mergingTmpIdx = mergingTmpIdx
 
 	return &info, nil
 }
@@ -679,7 +699,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	)
 	if job.SnapshotVer == 0 {
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -691,9 +713,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
-			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", tryDecodeToHandleString(start)),
-			zap.String("endHandle", tryDecodeToHandleString(end)))
+			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
+			zap.String("start key", hex.EncodeToString(start)),
+			zap.String("end key", hex.EncodeToString(end)))
 
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {

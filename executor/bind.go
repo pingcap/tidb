@@ -38,6 +38,8 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	sqlDigest    string
+	planDigest   string
 }
 
 // Next implements the Executor Next interface.
@@ -75,9 +77,12 @@ func (e *SQLBindExec) dropSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		err := handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		return err
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
 }
 
 func (e *SQLBindExec) setBindingStatus() error {
@@ -111,6 +116,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Collation: e.collation,
 		Status:    bindinfo.Enabled,
 		Source:    bindinfo.Manual,
+		SQLDigest: e.sqlDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

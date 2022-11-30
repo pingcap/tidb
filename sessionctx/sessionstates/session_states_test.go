@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,15 +381,18 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check MPPStoreLastFailTime
 			setFunc: func(tk *testkit.TestKit) any {
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
+				m := sync.Map{}
+				m.Store("store1", time.Now())
+				tk.Session().GetSessionVars().MPPStoreLastFailTime = &m
 				return tk.Session().GetSessionVars().MPPStoreLastFailTime
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				require.Equal(t, 1, len(failTime))
-				tm, ok := failTime["store1"]
+				tm, ok := failTime.Load("store1")
 				require.True(t, ok)
-				require.True(t, param.(map[string]time.Time)["store1"].Equal(tm))
+				v, ok := (param.(*sync.Map)).Load("store1")
+				require.True(t, ok)
+				require.True(t, tm.(time.Time).Equal(v.(time.Time)))
 			},
 		},
 		{
@@ -979,6 +983,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1362,6 +1367,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {

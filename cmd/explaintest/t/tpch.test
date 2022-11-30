@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 -- http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.1.pdf
 CREATE DATABASE IF NOT EXISTS TPCH;
 USE TPCH;

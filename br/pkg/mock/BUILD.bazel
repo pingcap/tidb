@@ -44,6 +44,7 @@ go_library(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@io_opencensus_go//stats/view",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
         "@org_uber_go_zap//:zap",

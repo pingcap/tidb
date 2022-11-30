@@ -291,6 +291,8 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -428,6 +430,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
 	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
+
+	// Enable the coprocessor paging protocol.
+	tk.MustExec("set @@tidb_enable_paging = on")
 
 	// When the min paging size is small, we need more RPC roundtrip!
 	// Check 'rpc_num' in the execution information

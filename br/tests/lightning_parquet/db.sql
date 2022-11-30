@@ -226,3 +226,10 @@ CREATE TABLE `special_col_name` (
     `123_c3` timestamp NULL DEFAULT NULL,
     `中_c4` timestamp NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+DROP TABLE IF EXISTS `test_time`;
+CREATE TABLE `test_time` (
+ `id` INT NOT NULL,
+ `ts` TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

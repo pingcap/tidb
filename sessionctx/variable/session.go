@@ -46,9 +46,11 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -61,8 +63,29 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// PreparedStmtCount is exported for test.
-var PreparedStmtCount int64
+var (
+	// PreparedStmtCount is exported for test.
+	PreparedStmtCount int64
+	// enableAdaptiveReplicaRead indicates whether closest adaptive replica read
+	// can be enabled. We forces disable replica read when tidb server in missing
+	// in regions that contains tikv server to avoid read traffic skew.
+	enableAdaptiveReplicaRead uint32 = 1
+)
+
+// SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
+// return true if the value is changed.
+func SetEnableAdaptiveReplicaRead(enabled bool) bool {
+	value := uint32(0)
+	if enabled {
+		value = 1
+	}
+	return atomic.SwapUint32(&enableAdaptiveReplicaRead, value) != value
+}
+
+// IsAdaptiveReplicaReadEnabled returns whether adaptive closest replica read can be enabled.
+func IsAdaptiveReplicaReadEnabled() bool {
+	return atomic.LoadUint32(&enableAdaptiveReplicaRead) > 0
+}
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -71,6 +94,12 @@ type RetryInfo struct {
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
 	LastRcReadTS           uint64
+}
+
+// ReuseChunkPool save Alloc object
+type ReuseChunkPool struct {
+	mu    sync.Mutex
+	Alloc chunk.Allocator
 }
 
 // Clean does some clean work.
@@ -200,6 +229,10 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+	// EnableMDL indicates whether to enable the MDL lock for the transaction.
+	EnableMDL bool
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
+	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -295,10 +328,12 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
+	tc.EnableMDL = false
 }
 
 // ClearDelta clears the delta map.
@@ -571,6 +606,11 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 	return ft, ok
 }
 
+// HookContext contains the necessary variables for executing set/get hook
+type HookContext interface {
+	GetStore() kv.Storage
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -615,6 +655,8 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+	// TxnCtxMu is used to protect TxnCtx.
+	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
 	TxnManager interface{}
@@ -700,6 +742,11 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
+
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
@@ -716,6 +763,9 @@ type SessionVars struct {
 
 	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
 	EnableSkewDistinctAgg bool
+
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -790,29 +840,8 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
-	// factors for cost model v2
-	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
-	cpuFactorV2 float64
-	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	copCPUFactorV2 float64
-	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	tiflashCPUFactorV2 float64
-	// networkFactorV2 is the network factor for the Cost Model Ver2.
-	networkFactorV2 float64
-	// scanFactorV2 is the scan factor for the Cost Model Ver2.
-	scanFactorV2 float64
-	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
-	descScanFactorV2 float64
-	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
-	tiflashScanFactorV2 float64
-	// seekFactorV2 is the seek factor for the Cost Model Ver2.
-	seekFactorV2 float64
-	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
-	memoryFactorV2 float64
-	// diskFactorV2 is the disk factor for the Cost Model Ver2.
-	diskFactorV2 float64
-	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
-	concurrencyFactorV2 float64
+	// enableForceInlineCTE is used to enable/disable force inline CTE.
+	enableForceInlineCTE bool
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
@@ -865,6 +894,9 @@ type SessionVars struct {
 
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
+
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1014,6 +1046,10 @@ type SessionVars struct {
 
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
+
+	// CDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	CDCWriteSource uint64
+
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
 
@@ -1134,8 +1170,8 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
-	MPPStoreLastFailTime map[string]time.Time
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
+	MPPStoreLastFailTime *sync.Map
 
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
@@ -1143,11 +1179,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
@@ -1179,8 +1212,8 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
@@ -1213,6 +1246,9 @@ type SessionVars struct {
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
 
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
 
@@ -1222,11 +1258,116 @@ type SessionVars struct {
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	PreparedPlanCacheSize uint64
 
+	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+
 	// EnableGeneralPlanCache indicates whether to enable general plan cache.
 	EnableGeneralPlanCache bool
 
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
+
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
+
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
+	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker *memory.Tracker
+	// MemDBDBFootprint tracks the memory footprint of memdb, and is attached to `MemTracker`
+	MemDBFootprint *memory.Tracker
+	DiskTracker    *memory.Tracker
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
+
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool ReuseChunkPool
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
+	EnableReuseCheck bool
+
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
+	preUseChunkAlloc bool
+
+	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
+	EnablePlanReplayerCapture bool
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
+	if pool == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
+	}
+	chk := pool.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+// ExchangeChunkStatus give the status to preUseChunkAlloc
+func (s *SessionVars) ExchangeChunkStatus() {
+	s.preUseChunkAlloc = s.GetUseChunkAlloc()
+}
+
+// GetUseChunkAlloc return useChunkAlloc status
+func (s *SessionVars) GetUseChunkAlloc() bool {
+	return s.StmtCtx.GetUseChunkAllocStatus()
+}
+
+// SetAlloc Attempt to set the buffer pool address
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if !s.EnableReuseCheck {
+		return
+	}
+	s.ChunkPool.Alloc = alloc
+}
+
+// ClearAlloc indicates stop reuse chunk
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
+	if !b {
+		s.ChunkPool.Alloc = nil
+		return
+	}
+
+	// If an error is reported, re-apply for alloc
+	// Prevent the goroutine left before, affecting the execution of the next sql
+	// issuse 38918
+	s.ChunkPool.mu.Lock()
+	s.ChunkPool.Alloc = nil
+	s.ChunkPool.mu.Unlock()
+	*alloc = chunk.NewAllocator()
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1249,9 +1390,17 @@ func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
+	sc := &s.cachedStmtCtx[0]
+	if sc == s.StmtCtx {
+		sc = &s.cachedStmtCtx[1]
+	}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
+	return sc
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1298,8 +1447,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	return kv.GlobalTxnScope
 }
 
-// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
-func (s *SessionVars) UseDynamicPartitionPrune() bool {
+// IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
+// Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
+// session variable, it isn't guaranteed to be used during query due to other conditions checking.
+func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1384,6 +1535,7 @@ type ConnectionInfo struct {
 	ClientIP          string
 	ClientPort        string
 	ServerID          int
+	ServerIP          string
 	ServerPort        int
 	Duration          float64
 	User              string
@@ -1415,7 +1567,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 }
 
 // NewSessionVars creates a session vars object.
-func NewSessionVars() *SessionVars {
+func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
 		userVars: struct {
 			lock   sync.RWMutex
@@ -1425,108 +1577,118 @@ func NewSessionVars() *SessionVars {
 			values: make(map[string]types.Datum),
 			types:  make(map[string]*types.FieldType),
 		},
-		systems:                     make(map[string]string),
-		stmtVars:                    make(map[string]string),
-		PreparedStmts:               make(map[uint32]interface{}),
-		PreparedStmtNameToID:        make(map[string]uint32),
-		PreparedParams:              make([]types.Datum, 0, 10),
-		TxnCtx:                      &TransactionContext{},
-		RetryInfo:                   &RetryInfo{},
-		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:               true,
-		AutoIncrementIncrement:      DefAutoIncrementIncrement,
-		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
-		StmtCtx:                     new(stmtctx.StatementContext),
-		AllowAggPushDown:            false,
-		AllowCartesianBCJ:           DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
-		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
-		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
-		RetryLimit:                  DefTiDBRetryLimit,
-		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
-		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		preferRangeScan:             DefOptPreferRangeScan,
-		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
-		CorrelationThreshold:        DefOptCorrelationThreshold,
-		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		cpuFactor:                   DefOptCPUFactor,
-		copCPUFactor:                DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		networkFactor:               DefOptNetworkFactor,
-		scanFactor:                  DefOptScanFactor,
-		descScanFactor:              DefOptDescScanFactor,
-		seekFactor:                  DefOptSeekFactor,
-		memoryFactor:                DefOptMemoryFactor,
-		diskFactor:                  DefOptDiskFactor,
-		concurrencyFactor:           DefOptConcurrencyFactor,
-		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		CommandValue:                uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            DefTiDBEnableIndexMerge,
-		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
-		replicaRead:                 kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:            DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:         false,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:            DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
-		SequenceState:               NewSequenceState(),
-		WindowingUseHighPrecision:   true,
-		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
-		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:          DefTiDBFoundInBinding,
-		FoundInBinding:              DefTiDBFoundInBinding,
-		SelectLimit:                 math.MaxUint64,
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableParallelApply:         DefTiDBEnableParallelApply,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
-		Enable1PC:                   DefTiDBEnable1PC,
-		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:              DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:        make(map[string]time.Time),
-		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		Rng:                         mathutil.NewWithTime(),
-		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
-		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
-		MaxAllowedPacket:            DefMaxAllowedPacket,
+		systems:                       make(map[string]string),
+		stmtVars:                      make(map[string]string),
+		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmtNameToID:          make(map[string]uint32),
+		PreparedParams:                make([]types.Datum, 0, 10),
+		TxnCtx:                        &TransactionContext{},
+		RetryInfo:                     &RetryInfo{},
+		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                 true,
+		AutoIncrementIncrement:        DefAutoIncrementIncrement,
+		AutoIncrementOffset:           DefAutoIncrementOffset,
+		Status:                        mysql.ServerStatusAutocommit,
+		StmtCtx:                       new(stmtctx.StatementContext),
+		AllowAggPushDown:              false,
+		AllowCartesianBCJ:             DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		RetryLimit:                    DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:              kv.PriorityLow,
+		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          DefOptCorrelationThreshold,
+		CorrelationExpFactor:          DefOptCorrelationExpFactor,
+		cpuFactor:                     DefOptCPUFactor,
+		copCPUFactor:                  DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 DefOptNetworkFactor,
+		scanFactor:                    DefOptScanFactor,
+		descScanFactor:                DefOptDescScanFactor,
+		seekFactor:                    DefOptSeekFactor,
+		memoryFactor:                  DefOptMemoryFactor,
+		diskFactor:                    DefOptDiskFactor,
+		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
+		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		CommandValue:                  uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
+		enableIndexMerge:              DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                   kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:           false,
+		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                 NewSequenceState(),
+		WindowingUseHighPrecision:     true,
+		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            DefTiDBFoundInBinding,
+		FoundInBinding:                DefTiDBFoundInBinding,
+		SelectLimit:                   math.MaxUint64,
+		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           DefTiDBEnableParallelApply,
+		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                      kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
+		Enable1PC:                     DefTiDBEnable1PC,
+		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
+		TMPTableSize:                  DefTiDBTmpTableMaxSize,
+		MPPStoreLastFailTime:          new(sync.Map),
+		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		Rng:                           mathutil.NewWithTime(),
+		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:              DefMaxAllowedPacket,
+		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		HookContext:                   hctx,
+		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
+		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:     DefIndexLookupConcurrency,
-		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		projectionConcurrency:      DefTiDBProjectionConcurrency,
-		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		windowConcurrency:          DefTiDBWindowConcurrency,
-		mergeJoinConcurrency:       DefTiDBMergeJoinConcurrency,
-		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
-		ExecutorConcurrency:        DefExecutorConcurrency,
+		indexLookupConcurrency:            DefIndexLookupConcurrency,
+		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency:        DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
+		projectionConcurrency:             DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:                 DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:              DefTiDBMergeJoinConcurrency,
+		streamAggConcurrency:              DefTiDBStreamAggConcurrency,
+		indexMergeIntersectionConcurrency: DefTiDBIndexMergeIntersectionConcurrency,
+		ExecutorConcurrency:               DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
@@ -1547,6 +1709,9 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
+	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
+	vars.MemTracker.IsRootTrackerOfSess = true
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -1626,12 +1791,21 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	// if closest-adaptive is unavailable, fallback to leader read
+	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+		return kv.ReplicaReadLeader
+	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
 func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
+}
+
+// IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
+func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
+	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -1678,7 +1852,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -1926,7 +2100,7 @@ func (s *SessionVars) ClearStmtVars() {
 // GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetSessionOrGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1952,7 +2126,7 @@ func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
 		}
 		return sv.GetSessionFromHook(s)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // GetSessionStatesSystemVar gets the session variable value for session states.
@@ -1979,12 +2153,12 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // SetStmtVar sets system variable and updates SessionVars states.
@@ -2110,7 +2284,12 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
+	s.MPPStoreLastFailTime.Range(
+		func(key, value interface{}) bool {
+			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
+			return true
+		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2146,8 +2325,8 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	if sessionStates.MPPStoreLastFailTime != nil {
-		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	for k, v := range sessionStates.MPPStoreLastFailTime {
+		s.MPPStoreLastFailTime.Store(k, v)
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
@@ -2195,7 +2374,6 @@ type Concurrency struct {
 	indexLookupJoinConcurrency int
 
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
 	distSQLScanConcurrency int
 
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
@@ -2224,6 +2402,10 @@ type Concurrency struct {
 	// streamAggConcurrency is the number of concurrent stream aggregation worker.
 	// streamAggConcurrency is deprecated, use ExecutorConcurrency instead.
 	streamAggConcurrency int
+
+	// indexMergeIntersectionConcurrency is the number of indexMergeProcessWorker
+	// Only meaningful for dynamic pruned partition table.
+	indexMergeIntersectionConcurrency int
 
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
@@ -2283,6 +2465,11 @@ func (c *Concurrency) SetMergeJoinConcurrency(n int) {
 // SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
 func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
+}
+
+// SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
+func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
+	c.indexMergeIntersectionConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -2363,6 +2550,14 @@ func (c *Concurrency) MergeJoinConcurrency() int {
 func (c *Concurrency) StreamAggConcurrency() int {
 	if c.streamAggConcurrency != ConcurrencyUnset {
 		return c.streamAggConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexMergeIntersectionConcurrency return the number of concurrent process worker.
+func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
+	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
+		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
 }
@@ -2844,46 +3039,26 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 
 // GetCPUFactor returns the session variable cpuFactor
 func (s *SessionVars) GetCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.cpuFactorV2
-	}
 	return s.cpuFactor
 }
 
 // GetCopCPUFactor returns the session variable copCPUFactor
 func (s *SessionVars) GetCopCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.copCPUFactorV2
-	}
 	return s.copCPUFactor
-}
-
-// GetTiFlashCPUFactor returns the session
-func (s *SessionVars) GetTiFlashCPUFactor() float64 {
-	return s.tiflashCPUFactorV2
 }
 
 // GetMemoryFactor returns the session variable memoryFactor
 func (s *SessionVars) GetMemoryFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.memoryFactorV2
-	}
 	return s.memoryFactor
 }
 
 // GetDiskFactor returns the session variable diskFactor
 func (s *SessionVars) GetDiskFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.diskFactorV2
-	}
 	return s.diskFactor
 }
 
 // GetConcurrencyFactor returns the session variable concurrencyFactor
 func (s *SessionVars) GetConcurrencyFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.concurrencyFactorV2
-	}
 	return s.concurrencyFactor
 }
 
@@ -2894,9 +3069,6 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2909,9 +3081,6 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.scanFactorV2
-	}
 	return s.scanFactor
 }
 
@@ -2923,15 +3092,7 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.descScanFactorV2
-	}
 	return s.descScanFactor
-}
-
-// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
-func (s *SessionVars) GetTiFlashScanFactor() float64 {
-	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -2941,9 +3102,6 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.seekFactorV2
 	}
 	return s.seekFactor
 }
@@ -2974,4 +3132,19 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
+}
+
+// EnableForceInlineCTE returns the session variable enableForceInlineCTE
+func (s *SessionVars) EnableForceInlineCTE() bool {
+	return s.enableForceInlineCTE
 }

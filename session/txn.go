@@ -67,6 +67,9 @@ type LazyTxn struct {
 		sync.RWMutex
 		txninfo.TxnInfo
 	}
+
+	// mark the txn enables lazy uniqueness check in pessimistic transactions.
+	lazyUniquenessCheckEnabled bool
 }
 
 // GetTableInfo returns the cached index name.
@@ -123,6 +126,16 @@ func (txn *LazyTxn) flushStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
+
+	if txn.lazyUniquenessCheckEnabled {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+			return flags.HasPresumeKeyNotExists()
+		})
+		for _, key := range keysNeedSetPersistentPNE {
+			buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
+		}
+	}
+
 	buf.Release(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 }
@@ -138,7 +151,6 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 }
 
 // resetTxnInfo resets the transaction info.
@@ -146,8 +158,7 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 func (txn *LazyTxn) resetTxnInfo(
 	startTS uint64,
 	state txninfo.TxnRunningState,
-	entriesCount,
-	entriesSize uint64,
+	entriesCount uint64,
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
@@ -165,7 +176,7 @@ func (txn *LazyTxn) resetTxnInfo(
 	txninfo.TxnStatusEnteringCounter(state).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
-	txn.mu.TxnInfo.EntriesSize = entriesSize
+
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
 }
@@ -176,6 +187,22 @@ func (txn *LazyTxn) Size() int {
 		return 0
 	}
 	return txn.Transaction.Size()
+}
+
+// Mem implements the MemBuffer interface.
+func (txn *LazyTxn) Mem() uint64 {
+	if txn.Transaction == nil {
+		return 0
+	}
+	return txn.Transaction.Mem()
+}
+
+// SetMemoryFootprintChangeHook sets the hook to be called when the memory footprint of this transaction changes.
+func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
 // Valid implements the kv.Transaction interface.
@@ -262,7 +289,6 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		t.StartTS(),
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
 
@@ -420,7 +446,6 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.updateState(originState)
 	txn.mu.TxnInfo.BlockStartTime.Valid = false
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 	return err
 }
 
@@ -450,6 +475,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		keys = append(keys, k)
 	})
+
 	return keys, nil
 }
 
@@ -473,6 +499,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
 			return txn, err
 		}
+		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
 }
@@ -483,6 +510,13 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		// meta key always need to lock.
 		return true
 	}
+
+	// a pessimistic locking is skipped, perform the conflict check and
+	// constraint check (more accurately, PresumeKeyNotExist) in prewrite (or later pessimistic locking)
+	if flags.HasNeedConstraintCheckInPrewrite() {
+		return false
+	}
+
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}

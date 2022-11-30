@@ -78,6 +78,7 @@ var (
 	mPolicyMagicByte  = CurrentMagicByteVer
 	mDDLTableVersion  = []byte("DDLTableVersion")
 	mConcurrentDDL    = []byte("concurrentDDL")
+	mMetaDataLock     = []byte("metadataLock")
 )
 
 const (
@@ -163,6 +164,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
 	}
 	return newID, err
+}
+
+// AdvanceGlobalIDs advances the global ID by n.
+// return the old global ID.
+func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	if err != nil {
+		return 0, err
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	origID := newID - int64(n)
+	return origID, nil
 }
 
 // GenGlobalIDs generates the next n global IDs.
@@ -544,6 +562,12 @@ func (m *Meta) SetDDLTables() error {
 	return errors.Trace(err)
 }
 
+// SetMDLTables write a key into storage.
+func (m *Meta) SetMDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	return errors.Trace(err)
+}
+
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -589,6 +613,15 @@ func (m *Meta) CheckDDLTableExists() (bool, error) {
 	return len(v) != 0, nil
 }
 
+// CheckMDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckMDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Equal(v, []byte("2")), nil
+}
+
 // SetConcurrentDDL set the concurrent DDL flag.
 func (m *Meta) SetConcurrentDDL(b bool) error {
 	var data []byte
@@ -608,6 +641,29 @@ func (m *Meta) IsConcurrentDDL() (bool, error) {
 	}
 
 	return len(val) == 0 || bytes.Equal(val, []byte("1")), nil
+}
+
+// SetMetadataLock sets the metadata lock.
+func (m *Meta) SetMetadataLock(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return errors.Trace(m.txn.Set(mMetaDataLock, data))
+}
+
+// GetMetadataLock gets the metadata lock.
+func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
+	val, err := m.txn.Get(mMetaDataLock)
+	if err != nil {
+		return false, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return false, true, nil
+	}
+	return bytes.Equal(val, []byte("1")), false, nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,

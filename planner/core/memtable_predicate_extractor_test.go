@@ -16,8 +16,10 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1702,6 +1704,20 @@ func TestTikvRegionStatusExtractor(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE p (id int(11), unique index(id))
+PARTITION BY RANGE COLUMNS ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p3 VALUES LESS THAN (21)
+)`)
+	res := tk.MustQuery("select * from information_schema.tables where table_name = 'p'")
+	idStr := res.Rows()[0][21]
+	id, err := strconv.Atoi(idStr.(string))
+	require.NoError(t, err)
+	sSQL := fmt.Sprintf("select * from information_schema.TIKV_REGION_STATUS where table_id = %v", id)
+
 	var cases = []struct {
 		sql      string
 		tableIDs []int64
@@ -1717,6 +1733,10 @@ func TestTikvRegionStatusExtractor(t *testing.T) {
 		{
 			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
 			tableIDs: []int64{1, 2, 3},
+		},
+		{
+			sql:      sSQL,
+			tableIDs: []int64{int64(id)},
 		},
 	}
 	parser := parser.New()

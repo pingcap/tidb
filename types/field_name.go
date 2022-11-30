@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // FieldName records the names used for mysql protocol.
@@ -55,6 +56,17 @@ func (name *FieldName) String() string {
 	}
 	builder.WriteString(name.ColName.L)
 	return builder.String()
+}
+
+// MemoryUsage return the memory usage of FieldName
+func (name *FieldName) MemoryUsage() (sum int64) {
+	if name == nil {
+		return
+	}
+
+	sum = name.OrigTblName.MemoryUsage() + name.OrigColName.MemoryUsage() + name.DBName.MemoryUsage() +
+		name.TblName.MemoryUsage() + name.ColName.MemoryUsage() + size.SizeOfBool*3
+	return
 }
 
 // NameSlice is the slice of the *fieldName

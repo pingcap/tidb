@@ -77,6 +77,7 @@ type Lightning struct {
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
+	metrics      *metric.Metrics
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -96,7 +97,15 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
-	tls, err := common.NewTLS(globalCfg.Security.CAPath, globalCfg.Security.CertPath, globalCfg.Security.KeyPath, globalCfg.App.StatusAddr)
+	tls, err := common.NewTLS(
+		globalCfg.Security.CAPath,
+		globalCfg.Security.CertPath,
+		globalCfg.Security.KeyPath,
+		globalCfg.App.StatusAddr,
+		globalCfg.Security.CABytes,
+		globalCfg.Security.CertBytes,
+		globalCfg.Security.KeyBytes,
+	)
 	if err != nil {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
@@ -380,6 +389,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	defer func() {
 		metrics.UnregisterFrom(o.promRegistry)
 	}()
+	l.metrics = metrics
 
 	ctx := metric.NewContext(taskCtx, metrics)
 	ctx = log.NewContext(ctx, o.logger)
@@ -423,6 +433,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
 			panic(err)
 		}
+	})
+
+	failpoint.Inject("PrintStatus", func() {
+		defer func() {
+			finished, total := l.Status()
+			o.logger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total),
+				zap.Bool("equal", finished == total))
+		}()
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -494,8 +514,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	var procedure *restore.Controller
-
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
@@ -506,6 +524,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		CheckpointName:    o.checkpointName,
 	}
 
+	var procedure *restore.Controller
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))
@@ -534,6 +553,12 @@ func (l *Lightning) Status() (finished int64, total int64) {
 	finished = l.status.FinishedFileSize.Load()
 	total = l.status.TotalFileSize.Load()
 	return
+}
+
+// Metrics returns the metrics of lightning.
+// it's inited during `run`, so might return nil.
+func (l *Lightning) Metrics() *metric.Metrics {
+	return l.metrics
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {

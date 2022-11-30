@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -141,7 +142,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		handleKey = &keyValueWithDupInfo{
 			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), t.Meta().Name.String()+".PRIMARY"),
 		}
 	}
 
@@ -179,13 +180,17 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
+		// If index is used ingest ways, then we should check key from temp index.
+		if v.Meta().BackfillState != model.BackfillStateInapplicable {
+			_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
+		}
 		colValStr, err1 := formatDataForDupError(colVals)
 		if err1 != nil {
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 			newKey:       key,
-			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
 			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}

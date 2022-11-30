@@ -413,7 +413,8 @@ func TestCheckCSVHeader(t *testing.T) {
 			preInfoGetter,
 			nil,
 		)
-		err = rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos))
+		preInfoGetter.dbInfosCache = rc.dbInfos
+		err = rc.checkCSVHeader(ctx)
 		require.NoError(t, err)
 		if ca.level != passed {
 			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
@@ -631,7 +632,8 @@ func TestLocalResource(t *testing.T) {
 	}
 
 	estimatedSizeResult := new(EstimateSourceDataSizeResult)
-	ctx := WithPreInfoGetterEstimatedSrcSizeCache(context.Background(), estimatedSizeResult)
+	preInfoGetter.estimatedSizeCache = estimatedSizeResult
+	ctx := context.Background()
 	// 1. source-size is smaller than disk-size, won't trigger error information
 	rc.checkTemplate = NewSimpleTemplate()
 	estimatedSizeResult.SizeWithIndex = 1000

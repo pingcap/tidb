@@ -12,76 +12,121 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
-type StreamMetadataSet struct {
-	metadata map[string]*backuppb.Metadata
-	// The metadata after changed that needs to be write back.
-	writeback map[string]*backuppb.Metadata
+const notDeletedBecameFatalThreshold = 128
 
-	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
+type StreamMetadataSet struct {
+	// if set true, the metadata and datafile won't be removed
+	DryRun bool
+
+	// keeps the meta-information of metadata as little as possible
+	// to save the memory
+	metadataInfos map[string]*MetadataInfo
+
+	// a parser of metadata
+	Helper *stream.MetadataHelper
+
+	// for test
+	BeforeDoWriteBack func(path string, replaced *backuppb.Metadata) (skip bool)
 }
 
-// LoadUntil loads the metadata until the specified timestamp.
-// This would load all metadata files that *may* contain data from transaction committed before that TS.
-// Note: maybe record the timestamp and reject reading data files after this TS?
-func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalStorage, until uint64) error {
+// keep these meta-information for statistics and filtering
+type FileGroupInfo struct {
+	MaxTS   uint64
+	Length  uint64
+	KVCount int64
+}
+
+// keep these meta-information for statistics and filtering
+type MetadataInfo struct {
+	MinTS          uint64
+	FileGroupInfos []*FileGroupInfo
+}
+
+// LoadUntilAndCalculateShiftTS loads the metadata until the specified timestamp and calculate the shift-until-ts by the way.
+// This would record all metadata files that *may* contain data from transaction committed before that TS.
+func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s storage.ExternalStorage, until uint64) (uint64, error) {
 	metadataMap := struct {
 		sync.Mutex
-		metas map[string]*backuppb.Metadata
+		metas        map[string]*MetadataInfo
+		shiftUntilTS uint64
 	}{}
-	ms.writeback = make(map[string]*backuppb.Metadata)
-	metadataMap.metas = make(map[string]*backuppb.Metadata)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
-		metadataMap.Lock()
+	metadataMap.metas = make(map[string]*MetadataInfo)
+	// `shiftUntilTS` must be less than `until`
+	metadataMap.shiftUntilTS = until
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+		m, err := ms.Helper.ParseToMetadataHard(raw)
+		if err != nil {
+			return err
+		}
 		// If the meta file contains only files with ts grater than `until`, when the file is from
 		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
 		// `Write`: it should trivially not be considered.
 		if m.MinTs <= until {
-			metadataMap.metas[path] = m
+			// record these meta-information for statistics and filtering
+			fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
+			for _, group := range m.FileGroups {
+				var kvCount int64 = 0
+				for _, file := range group.DataFilesInfo {
+					kvCount += file.NumberOfEntries
+				}
+				fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
+					MaxTS:   group.MaxTs,
+					Length:  group.Length,
+					KVCount: kvCount,
+				})
+			}
+			metadataMap.Lock()
+			metadataMap.metas[path] = &MetadataInfo{
+				MinTS:          m.MinTs,
+				FileGroupInfos: fileGroupInfos,
+			}
+			metadataMap.Unlock()
 		}
-		metadataMap.Unlock()
+		// filter out the metadatas whose ts-range is overlap with [until, +inf)
+		// and calculate their minimum begin-default-ts
+		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+		if ok {
+			metadataMap.Lock()
+			if ts < metadataMap.shiftUntilTS {
+				metadataMap.shiftUntilTS = ts
+			}
+			metadataMap.Unlock()
+		}
 		return nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	ms.metadata = metadataMap.metas
-	return nil
+	ms.metadataInfos = metadataMap.metas
+	if metadataMap.shiftUntilTS != until {
+		log.Warn("calculate shift-ts", zap.Uint64("start-ts", until), zap.Uint64("shift-ts", metadataMap.shiftUntilTS))
+	}
+	return metadataMap.shiftUntilTS, nil
 }
 
-// LoadFrom loads data from an external storage into the stream metadata set.
+// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
-	return ms.LoadUntil(ctx, s, math.MaxUint64)
+	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
+	return err
 }
 
-func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
-	for _, m := range ms.metadata {
-		for _, d := range m.Files {
+func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
+	for _, m := range ms.metadataInfos {
+		for _, d := range m.FileGroupInfos {
 			if f(d) {
 				return
 			}
 		}
 	}
-}
-
-// CalculateShiftTS calculates the shift-ts.
-func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
-	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
-	for _, m := range ms.metadata {
-		metadatas = append(metadatas, m)
-	}
-
-	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
-	if !exist {
-		minBeginTS = startTS
-	}
-	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
-	return minBeginTS
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
@@ -92,113 +137,151 @@ func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
 //	                               |-file2--------------| <- File contains any record out of this won't be found.
 //
 // This function would call the `f` over file1 only.
-func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
-	ms.iterateDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
-		if d.MaxTs >= before {
+func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *FileGroupInfo) (shouldBreak bool)) {
+	ms.iterateDataFiles(func(d *FileGroupInfo) (shouldBreak bool) {
+		if d.MaxTS >= before {
 			return false
 		}
 		return f(d)
 	})
 }
 
-// RemoveDataBefore would find files contains only records before the timestamp, mark them as removed from meta,
-// and returning their information.
-func (ms *StreamMetadataSet) RemoveDataBefore(from uint64) []*backuppb.DataFileInfo {
-	removed := []*backuppb.DataFileInfo{}
-	for metaPath, m := range ms.metadata {
-		remainedDataFiles := make([]*backuppb.DataFileInfo, 0)
-		// can we assume those files are sorted to avoid traversing here? (by what?)
-		for _, d := range m.Files {
-			if d.MaxTs < from {
-				removed = append(removed, d)
-			} else {
-				remainedDataFiles = append(remainedDataFiles, d)
+// RemoveDataFilesAndUpdateMetadataInBatch concurrently remove datafilegroups and update metadata.
+// Only one metadata is processed in each thread, including deleting its datafilegroup and updating it.
+// Returns the not deleted datafilegroups.
+func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context.Context, from uint64, storage storage.ExternalStorage, updateFn func(num int64)) ([]string, error) {
+	var notDeleted struct {
+		item []string
+		sync.Mutex
+	}
+	worker := utils.NewWorkerPool(128, "delete files")
+	eg, cx := errgroup.WithContext(ctx)
+	for path, metaInfo := range ms.metadataInfos {
+		path := path
+		minTS := metaInfo.MinTS
+		// It's safety to remove the item within a range loop
+		delete(ms.metadataInfos, path)
+		if minTS >= from {
+			// That means all the datafiles wouldn't be removed,
+			// so that the metadata is skipped.
+			continue
+		}
+		worker.ApplyOnErrorGroup(eg, func() error {
+			if cx.Err() != nil {
+				return cx.Err()
+			}
+
+			data, err := storage.ReadFile(ctx, path)
+			if err != nil {
+				return err
+			}
+
+			meta, err := ms.Helper.ParseToMetadataHard(data)
+			if err != nil {
+				return err
+			}
+
+			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ctx, storage, from, meta, path)
+			if err != nil {
+				return err
+			}
+
+			updateFn(num)
+
+			notDeleted.Lock()
+			notDeleted.item = append(notDeleted.item, notDeletedItems...)
+			notDeleted.Unlock()
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return notDeleted.item, nil
+}
+
+// removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
+func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Context, storage storage.ExternalStorage, from uint64, meta *backuppb.Metadata, metaPath string) (num int64, notDeleted []string, err error) {
+	removed := make([]*backuppb.DataFileGroup, 0)
+	remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
+	notDeleted = make([]string, 0)
+	// can we assume those files are sorted to avoid traversing here? (by what?)
+	for _, ds := range meta.FileGroups {
+		if ds.MaxTs < from {
+			removed = append(removed, ds)
+		} else {
+			// That means some kvs in the datafilegroup shouldn't be removed,
+			// so it will be kept out being removed.
+			remainedDataFiles = append(remainedDataFiles, ds)
+		}
+	}
+
+	num = int64(len(removed))
+
+	if ms.DryRun {
+		log.Debug("dry run, skip deletion ...")
+		return num, notDeleted, nil
+	}
+
+	// remove data file groups
+	for _, f := range removed {
+		log.Debug("Deleting file", zap.String("path", f.Path))
+		if err := storage.DeleteFile(ctx, f.Path); err != nil {
+			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+			notDeleted = append(notDeleted, f.Path)
+			if len(notDeleted) > notDeletedBecameFatalThreshold {
+				return num, notDeleted, errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
 			}
 		}
-		if len(remainedDataFiles) != len(m.Files) {
-			mCopy := *m
-			mCopy.Files = remainedDataFiles
-			ms.WriteBack(metaPath, &mCopy)
+	}
+
+	// update metadata
+	if len(remainedDataFiles) != len(meta.FileGroups) {
+		// rewrite metadata
+		log.Info("Updating metadata.", zap.String("file", metaPath),
+			zap.Int("data-file-before", len(meta.FileGroups)),
+			zap.Int("data-file-after", len(remainedDataFiles)))
+
+		// replace the filegroups and update the ts of the replaced metadata
+		ReplaceMetadata(meta, remainedDataFiles)
+
+		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(metaPath, meta) {
+			return num, notDeleted, nil
+		}
+
+		if err := ms.doWriteBackForFile(ctx, storage, metaPath, meta); err != nil {
+			// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
+			return num, notDeleted, errors.Annotatef(err, "failed to write back file %s", metaPath)
 		}
 	}
-	return removed
+
+	return num, notDeleted, nil
 }
 
-func (ms *StreamMetadataSet) WriteBack(path string, file *backuppb.Metadata) {
-	ms.writeback[path] = file
-}
-
-func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.ExternalStorage, path string) error {
-	data, ok := ms.writeback[path]
-	if !ok {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "There is no write back for path %s", path)
-	}
+func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.ExternalStorage, path string, meta *backuppb.Metadata) error {
 	// If the metadata file contains no data file, remove it due to it is meanless.
-	if len(data.Files) == 0 {
+	if len(meta.FileGroups) == 0 {
 		if err := s.DeleteFile(ctx, path); err != nil {
 			return errors.Annotatef(err, "failed to remove the empty meta %s", path)
 		}
 		return nil
 	}
 
-	bs, err := data.Marshal()
+	bs, err := ms.Helper.Marshal(meta)
 	if err != nil {
 		return errors.Annotatef(err, "failed to marshal the file %s", path)
 	}
 	return truncateAndWrite(ctx, s, path, bs)
 }
 
-func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.ExternalStorage) error {
-	for path := range ms.writeback {
-		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(path, ms.metadata[path], ms.writeback[path]) {
-			return nil
-		}
-		err := ms.doWriteBackForFile(ctx, s, path)
-		// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
-		if err != nil {
-			return errors.Annotatef(err, "failed to write back file %s", path)
-		}
-
-		delete(ms.writeback, path)
-	}
-	return nil
-}
-
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
-	switch s.(type) {
-	// Performance hack: the `Write` implemention for S3 and local would truncate the file if it exists.
-	case *storage.S3Storage, *storage.LocalStorage:
-		if err := s.WriteFile(ctx, path, data); err != nil {
-			return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
-		}
-	default:
-		if err := swapAndOverrideFile(ctx, s, path, data); err != nil {
-			return errors.Annotatef(err, "failed during rewriting the file at %s in %s", path, s.URI())
-		}
+	// Performance hack: the `Write` implemention would truncate the file if it exists.
+	if err := s.WriteFile(ctx, path, data); err != nil {
+		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
 	}
 	return nil
-}
-
-// swapAndOverrideFile is a slow but safe way for overriding a file in the external storage.
-// Because there isn't formal definition of `WriteFile` over a existing file, this should be safe in generic external storage.
-// It moves the origin file to a swap file and did the file write, finally remove the swap file.
-func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
-	ok, err := s.FileExists(ctx, path)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.Annotate(berrors.ErrInvalidArgument, "the origin file doesn't exist")
-	}
-
-	backup := path + ".override_swap"
-	if err := s.Rename(ctx, path, backup); err != nil {
-		return err
-	}
-	if err := s.WriteFile(ctx, path, data); err != nil {
-		return err
-	}
-	return s.DeleteFile(ctx, backup)
 }
 
 const (
@@ -250,45 +333,51 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 		minBeginTS uint64
 		isExist    bool
 	)
-	if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+	if len(m.FileGroups) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
 		return 0, false
 	}
 
-	for _, d := range m.Files {
-		if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
-			continue
-		}
-		if d.MinTs > restoreTS || d.MaxTs < startTS {
-			continue
-		}
-		if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
-			isExist = true
-			minBeginTS = d.MinBeginTsInDefaultCf
+	for _, ds := range m.FileGroups {
+		for _, d := range ds.DataFilesInfo {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+				isExist = true
+				minBeginTS = d.MinBeginTsInDefaultCf
+			}
 		}
 	}
 	return minBeginTS, isExist
 }
 
-// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
-func CalculateShiftTS(
-	metas []*backuppb.Metadata,
-	startTS uint64,
-	restoreTS uint64,
-) (uint64, bool) {
-	var (
-		minBeginTS uint64
-		isExist    bool
-	)
-	for _, m := range metas {
-		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
-			continue
-		}
-		ts, ok := UpdateShiftTS(m, startTS, mathutil.MaxUint)
-		if ok && (!isExist || ts < minBeginTS) {
-			minBeginTS = ts
-			isExist = true
-		}
+// replace the filegroups and update the ts of the replaced metadata
+func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGroup) {
+	// replace the origin metadata
+	meta.FileGroups = filegroups
+
+	if len(meta.FileGroups) == 0 {
+		meta.MinTs = 0
+		meta.MaxTs = 0
+		meta.ResolvedTs = 0
+		return
 	}
 
-	return minBeginTS, isExist
+	meta.MinTs = meta.FileGroups[0].MinTs
+	meta.MaxTs = meta.FileGroups[0].MaxTs
+	meta.ResolvedTs = meta.FileGroups[0].MinResolvedTs
+	for _, group := range meta.FileGroups {
+		if group.MinTs < meta.MinTs {
+			meta.MinTs = group.MinTs
+		}
+		if group.MaxTs > meta.MaxTs {
+			meta.MaxTs = group.MaxTs
+		}
+		if group.MinResolvedTs < meta.ResolvedTs {
+			meta.ResolvedTs = group.MinResolvedTs
+		}
+	}
 }

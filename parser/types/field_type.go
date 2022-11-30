@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
@@ -74,6 +75,16 @@ func (ft *FieldType) IsDecimalValid() bool {
 		return false
 	}
 	return true
+}
+
+// IsVarLengthType Determine whether the column type is a variable-length type
+func (ft *FieldType) IsVarLengthType() bool {
+	switch ft.tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetType returns the type of the FieldType.
@@ -272,6 +283,26 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return true
 }
 
+// PartialEqual checks whether two FieldType objects are equal.
+// If unsafe is true and the objects is string type, PartialEqual will ignore flen.
+// See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
+func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
+		return ft.Equal(other)
+	}
+
+	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	if !partialEqual || len(ft.elems) != len(other.elems) {
+		return false
+	}
+	for i := range ft.elems {
+		if ft.elems[i] != other.elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // EvalType gets the type in evaluation.
 func (ft *FieldType) EvalType() EvalType {
 	switch ft.tp {
@@ -361,6 +392,8 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeNull:
+		suffix = "(0)"
 	}
 	return ts + suffix
 }
@@ -369,7 +402,9 @@ func (ft *FieldType) CompactStr() string {
 // returns a string.
 func (ft *FieldType) InfoSchemaStr() string {
 	suffix := ""
-	if mysql.HasUnsignedFlag(ft.flag) {
+	if mysql.HasUnsignedFlag(ft.flag) &&
+		ft.tp != mysql.TypeBit &&
+		ft.tp != mysql.TypeYear {
 		suffix = " unsigned"
 	}
 	return ft.CompactStr() + suffix
@@ -600,4 +635,20 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	return json.Marshal(r)
+}
+
+const emptyFieldTypeSize = int64(unsafe.Sizeof(FieldType{}))
+
+// MemoryUsage return the memory usage of FieldType
+func (ft *FieldType) MemoryUsage() (sum int64) {
+	if ft == nil {
+		return
+	}
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate)) + int64(cap(ft.elems))*int64(unsafe.Sizeof(*new(string))) +
+		int64(cap(ft.elemsIsBinaryLit))*int64(unsafe.Sizeof(*new(bool)))
+
+	for _, s := range ft.elems {
+		sum += int64(len(s))
+	}
+	return
 }

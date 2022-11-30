@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -67,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked,plugin FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
@@ -101,6 +100,8 @@ type UserRecord struct {
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
+	AuthTokenIssuer      string
+	Email                string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -429,16 +430,7 @@ func (p *MySQLPrivilege) buildUserMap() {
 	p.UserMap = userMap
 }
 
-type sortedUserRecord []UserRecord
-
-func (s sortedUserRecord) Len() int {
-	return len(s)
-}
-
-func (s sortedUserRecord) Less(i, j int) bool {
-	x := s[i]
-	y := s[j]
-
+func compareBaseRecord(x, y *baseRecord) bool {
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
 	if c1 < 0 {
@@ -450,6 +442,10 @@ func (s sortedUserRecord) Less(i, j int) bool {
 
 	// Then, compare item by user's name value.
 	return x.User < y.User
+}
+
+func compareUserRecord(x, y UserRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -501,13 +497,9 @@ func compareHost(x, y string) int {
 	return 0
 }
 
-func (s sortedUserRecord) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	sort.Sort(sortedUserRecord(p.User))
+	slices.SortFunc(p.User, compareUserRecord)
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -530,10 +522,19 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return nil
 }
 
+func compareDBRecord(x, y dbRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
 func (p *MySQLPrivilege) buildDBMap() {
 	dbMap := make(map[string][]dbRecord, len(p.DB))
 	for _, record := range p.DB {
 		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+
+	// Sort the records to make the matching rule work.
+	for _, records := range dbMap {
+		slices.SortFunc(records, compareDBRecord)
 	}
 	p.DBMap = dbMap
 }
@@ -664,6 +665,24 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
+		case f.ColumnAsName.L == "token_issuer":
+			value.AuthTokenIssuer = row.GetString(i)
+		case f.ColumnAsName.L == "user_attributes":
+			if row.IsNull(i) {
+				continue
+			}
+			bj := row.GetJSON(i)
+			pathExpr, err := types.ParseJSONPathExpr("$.metadata.email")
+			if err != nil {
+				return err
+			}
+			if emailBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+				email, err := emailBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				value.Email = email
+			}
 		default:
 			value.assignUserOrHost(row, i, f)
 		}

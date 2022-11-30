@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -22,12 +23,16 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -67,7 +72,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		return err
 	}
 	setOptionForTopSQL(sessVars.StmtCtx, txn)
-	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -110,7 +114,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -261,6 +264,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
+			// of value, So if return a key we check and skip deleted key.
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				rowVal := val[:len(val)-1]
+				if bytes.Equal(rowVal, tables.DeleteMarkerUnique) {
+					continue
+				}
+			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
@@ -310,11 +321,25 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
-	return insertRows(ctx, e)
+	err := insertRows(ctx, e)
+	if err != nil {
+		terr, ok := errors.Cause(err).(*terror.Error)
+		if ok && len(e.OnDuplicate) == 0 &&
+			e.ctx.GetSessionVars().StmtCtx.ErrAutoincReadFailedAsWarning &&
+			terr.Code() == errno.ErrAutoincReadFailed {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
 	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
@@ -420,7 +445,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker)
+	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return err
 	}
@@ -447,4 +472,19 @@ func (e *InsertExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *InsertExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

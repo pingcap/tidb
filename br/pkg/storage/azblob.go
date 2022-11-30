@@ -343,8 +343,6 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 		prefix += "/"
 	}
 
-	prefixLength := len(prefix)
-
 	listOption := &azblob.ContainerListBlobFlatSegmentOptions{Prefix: &prefix}
 	for {
 		respIter := s.containerClient.ListBlobsFlat(listOption)
@@ -363,7 +361,13 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 		}
 
 		for _, blob := range respIter.PageResponse().Segment.BlobItems {
-			if err := fn((*blob.Name)[prefixLength:], *blob.Properties.ContentLength); err != nil {
+			// when walk on specify directory, the result include storage.Prefix,
+			// which can not be reuse in other API(Open/Read) directly.
+			// so we use TrimPrefix to filter Prefix for next Open/Read.
+			path := strings.TrimPrefix((*blob.Name), s.options.Prefix)
+			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+			path = strings.TrimPrefix(path, "/")
+			if err := fn(path, *blob.Properties.ContentLength); err != nil {
 				return errors.Trace(err)
 			}
 		}

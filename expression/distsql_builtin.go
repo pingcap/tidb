@@ -663,9 +663,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base, nil, false, sync.Once{}}
 	case tipb.ScalarFuncSig_RegexpSig:
-		f = newBuiltinRegexpSig(base)
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:
-		f = newBuiltinRegexpUTF8Sig(base)
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+	case tipb.ScalarFuncSig_RegexpLikeSig:
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+	case tipb.ScalarFuncSig_RegexpSubstrSig:
+		f = &builtinRegexpSubstrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+	case tipb.ScalarFuncSig_RegexpInStrSig:
+		f = &builtinRegexpInStrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+	case tipb.ScalarFuncSig_RegexpReplaceSig:
+		f = &builtinRegexpReplaceFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
 	case tipb.ScalarFuncSig_JsonExtractSig:
 		f = &builtinJSONExtractSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
@@ -1123,9 +1131,9 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Null:
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case tipb.ExprType_Int64:
-		return convertInt(expr.Val)
+		return convertInt(expr.Val, expr.FieldType)
 	case tipb.ExprType_Uint64:
-		return convertUint(expr.Val)
+		return convertUint(expr.Val, expr.FieldType)
 	case tipb.ExprType_String:
 		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
@@ -1215,32 +1223,30 @@ func decodeValueList(data []byte) ([]Expression, error) {
 	return result, nil
 }
 
-func convertInt(val []byte) (*Constant, error) {
+func convertInt(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	_, i, err := codec.DecodeInt(val)
 	if err != nil {
 		return nil, errors.Errorf("invalid int % x", val)
 	}
 	d.SetInt64(i)
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
+	return &Constant{Value: d, RetType: PbTypeToFieldType(tp)}, nil
 }
 
-func convertUint(val []byte) (*Constant, error) {
+func convertUint(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	_, u, err := codec.DecodeUint(val)
 	if err != nil {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	ftp := types.NewFieldTypeBuilder()
-	ftp.SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag)
-	return &Constant{Value: d, RetType: ftp.BuildP()}, nil
+	return &Constant{Value: d, RetType: PbTypeToFieldType(tp)}, nil
 }
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	d.SetBytesAsString(val, collate.ProtoToCollation(tp.Collate), uint32(tp.Flen))
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
+	return &Constant{Value: d, RetType: PbTypeToFieldType(tp)}, nil
 }
 
 func convertFloat(val []byte, f32 bool) (*Constant, error) {

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 // Row represents a row of data, can be used to access values.
@@ -108,7 +107,7 @@ func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 }
 
 // GetJSON returns the JSON value with the colIdx.
-func (r Row) GetJSON(colIdx int) json.BinaryJSON {
+func (r Row) GetJSON(colIdx int) types.BinaryJSON {
 	return r.c.columns[colIdx].GetJSON(r.idx)
 }
 

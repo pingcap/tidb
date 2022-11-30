@@ -2,10 +2,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "16e9fca53ed6bd4ff4ad76facc9b7b651a89db1689a2877d6fd7b82aa824e366",
+    sha256 = "ae013bf35bd23234d1dea46b079f1e05ba74ac0321423830119d3e787ec73483",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.34.0/rules_go-v0.34.0.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.34.0/rules_go-v0.34.0.zip",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.36.0/rules_go-v0.36.0.zip",
+        "https://github.com/bazelbuild/rules_go/releases/download/v0.36.0/rules_go-v0.36.0.zip",
     ],
 )
 
@@ -18,21 +18,28 @@ http_archive(
     ],
 )
 
-load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
+load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchains", "go_rules_dependencies")
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
 load("//:DEPS.bzl", "go_deps")
-load("//build:lint.bzl", "nogo_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
 go_deps()
 
-nogo_deps()
-
 go_rules_dependencies()
+
+go_download_sdk(
+    name = "go_sdk",
+    urls = [
+        "http://ats.apps.svc/golang/{}",
+        "http://bazel-cache.pingcap.net:8080/golang/{}",
+        "https://mirrors.aliyun.com/golang/{}",
+        "https://dl.google.com/go/{}",
+    ],
+    version = "1.19.3",
+)
 
 go_register_toolchains(
     nogo = "@//build:tidb_nogo",
-    version = "1.19",
 )
 
 gazelle_dependencies()

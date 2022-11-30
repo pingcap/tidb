@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -275,7 +277,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			path.IsSingleScan = true
 		} else {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// Try some heuristic rules to select access path.
 		if len(path.Ranges) == 0 {
@@ -465,10 +467,19 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
+	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
+	// 2. Generate possible IndexMerge paths for `AND`.
+	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
+	if indexMergeAndPath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
+	}
+
+	// 3. If needed, append a warning if no IndexMerge is generated.
+
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -479,6 +490,9 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
+
+	// 4. If needPrune is true, prune non-IndexMerge paths.
+
 	// Do not need to consider the regular paths in find_best_task().
 	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
@@ -509,7 +523,8 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType)
+		// TODO: restrict mem usage of table ranges.
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -612,7 +627,9 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 	return nil
 }
 
-// isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
+// isInIndexMergeHints returns true if the input index name is not excluded by the IndexMerge hints, which means either
+// (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
+// name is specified in the IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	if len(ds.indexMergeHints) == 0 {
 		return true
@@ -622,7 +639,35 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 			return true
 		}
 		for _, hintName := range hint.indexHint.IndexNames {
-			if name == hintName.String() {
+			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// indexMergeHintsHasSpecifiedIdx returns true if there's IndexMerge hint, and it has specified index names.
+func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
+	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
+		}
+		if len(hint.indexHint.IndexNames) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// indexMergeHintsHasSpecifiedIdx return true if the input index name is specified in the IndexMerge hint.
+func (ds *DataSource) isSpecifiedInIndexMergeHints(name string) bool {
+	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
+		}
+		for _, hintName := range hint.indexHint.IndexNames {
+			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
 				return true
 			}
 		}
@@ -751,6 +796,103 @@ func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, par
 	return indexMergePath
 }
 
+// generateIndexMergeAndPaths generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
+func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.AccessPath {
+	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
+	if !ds.indexMergeHintsHasSpecifiedIdx() {
+		return nil
+	}
+
+	// 1. Collect partial paths from normal paths.
+	var partialPaths []*util.AccessPath
+	for i := 0; i < normalPathCnt; i++ {
+		originalPath := ds.possibleAccessPaths[i]
+		// No need to consider table path as a partial path.
+		if ds.possibleAccessPaths[i].IsTablePath() {
+			continue
+		}
+		if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
+			continue
+		}
+		// If the path contains a full range, ignore it.
+		if ranger.HasFullRange(originalPath.Ranges, false) {
+			continue
+		}
+		newPath := originalPath.Clone()
+		partialPaths = append(partialPaths, newPath)
+	}
+	if len(partialPaths) < 2 {
+		return nil
+	}
+
+	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
+	finalFilters := make([]expression.Expression, 0)
+	partialFilters := make([]expression.Expression, 0, len(partialPaths))
+	hashCodeSet := make(map[string]struct{})
+	for _, path := range partialPaths {
+		// Classify filters into coveredConds and notCoveredConds.
+		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
+		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
+		// AccessConds can be covered by partial path.
+		coveredConds = append(coveredConds, path.AccessConds...)
+		for i, cond := range path.IndexFilters {
+			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
+			if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
+				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
+				notCoveredConds = append(notCoveredConds, cond)
+			} else {
+				coveredConds = append(coveredConds, cond)
+			}
+		}
+		// TableFilters can't be covered by partial path.
+		notCoveredConds = append(notCoveredConds, path.TableFilters...)
+
+		// Record covered filters in hashCodeSet.
+		// Note that we only record filters that not appear in the notCoveredConds. It's possible that a filter appear
+		// in both coveredConds and notCoveredConds (e.g. because of prefix index). So we need this extra check to
+		// avoid wrong deduplication.
+		notCoveredHashCodeSet := make(map[string]struct{})
+		for _, cond := range notCoveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			notCoveredHashCodeSet[hashCode] = struct{}{}
+		}
+		for _, cond := range coveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
+				hashCodeSet[hashCode] = struct{}{}
+			}
+		}
+
+		finalFilters = append(finalFilters, notCoveredConds...)
+		partialFilters = append(partialFilters, coveredConds...)
+	}
+
+	// Remove covered filters from finalFilters and deduplicate finalFilters.
+	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
+	for _, cond := range finalFilters {
+		hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+		if _, ok := hashCodeSet[hashCode]; !ok {
+			dedupedFinalFilters = append(dedupedFinalFilters, cond)
+			hashCodeSet[hashCode] = struct{}{}
+		}
+	}
+
+	// 3. Estimate the row count after partial paths.
+	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialFilters, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = SelectionFactor
+	}
+
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        partialPaths,
+		IndexMergeIsIntersection: true,
+		TableFilters:             dedupedFinalFilters,
+		CountAfterAccess:         sel * ds.tableStats.RowCount,
+	}
+	return indexMergePath
+}
+
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
@@ -830,25 +972,25 @@ func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *pro
 	return nil
 }
 
-// getColsNDV returns the NDV of a couple of columns.
+// getColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
 // Otherwise, we simply return the max NDV among the columns, which is a lower bound.
-func getColsNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
 	NDV := 1.0
 	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
-		return math.Max(groupNDV.NDV, NDV)
+		return math.Max(groupNDV.NDV, NDV), len(groupNDV.Cols)
 	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return NDV
+		return NDV, 1
 	}
 	for _, idx := range indices {
 		// It is a very naive estimation.
 		col := schema.Columns[idx]
 		NDV = math.Max(NDV, profile.ColNDVs[col.UniqueID])
 	}
-	return NDV
+	return NDV, 1
 }
 
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
@@ -901,7 +1043,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = getColsNDV(cols, childSchema[0], childProfile)
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.stats, nil
@@ -964,7 +1106,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.stats, nil
 	}
-	NDV := getColsNDV(gbyCols, childSchema[0], childProfile)
+	NDV, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
 		RowCount: NDV,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
@@ -1025,6 +1167,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
+		sctx:          p.SCtx(),
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
 		rightProfile:  rightProfile,
@@ -1104,6 +1247,7 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 type fullJoinRowCountHelper struct {
+	sctx          sessionctx.Context
 	cartesian     bool
 	leftProfile   *property.StatsInfo
 	rightProfile  *property.StatsInfo
@@ -1111,16 +1255,31 @@ type fullJoinRowCountHelper struct {
 	rightJoinKeys []*expression.Column
 	leftSchema    *expression.Schema
 	rightSchema   *expression.Schema
+
+	leftNAJoinKeys  []*expression.Column
+	rightNAJoinKeys []*expression.Column
 }
 
 func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyNDV := getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-	rightKeyNDV := getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	var leftKeyNDV, rightKeyNDV float64
+	var leftColCnt, rightColCnt int
+	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	} else {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
+	}
 	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
-	return count
+	if h.sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
+		return count
+	}
+	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
+	// This estimation logic is referred to Presto.
+	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
 func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
@@ -1288,7 +1447,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.cte.IsDistinct {
-			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
+			p.stats.RowCount, _ = getColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.stats)
 		} else {
 			p.stats.RowCount += recurStat.RowCount
 		}

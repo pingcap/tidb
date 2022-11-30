@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -66,24 +65,7 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 }
 
 func TestFetchShowBRIE(t *testing.T) {
-	// Compose a mocked session manager.
-	ps := make([]*util.ProcessInfo, 0, 1)
-	pi := &util.ProcessInfo{
-		ID:      0,
-		User:    "test",
-		Host:    "127.0.0.1",
-		DB:      "test",
-		Command: 't',
-		State:   1,
-		Info:    "",
-	}
-	ps = append(ps, pi)
-	sm := &mockSessionManager{
-		PS: ps,
-	}
-
 	sctx := mock.NewContext()
-	sctx.SetSessionManager(sm)
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 
 	ctx := context.Background()

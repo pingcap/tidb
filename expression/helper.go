@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"time"
@@ -164,7 +165,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar("timestamp")
+	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
 	if err != nil {
 		return now, err
 	}

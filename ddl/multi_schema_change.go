@@ -118,11 +118,13 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			proxyJob := sub.ToProxyJob(job)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
-			} else {
-				schemaVersionGenerated = true
 			}
-			ver, err = w.runDDLJob(d, t, &proxyJob)
-			sub.FromProxyJob(&proxyJob, ver)
+			proxyJobVer, err := w.runDDLJob(d, t, &proxyJob)
+			if !schemaVersionGenerated && proxyJobVer != 0 {
+				schemaVersionGenerated = true
+				ver = proxyJobVer
+			}
+			sub.FromProxyJob(&proxyJob, proxyJobVer)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
@@ -257,6 +259,9 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		idxName := job.Args[0].(model.CIStr)
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
+	case model.ActionAddForeignKey:
+		fkInfo := job.Args[0].(*model.FKInfo)
+		info.ForeignKeys = append(info.ForeignKeys, fkInfo.Name)
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
@@ -373,8 +378,8 @@ func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
 	}
 	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
 	if err != nil {
-		return ver, err
+		return 0, err
 	}
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-	return ver, err
+	return 0, err
 }

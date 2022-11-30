@@ -23,9 +23,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -33,7 +37,7 @@ import (
 )
 
 func TestSetSystemVariable(t *testing.T) {
-	v := variable.NewSessionVars()
+	v := variable.NewSessionVars(nil)
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 	mtx := new(sync.Mutex)
@@ -160,9 +164,11 @@ func TestSlowLogFormat(t *testing.T) {
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: util.TimeDetail{
-			ProcessTime: time.Second * time.Duration(2),
-			WaitTime:    time.Minute,
+		DetailsNeedP90: execdetails.DetailsNeedP90{
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(2),
+				WaitTime:    time.Minute,
+			},
 		},
 	}
 	statsInfos := make(map[string]uint64)
@@ -291,7 +297,7 @@ func TestIsolationRead(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
@@ -393,7 +399,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 }
 
 func TestGeneralPlanCacheStmt(t *testing.T) {
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	sessVars.GeneralPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
@@ -407,4 +413,76 @@ func TestGeneralPlanCacheStmt(t *testing.T) {
 	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+}
+
+func TestHookContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := mock.NewContext()
+	ctx.Store = store
+	sv := variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "testhooksysvar", Value: variable.On, Type: variable.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
+		require.Equal(t, s.GetStore(), store)
+		return nil
+	}}
+	variable.RegisterSysVar(&sv)
+
+	ctx.GetSessionVars().SetSystemVar("testhooksysvar", "test")
+}
+
+func TestGetReuseChunk(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	sessVars := variable.NewSessionVars(nil)
+
+	// SetAlloc efficient
+	sessVars.SetAlloc(nil)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+	// alloc is nil ，Allocate memory from the system
+	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+
+	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
+	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
+
+	alloc := chunk.NewAllocator()
+	sessVars.EnableReuseCheck = true
+	sessVars.SetAlloc(alloc)
+	require.NotNil(t, sessVars.ChunkPool.Alloc)
+	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+
+	//tries to apply from the cache
+	initCap := 10
+	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+	chunkReuseMap[chk1] = struct{}{}
+	for i := 0; i < chk1.NumCols(); i++ {
+		columnReuseMap[chk1.Column(i)] = struct{}{}
+	}
+
+	alloc.Reset()
+	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chkres1)
+	_, exist := chunkReuseMap[chkres1]
+	require.True(t, exist)
+	for i := 0; i < chkres1.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres1.Column(i)]
+		require.True(t, exist)
+	}
+	allocpool := variable.ReuseChunkPool{Alloc: alloc}
+
+	sessVars.ClearAlloc(&allocpool.Alloc, false)
+	require.Equal(t, alloc, allocpool.Alloc)
+
+	sessVars.ClearAlloc(&allocpool.Alloc, true)
+	require.NotEqual(t, allocpool.Alloc, alloc)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
 }

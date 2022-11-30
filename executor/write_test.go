@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -318,10 +319,10 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)))")
 	tk.MustExec("insert into t(name, b) values(\"cha\", 3)")
 	err = tk.ExecToErr("insert into t(name, b) values(\"chb\", 3)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry 'ch' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'ch' for key 't.PRIMARY'")
 	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
 	err = tk.ExecToErr("insert into t(name, b) values(\"测试\", 3)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '\xe6\xb5' for key 't.PRIMARY'")
 }
 
 func TestMultiBatch(t *testing.T) {
@@ -541,7 +542,7 @@ func TestInsertIgnore(t *testing.T) {
 	require.Empty(t, tk.Session().LastMessage())
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 't.PRIMARY'"))
 
 	testSQL = `drop table if exists test;
 create table test (i int primary key, j int unique);
@@ -784,21 +785,21 @@ func TestInsertIgnoreOnDup(t *testing.T) {
 	tk.MustExec("create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`))")
 	tk.MustExec("insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05')")
 	tk.MustExec("insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'Alice' for key 'idx_10'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'Alice' for key 't2.idx_10'"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("Bob 1989-03-23", "Alice 2023-11-24", "Charlie 2023-12-05"))
 
 	tk.MustExec("drop table if exists t4")
 	tk.MustExec("create table t4(id int primary key clustered, k int, v int, unique key uk1(k))")
 	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
 	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 't4.uk1'"))
 	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
 
 	tk.MustExec("drop table if exists t5")
 	tk.MustExec("create table t5(k1 varchar(100), k2 varchar(100), uk1 int, v int, primary key(k1, k2) clustered, unique key ukk1(uk1), unique key ukk2(v))")
 	tk.MustExec("insert into t5(k1, k2, uk1, v) values('1', '1', 1, '100'), ('1', '3', 2, '200')")
 	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k1 = '1' and k2 = '1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 't5.ukk1'"))
 	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 1 100", "1 3 2 200"))
 
 	tk.MustExec("drop table if exists t6")
@@ -1191,6 +1192,8 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 }
 
 func TestPartitionedTableReplace(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1449,6 +1452,8 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 }
 
 func TestPartitionedTableUpdate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1530,7 +1535,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 't.PRIMARY'"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
 
 	// test update ignore for truncate as warning
@@ -1551,7 +1556,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'I_uniq'"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 't.I_uniq'"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
 }
 
@@ -1719,6 +1724,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestPartitionedTableDelete(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
 			  PARTITION BY RANGE ( id ) (
 			  PARTITION p0 VALUES LESS THAN (6),
@@ -2703,7 +2710,7 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(1, 3)")
 	tk.MustExec("delete from t1 where j = 3")
-	tk.MustGetErrMsg("commit", "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	tk.MustGetErrMsg("commit", "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 't1.PRIMARY'")
 	tk.MustExec("rollback")
 
 	tk.MustExec("create table t2(i int, j int, unique index idx(i))")
@@ -2711,7 +2718,7 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 values(1, 3)")
 	tk.MustExec("delete from t2 where j = 3")
-	tk.MustGetErrMsg("commit", "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("commit", "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 't2.idx'")
 	tk.MustExec("admin check table t2")
 
 	tk.MustExec("create table t3(i int, j int, primary key(i))")
@@ -3044,7 +3051,7 @@ func TestWriteListPartitionTable(t *testing.T) {
 
 	// Test insert error
 	tk.MustExec("insert into t values  (1, 'a')")
-	tk.MustGetErrMsg("insert into t values (1, 'd')", "[kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values (1, 'd')", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	tk.MustGetErrMsg("insert into t values (100, 'd')", "[table:1526]Table has no partition for value 100")
 	tk.MustExec("admin check table t;")
 
@@ -3092,7 +3099,7 @@ func TestWriteListColumnsPartitionTable(t *testing.T) {
 	// Test insert error
 	tk.MustExec("insert into t values  (1, 'a')")
 	err := tk.ExecToErr("insert into t values (1, 'd')")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	err = tk.ExecToErr("insert into t values (100, 'd')")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
 	tk.MustExec("admin check table t;")
@@ -3126,7 +3133,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
 	err := tk.ExecToErr("alter table t add unique index idx (id)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
 	tk.MustExec("alter table t add unique index idx (id)")
@@ -3151,11 +3158,11 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
 	err = tk.ExecToErr("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '4' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '4' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  (1, 'b'), (5,'a'),(null,'y')")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'idx'", "Warning 1062 Duplicate entry '5' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 't.idx'", "Warning 1062 Duplicate entry '5' for key 't.idx'"))
 	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
 	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
 	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
@@ -3180,7 +3187,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
 	err = tk.ExecToErr("update t set id=2 where id = 1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
 	// Test update multi-partitions
@@ -3192,7 +3199,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
 	err = tk.ExecToErr("update t set id=id+17 where id in (3,10)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '20' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '20' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
 	err = tk.ExecToErr("update t set id=id*2 where id in (3,20)")
@@ -3237,6 +3244,8 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3253,7 +3262,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	// Test add unique index failed.
 	tk.MustExec("insert into t (id,name) values  (1, 'a'),(1,'b')")
 	err := tk.ExecToErr("alter table t add unique index idx (id,b)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-2' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-2' for key 't.idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
 	tk.MustExec("alter table t add unique index idx (id,b)")
@@ -3278,11 +3287,11 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustQuery("select id,name from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
 	err = tk.ExecToErr("insert into t (id,name) values (3, 'a'), (11,'x') on duplicate key update id=id+1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '4-2' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '4-2' for key 't.idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t (id,name) values  (1, 'b'), (5,'a'),(null,'y')")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1-2' for key 'idx'", "Warning 1062 Duplicate entry '5-2' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1-2' for key 't.idx'", "Warning 1062 Duplicate entry '5-2' for key 't.idx'"))
 	tk.MustQuery("select id,name from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
 	tk.MustQuery("select id,name from t partition(p1) order by id").Check(testkit.Rows("1 x"))
 	tk.MustQuery("select id,name from t partition(p2) order by id").Check(testkit.Rows("4 e"))
@@ -3306,7 +3315,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set name='y' where id < 3")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
-	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2-2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2-2' for key 't.idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
 	// Test update multi-partitions
@@ -3317,7 +3326,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set id=id*10 where id in (1,2)")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
-	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20-2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20-2' for key 't.idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
 	tk.MustGetErrMsg("update t set id=id*2 where id in (3,20)", "[table:1526]Table has no partition for value 40")
@@ -3359,6 +3368,8 @@ func TestWriteListPartitionTable2(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable1(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3374,7 +3385,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
-	tk.MustGetErrMsg("alter table t add unique index idx (id)", "[kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("alter table t add unique index idx (id)", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
 	tk.MustExec("alter table t add unique index idx (id)")
@@ -3398,11 +3409,11 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
-	tk.MustGetErrMsg("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1", "[kv:1062]Duplicate entry '4' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1", "[kv:1062]Duplicate entry '4' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  (1, 'b'), (5,'a'),(null,'y')")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'idx'", "Warning 1062 Duplicate entry '5' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 't.idx'", "Warning 1062 Duplicate entry '5' for key 't.idx'"))
 	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
 	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
 	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
@@ -3425,7 +3436,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set name='y' where id < 3")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
-	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
 	// Test update multi-partitions
@@ -3436,7 +3447,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set id=id*10 where id in (1,2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
-	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
 	tk.MustGetErrMsg("update t set id=id*2 where id in (3,20)", "[table:1526]Table has no partition for value from column_list")
@@ -3494,7 +3505,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  ('w', 1, 1),('w', 1, 2)")
 	err := tk.ExecToErr("alter table t add unique index idx (location,id)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-1' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-1' for key 't.idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where a=2")
 	tk.MustExec("alter table t add unique index idx (location,id)")
@@ -3520,11 +3531,11 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
 	tk.MustExec("insert into t values  ('w', 2, 2), ('w', 1, 1)")
-	tk.MustGetErrMsg("insert into t values  ('w', 2, 3) on duplicate key update id=1", "[kv:1062]Duplicate entry 'w-1' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values  ('w', 2, 3) on duplicate key update id=1", "[kv:1062]Duplicate entry 'w-1' for key 't.idx'")
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  ('w', 2, 2), ('w', 3, 3), ('n', 10, 10)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'w-2' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'w-2' for key 't.idx'"))
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2", "w 3 3"))
 	tk.MustQuery("select * from t partition(p_north) order by id").Check(testkit.Rows("n 9 9", "n 10 10"))
 	// Test insert ignore without duplicate
@@ -3553,7 +3564,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t partition(p_west) order by id,a").Check(testkit.Rows("w 1 5", "w 2 5", "w 3 6"))
 	// Test update meet duplicate error.
 	err = tk.ExecToErr("update t set id=id+1 where location='w' and id<2")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 't.idx'")
 	tk.MustQuery("select * from t partition(p_west) order by id,a").Check(testkit.Rows("w 1 5", "w 2 5", "w 3 6"))
 
 	// Test update multi-partitions
@@ -3571,7 +3582,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 4", "w 2 4", "e 8 9", "n 11 15"))
 	// Test update meet duplicate error.
 	err = tk.ExecToErr("update t set id=id+1 where location='w' and id in (1,2)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 'idx'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 't.idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 4", "w 2 4", "e 8 9", "n 11 15"))
 	// Test update meet no partition error.
 	err = tk.ExecToErr("update t set id=id+3 where location='w' and id in (1,2)")
@@ -3930,6 +3941,8 @@ func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, sam
 }
 
 func TestUpdate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4003,14 +4016,14 @@ func TestUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 't.PRIMARY'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	// test update ignore for truncate as warning
 	err = tk.ExecToErr("update ignore t set a = 1 where a = (select '2a')")
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1062 Duplicate entry '1' for key 't.PRIMARY'"))
 
 	tk.MustExec("update ignore t set a = 42 where a = 2;")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "42"))
@@ -4024,7 +4037,7 @@ func TestUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 't.I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	// test issue21965
@@ -4200,6 +4213,8 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

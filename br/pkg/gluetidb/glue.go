@@ -204,7 +204,7 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
 
@@ -231,7 +231,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
+		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, append(cs, ddl.OnExistIgnore)...)
 		if err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
@@ -245,7 +245,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
+func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 	query, err := gs.showCreateTable(table)
 	if err != nil {
@@ -259,7 +259,8 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+
+	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
 }
 
 // Close implements glue.Session.
@@ -302,7 +303,8 @@ func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) strin
 
 // mockSession is used for test.
 type mockSession struct {
-	se session.Session
+	se         session.Session
+	globalVars map[string]string
 }
 
 // GetSessionCtx implements glue.Glue
@@ -349,13 +351,13 @@ func (s *mockSession) CreatePlacementPolicy(ctx context.Context, policy *model.P
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
+func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
+func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -367,12 +369,16 @@ func (s *mockSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
-	return "true", nil
+	if ret, ok := s.globalVars[name]; ok {
+		return ret, nil
+	}
+	return "True", nil
 }
 
 // MockGlue only used for test
 type MockGlue struct {
-	se session.Session
+	se         session.Session
+	GlobalVars map[string]string
 }
 
 func (m *MockGlue) SetSession(se session.Session) {
@@ -387,7 +393,8 @@ func (*MockGlue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 // CreateSession implements glue.Glue.
 func (m *MockGlue) CreateSession(store kv.Storage) (glue.Session, error) {
 	glueSession := &mockSession{
-		se: m.se,
+		se:         m.se,
+		globalVars: m.GlobalVars,
 	}
 	return glueSession, nil
 }

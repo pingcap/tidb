@@ -393,7 +393,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 			key := deletedMutations.GetKeys()[i]
 			if _, ok := a.insertedNewIndexKeys[string(key)]; !ok {
 				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.IsPessimisticLock(i),
-					deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i))
+					deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i), deletedMutations.NeedConstraintCheckInPrewrite(i))
 			}
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
@@ -403,7 +403,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 				destKeyOp = kvrpcpb.Op_Put
 			}
 			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.IsPessimisticLock(i),
-				insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i))
+				insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i), insertedMutations.NeedConstraintCheckInPrewrite(i))
 		}
 	} else {
 		resAddMutations.MergeMutations(deletedMutations)
@@ -447,7 +447,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil, a.indexInfoAtCommit.Meta())
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit.Meta(), getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil, a.indexInfoAtCommit.Meta())
 
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,

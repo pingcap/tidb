@@ -517,7 +517,15 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := common.ConnectMySQL(cfg.Checkpoint.DSN)
+		var (
+			db  *sql.DB
+			err error
+		)
+		if cfg.Checkpoint.MySQLParam != nil {
+			db, err = cfg.Checkpoint.MySQLParam.Connect()
+		} else {
+			db, err = sql.Open("mysql", cfg.Checkpoint.DSN)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -546,7 +554,15 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 	}
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		var (
+			db  *sql.DB
+			err error
+		)
+		if cfg.Checkpoint.MySQLParam != nil {
+			db, err = cfg.Checkpoint.MySQLParam.Connect()
+		} else {
+			db, err = sql.Open("mysql", cfg.Checkpoint.DSN)
+		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1568,6 +1584,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			task_id,
@@ -1590,6 +1607,7 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			table_name,
@@ -1610,6 +1628,7 @@ func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Write
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			table_name,
