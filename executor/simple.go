@@ -136,7 +136,7 @@ func (e *baseExecutor) releaseSysSession(ctx context.Context, sctx sessionctx.Co
 	sysSessionPool.Put(sctx.(pools.Resource))
 }
 
-// Environment variable changes to close this Resource
+// Since the environment variables in the session are changed, closing the session does not return the session
 func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
@@ -1393,7 +1393,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 		if errRollback != nil {
 			return errRollback
@@ -1720,7 +1720,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 		if errRollback != nil {
 			return errRollback
@@ -2094,7 +2094,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin PESSIMISTIC"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
 		if errRollback != nil {
 			return errRollback

@@ -1543,7 +1543,7 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 		return nil
 	}
 	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
-	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.Version)
+	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.SepAutoInc())
 	if err != nil {
 		return err
 	}
@@ -1552,13 +1552,17 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
-	newCol *model.ColumnInfo, newShardBits, newRangeBits uint64, tblVer uint16) error {
+	newCol *model.ColumnInfo, newShardBits, newRangeBits uint64, sepAutoInc bool) error {
 	shardFmt := autoid.NewShardIDFormat(&newCol.FieldType, newShardBits, newRangeBits)
 
 	idAcc := idAccessors.RandomID()
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
 	if convertedFromAutoInc {
-		idAcc = idAccessors.IncrementID(tblVer)
+		if sepAutoInc {
+			idAcc = idAccessors.IncrementID(model.TableInfoVersion5)
+		} else {
+			idAcc = idAccessors.RowID()
+		}
 	}
 	// Generate a new auto ID first to prevent concurrent update in DML.
 	_, err := idAcc.Inc(1)
