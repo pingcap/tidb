@@ -292,10 +292,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	finalPlan := postOptimize(sctx, physical)
 
-	if variable.ProcessGeneralLog.Load() && !sctx.GetSessionVars().InRestrictedSQL {
+	if sctx.GetSessionVars().EnableRecordTiFlashPlan && !sctx.GetSessionVars().InRestrictedSQL {
 		ok, tiflashTables := hasTiFlashPlan(finalPlan)
 		if ok {
-			logutil.BgLogger().Info("GENERAL_LOG",
+			logutil.BgLogger().Info("Record the tiflash plan",
 				zap.String("SQL", sctx.GetSessionVars().StmtCtx.OriginalSQL),
 				zap.Any("TiFlashTables", tiflashTables))
 		}

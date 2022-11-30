@@ -647,6 +647,9 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBRecordTiFlashPlan is used to record the tiflash plan.
+	TiDBRecordTiFlashPlan = "tidb_record_tiflash_plan"
 )
 
 // TiDB vars that have only global scope
@@ -901,6 +904,7 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBCheckAutoAnalyzeStatus                = true
+	DefTiDBRecordTiFlashPlan                     = false
 )
 
 // Process global variables.

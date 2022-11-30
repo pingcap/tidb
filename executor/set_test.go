@@ -1210,6 +1210,15 @@ func TestValidateSetVar(t *testing.T) {
 
 	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
 	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set global tidb_record_tiflash_plan=on;")
+	tk.MustQuery("select @@global.tidb_record_tiflash_plan;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set global tidb_record_tiflash_plan=0;")
+	tk.MustQuery("select @@global.tidb_record_tiflash_plan;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set session tidb_record_tiflash_plan=on;")
+	tk.MustQuery("select @@session.tidb_record_tiflash_plan;").Check(testkit.Rows("1"))
 }
 
 func TestSelectGlobalVar(t *testing.T) {
