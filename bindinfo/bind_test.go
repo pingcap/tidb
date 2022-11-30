@@ -1352,19 +1352,35 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	}
 
 	h := dom.BindHandle()
+	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk, dom)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
+		h.ReloadBindings()
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equal(t, len(res), 1)
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		// https://docs.pingcap.com/tidb/stable/sql-plan-management#remove-binding
 		require.NoError(t, h.GCBindRecord())
-		res = tk.MustQuery("show global bindings").Rows()
+		h.ReloadBindings()
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
+	}
+
+	// session scope
+	for _, c := range cases {
+		utilCleanBindingEnv(tk, dom)
+		sql := "create binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		res := tk.MustQuery(`show bindings`).Rows()
+
+		require.Equal(t, len(res), 1)
+		require.Equal(t, len(res[0]), 11)
+		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
+		tk.MustExec(drop)
+		require.NoError(t, h.GCBindRecord())
+		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 }
