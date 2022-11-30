@@ -145,16 +145,11 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
-	e := &FKCheckExec{
+	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
 		fkValueHelper: helper,
-	}
-	if sctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		e.stats = &FKCheckRuntimeStats{}
-		sctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkCheck.ID(), e.stats)
-	}
-	return e, nil
+	}, nil
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -196,6 +191,10 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 }
 
 func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
+	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCheckRuntimeStats{}
+		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
+	}
 	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
 		return nil
 	}
@@ -514,6 +513,10 @@ type fkCheckKey struct {
 }
 
 func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCheckRuntimeStats{}
+		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
+	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -623,7 +626,7 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
-	e := &FKCascadeExec{
+	return &FKCascadeExec{
 		b:                  b,
 		fkValueHelper:      helper,
 		plan:               fkCascade,
@@ -634,12 +637,7 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		fkCols:             fkCascade.FKCols,
 		fkIdx:              fkCascade.FKIdx,
 		fkUpdatedValuesMap: make(map[string]*UpdatedValuesCouple),
-	}
-	if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		e.stats = &FKCascadeRuntimeStats{}
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkCascade.ID(), e.stats)
-	}
-	return e, nil
+	}, nil
 }
 
 func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {

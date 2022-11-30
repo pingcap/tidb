@@ -669,7 +669,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	if e == nil {
+	if e == nil || (e.consume == 0 && e.loop == 0) {
 		return ""
 	}
 	var str strings.Builder
