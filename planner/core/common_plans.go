@@ -250,7 +250,7 @@ const (
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
-	// OpSQLBindDropBySQLDigest is used to drop SQL binds by digest
+	// OpSQLBindDropByDigest is used to drop SQL binds by digest
 	OpSQLBindDropByDigest
 )
 
