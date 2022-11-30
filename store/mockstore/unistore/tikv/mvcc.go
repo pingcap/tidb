@@ -225,6 +225,7 @@ func sortKeys(keys [][]byte) [][]byte {
 	return keys
 }
 
+// PessimisticLock will add pessimistic lock on key
 func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.PessimisticLockRequest, resp *kvrpcpb.PessimisticLockResponse) (*lockwaiter.Waiter, error) {
 	waiter, err := store.pessimisticLockInner(reqCtx, req, resp)
 	if err != nil && req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
@@ -239,7 +240,6 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	return waiter, err
 }
 
-// PessimisticLock will add pessimistic lock on key
 func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.PessimisticLockRequest, resp *kvrpcpb.PessimisticLockResponse) (*lockwaiter.Waiter, error) {
 	mutations := req.Mutations
 	if !req.ReturnValues {
