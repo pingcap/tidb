@@ -135,6 +135,7 @@ func (c *copReqSender) run() {
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
 				p.sendResult(idxRecResult{id: task.id, err: err})
+				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
 				return
 			}
 			total += len(idxRec)
