@@ -1670,34 +1670,18 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return err
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
 		if len(newUser.Username) > auth.UserNameMaxLength {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
 		exists, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		}
 		if !exists {
@@ -1707,10 +1691,6 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		exists, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		}
 		if exists {
@@ -2112,8 +2092,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "commit"); rollbackErr != nil {
-		return rollbackErr
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return err
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
