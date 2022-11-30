@@ -231,6 +231,18 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasPlanForLastExecution checks if the execution plan of the last execution contains specific plan.
+func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
+	connID := tk.session.GetSessionVars().ConnectionID
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", connID))
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
 func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)

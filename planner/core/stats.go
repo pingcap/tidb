@@ -467,10 +467,19 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
+	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
+	// 2. Generate possible IndexMerge paths for `AND`.
+	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
+	if indexMergeAndPath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
+	}
+
+	// 3. If needed, append a warning if no IndexMerge is generated.
+
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -481,6 +490,9 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
+
+	// 4. If needPrune is true, prune non-IndexMerge paths.
+
 	// Do not need to consider the regular paths in find_best_task().
 	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
@@ -615,7 +627,9 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 	return nil
 }
 
-// isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
+// isInIndexMergeHints returns true if the input index name is not excluded by the IndexMerge hints, which means either
+// (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
+// name is specified in the IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	if len(ds.indexMergeHints) == 0 {
 		return true
@@ -623,6 +637,34 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	for _, hint := range ds.indexMergeHints {
 		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
 			return true
+		}
+		for _, hintName := range hint.indexHint.IndexNames {
+			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// indexMergeHintsHasSpecifiedIdx returns true if there's IndexMerge hint, and it has specified index names.
+func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
+	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
+		}
+		if len(hint.indexHint.IndexNames) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// indexMergeHintsHasSpecifiedIdx return true if the input index name is specified in the IndexMerge hint.
+func (ds *DataSource) isSpecifiedInIndexMergeHints(name string) bool {
+	for _, hint := range ds.indexMergeHints {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+			continue
 		}
 		for _, hintName := range hint.indexHint.IndexNames {
 			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
@@ -750,6 +792,103 @@ func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, par
 	}
 	if addCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
+	}
+	return indexMergePath
+}
+
+// generateIndexMergeAndPaths generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
+func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.AccessPath {
+	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
+	if !ds.indexMergeHintsHasSpecifiedIdx() {
+		return nil
+	}
+
+	// 1. Collect partial paths from normal paths.
+	var partialPaths []*util.AccessPath
+	for i := 0; i < normalPathCnt; i++ {
+		originalPath := ds.possibleAccessPaths[i]
+		// No need to consider table path as a partial path.
+		if ds.possibleAccessPaths[i].IsTablePath() {
+			continue
+		}
+		if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
+			continue
+		}
+		// If the path contains a full range, ignore it.
+		if ranger.HasFullRange(originalPath.Ranges, false) {
+			continue
+		}
+		newPath := originalPath.Clone()
+		partialPaths = append(partialPaths, newPath)
+	}
+	if len(partialPaths) < 2 {
+		return nil
+	}
+
+	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
+	finalFilters := make([]expression.Expression, 0)
+	partialFilters := make([]expression.Expression, 0, len(partialPaths))
+	hashCodeSet := make(map[string]struct{})
+	for _, path := range partialPaths {
+		// Classify filters into coveredConds and notCoveredConds.
+		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
+		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
+		// AccessConds can be covered by partial path.
+		coveredConds = append(coveredConds, path.AccessConds...)
+		for i, cond := range path.IndexFilters {
+			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
+			if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
+				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
+				notCoveredConds = append(notCoveredConds, cond)
+			} else {
+				coveredConds = append(coveredConds, cond)
+			}
+		}
+		// TableFilters can't be covered by partial path.
+		notCoveredConds = append(notCoveredConds, path.TableFilters...)
+
+		// Record covered filters in hashCodeSet.
+		// Note that we only record filters that not appear in the notCoveredConds. It's possible that a filter appear
+		// in both coveredConds and notCoveredConds (e.g. because of prefix index). So we need this extra check to
+		// avoid wrong deduplication.
+		notCoveredHashCodeSet := make(map[string]struct{})
+		for _, cond := range notCoveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			notCoveredHashCodeSet[hashCode] = struct{}{}
+		}
+		for _, cond := range coveredConds {
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
+				hashCodeSet[hashCode] = struct{}{}
+			}
+		}
+
+		finalFilters = append(finalFilters, notCoveredConds...)
+		partialFilters = append(partialFilters, coveredConds...)
+	}
+
+	// Remove covered filters from finalFilters and deduplicate finalFilters.
+	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
+	for _, cond := range finalFilters {
+		hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+		if _, ok := hashCodeSet[hashCode]; !ok {
+			dedupedFinalFilters = append(dedupedFinalFilters, cond)
+			hashCodeSet[hashCode] = struct{}{}
+		}
+	}
+
+	// 3. Estimate the row count after partial paths.
+	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialFilters, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = SelectionFactor
+	}
+
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        partialPaths,
+		IndexMergeIsIntersection: true,
+		TableFilters:             dedupedFinalFilters,
+		CountAfterAccess:         sel * ds.tableStats.RowCount,
 	}
 	return indexMergePath
 }
