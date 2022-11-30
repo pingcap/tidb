@@ -350,6 +350,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		// case 1: tiflash
 		if ds.tableInfo.TiFlashReplica != nil {
 			handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
+			//
+			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, handleCol)
 		} else {
 			// case 2: tikv
 			handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)

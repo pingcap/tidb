@@ -1126,5 +1126,11 @@
       "select a, count(*) from t group by a -- shouldn't be rewritten",
       "select sum(a) from t -- sum shouldn't be rewritten"
     ]
+  },
+  {
+    "name": "TestCountStarForTikvButNotNullColumn",
+    "cases": [
+      "select count(*) from t"
+    ]
   }
 ]

@@ -6709,5 +6709,20 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestCountStarForTikvButNotNullColumn",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#9)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.b)->Column#9",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]
