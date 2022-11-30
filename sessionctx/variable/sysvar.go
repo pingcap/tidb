@@ -1592,6 +1592,13 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, TiDBStreamAggConcurrency, TiDBExecutorConcurrency)
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexMergeIntersectionConcurrency, Value: strconv.Itoa(DefTiDBIndexMergeIntersectionConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
+		s.indexMergeIntersectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		appendDeprecationWarning(vars, TiDBIndexMergeIntersectionConcurrency, TiDBExecutorConcurrency)
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelApply, Value: BoolToOnOff(DefTiDBEnableParallelApply), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableParallelApply = TiDBOptOn(val)
 		return nil

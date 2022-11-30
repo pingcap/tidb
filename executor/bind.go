@@ -39,6 +39,8 @@ type SQLBindExec struct {
 	bindAst      ast.StmtNode
 	newStatus    string
 	source       string
+	sqlDigest    string
+	planDigest   string
 }
 
 // Next implements the Executor Next interface.
@@ -115,6 +117,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Collation: e.collation,
 		Status:    bindinfo.Enabled,
 		Source:    e.source,
+		SQLDigest: e.sqlDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

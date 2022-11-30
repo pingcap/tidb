@@ -123,7 +123,7 @@
                         "operator_info": "data:TableFullScan_16"
                       }
                     ],
-                    "cost": 975351.9825195674,
+                    "cost": 976848.9825195674,
                     "est_rows": 100000000,
                     "act_rows": 8,
                     "task_type": 1,
@@ -131,7 +131,7 @@
                     "operator_info": "CARTESIAN inner join"
                   }
                 ],
-                "cost": 998975351.9825196,
+                "cost": 998976848.9825196,
                 "est_rows": 100000000,
                 "act_rows": 8,
                 "task_type": 1,
@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
               }
             ],
-            "cost": 1996975363.5625196,
+            "cost": 1996978357.5625196,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
@@ -283,7 +283,7 @@
                 "operator_info": "data:Selection_33"
               }
             ],
-            "cost": 1798740.0717058014,
+            "cost": 1800237.0717058014,
             "est_rows": 12487.5,
             "task_type": 1,
             "store_type": 1,

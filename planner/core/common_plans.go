@@ -266,6 +266,8 @@ type SQLBindPlan struct {
 	Collation    string
 	NewStatus    string
 	Source       string
+	SQLDigest    string
+	PlanDigest   string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
