@@ -364,7 +364,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 		{
 			sql:      "select count(*) from t_unistore_act_rows group by b",
-			expected: []string{"2", "2", "2", "4"},
+			expected: []string{"2", "4", "4"},
 		},
 		{
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
