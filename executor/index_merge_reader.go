@@ -950,7 +950,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}, w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh))
 		workers = append(workers, worker)
 	}
-	loop:
+loop:
 	for task := range fetchCh {
 		select {
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
