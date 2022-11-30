@@ -68,13 +68,14 @@ var (
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
-	table        table.Table
-	indexes      []*model.IndexInfo
-	descs        []bool
-	ranges       [][]*ranger.Range
-	dagPBs       []*tipb.DAGRequest
-	startTS      uint64
-	tableRequest *tipb.DAGRequest
+	table          table.Table
+	indexes        []*model.IndexInfo
+	descs          []bool
+	ranges         [][]*ranger.Range
+	dagPBs         []*tipb.DAGRequest
+	startTS        uint64
+	tableRequestMu sync.Mutex
+	tableRequest   *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder
@@ -631,9 +632,12 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
+		e.tableRequestMu.Lock()
 		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
+			e.tableRequestMu.Unlock()
 			return nil, err
 		}
+		e.tableRequestMu.Unlock()
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
