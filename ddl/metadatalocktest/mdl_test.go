@@ -1105,3 +1105,16 @@ func TestMDLRenameTable(t *testing.T) {
 	tk.MustGetErrCode("select * from test2.t1;", mysql.ErrNoSuchTable)
 	tk.MustExec("commit")
 }
+
+func TestMDLPrepareFail(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	_, _, _, err := tk.Session().PrepareStmt("select b from t")
+	require.Error(t, err)
+
+	tk2.MustExec("alter table test.t add column c int")
+}

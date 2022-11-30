@@ -162,6 +162,13 @@ var (
 			Name:      "index_merge_usage",
 			Help:      "Counter of usage of index merge",
 		})
+	TelemetryCompactPartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "compact_partition_usage",
+			Help:      "Counter of compact table partition",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -261,6 +268,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
+	TablePartitionComactCnt                   int64 `json:"table_TablePartitionComactCnt"`
 }
 
 // ExchangePartitionUsageCounter records the usages of exchange partition.
@@ -298,6 +306,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
+		TablePartitionComactCnt:                   c.TablePartitionComactCnt - rhs.TablePartitionComactCnt,
 	}
 }
 
@@ -333,6 +342,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionCreateIntervalPartitionsCnt: readCounter(TelemetryTablePartitionCreateIntervalPartitionsCnt),
 		TablePartitionAddIntervalPartitionsCnt:    readCounter(TelemetryTablePartitionAddIntervalPartitionsCnt),
 		TablePartitionDropIntervalPartitionsCnt:   readCounter(TelemetryTablePartitionDropIntervalPartitionsCnt),
+		TablePartitionComactCnt:                   readCounter(TelemetryCompactPartitionCnt),
 	}
 }
 

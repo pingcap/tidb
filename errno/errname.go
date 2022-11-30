@@ -1029,6 +1029,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
 	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
 	ErrLazyUniquenessCheckFailure:    mysql.Message("transaction aborted because lazy uniqueness check is enabled and an error occurred: %s", nil),
+	ErrUnsupportedColumnInTTLConfig:  mysql.Message("Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP", nil),
+	ErrTTLColumnCannotDrop:           mysql.Message("Cannot drop column '%-.192s': needed in TTL config", nil),
+	ErrSetTTLEnableForNonTTLTable:    mysql.Message("Cannot set TTL_ENABLE on a table without TTL config", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1072,8 +1075,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
 	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
-	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
-	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrPartitionStatsMissing:       mysql.Message("Build global-level stats failed due to missing partition-level stats: %s", nil),
+	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
