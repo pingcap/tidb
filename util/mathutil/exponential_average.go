@@ -24,7 +24,7 @@ func factor(n int) float64 {
 type ExponentialAverage struct {
 	value        float64
 	sum          float64
-	window       int
+	factor       int
 	warmupWindow int
 	count        int
 
@@ -33,11 +33,14 @@ type ExponentialAverage struct {
 
 // NewExponentialAverage will create a new ExponentialAverage
 func NewExponentialAverage(
-	window int,
+	factor int,
 	warmupWindow int,
 ) *ExponentialAverage {
+	if factor <= 1 {
+		panic("factor must be greater than 1")
+	}
 	return &ExponentialAverage{
-		window:       window,
+		factor:       factor,
 		warmupWindow: warmupWindow,
 	}
 }
@@ -51,7 +54,7 @@ func (m *ExponentialAverage) Add(value float64) {
 		m.sum += value
 		m.value = m.sum / float64(m.count)
 	} else {
-		f := factor(m.window)
+		f := factor(m.factor)
 		m.value = m.value*(1-f) + value*f
 	}
 }
