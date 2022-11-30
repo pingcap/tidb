@@ -256,8 +256,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	}
 	tableSideCost := divCostVer2(sumCostVer2(tableNetCost, tableChildCost), distConcurrency)
 
-	// double-read: assume at least 1 row to double-read to avoid 0 double-read cost.
-	doubleReadRows := math.Max(indexRows, 1)
+	doubleReadRows := indexRows
 	doubleReadCPUCost := newCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
 		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
@@ -448,13 +447,16 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
+	startCost := newCostVer2(option, cpuFactor,
+		10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
 
-	p.planCostVer2 = sumCostVer2(childCost, divCostVer2(sumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	p.planCostVer2 = sumCostVer2(startCost, childCost, divCostVer2(sumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -532,7 +534,10 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost,
 			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
 	} else { // TiDB HashJoin
-		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
+		startCost := newCostVer2(option, cpuFactor,
+			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+		p.planCostVer2 = sumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.planCostInit = true
@@ -563,6 +568,9 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	buildTaskCost := newCostVer2(option, cpuFactor,
 		buildRows*10*cpuFactor.Value,
 		func() string { return fmt.Sprintf("cpu(%v*10*%v)", buildRows, cpuFactor) })
+	startCost := newCostVer2(option, cpuFactor,
+		10*3*cpuFactor.Value,
+		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 
 	probeFilterCost := filterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
 	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
@@ -587,7 +595,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	batchRatio := 6.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
 
-	p.planCostVer2 = sumCostVer2(buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.planCostVer2 = sumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
