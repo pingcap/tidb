@@ -1326,11 +1326,14 @@ type RecoverSchemaInfo struct {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
+	if variable.EnableMDL.Load() {
+		return
+	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	duration := cfg.SafeWindow + cfg.AllowedClockDrift
 	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
 		zap.Duration("duration", duration))
-	//time.Sleep(duration)
+	time.Sleep(duration)
 }
 
 var (
