@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 const (
@@ -38,7 +40,21 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp"
 	if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
-		return errors.Trace(err)
+		path := filepath.Dir(tmpPath)
+		log.Info("failed to write file, try to mkdir the path", zap.String("path", path))
+		exists, existErr := pathExists(path)
+		if existErr != nil {
+			return errors.Annotatef(err, "after failed to write file, failed to check path exists : %v", existErr)
+		}
+		if exists {
+			return errors.Trace(err)
+		}
+		if mkdirErr := mkdirAll(path); mkdirErr != nil {
+			return errors.Annotatef(err, "after failed to write file, failed to mkdir : %v", mkdirErr)
+		}
+		if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
 		return errors.Trace(err)

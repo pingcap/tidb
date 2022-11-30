@@ -642,14 +642,23 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 		// AutoID allocation will take increment and offset into consideration.
 		tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
-		// HandleID allocation will ignore the increment and offset.
-		tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+		if str == "" {
+			// HandleID allocation will ignore the increment and offset.
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+		} else {
+			// Separate row id and auto inc id, increment and offset works on auto inc id
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("1", "2", "3"))
+		}
 		tk.MustExec(`delete from io`)
 
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
 		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 		tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
-		tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+		if str == "" {
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+		} else {
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("4", "5", "6"))
+		}
 
 		// Test invalid value.
 		tk.Session().GetSessionVars().AutoIncrementIncrement = -1
@@ -711,27 +720,19 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 	require.NoError(t, err2)
 
 	tk.MustExec("alter table t_473 auto_id_cache = 100")
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val)))
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
+		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val),
+		"test t_473 id 1 AUTO_INCREMENT",
+	))
 	tk.MustExec("insert into t_473 values ()")
 	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+100)))
+	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
+		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+100),
+		"test t_473 id 1 AUTO_INCREMENT",
+	))
 
-	// Note that auto_id_cache=1 use a different implementation.
-	tk.MustExec("alter table t_473 auto_id_cache = 1")
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+100)))
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val), fmt.Sprintf("%d", val+100)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+101)))
-
-	// alter table from auto_id_cache=1 to default will discard the IDs cached by the autoid service.
-	// This is because they are two component and TiDB can't tell the autoid service to "save position and exit".
-	tk.MustExec("alter table t_473 auto_id_cache = 20000")
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+4100)))
-
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1",
-		fmt.Sprintf("%d", val),
-		fmt.Sprintf("%d", val+100),
-		fmt.Sprintf("%d", val+4100)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+24100)))
+	// Note that auto_id_cache=1 use a different implementation, switch between them is not allowed.
+	// TODO: relax this restriction and update the test case.
+	_, err = tk.Exec("alter table t_473 auto_id_cache = 1")
+	require.Error(t, err)
 }

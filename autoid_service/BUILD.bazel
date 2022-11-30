@@ -11,6 +11,7 @@ go_library(
         "//meta",
         "//metrics",
         "//owner",
+        "//parser/model",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",

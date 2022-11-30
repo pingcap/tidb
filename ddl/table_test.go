@@ -160,7 +160,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 		return nil, errors.New("table not found")
 	}
 	alloc := autoid.NewAllocator(store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(false, alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
