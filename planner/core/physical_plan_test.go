@@ -2532,7 +2532,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 	}
 }
 
-func TestCountStarForTikvButNotNullColumn(t *testing.T) {
+func TestCountStarForTikvWithoutTiFlashEngine(t *testing.T) {
 	var (
 		input  []string
 		output []struct {

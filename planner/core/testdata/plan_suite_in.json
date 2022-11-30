@@ -1128,7 +1128,7 @@
     ]
   },
   {
-    "name": "TestCountStarForTikvButNotNullColumn",
+    "name": "TestCountStarForTikvWithoutTiFlashEngine",
     "cases": [
       "select count(*) from t"
     ]

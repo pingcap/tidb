@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -348,9 +349,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
 		// case 1: tiflash
-		if ds.tableInfo.TiFlashReplica != nil {
+		_, isolationReadEnginesHasTiFlash := ds.ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
+		if ds.tableInfo.TiFlashReplica != nil && isolationReadEnginesHasTiFlash {
 			handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
-			//
+			// The selected columns need to be added to `colsRequiringFullLen`.
+			// This attribute will be used to judge `isSingleScan`.
+			// When Index can cover all FullLen cols, the index scan will be candidate and isSingleScan will be true.
 			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, handleCol)
 		} else {
 			// case 2: tikv
