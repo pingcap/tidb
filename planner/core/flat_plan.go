@@ -398,6 +398,13 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target, childIdx = f.flattenRecursively(plan.TargetPlan, initInfo, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
+	case *FKCascade:
+		for i, child := range plan.CascadePlans {
+			childCtx.label = Empty
+			childCtx.isLastChild = i == len(plan.CascadePlans)-1
+			target, childIdx = f.flattenRecursively(child, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
 	}
 	if flat != nil {
 		flat.ChildrenIdx = childIdxs
