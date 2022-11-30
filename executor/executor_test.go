@@ -1922,7 +1922,7 @@ func TestCheckIndex(t *testing.T) {
 	tbInfo := tbl.Meta()
 
 	alloc := autoid.NewAllocator(store, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
-	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(false, alloc), tbInfo)
 	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")

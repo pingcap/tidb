@@ -1231,9 +1231,9 @@ func TestAggPushDownEngine(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
-		"└─TableReader 1.00 root  data:HashAgg",
-		"  └─HashAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
+		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
 		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
@@ -1365,16 +1365,18 @@ func TestViewHintScope(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop view if exists v, v1, v2, v3")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop view if exists v, v1, v2, v3, v4")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
 	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
 	tk.MustExec("create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.b from t join (select /*+ stream_agg() */ count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
+	tk.MustExec("create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3;")
 
 	var input []string
 	var output []struct {
@@ -1403,7 +1405,7 @@ func TestViewHintWithBinding(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop view if exists v, v1")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop table if exists t, t1, t2, t3")
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
@@ -2349,7 +2351,7 @@ func TestIssue16837(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
-		"IndexMerge 0.01 root  ",
+		"IndexMerge 0.01 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1,1], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
 		"└─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
@@ -2590,7 +2592,7 @@ func TestIssue16407(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b char(100),key(a),key(b(10)))")
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
-		"IndexMerge 0.04 root  ",
+		"IndexMerge 0.04 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
 		"└─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t.a, 10), eq(test.t.b, \"x\"))",
@@ -5038,7 +5040,7 @@ func TestIndexMergeTableFilter(t *testing.T) {
 	tk.MustExec("insert into t values(10,1,1,10)")
 
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10)").Check(testkit.Rows(
-		"IndexMerge 0.02 root  ",
+		"IndexMerge 0.02 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
 		"└─Selection(Probe) 0.02 cop[tikv]  or(eq(test.t.a, 10), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
@@ -5048,7 +5050,7 @@ func TestIndexMergeTableFilter(t *testing.T) {
 		"10 1 1 10",
 	))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
-		"IndexMerge 0.00 root  ",
+		"IndexMerge 0.00 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
 		"└─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 10), eq(test.t.d, 10)), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
@@ -5699,36 +5701,36 @@ func TestIssue29221(t *testing.T) {
 	tk.MustExec("set @@session.sql_select_limit=3;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  ",
+		"└─IndexMerge 3.00 root  type: union",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  ",
+		"└─IndexMerge 3.00 root  type: union",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"IndexMerge 19.99 root  ",
+		"IndexMerge 19.99 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  ",
+		"└─IndexMerge 3.00 root  type: union",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"IndexMerge 19.99 root  ",
+		"IndexMerge 19.99 root  type: union",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  ",
+		"└─IndexMerge 3.00 root  type: union",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
@@ -6695,7 +6697,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk.MustExec("alter table t32157 cache")
 
 	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-		"HashAgg 1.00 root  funcs:count(1)->Column#8]\n" +
+		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
 			"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[  └─TableReader 10.00 root  data:Selection]\n" +
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
@@ -7554,6 +7556,40 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	checkMpp(rs)
 }
 
+func TestPointGetWithSelectLock(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a, b));")
+	tk.MustExec("create table t1(c int unique, d int);")
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
+	tk.MustExec("begin;")
+	// assert point get condition with txn commit and tiflash store
+	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 and d = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery("explain select a, b from t where a = 1 for update;")
+	tk.MustQuery("explain select c, d from t1 where c > 1 for update;")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
+	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+	tk.MustExec("commit")
+	tk.MustExec("set tidb_isolation_read_engines='tidb,tiflash';")
+	// assert point get condition with auto commit and tiflash store
+	tk.MustQuery("explain select a, b from t where  a = 1 and b = 2 for update;")
+	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+}
+
 func TestTableRangeFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7963,10 +7999,10 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"HashAgg_12 1.00 root  funcs:count(Column#6)->Column#5",
-		"└─IndexReader_13 1.00 root  index:HashAgg_6",
-		"  └─HashAgg_6 1.00 cop[tikv]  funcs:count(1)->Column#6",
-		"    └─IndexRangeScan_11 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		"StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
+		"└─IndexReader_19 1.00 root  index:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
+		"    └─IndexRangeScan_17 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 }
 
 func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {

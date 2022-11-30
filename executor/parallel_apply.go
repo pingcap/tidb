@@ -176,7 +176,6 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -187,6 +186,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 			runtimeStats.setCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return err
 }
