@@ -1166,6 +1166,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(ctx, restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
@@ -1225,13 +1232,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
-		restrictedCtx, err := e.getSysSession()
-		if err != nil {
-			return err
-		}
-		defer e.releaseSysSession(ctx, restrictedCtx)
-		sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
-		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+
 		type alterField struct {
 			expr  string
 			value string
