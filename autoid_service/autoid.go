@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -403,6 +404,12 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		logutil.BgLogger().Info("[autoid service] Alloc AutoID fail, not leader")
 		return nil, errors.New("not leader")
 	}
+
+	failpoint.Inject("mockErr", func(val failpoint.Value) {
+		if val.(bool) {
+			return nil, errors.New("mock reload failed")
+		}
+	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 

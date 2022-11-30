@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -734,4 +735,16 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 		fmt.Sprintf("%d", val+100),
 		fmt.Sprintf("%d", val+4100)))
 	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(fmt.Sprintf("test t_473 id %d AUTO_INCREMENT", val+24100)))
+}
+
+func TestMockAutoIDServiceError(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("create table t_mock_err (id int key auto_increment) auto_id_cache 1")
+
+	failpoint.Enable("github.com/pingcap/tidb/autoid_service/mockErr", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/autoid_service/mockErr")
+	// Cover a bug that the autoid client retry non-retryable errors forever cause dead loop.
+	require.Error(t, tk.ExecToErr("insert into t_mock_err values (),()")) // mock error, instead of dead loop
 }
