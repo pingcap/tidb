@@ -154,6 +154,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 		// TODO: Test decreasing end range and concurrently insert in the gap
 		// TODO: Test increasing end range and concurrently insert into the gap
+		ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
 		for _, def := range pi.DroppingDefinitions {
 			p, err := initPartition(ret, def)
 			if err != nil {

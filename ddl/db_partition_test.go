@@ -5087,7 +5087,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		`(partition p0 values less than (10),` +
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
@@ -5101,12 +5101,12 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 
 	currState := model.StateNone
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && currState != job.SchemaState {
-			currState = job.SchemaState
-			<-wait
-			<-wait
-		}
-		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteReorganization && currState != job.SchemaState {
+		if job.Type == model.ActionReorganizePartition &&
+			(job.SchemaState == model.StateDeleteOnly ||
+				job.SchemaState == model.StateWriteOnly ||
+				job.SchemaState == model.StateWriteReorganization ||
+				job.SchemaState == model.StateDeleteReorganization) &&
+			currState != job.SchemaState {
 			currState = job.SchemaState
 			<-wait
 			<-wait
@@ -5114,39 +5114,104 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	}
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
+
+	wait <- true
+	// StateDeleteOnly
+	deleteOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	wait <- true
+
+	// StateWriteOnly
+	wait <- true
+	tk.MustExec(`insert into t values (11, "11", 11),(12,"12",21)`)
+	writeOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), writeOnlyInfoSchema.SchemaMetaVersion()-deleteOnlyInfoSchema.SchemaMetaVersion())
+	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	writeOnlyParts := writeOnlyTbl.Meta().Partition
+	writeOnlyTbl.Meta().Partition = deleteOnlyTbl.Meta().Partition
+	// If not DeleteOnly is working, then this would show up when reorg is done
+	tk.MustExec(`delete from t where a = 11`)
+	tk.MustExec(`update t set b = "12b", c = 12 where a = 12`)
+	writeOnlyTbl.Meta().Partition = writeOnlyParts
+	wait <- true
+
+	// StateWriteReorganization
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	oldInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	writeReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	wait <- true
+
+	// StateDeleteReorganization
 	wait <- true
-	// This reads the new schema (in StateDeleteReorganization)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"12 12 21",
+		"10 10 10",
+		"12 12 21", // FIXME!!!
+		"12 12b 12",
 		"14 14 14",
 		"15 15 15"))
-	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-oldInfoSchema.SchemaMetaVersion())
+	deleteReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), deleteReorgInfoSchema.SchemaMetaVersion()-writeReorgInfoSchema.SchemaMetaVersion())
 	tk.MustExec(`insert into t values (16, "16", 16)`)
-	tbl, err := oldInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	oldTbl, err := writeReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	partDef := tbl.Meta().Partition.Definitions[1]
+	partDef := oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1", partDef.Name.O)
-	rows := getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.Definitions[1:2])
-	require.Equal(t, 4, rows)
+	rows := getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
+	require.Equal(t, 5, rows)
+	currTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	currPart := currTbl.Meta().Partition
+	currTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows(""+
+		"10 10 10",
+		"12 12b 12",
+		"14 14 14",
+		"15 15 15",
+		"16 16 16"))
+	currTbl.Meta().Partition = currPart
 	wait <- true
 	syncOnChanged <- true
 	// This reads the new schema (Schema update completed)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"12 12 21",
+		"10 10 10",
+		"12 12 21", // FIXME!!!
+		"12 12b 12",
 		"14 14 14",
 		"15 15 15",
 		"16 16 16"))
-	oldInfoSchema = newInfoSchema
-	newInfoSchema = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-oldInfoSchema.SchemaMetaVersion())
-	tbl, err = oldInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
+	oldTbl, err = deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	partDef = tbl.Meta().Partition.Definitions[1]
+	partDef = oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1a", partDef.Name.O)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -5162,6 +5227,25 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	newTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	newPart := newTbl.Meta().Partition
+	newTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	newTbl.Meta().Partition = newPart
 	syncOnChanged <- true
 	require.NoError(t, <-alterErr)
 }
