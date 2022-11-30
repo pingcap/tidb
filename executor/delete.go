@@ -175,9 +175,13 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 			return err
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		_, exist := tblRowMap[info.TblID].Get(handle)
-		row := make([]types.Datum, info.End-info.Start)
-		copy(row, joinedRow[info.Start:info.End])
+		row, exist := tblRowMap[info.TblID].Get(handle)
+		if !exist {
+			row = make([]types.Datum, info.End-info.Start)
+		}
+		for i, d := range joinedRow[info.Start:info.End] {
+			d.Copy(&row[i])
+		}
 		memDelta := tblRowMap[info.TblID].Set(handle, row)
 		if !exist {
 			memDelta += types.EstimatedMemUsage(joinedRow, 1)
