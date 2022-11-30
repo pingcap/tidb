@@ -36,12 +36,14 @@ func TestCopTasksDetails(t *testing.T) {
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
-			CalleeAddress: fmt.Sprintf("%v", i+1),
-			BackoffSleep:  make(map[string]time.Duration),
-			BackoffTimes:  make(map[string]int),
-			TimeDetail: util.TimeDetail{
-				ProcessTime: time.Second * time.Duration(i+1),
-				WaitTime:    time.Millisecond * time.Duration(i+1),
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				CalleeAddress: fmt.Sprintf("%v", i+1),
+				BackoffSleep:  make(map[string]time.Duration),
+				BackoffTimes:  make(map[string]int),
+				TimeDetail: util.TimeDetail{
+					ProcessTime: time.Second * time.Duration(i+1),
+					WaitTime:    time.Millisecond * time.Duration(i+1),
+				},
 			},
 		}
 		for _, backoff := range backoffs {

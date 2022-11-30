@@ -9,7 +9,7 @@
           "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#26)",
           "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "  │ └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
-          "  └─HashAgg(Probe) 2.00 root  funcs:count(1)->Column#26",
+          "  └─StreamAgg(Probe) 2.00 root  funcs:count(1)->Column#26",
           "    └─HashJoin 4.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "      │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:idx(b, c, d) keep order:false",

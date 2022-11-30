@@ -1094,5 +1094,37 @@
       "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100"
 
     ]
+  },
+  {
+    "name": "TestCountStarForTikv",
+    "cases": [
+      "select count(*) from t",
+      "select count(1), count(3.1415), count(0), count(null) from t -- be rewritten count(row_id) but count(null)",
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive, be rewritten count(row_id)",
+      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- count(1) to count(a)",
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
+    ]
+  },
+  {
+    "name": "TestCountStarForTiFlash",
+    "cases": [
+      "select count(*) from t",
+      "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
+      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- count(1) to count(a)",
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
+    ]
   }
 ]

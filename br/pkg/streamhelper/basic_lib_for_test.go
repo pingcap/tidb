@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
@@ -80,16 +81,6 @@ type fakeCluster struct {
 	testCtx   *testing.T
 
 	onGetClient func(uint64) error
-}
-
-func overlaps(a, b kv.KeyRange) bool {
-	if len(b.EndKey) == 0 {
-		return len(a.EndKey) == 0 || bytes.Compare(a.EndKey, b.StartKey) > 0
-	}
-	if len(a.EndKey) == 0 {
-		return len(b.EndKey) == 0 || bytes.Compare(b.EndKey, a.StartKey) > 0
-	}
-	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -178,7 +169,7 @@ func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte,
 
 	result := make([]streamhelper.RegionWithLeader, 0, limit)
 	for _, region := range f.regions {
-		if overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := streamhelper.RegionWithLeader{
 				Region: &metapb.Region{
 					Id:       region.id,
