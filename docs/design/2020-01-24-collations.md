@@ -105,10 +105,10 @@ The interface is quite similar to the Go [collate package](https://godoc.org/gol
 
 ### Row Format
 
-The encoding layout of TiDB has been described in our [previous article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map). The row format should be changed to make it memory comparable, this is important to the index lookup. Basic principle is that all keys encoded for strings should use the `sortKeys` result from `Key()`/`KeyFromString()` function. However, most of the `sortKeys` calculations are not reversible.
+The encoding layout of TiDB has been described in our [previous article](https://docs.pingcap.com/tidb/stable/tidb-computing). The row format should be changed to make it memory comparable, this is important to the index lookup. Basic principle is that all keys encoded for strings should use the `sortKeys` result from `Key()`/`KeyFromString()` function. However, most of the `sortKeys` calculations are not reversible.
 
   * For table data, encodings stay unchanged. All strings are compared after decoding with the `Compare()` function.
-  * For table indices, we replace current `ColumnValue` with `sortKey` and encode the `ColumnValue` to the value,:
+  * For table indices, we replace current `ColumnValue` with `sortKey` and encode the `ColumnValue` to the value:
     - For unique indices:
 	```
       Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKey

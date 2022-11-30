@@ -435,6 +435,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 	})
 
+	failpoint.Inject("PrintStatus", func() {
+		defer func() {
+			finished, total := l.Status()
+			o.logger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total),
+				zap.Bool("equal", finished == total))
+		}()
+	})
+
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
@@ -504,8 +514,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	var procedure *restore.Controller
-
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
@@ -516,6 +524,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		CheckpointName:    o.checkpointName,
 	}
 
+	var procedure *restore.Controller
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))

@@ -325,8 +325,9 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 
 		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+			tableID := results.TableID.TableID
 			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)

@@ -15,7 +15,10 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -23,14 +26,25 @@ func SetBatchInsertDeleteRangeSize(i int) {
 	batchInsertDeleteRangeSize = i
 }
 
-var (
-	FetchRowsFromCop4Test = fetchRowsFromCop
-	NewCopContext4Test    = newCopContext
-)
+var NewCopContext4Test = newCopContext
 
-type (
-	IndexRecord4Test = *indexRecord
-)
+func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
+	batchSize int) ([]*indexRecord, bool, error) {
+	variable.SetDDLReorgBatchSize(int32(batchSize))
+	task := &reorgBackfillTask{
+		id:       1,
+		startKey: startKey,
+		endKey:   endKey,
+	}
+	pool := newCopReqSenderPool(context.Background(), copCtx, startTS)
+	pool.adjustSize(1)
+	pool.tasksCh <- task
+	idxRec, _, done, err := pool.fetchRowColValsFromCop(*task)
+	pool.close()
+	return idxRec, done, err
+}
+
+type IndexRecord4Test = *indexRecord
 
 func (i IndexRecord4Test) GetHandle() kv.Handle {
 	return i.handle

@@ -272,8 +272,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
-			e.runtimeStats = &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, e.runtimeStats)
+			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(id)
 		}
 	}
 	if schema != nil {
@@ -323,7 +322,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
-	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
@@ -399,7 +398,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	tblMeta := tbl.Meta()
 
 	allocators := tbl.Allocators(e.ctx)
-	for _, alloc := range allocators {
+	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
 			return err
@@ -407,7 +406,16 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		var colName, idType string
 		switch alloc.GetType() {
-		case autoid.RowIDAllocType, autoid.AutoIncrementType:
+		case autoid.RowIDAllocType:
+			idType = "_TIDB_ROWID"
+			if tblMeta.PKIsHandle {
+				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+					colName = col.Name.O
+				}
+			} else {
+				colName = model.ExtraHandleName.O
+			}
+		case autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
 			if tblMeta.PKIsHandle {
 				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
@@ -2184,39 +2192,6 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
-}
-
-// FillVirtualColumnValue will calculate the virtual column value by evaluating generated
-// expression using rows from a chunk, and then fill this value into the chunk
-func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
-	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
-	if len(virtualColumnIndex) == 0 {
-		return nil
-	}
-
-	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
-	iter := chunk.NewIterator4Chunk(req)
-	for i, idx := range virtualColumnIndex {
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := schema.Columns[idx].EvalVirtualColumn(row)
-			if err != nil {
-				return err
-			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx], false, true)
-			if err != nil {
-				return err
-			}
-			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
-				castDatum = table.GetZeroValue(columns[idx])
-			}
-			virCols.AppendDatum(i, &castDatum)
-		}
-		req.SetCol(idx, virCols.Column(i))
-	}
-	return nil
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {

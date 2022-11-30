@@ -686,20 +686,15 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
 }
 
-func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionID int64, isIndex int, histIDs []int64) (*statistics.Table, error) {
+func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
 	var partitionStats *statistics.Table
-	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
+	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
 	if err != nil {
 		return nil, err
 	}
 	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 	if partitionStats == nil {
-		var errMsg string
-		if isIndex == 0 {
-			errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
-		} else {
-			errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
-		}
+		errMsg := fmt.Sprintf("table `%s` partition `%s`", tableInfo.Name.L, partitionDef.Name.L)
 		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 		return nil, err
 	}
@@ -750,7 +745,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
 
-	for _, partitionID := range partitionIDs {
+	for _, def := range globalTableInfo.Partition.Definitions {
+		partitionID := def.ID
 		h.mu.Lock()
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
 		h.mu.Unlock()
@@ -765,7 +761,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			partitionStats, err = h.loadTablePartitionStats(tableInfo, partitionID, isIndex, histIDs)
+			partitionStats, err = h.loadTablePartitionStats(tableInfo, &def)
 			if err != nil {
 				return
 			}
@@ -779,9 +775,9 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			if !analyzed {
 				var errMsg string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
 				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 				return
@@ -790,9 +786,9 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("`%s` column: `%s`", tableInfo.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
 				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
 				return

@@ -15,6 +15,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	tidbNewCollationEnabled = "new_collation_enabled"
+)
+
 var (
 	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
 	_ DBExecutor = &sql.DB{}
@@ -94,14 +98,14 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-// CheckLogBackupTaskExist increases the count of log backup task.
+// LogBackupTaskCountInc increases the count of log backup task.
 func LogBackupTaskCountInc() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount++
 	LogBackupTaskMutex.Unlock()
 }
 
-// CheckLogBackupTaskExist decreases the count of log backup task.
+// LogBackupTaskCountDec decreases the count of log backup task.
 func LogBackupTaskCountDec() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount--
@@ -116,4 +120,9 @@ func CheckLogBackupTaskExist() bool {
 // IsLogBackupInUse checks the log backup task existed.
 func IsLogBackupInUse(ctx sessionctx.Context) bool {
 	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+}
+
+// GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.
+func GetTidbNewCollationEnabled() string {
+	return tidbNewCollationEnabled
 }

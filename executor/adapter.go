@@ -198,6 +198,7 @@ type TelemetryInfo struct {
 	UseFlashbackToCluster bool
 	PartitionTelemetry    *PartitionTelemetryInfo
 	AccountLockTelemetry  *AccountLockTelemetryInfo
+	UseIndexMerge         bool
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -215,6 +216,7 @@ type PartitionTelemetryInfo struct {
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
