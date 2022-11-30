@@ -904,7 +904,13 @@ func TestInsertErrorMsg(t *testing.T) {
 
 	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
 	err = tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
-	require.Error(t, err, "ERROR 1062 (23000): Duplicate entry '\x0C\x1E\x8DG`\xEB\x93 F&BC\xF0\xB5\xF4\xB7' for key 't1.PRIMARY'")
+	require.Error(t, err, "ERROR 1062 (23000): Duplicate entry '\\x0C\\x1E\\x8DG`\\xEB\\x93 F&BC\\xF0\\xB5\\xF4\\xB7' for key 't1.PRIMARY'")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a bit primary key) engine=innodb;")
+	tk.MustExec("insert into t1 values (b'0');")
+	err = tk.ExecToErr(`insert into t1 values (b'0');`)
+	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '\x00' for key 't1.PRIMARY'`)
 }
 
 func TestIssue16366(t *testing.T) {
