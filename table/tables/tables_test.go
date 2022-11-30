@@ -378,18 +378,18 @@ func TestTableFromMeta(t *testing.T) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.NoError(t, err)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Error(t, err)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 

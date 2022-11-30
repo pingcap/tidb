@@ -369,6 +369,8 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
+				hint.SQLDigest,
+				hint.PlanDigest,
 			})
 		}
 	}
