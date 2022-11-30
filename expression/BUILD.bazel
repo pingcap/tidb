@@ -97,6 +97,7 @@ go_library(
         "//util/mathutil",
         "//util/mock",
         "//util/parser",
+        "//util/password-validation",
         "//util/plancodec",
         "//util/printer",
         "//util/sem",

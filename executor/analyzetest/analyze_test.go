@@ -2836,8 +2836,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2849,8 +2849,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
 	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
@@ -2904,7 +2904,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
@@ -2914,7 +2914,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
@@ -2923,7 +2923,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8244 Build table: `t` column: `d` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
+		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2974,8 +2974,8 @@ PARTITION BY RANGE ( a ) (
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())

@@ -306,3 +306,13 @@ func (rng StringifyRange) String() string {
 	sb.WriteString(")")
 	return sb.String()
 }
+
+// StringifyMany returns an array marshaler for a slice of stringers.
+func StringifyMany[T fmt.Stringer](items []T) zapcore.ArrayMarshaler {
+	return zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		for _, item := range items {
+			ae.AppendString(item.String())
+		}
+		return nil
+	})
+}

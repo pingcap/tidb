@@ -266,15 +266,16 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
-	if len(list) > 10 {
-		list = list[:10]
-	}
 	var buf strings.Builder
 	oomAction := variable.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
-	for i, info := range list {
+	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
+		info := list[i]
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
+		if fields == nil {
+			continue
+		}
 		fields = append(fields, zap.String("tidb_mem_oom_action", oomAction))
 		fields = append(fields, zap.Uint64("tidb_server_memory_limit", serverMemoryLimit))
 		fields = append(fields, zap.Int64("tidb_mem_quota_query", info.OOMAlarmVariablesInfo.SessionMemQuotaQuery))
@@ -294,6 +295,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 			}
 			buf.WriteString("\n")
 		}
+		totalCnt--
 	}
 	buf.WriteString("\n")
 	return buf

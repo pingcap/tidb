@@ -130,3 +130,7 @@ func GetFlatPlanSuiteData() testdata.TestData {
 func GetBinaryPlanSuiteData() testdata.TestData {
 	return testDataMap["binary_plan_suite"]
 }
+
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
+}

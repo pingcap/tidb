@@ -336,21 +336,23 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	appendColumnPruneTraceStep(ds, prunedColumns, opt)
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
+	// There are two situations
+	// case 1: tiflash. Select a non-empty and narrowest column.
+	//         The main reason is that tiflash is a column storage structure,
+	//         and choosing the narrowest column can reduce the amount of data read as much as possible,
+	//         making the reading efficiency the best.
+	// case 2: tikv. Select row_id or pk column.
+	//         The main reason is that tikv is a kv store.
+	//         Select the key column for the best read efficiency.
 	if ds.schema.Len() == 0 {
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
-		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
-			// use the first line.
-			handleCol = originSchemaColumns[0]
-			handleColInfo = originColumns[0]
+		// case 1: tiflash
+		if ds.tableInfo.TiFlashReplica != nil {
+			handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
 		} else {
-			if ds.handleCols != nil {
-				handleCol = ds.handleCols.GetCol(0)
-				handleColInfo = handleCol.ToInfo()
-			} else {
-				handleCol = ds.newExtraHandleSchemaCol()
-				handleColInfo = model.NewExtraHandleColInfo()
-			}
+			// case 2: tikv
+			handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
@@ -657,4 +659,56 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fm
 		return ""
 	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+// pick a not null and narrowest column from table
+func preferNotNullColumnFromTable(dataSource *DataSource) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+
+	if dataSource.handleCols != nil {
+		resultColumn = dataSource.handleCols.GetCol(0)
+		resultColumnInfo = resultColumn.ToInfo()
+	} else {
+		resultColumn = dataSource.newExtraHandleSchemaCol()
+		resultColumnInfo = model.NewExtraHandleColInfo()
+	}
+
+	for _, columnInfo := range dataSource.tableInfo.Columns {
+		if columnInfo.FieldType.IsVarLengthType() {
+			continue
+		}
+		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
+			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
+				resultColumnInfo = columnInfo
+				resultColumn = &expression.Column{
+					UniqueID: dataSource.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       resultColumnInfo.ID,
+					RetType:  resultColumnInfo.FieldType.Clone(),
+					OrigName: fmt.Sprintf("%s.%s.%s", dataSource.DBName.L, dataSource.tableInfo.Name.L, resultColumnInfo.Name),
+				}
+			}
+		}
+	}
+	return resultColumn, resultColumnInfo
+}
+
+func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
+	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
+		// use the first column.
+		resultColumnInfo = originSchemaColumns[0]
+		resultColumn = originColumns[0]
+	} else {
+		if dataSource.handleCols != nil {
+			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else {
+			resultColumn = dataSource.newExtraHandleSchemaCol()
+			resultColumnInfo = model.NewExtraHandleColInfo()
+		}
+	}
+	return resultColumn, resultColumnInfo
 }

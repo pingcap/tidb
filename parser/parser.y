@@ -373,6 +373,7 @@ import (
 	deallocate            "DEALLOCATE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
 	disabled              "DISABLED"
@@ -6402,6 +6403,7 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"DIGEST"
 
 TiDBKeyword:
 	"ADMIN"
@@ -13164,6 +13166,15 @@ DropBindingStmt:
 
 		$$ = x
 	}
+|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.DropBindingStmt{
+			GlobalScope: $2.(bool),
+			SQLDigest:   $7,
+		}
+
+		$$ = x
+	}
 
 SetBindingStmt:
 	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
@@ -13906,6 +13917,7 @@ ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 DryRunOptions:
 	{
