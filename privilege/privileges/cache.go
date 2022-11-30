@@ -92,6 +92,7 @@ type baseRecord struct {
 	hostIPNet *net.IPNet
 }
 
+// UserAttributesInfo is user UserAttributes.PasswordLocking in privilege cache.
 type UserAttributesInfo struct {
 	FailedLoginAttempts   int64
 	PasswordLockTime      int64
