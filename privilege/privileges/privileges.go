@@ -381,8 +381,8 @@ func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string
 			zap.String("authUser", user), zap.String("authHost", host))
 		return "", ErrAccessDenied.FastGenByArgs(user, host)
 	}
-	autoLock := record.AutoAccountLocked
-	if autoLock {
+
+	if record.AutoAccountLocked {
 		lockTime := record.PasswordLockTime
 		if lockTime == -1 {
 			return "", GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")

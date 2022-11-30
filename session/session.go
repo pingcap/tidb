@@ -2664,7 +2664,7 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 	}
 	pm := privilege.GetPrivilegeManager(s)
-	if !(passwordLocking.FailedLoginCount == 0 && !passwordLocking.AutoAccountLocked) {
+	if passwordLocking.FailedLoginCount != 0 {
 		passwordLockingJSON := pm.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
 			passwordLocking.PasswordLockTimeDays)
 		if passwordLockingJSON != "" {
