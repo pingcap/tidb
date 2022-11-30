@@ -31,9 +31,9 @@ var samples = [100]float64{
 }
 
 func TestExponential(t *testing.T) {
-	win := NewExponentialMovingAverage(100, 2)
+	win := NewExponentialMovingAverage(0.2, 2)
 	for _, s := range samples {
 		win.Add(s)
 	}
-	require.Equal(t, 4552.25359667918, win.Get())
+	require.Equal(t, 3886.6630486098793, win.Get())
 }

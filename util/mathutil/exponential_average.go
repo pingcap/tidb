@@ -16,15 +16,11 @@ package mathutil
 
 import "sync"
 
-func factor(n int) float64 {
-	return 2.0 / float64(n+1)
-}
-
 // ExponentialMovingAverage is an exponential moving average measurement implementation.
 type ExponentialMovingAverage struct {
 	value        float64
 	sum          float64
-	factor       int
+	factor       float64
 	warmupWindow int
 	count        int
 
@@ -33,11 +29,11 @@ type ExponentialMovingAverage struct {
 
 // NewExponentialMovingAverage will create a new ExponentialMovingAverage
 func NewExponentialMovingAverage(
-	factor int,
+	factor float64,
 	warmupWindow int,
 ) *ExponentialMovingAverage {
-	if factor <= 1 {
-		panic("factor must be greater than 1")
+	if factor >= 1 || factor == 0 {
+		panic("factor must be (0, 1)")
 	}
 	return &ExponentialMovingAverage{
 		factor:       factor,
@@ -54,8 +50,7 @@ func (m *ExponentialMovingAverage) Add(value float64) {
 		m.sum += value
 		m.value = m.sum / float64(m.count)
 	} else {
-		f := factor(m.factor)
-		m.value = m.value*(1-f) + value*f
+		m.value = m.value*m.factor + value*(1-m.factor)
 	}
 }
 
