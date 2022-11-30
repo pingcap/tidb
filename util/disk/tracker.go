@@ -22,8 +22,8 @@ import (
 type Tracker = memory.Tracker
 
 // NewTracker creates a disk tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
 
 // NewGlobalTrcaker creates a global disk tracker.

@@ -569,10 +569,12 @@ func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr express
 // It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
 // For example, you can write `eq`(a, 1), which is the same as a = 1.
 // We should have implemented this by first implementing a method to turn an expression to an AST
-//   then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
+//
+//	then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
 //
 // It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
-//   and it may not be general enough to handle all possible expressions. So we put it here for now.
+//
+//	and it may not be general enough to handle all possible expressions. So we put it here for now.
 func ExprToString(e expression.Expression) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:

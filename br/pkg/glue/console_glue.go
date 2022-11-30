@@ -91,8 +91,10 @@ func (t *Table) maxKeyLen() int {
 
 // Print prints the table.
 // The format would be like:
-//    Key1: <Value>
-//   Other: <Value>
+//
+//	 Key1: <Value>
+//	Other: <Value>
+//
 // LongKey: <Value>
 // The format may change if the terminal size is small.
 func (t *Table) Print() {
@@ -267,7 +269,9 @@ func (ps PrettyString) slicePointOf(s int) (realSlicePoint, endAt int) {
 // It is the abstraction of some subarea of the terminal,
 // you might imagine it as a panel in the tmux, but with infinity height.
 // For example, printing a frame with the width of 10 chars, and 4 chars offset left, would be like:
-//    v~~~~~~~~~~v Here is the "width of a frame".
+//
+//	v~~~~~~~~~~v Here is the "width of a frame".
+//
 // +--+----------+--+
 // |   Hello, wor   |
 // |   ld.          |

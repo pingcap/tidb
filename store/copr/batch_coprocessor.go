@@ -282,11 +282,12 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
-// 1. the first region of each original batch cop task belongs to its original store because some
-//    meta data(like the rpc context) in batchCopTask is related to it
-// 2. for the remaining regions:
-//    if there is only 1 available store, then put the region to the related store
-//    otherwise, these region will be balance between TiFlash stores.
+//  1. the first region of each original batch cop task belongs to its original store because some
+//     meta data(like the rpc context) in batchCopTask is related to it
+//  2. for the remaining regions:
+//     if there is only 1 available store, then put the region to the related store
+//     otherwise, these region will be balance between TiFlash stores.
+//
 // Currently, there are two balance strategies.
 // The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
 //

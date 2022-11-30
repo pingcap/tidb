@@ -2257,7 +2257,7 @@ func TestIndexUsageInformation(t *testing.T) {
 	))
 }
 
-//Functional Test:test batch insert
+// Functional Test:test batch insert
 func TestIndexUsageInformationMultiIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
