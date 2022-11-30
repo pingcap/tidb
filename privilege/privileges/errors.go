@@ -28,3 +28,11 @@ var (
 	errAccountHasBeenLocked                               = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
 )
+
+type ErrUserPasswordFailed struct {
+	err error
+}
+
+func (e *ErrUserPasswordFailed) Error() string {
+	return e.err.Error()
+}

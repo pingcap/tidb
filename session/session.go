@@ -2608,17 +2608,17 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	//If enabled, determine whether to unlock the account and notify TiDB to update the cache
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
-		passwordLockingJSON, verErr := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
-		if verErr != nil {
-			return verErr
+		passwordLockingJSON, err := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
+		if err != nil {
+			return err
 		}
 		if passwordLockingJSON != "" {
-			if lockErr := s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJSON); lockErr != nil {
-				return lockErr
+			if err = s.passwordLocking(authUser.Username, authUser.Hostname, passwordLockingJSON); err != nil {
+				return err
 			}
-			notifyUpdatePrivilegeErr := domain.GetDomain(s).NotifyUpdatePrivilege()
-			if notifyUpdatePrivilegeErr != nil {
-				return notifyUpdatePrivilegeErr
+			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -2626,10 +2626,16 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if connVerifErr != nil {
 		//when user enables the account locking function for consecutive login failures,
 		//the system updates the login failure count and determines whether to lock the account when authentication fails
-		if enableAutoLock && pm.IsConnectionPasswordFailed(authUser.Username, authUser.Hostname, authentication) {
-			if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
-				return trackingErr
+		if enableAutoLock {
+			switch connVerifErr.(type) {
+			case *privileges.ErrUserPasswordFailed:
+				if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
+					return trackingErr
+				}
+			default:
+				return err
 			}
+
 		}
 		return connVerifErr
 	}

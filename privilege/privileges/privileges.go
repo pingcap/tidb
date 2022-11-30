@@ -452,17 +452,6 @@ func buildPasswordLockingJSON(failedLoginAttempts int64,
 	return ""
 }
 
-// IsConnectionPasswordFailed implements the Manager interface.
-func (p *UserPrivileges) IsConnectionPasswordFailed(authUser, authHost string, authentication []byte) bool {
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(authUser, authHost)
-	pwd := record.AuthenticationString
-	if record.AuthPlugin != mysql.AuthTiDBAuthToken && (len(pwd) > 0 || len(authentication) > 0) && !record.AccountLocked {
-		return true
-	}
-	return false
-}
-
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
 	hasPassword := "YES"
@@ -523,11 +512,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -536,22 +525,22 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 			}
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
 		if record.AuthPlugin != mysql.AuthSocket {
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return &ErrUserPasswordFailed{ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)}
 		}
 	}
 
