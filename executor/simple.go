@@ -1229,8 +1229,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 	return false, nil
 }
 
-func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context, passwordNum int64) (bool, error) {
+func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo) (bool, error) {
 	sql := new(strings.Builder)
 	// Exceeded the maximum number of saved items, only check the ones within the limit
 	checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
@@ -1252,7 +1251,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 }
 
 func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context, passwordNum int64) (bool, error) {
+	sctx sessionctx.Context) (bool, error) {
 	sql := new(strings.Builder)
 	beforeDate := getValidTime(sctx, passwordReuse)
 	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
@@ -1295,13 +1294,13 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 
 	if passwordReuse.passwordHistory > 0 {
-		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx, passwordNum)
+		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
 	}
 	if passwordReuse.passwordReuseInterval > 0 {
-		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx, passwordNum)
+		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
@@ -1394,10 +1393,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return err
 	}
 
@@ -1424,34 +1419,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
 
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
-				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-				if errRollback != nil {
-					return errRollback
-				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
-				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-				if errRollback != nil {
-					return errRollback
-				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
 			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
-				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-				if errRollback != nil {
-					return errRollback
-				}
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
 		exists, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		}
 
@@ -1473,10 +1452,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
 		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
@@ -1491,10 +1466,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin == "" {
 				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
-					_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-					if errRollback != nil {
-						return errRollback
-					}
 					return err
 				}
 				spec.AuthOpt.AuthPlugin = curAuthplugin
@@ -1507,27 +1478,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
-				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-				if errRollback != nil {
-					return errRollback
-				}
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
 				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
-					_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-					if errRollback != nil {
-						return errRollback
-					}
 					return err
 				}
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
-				_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-				if errRollback != nil {
-					return errRollback
-				}
 				return errors.Trace(ErrPasswordFormat)
 			}
 			// for Support Password Reuse Policy
@@ -1537,9 +1496,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				userDetail := &userInfo{spec.User.Hostname, spec.User.Username, passwdlockinfo, pwd}
 				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
 				if err != nil {
-					if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
-						return err
-					}
 					return err
 				}
 			}
@@ -1633,9 +1589,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if len(failedUsers) > 0 {
 		// Compatible with mysql8.0, `ALTER USER` realizes atomic operation
 		if !s.IfExists || needRollback {
-			if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
-				return err
-			}
 			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
 		for _, user := range failedUsers {
@@ -1644,10 +1597,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return err
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
@@ -2095,20 +2044,12 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return err
 	}
 
 	var u, h string
 	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return errors.New("Session error is empty")
 		}
 		u = e.ctx.GetSessionVars().User.AuthUsername
@@ -2117,22 +2058,12 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
 		u = s.User.Username
 		h = s.User.Hostname
 	}
 	exists, err := userExistsInternal(ctx, sqlExecutor, u, h)
-	if err != nil || !exists {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
-	}
 	if err != nil {
 		return err
 	}
@@ -2142,18 +2073,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	authplugin, err := e.userAuthPlugin(u, h)
 	if err != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return err
 	}
 	if e.isValidatePasswordEnabled() {
 		if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		}
 	}
@@ -2179,10 +2102,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		userDetail := &userInfo{h, u, passwdlockinfo, pwd}
 		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
 		if err != nil {
-			_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-			if errRollback != nil {
-				return errRollback
-			}
 			return err
 		}
 	}
@@ -2191,16 +2110,9 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
-		if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
-			return rollbackErr
-		}
 		return err
 	}
 	if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "commit"); rollbackErr != nil {
-		_, errRollback := sqlExecutor.ExecuteInternal(ctx, "rollback")
-		if errRollback != nil {
-			return errRollback
-		}
 		return rollbackErr
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
