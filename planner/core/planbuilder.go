@@ -980,7 +980,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	var p *SQLBindPlan
-	if v.SQLDigest == "" {
+	if v.OriginNode != nil {
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
 			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),

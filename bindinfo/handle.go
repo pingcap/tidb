@@ -668,8 +668,8 @@ func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 }
 
 // GetBindRecordBySQLDigest returns the BindRecord of the sql digest.
-func (h *BindHandle) GetBindRecordBySQLDigest(hash string) (*BindRecord, error) {
-	return h.bindInfo.Load().(*bindCache).GetBindRecordBySQLDigest(hash)
+func (h *BindHandle) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
+	return h.bindInfo.Load().(*bindCache).GetBindRecordBySQLDigest(sqlDigest)
 }
 
 // GetAllBindRecord returns all bind records in cache.

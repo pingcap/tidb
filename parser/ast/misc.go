@@ -1883,7 +1883,7 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SESSION ")
 	}
 	ctx.WriteKeyWord("BINDING FOR ")
-	if n.SQLDigest != "" {
+	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
 		ctx.WriteString(n.SQLDigest)
 	} else {
@@ -1906,8 +1906,8 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
-	if n.SQLDigest == "" {
-		// if n.SQLDigest != "" means we build drop binding by sql digest
+	if n.OriginNode != nil {
+		//  OriginNode is nil means we build drop binding by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false

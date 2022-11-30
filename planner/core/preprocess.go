@@ -304,7 +304,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
-		if node.SQLDigest == "" {
+		if node.OriginNode != nil {
 			EraseLastSemicolon(node.OriginNode)
 			if node.HintedNode != nil {
 				EraseLastSemicolon(node.HintedNode)

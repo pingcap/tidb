@@ -1383,4 +1383,8 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.NoError(t, h.GCBindRecord())
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for `1`")
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
 }
