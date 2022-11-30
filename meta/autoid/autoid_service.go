@@ -157,6 +157,8 @@ retry:
 const backoffDuration = 200 * time.Millisecond
 
 func (sp *singlePointAlloc) resetConn(reason error) {
+	logutil.BgLogger().Info("[autoid client] AllocAutoID grpc error, reconnect",
+		zap.String("reason", reason.Error()))
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
 	grpcConn = sp.mu.ClientConn
@@ -166,9 +168,9 @@ func (sp *singlePointAlloc) resetConn(reason error) {
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
 		err := grpcConn.Close()
-		logutil.BgLogger().Info("[autoid client] AllocAutoID grpc error, reconnect",
-			zap.String("reason", reason.Error()),
-			zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Info("[autoid client] close grpc connection error", zap.Error(err))
+		}
 	}
 }
 
@@ -252,5 +254,5 @@ func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 }
 
 func (*singlePointAlloc) GetType() AllocatorType {
-	return RowIDAllocType
+	return AutoIncrementType
 }

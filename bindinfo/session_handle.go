@@ -33,13 +33,12 @@ import (
 
 // SessionHandle is used to handle all session sql bind operations.
 type SessionHandle struct {
-	ch     *bindCache
-	parser *parser.Parser
+	ch *bindCache
 }
 
 // NewSessionBindHandle creates a new SessionBindHandle.
-func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
-	sessionHandle := &SessionHandle{parser: parser}
+func NewSessionBindHandle() *SessionHandle {
+	sessionHandle := &SessionHandle{}
 	sessionHandle.ch = newBindCache()
 	return sessionHandle
 }

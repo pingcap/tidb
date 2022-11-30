@@ -66,6 +66,11 @@ error = '''
 restore met a invalid peer
 '''
 
+["BR:EBS:ErrRestoreRegionWithoutPeer"]
+error = '''
+restore met a region without any peer
+'''
+
 ["BR:EBS:ErrRestoreTotalKVMismatch"]
 error = '''
 restore total tikvs mismatch
@@ -1189,6 +1194,21 @@ Unknown SEQUENCE: '%-.300s'
 ["ddl:8006"]
 error = '''
 `%s` is unsupported on temporary tables.
+'''
+
+["ddl:8148"]
+error = '''
+Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+'''
+
+["ddl:8149"]
+error = '''
+Cannot drop column '%-.192s': needed in TTL config
+'''
+
+["ddl:8150"]
+error = '''
+Cannot set TTL_ENABLE on a table without TTL config
 '''
 
 ["ddl:8200"]
