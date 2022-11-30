@@ -1232,7 +1232,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseRowIDType(d, t, job)
+		ver, err = onRebaseAutoIncrementIDType(d, t, job)
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d, t, job)
 	case model.ActionRenameTable:
@@ -1287,6 +1287,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionAlterTTLInfo:
+		ver, err = onTTLInfoChange(d, t, job)
+	case model.ActionAlterTTLRemove:
+		ver, err = onTTLInfoRemove(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

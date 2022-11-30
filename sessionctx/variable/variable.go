@@ -85,6 +85,7 @@ const (
 // Global config name list.
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
+	GlobalConfigSourceID     = "source_id"
 )
 
 func (s ScopeFlag) String() string {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package issuetest_test
 
 import (
 	"context"
@@ -684,6 +684,9 @@ func TestIssue22231(t *testing.T) {
 	tk.MustQuery("select cast('2020-05-28 23:59:59 00:00:00' as datetime)").Check(testkit.Rows("2020-05-28 23:59:59"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '2020-05-28 23:59:59 00:00:00'"))
 	tk.MustExec("drop table if exists t_issue_22231")
+
+	tk.MustQuery("SELECT CAST(\"1111111111-\" AS DATE);")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '1111111111-'"))
 }
 
 // TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
@@ -1235,5 +1238,48 @@ func TestIssue33214(t *testing.T) {
 		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
 			break
 		}
+	}
+}
+
+func TestIssue982(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c int auto_increment, key(c)) auto_id_cache 1;")
+	tk.MustExec("insert into t values();")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+}
+
+func TestIssue24627(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range []string{
+		"create table test(id float primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test(id float primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec("drop table if exists test;")
+		tk.MustExec(sql)
+		tk.MustExec("replace into test(col1) values(1);")
+		tk.MustExec("replace into test(col1) values(2);")
+		tk.MustQuery("select * from test;").Check(testkit.Rows("1 1", "2 2"))
+		tk.MustExec("drop table test")
+	}
+
+	for _, sql := range []string{
+		"create table test2(id double primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test2(id double primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec(sql)
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustQuery("select * from test2").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1", "6 1"))
+		tk.MustExec("drop table test2")
 	}
 }

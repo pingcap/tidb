@@ -63,7 +63,7 @@ func NewWatcher() *Watcher {
 
 // Start starts the watching
 func (w *Watcher) Start(d time.Duration) error {
-	if !w.running.CAS(0, 1) {
+	if !w.running.CompareAndSwap(0, 1) {
 		return ErrWatcherStarted
 	}
 
@@ -83,7 +83,7 @@ func (w *Watcher) Start(d time.Duration) error {
 
 // Close stops the watching
 func (w *Watcher) Close() {
-	if !w.running.CAS(1, 0) {
+	if !w.running.CompareAndSwap(1, 0) {
 		return
 	}
 
