@@ -155,6 +155,13 @@ var (
 			Name:      "flashback_cluster_usage",
 			Help:      "Counter of usage of flashback cluster",
 		})
+	TelemetryCompactPartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "compact_partition_usage",
+			Help:      "Counter of compact table partition",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -254,6 +261,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
+	TablePartitionComactCnt                   int64 `json:"table_TablePartitionComactCnt"`
 }
 
 // ExchangePartitionUsageCounter records the usages of exchange partition.
@@ -291,6 +299,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
+		TablePartitionComactCnt:                   c.TablePartitionComactCnt - rhs.TablePartitionComactCnt,
 	}
 }
 
@@ -326,12 +335,14 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionCreateIntervalPartitionsCnt: readCounter(TelemetryTablePartitionCreateIntervalPartitionsCnt),
 		TablePartitionAddIntervalPartitionsCnt:    readCounter(TelemetryTablePartitionAddIntervalPartitionsCnt),
 		TablePartitionDropIntervalPartitionsCnt:   readCounter(TelemetryTablePartitionDropIntervalPartitionsCnt),
+		TablePartitionComactCnt:                   readCounter(TelemetryCompactPartitionCnt),
 	}
 }
 
 // NonTransactionalStmtCounter records the usages of non-transactional statements.
 type NonTransactionalStmtCounter struct {
 	DeleteCount int64 `json:"delete"`
+	UpdateCount int64 `json:"update"`
 	InsertCount int64 `json:"insert"`
 }
 
@@ -339,6 +350,7 @@ type NonTransactionalStmtCounter struct {
 func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+		UpdateCount: n.UpdateCount - rhs.UpdateCount,
 		InsertCount: n.InsertCount - rhs.InsertCount,
 	}
 }
@@ -347,6 +359,7 @@ func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTra
 func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "delete"})),
+		UpdateCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "update"})),
 		InsertCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "insert"})),
 	}
 }

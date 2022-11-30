@@ -127,6 +127,10 @@ const (
 	TypeCTE = "CTEFullScan"
 	// TypeCTEDefinition is the type of CTE definition
 	TypeCTEDefinition = "CTE"
+	// TypeForeignKeyCheck is the type of FKCheck
+	TypeForeignKeyCheck = "Foreign_Key_Check"
+	// TypeForeignKeyCascade is the type of FKCascade
+	TypeForeignKeyCascade = "Foreign_Key_Cascade"
 )
 
 // plan id.
@@ -187,6 +191,8 @@ const (
 	typePartitionUnionID      int = 53
 	typeShuffleID             int = 54
 	typeShuffleReceiverID     int = 55
+	typeForeignKeyCheck       int = 56
+	typeForeignKeyCascade     int = 57
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -302,6 +308,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeCTEDefinitionID
 	case TypeCTETable:
 		return typeCTETableID
+	case TypeForeignKeyCheck:
+		return typeForeignKeyCheck
+	case TypeForeignKeyCascade:
+		return typeForeignKeyCascade
 	}
 	// Should never reach here.
 	return 0
@@ -420,6 +430,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeCTEDefinition
 	case typeCTETableID:
 		return TypeCTETable
+	case typeForeignKeyCheck:
+		return TypeForeignKeyCheck
+	case typeForeignKeyCascade:
+		return TypeForeignKeyCascade
 	}
 
 	// Should never reach here.

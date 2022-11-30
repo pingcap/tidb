@@ -1850,6 +1850,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 
 	// tk2 starts a pessimistic transaction and make some changes on table t1.
 	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
@@ -1880,6 +1881,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
 
 	// Extend column field length is acceptable.
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
@@ -2153,6 +2155,7 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
@@ -2173,6 +2176,7 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
 	tk2.MustExec("alter table t1 drop column new_col")
 	require.Error(t, tk4.ExecToErr("commit"))
+	tk4.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5)")
@@ -2303,6 +2307,7 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := createAsyncCommitTestKit(t, store)
 	tk3 := createAsyncCommitTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2377,6 +2382,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values (1, 1)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2424,6 +2430,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t1")
@@ -2546,6 +2553,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t")
@@ -2563,6 +2571,7 @@ func TestIssue21498(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
 	for _, partition := range []bool{false, true} {
@@ -2732,6 +2741,7 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, v int, unique index iv (v), vv int)")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (4, 4, 4)")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
@@ -2899,6 +2909,7 @@ func TestAmendForIndexChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
 	tk.Session().GetSessionVars().EnableAsyncCommit = false
 	tk.Session().GetSessionVars().Enable1PC = false
@@ -2974,6 +2985,7 @@ func TestAmendForColumnChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
 	tk2.MustExec("drop table if exists t1")
 
