@@ -912,6 +912,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
+
+		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
+		if path.StoreType == kv.TiFlash && ds.isForUpdateRead && ds.ctx.GetSessionVars().TxnCtx.IsExplicit {
+			if ds.isPointGetConditions() {
+				continue
+			}
+		}
+
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
 		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
@@ -1901,6 +1909,66 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	is.stats = stats
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
 	return is
+}
+
+// isPointGetConditions indicates whether the conditions are point-get-able.
+// eg: create table t(a int, b int,c int unique, primary (a,b))
+// select * from t where a = 1 and b = 1 and c =1;
+// the datasource can access by primary key(a,b) or unique key (c) which are both point-get-able
+func (ds *DataSource) isPointGetConditions() bool {
+	t, _ := ds.is.TableByID(ds.physicalTableID)
+	columns := map[string]struct{}{}
+	for _, cond := range ds.allConds {
+		s, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		if s.FuncName.L != ast.EQ || (s.FuncName.L == ast.In && len(s.GetArgs()) != 2) {
+			return false
+		}
+		arg0 := s.GetArgs()[0]
+		arg1 := s.GetArgs()[1]
+		_, ok1 := arg0.(*expression.Constant)
+		col, ok2 := arg1.(*expression.Column)
+		if ok1 && ok2 {
+			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
+			continue
+		}
+		col, ok1 = arg0.(*expression.Column)
+		_, ok2 = arg1.(*expression.Constant)
+		if ok1 && ok2 {
+			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
+			continue
+		}
+	}
+	return ds.findPKOrUniqueIndexMatchColumns(columns)
+}
+
+func (ds *DataSource) findPKOrUniqueIndexMatchColumns(columns map[string]struct{}) bool {
+	for _, idx := range ds.tableInfo.Indices {
+		if !idx.Unique && !idx.Primary {
+			continue
+		}
+		if idx.HasPrefixIndex() {
+			continue
+		}
+		if len(idx.Columns) > len(columns) {
+			continue
+		}
+		flag := true
+		for _, idxCol := range idx.Columns {
+			_, ok := columns[idxCol.Name.String()]
+			if !ok {
+				flag = false
+				break
+			}
+		}
+		if !flag {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // convertToTableScan converts the DataSource to table scan.

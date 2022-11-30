@@ -4811,6 +4811,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
+		sqlDigest:    v.SQLDigest,
 	}
 	return e
 }
@@ -4906,7 +4907,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
 	if plan.IndexInfo != nil {
