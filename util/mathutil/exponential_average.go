@@ -43,7 +43,7 @@ func NewExponentialAverageMeasurement(
 }
 
 // Add a single sample and update the internal state.
-func (m *ExponentialAverageMeasurement) Add(value float64) (float64, bool) {
+func (m *ExponentialAverageMeasurement) Add(value float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.count < m.warmupWindow {
@@ -54,7 +54,6 @@ func (m *ExponentialAverageMeasurement) Add(value float64) (float64, bool) {
 		f := factor(m.window)
 		m.value = m.value*(1-f) + value*f
 	}
-	return m.value, true
 }
 
 // Get the current value.
