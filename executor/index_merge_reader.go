@@ -922,14 +922,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	if w.indexMerge.partitionTableMode {
 		partCnt = len(w.indexMerge.prunedPartitions)
 	}
-<<<<<<< HEAD
-	workerCnt := partCnt
-	if workerCnt > maxWorkerCnt {
-		workerCnt = maxWorkerCnt
-	}
-=======
 	workerCnt := mathutil.Min(partCnt, maxWorkerCnt)
->>>>>>> 179fcef405c73497af86813192535569d8480dc6
 	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
 		con := val.(int)
 		if con != workerCnt {
