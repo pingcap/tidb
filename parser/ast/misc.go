@@ -1907,6 +1907,7 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*DropBindingStmt)
 	if n.SQLDigest == "" {
+		// if n.SQLDigest != "" means we build drop binding by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
