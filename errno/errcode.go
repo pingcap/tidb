@@ -842,7 +842,6 @@ const (
 	ErrDependentByGeneratedColumn                            = 3108
 	ErrGeneratedColumnRefAutoInc                             = 3109
 	ErrAccountHasBeenLocked                                  = 3118
-	ErrAccountHasBeenAutoLocked                              = 3957
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
@@ -919,6 +918,7 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030

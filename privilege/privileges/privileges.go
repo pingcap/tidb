@@ -367,7 +367,7 @@ func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
 		"consecutive failed logins.", user, host, lockTime,
 		remainTime, failedLoginAttempts))
-	return ErrAccountHasBeenAutoLocked.FastGenByArgs(user, host,
+	return ErUserAccessDeniedForUserAccountBlockedByPasswordLock.FastGenByArgs(user, host,
 		lockTime, remainTime, failedLoginAttempts)
 }
 
