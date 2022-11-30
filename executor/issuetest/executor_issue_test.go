@@ -1240,3 +1240,46 @@ func TestIssue33214(t *testing.T) {
 		}
 	}
 }
+
+func TestIssue982(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c int auto_increment, key(c)) auto_id_cache 1;")
+	tk.MustExec("insert into t values();")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+}
+
+func TestIssue24627(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range []string{
+		"create table test(id float primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test(id float primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec("drop table if exists test;")
+		tk.MustExec(sql)
+		tk.MustExec("replace into test(col1) values(1);")
+		tk.MustExec("replace into test(col1) values(2);")
+		tk.MustQuery("select * from test;").Check(testkit.Rows("1 1", "2 2"))
+		tk.MustExec("drop table test")
+	}
+
+	for _, sql := range []string{
+		"create table test2(id double primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test2(id double primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec(sql)
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustQuery("select * from test2").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1", "6 1"))
+		tk.MustExec("drop table test2")
+	}
+}

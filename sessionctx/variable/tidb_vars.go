@@ -425,6 +425,9 @@ const (
 	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
 
+	// TiDBIndexMergeIntersectionConcurrency is used for parallel worker of index merge intersection.
+	TiDBIndexMergeIntersectionConcurrency = "tidb_index_merge_intersection_concurrency"
+
 	// TiDBEnableParallelApply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
@@ -1091,13 +1094,14 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold        float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan          = true
-	DefTiDBExternalTS                        = 0
-	DefTiDBEnableExternalTSRead              = false
-	DefTiDBEnableReusechunk                  = true
-	DefTiDBUseAlloc                          = false
-	DefTiDBEnablePlanReplayerCapture         = false
+	DefTiDBGOGCTunerThreshold                float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                  = true
+	DefTiDBExternalTS                                = 0
+	DefTiDBEnableExternalTSRead                      = false
+	DefTiDBEnableReusechunk                          = true
+	DefTiDBUseAlloc                                  = false
+	DefTiDBEnablePlanReplayerCapture                 = false
+	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
 )
 
 // Process global variables.

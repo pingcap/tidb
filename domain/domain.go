@@ -724,7 +724,6 @@ func (do *Domain) mdlCheckLoop() {
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
 					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-					jobNeedToSync = true
 				} else {
 					jobCache[jobID] = ver
 				}

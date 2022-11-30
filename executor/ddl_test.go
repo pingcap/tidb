@@ -79,10 +79,8 @@ func TestInTxnExecDDLFail(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
-	_, err := tk.Exec("truncate table t;")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
-	result := tk.MustQuery("select count(*) from t")
-	result.Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("truncate table t;", "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 }
 
 func TestInTxnExecDDLInvalid(t *testing.T) {
@@ -212,11 +210,9 @@ func TestCreateView(t *testing.T) {
 	// test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
-	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	require.EqualError(t, err, "[schema:1050]Table 'test.view_t' already exists")
+	tk.MustGetErrMsg("CREATE VIEW view_t AS select id , name from source_table", "[schema:1050]Table 'test.view_t' already exists")
 	// create view on nonexistent table
-	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1", "[schema:1146]Table 'test.t1' doesn't exist")
 	// simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -231,26 +227,22 @@ func TestCreateView(t *testing.T) {
 	// view with select wild card
 	tk.MustExec("create view v5 as select * from t1")
 	tk.MustExec("create view v6 (c,d) as select * from t1")
-	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
+	tk.MustGetErrCode("create view v7 (c,d,e) as select * from t1", errno.ErrViewWrongList)
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	require.EqualError(t, err, "[schema:1050]Table 'test.v1' already exists")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
 	// view with different col counts
-	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
-	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
+	tk.MustGetErrCode("create view v1 (c,d,e) as select a,b from t1 ", errno.ErrViewWrongList)
+	tk.MustGetErrCode("create view v1 (c) as select a,b from t1 ", errno.ErrViewWrongList)
 	// view with or_replace flag
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 (c,d) as select a,b from t1")
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
-	_, err = tk.Exec("create or replace view t1 as select * from t1")
+	err := tk.ExecToErr("create or replace view t1 as select * from t1")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error(), err.Error())
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
@@ -259,8 +251,7 @@ func TestCreateView(t *testing.T) {
 	// create view on union
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("drop view if exists v")
-	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	tk.MustGetDBError("create view v as select * from t1 union select * from t2", infoschema.ErrTableNotExists)
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
@@ -268,14 +259,12 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 union select * from t2")
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
 	tk.MustExec("alter table t1 drop column a")
-	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	tk.MustGetDBError("select * from v", plannercore.ErrViewInvalid)
 	tk.MustExec("alter table t1 add column a int")
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
 	tk.MustExec("alter table t1 drop column a")
 	tk.MustExec("alter table t2 drop column b")
-	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	tk.MustGetDBError("select * from v", plannercore.ErrViewInvalid)
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create view v as (select * from t1)")
@@ -294,8 +283,7 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create table test_v_nested(a int)")
 	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
 	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
-	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrNoSuchTable))
+	tk.MustGetDBError("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2", plannercore.ErrNoSuchTable)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
 
@@ -322,8 +310,7 @@ func TestViewRecursion(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1")
 	tk.MustExec("drop table t")
 	tk.MustExec("rename table recursive_view2 to t")
-	_, err := tk.Exec("select * from recursive_view1")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewRecursive))
+	tk.MustGetDBError("select * from recursive_view1", plannercore.ErrViewRecursive)
 	tk.MustExec("drop view recursive_view1, t")
 }
 
@@ -333,8 +320,8 @@ func TestIssue16250(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create view view_issue16250 as select * from t")
-	_, err := tk.Exec("truncate table view_issue16250")
-	require.EqualError(t, err, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+	tk.MustGetErrMsg("truncate table view_issue16250",
+		"[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
 func TestIssue24771(t *testing.T) {
@@ -564,11 +551,11 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
-	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
+	err = tk.ExecToErr("alter table alter_view add column c4 varchar(50)")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
-	_, err = tk.Exec("alter table alter_seq add column c int")
+	err = tk.ExecToErr("alter table alter_seq add column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 }
@@ -591,11 +578,11 @@ func TestAlterTableAddColumns(t *testing.T) {
 	require.Nil(t, r.Close())
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
-	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
+	err = tk.ExecToErr("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
-	_, err = tk.Exec("alter table alter_seq add column (c1 int, c2 varchar(10))")
+	err = tk.ExecToErr("alter table alter_seq add column (c1 int, c2 varchar(10))")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 }
@@ -662,8 +649,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
-	require.NoError(t, err)
+	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
@@ -919,10 +905,8 @@ func TestShardRowIDBits(t *testing.T) {
 	tk.MustExec("insert into t1 values(1)")
 
 	// continue inserting will fail.
-	_, err = tk.Exec("insert into t1 values(2)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
-	_, err = tk.Exec("insert into t1 values(3)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
+	tk.MustGetDBError("insert into t1 values(2)", autoid.ErrAutoincReadFailed)
+	tk.MustGetDBError("insert into t1 values(3)", autoid.ErrAutoincReadFailed)
 }
 
 func TestAutoRandomBitsData(t *testing.T) {
@@ -1164,8 +1148,7 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
@@ -1207,8 +1190,7 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, variable.MaxDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_reorg_batch_size = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
@@ -1315,8 +1297,7 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(math.MaxInt64), variable.GetDDLErrorCountLimit())
-	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
@@ -1373,39 +1354,21 @@ func TestCheckDefaultFsp(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 
-	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp default now(1));", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp(1) default current_timestamp);", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp(1) default now(2));", "[ddl:1067]Invalid default value for 'tt'")
 
 	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
 	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
 	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
 
-	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
-
-	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp default now(2);", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp(5) default current_timestamp;", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp(5) default now(2);", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t modify column tt timestamp(1) default now();", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("alter table t modify column tt timestamp(4) default now(5);", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("alter table t change column tt tttt timestamp(4) default now(5);", "[ddl:1067]Invalid default value for 'tttt'")
+	tk.MustGetErrMsg("alter table t change column tt tttt timestamp(1) default now();", "[ddl:1067]Invalid default value for 'tttt'")
 }
 
 func TestTimestampMinDefaultValue(t *testing.T) {
