@@ -151,7 +151,7 @@ var (
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 
-	telemetryIndexMerge = metrics.TelemetryIndexMerge
+	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.

@@ -408,10 +408,10 @@ func getGlobalMemoryControl() bool {
 }
 
 func postReportIndexMergeUsage() {
-	initialIndexMergeCounter = metrics.GetIndexMergeCounter()
+	initialIndexMergeCounter = m.GetIndexMergeCounter()
 }
 
-func getIndexMergeUsageInfo(ctx sessionctx.Context) *m.IndexMergeUsageCounter {
+func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 	curr := m.GetIndexMergeCounter()
 	diff := curr.Sub(initialIndexMergeCounter)
 	return &diff
