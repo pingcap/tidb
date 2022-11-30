@@ -605,10 +605,6 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 	if !ok {
 		return nil
 	}
-	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
-	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
-	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
 		err := fkCheck.doCheck(ctx)
@@ -638,11 +634,25 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 //  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
 //  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCascadeRuntimeStats{}
+		defer a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.plan.ID(), fkc.stats)
+	}
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
+	if fkc.stats != nil {
+		start := time.Now()
+		defer func() {
+			fkc.stats.Total += time.Since(start)
+		}()
 	}
 	for {
 		e, err := fkc.buildExecutor(ctx)
