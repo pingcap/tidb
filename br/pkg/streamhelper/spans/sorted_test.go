@@ -191,6 +191,7 @@ func TestSubRange(t *testing.T) {
 			InputSequence: []spans.Valued{
 				kv(s("0004", "0008"), 32),
 				kv(s("00041", "0007"), 33),
+				kv(s("0004", "00041"), 99999),
 			},
 			Result: []spans.Valued{
 				kv(s("0001", "0004"), 0),
