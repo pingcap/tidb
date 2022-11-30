@@ -195,8 +195,17 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)
 
-	// column order mismatch(success)
+	// user table in cluster have more columns(success)
 	mockedUserTI := userTI.Clone()
+	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}})
+	require.NoError(t, err)
+
+	// column order mismatch(success)
+	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns[4], mockedUserTI.Columns[5] = mockedUserTI.Columns[5], mockedUserTI.Columns[4]
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
@@ -220,6 +229,19 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
+
+	// use the mysql.db table to test for column count mismatch.
+	dbTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("db"))
+	require.NoError(t, err)
+
+	// other system tables in cluster have more columns(failed)
+	mockedDBTI := dbTI.Clone()
+	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 }
 
 func TestInitFullClusterRestore(t *testing.T) {
