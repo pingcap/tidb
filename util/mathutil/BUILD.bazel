@@ -16,6 +16,7 @@ go_test(
     name = "mathutil_test",
     timeout = "short",
     srcs = [
+        "exponential_average_test.go",
         "main_test.go",
         "math_test.go",
         "rand_test.go",

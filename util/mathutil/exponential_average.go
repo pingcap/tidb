@@ -63,10 +63,3 @@ func (m *ExponentialAverageMeasurement) Get() float64 {
 	defer m.mu.RUnlock()
 	return m.value
 }
-
-// Update will update the value given an operation function
-func (m *ExponentialAverageMeasurement) Update(operation func(value float64) float64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.value = operation(m.value)
-}
