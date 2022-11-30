@@ -810,8 +810,6 @@ type passwordOrLockOptionsInfo struct {
 	PasswordLockTime          int64
 	FailedLoginAttemptsChange bool
 	PasswordLockTimeChange    bool
-	// PasswordLocking           string
-	// AlterPasswordLocking      string
 }
 
 type alterUserPasswordLocking struct {
