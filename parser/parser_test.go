@@ -5106,6 +5106,8 @@ func TestBinding(t *testing.T) {
 		{"drop session binding for replace into t1 select * from t2 where t1.a=1", true, "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"},
 		{"DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", true, "DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"},
 		{"DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", true, "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"},
+		{"DROP SESSION BINDING FOR SQL DIGEST 'a'", true, "DROP SESSION BINDING FOR SQL DIGEST 'a'"},
+		{"drop global binding for sql digest 's'", true, "DROP GLOBAL BINDING FOR SQL DIGEST 's'"},
 	}
 	RunTest(t, table, false)
 

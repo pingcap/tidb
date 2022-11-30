@@ -437,6 +437,15 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (d
 	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
 
+// DropBindRecordByDigest drop BindRecord to the storage and BindRecord int the cache.
+func (h *BindHandle) DropBindRecordByDigest(sqlDigest string) (deletedRows uint64, err error) {
+	oldRecord, err := h.GetBindRecordBySQLDigest(sqlDigest)
+	if err != nil {
+		return 0, err
+	}
+	return h.DropBindRecord(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+}
+
 // SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
 func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
 	h.bindInfo.Lock()
@@ -656,6 +665,11 @@ func (h *BindHandle) Size() int {
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
 func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return h.bindInfo.Load().(*bindCache).GetBindRecord(hash, normdOrigSQL, db)
+}
+
+// GetBindRecordBySQLDigest returns the BindRecord of the sql digest.
+func (h *BindHandle) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
+	return h.bindInfo.Load().(*bindCache).GetBindRecordBySQLDigest(sqlDigest)
 }
 
 // GetAllBindRecord returns all bind records in cache.

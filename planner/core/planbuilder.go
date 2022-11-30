@@ -979,14 +979,23 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 }
 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		IsGlobal:     v.GlobalScope,
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-	}
-	if v.HintedNode != nil {
-		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+	var p *SQLBindPlan
+	if v.OriginNode != nil {
+		p = &SQLBindPlan{
+			SQLBindOp:    OpSQLBindDrop,
+			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			IsGlobal:     v.GlobalScope,
+			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		}
+		if v.HintedNode != nil {
+			p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+		}
+	} else {
+		p = &SQLBindPlan{
+			SQLBindOp: OpSQLBindDropByDigest,
+			IsGlobal:  v.GlobalScope,
+			SQLDigest: v.SQLDigest,
+		}
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
