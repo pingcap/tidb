@@ -485,8 +485,10 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 	re, err := regexp.Compile("[0-9]+ KB")
 	require.NoError(t, err)
 	require.True(t, re.MatchString(memStr))
-	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
+	var bytes float64
+	n, err := fmt.Sscanf(memStr, "%f KB", &bytes)
 	require.NoError(t, err)
+	require.Equal(t, n, 1)
 	require.Greater(t, bytes, 0.0)
 }
 

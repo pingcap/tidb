@@ -3226,14 +3226,14 @@ func TestTrackAggMemoryUsage(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set tidb_track_aggregate_memory_usage = off;")
 	rows := tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
+	require.Regexp(t, "N/A", rows[0][7])
 	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
+	require.Regexp(t, "N/A", rows[0][7])
 	tk.MustExec("set tidb_track_aggregate_memory_usage = on;")
 	rows = tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
+	require.NotRegexp(t, "N/A", rows[0][7])
 	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
+	require.NotRegexp(t, "N/A", rows[0][7])
 }
 
 func TestProjectionBitType(t *testing.T) {
