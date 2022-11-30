@@ -2098,8 +2098,8 @@ func upgradeToVer104(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreatePasswordHistory)
-	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL  AFTER `Create_Tablespace_Priv` ")
-	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL  AFTER `Password_reuse_history`")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL AFTER `Create_Tablespace_Priv` ")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
 }
 
 func writeOOMAction(s Session) {

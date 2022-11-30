@@ -1154,7 +1154,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	sql := new(strings.Builder)
 	// no prohibition time
 	if passwordReuse.passwordReuseInterval == 0 {
-		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %?  order by Password_timestamp ASC LIMIT `
+		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
 		sqlexec.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
 			userDetail.user, strings.ToLower(userDetail.host))
@@ -1388,7 +1388,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	// session isolation level changed to  READ-COMMITTED
+	// session isolation level changed to READ-COMMITTED
 	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
@@ -2089,7 +2089,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	// session isolation level changed to  READ-COMMITTED
+	// session isolation level changed to READ-COMMITTED
 	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
