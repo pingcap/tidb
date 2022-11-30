@@ -3969,6 +3969,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
+		isIntersection:           v.IsIntersectionType,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -3976,6 +3977,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
+	if b.Ti != nil {
+		b.Ti.UseIndexMerge = true
+	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
