@@ -50,7 +50,7 @@ func (m *ExponentialMovingAverage) Add(value float64) {
 		m.sum += value
 		m.value = m.sum / float64(m.count)
 	} else {
-		m.value = m.value*m.factor + value*(1-m.factor)
+		m.value = m.value*(1-m.factor) + value*m.factor
 	}
 }
 
