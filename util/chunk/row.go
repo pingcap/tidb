@@ -135,7 +135,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 }
 
 // GetDatumWithBuffer gets datum using the buffer d.
-func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
+func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) types.Datum {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
@@ -202,6 +202,7 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 			d.SetMysqlJSON(r.GetJSON(colIdx))
 		}
 	}
+	return *d
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.
