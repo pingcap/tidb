@@ -66,7 +66,7 @@ type Manager interface {
 
 	// BuildPasswordLockingJSON Build PasswordLocking Json
 	BuildPasswordLockingJSON(failedLoginAttempts int64,
-		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string
+		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string
 
 	// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
 	BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string

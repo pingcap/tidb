@@ -2770,15 +2770,17 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 
 func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64) error {
 	autoAccountLocked := "N"
+	autoLockedLastChanged := ""
 	if userFailedLoginAttempts == 0 || passwordLockTimeDays == 0 {
 		return nil
 	}
 	if failedLoginCount >= userFailedLoginAttempts {
+		autoLockedLastChanged = time.Now().Format(time.UnixDate)
 		autoAccountLocked = "Y"
 	}
 	pm := privilege.GetPrivilegeManager(s)
 	newAttributesStr := pm.BuildPasswordLockingJSON(userFailedLoginAttempts,
-		passwordLockTimeDays, autoAccountLocked, failedLoginCount)
+		passwordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 	if newAttributesStr != "" {
 		return s.passwordLocking(user, host, newAttributesStr)
 	}

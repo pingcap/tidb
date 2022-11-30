@@ -422,8 +422,8 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 // BuildPasswordLockingJSON implements the Manager interface.
 // Build PasswordLocking Json
 func (p *UserPrivileges) BuildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64) string {
-	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, "")
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 }
 
 // BuildSuccessPasswordLockingJSON implements the Manager interface.
