@@ -50,6 +50,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.createSQLBind()
 	case plannercore.OpSQLBindDrop:
 		return e.dropSQLBind()
+	case plannercore.OpSQLBindDropByDigest:
+		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
 	case plannercore.OpCaptureBindings:
@@ -81,6 +83,20 @@ func (e *SQLBindExec) dropSQLBind() error {
 		return err
 	}
 	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
+}
+
+func (e *SQLBindExec) dropSQLBindByDigest() error {
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
+	if !e.isGlobal {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		err := handle.DropBindRecordByDigest(e.sqlDigest)
+		return err
+	}
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecordByDigest(e.sqlDigest)
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
