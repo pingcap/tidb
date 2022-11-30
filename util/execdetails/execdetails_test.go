@@ -232,7 +232,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 
 	copStats.SetRowNum(10)
 	copStats.Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms}", copStats[0].String())
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms}", copStats.String())
 	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_load_time: 100ms, total_read_time: 3000ms}, total_create_snapshot_time: 50ms}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
