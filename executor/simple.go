@@ -844,7 +844,7 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 	}
 }
 
-func createUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
+func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 	if (info.FailedLoginAttemptsChange || info.PasswordLockTimeChange) && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
 		return fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
 			info.FailedLoginAttempts, info.PasswordLockTime)
@@ -852,7 +852,7 @@ func createUserFailedLoginJson(info *passwordOrLockOptionsInfo) string {
 	return ""
 }
 
-func alterUserFailedLoginJson(info *alterUserPasswordLocking, lockAccount string) string {
+func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string) string {
 	passwordLockingArray := []string{}
 	if lockAccount == "N" && (info.FailedLoginAttempts != 0 || info.PasswordLockTime != 0) {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount))
@@ -980,7 +980,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	lockAccount := "N"
 	plInfo := &passwordOrLockOptionsInfo{LockAccount: lockAccount, FailedLoginAttemptsChange: false, PasswordLockTimeChange: false}
 	plInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
-	PasswordLocking := createUserFailedLoginJson(plInfo)
+	PasswordLocking := createUserFailedLoginJSON(plInfo)
 	if plInfo.LockAccount != "" {
 		lockAccount = plInfo.LockAccount
 	}
@@ -1279,7 +1279,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if err != nil {
 			return err
 		}
-		AlterPasswordLocking := alterUserFailedLoginJson(alterUserPassword, lockAccount)
+		AlterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, lockAccount)
 
 		if s.CommentOrAttributeOption != nil {
 			alterUserPassword.commentIsNull = false
