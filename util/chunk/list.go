@@ -153,7 +153,7 @@ func (l *List) Reset() {
 
 // Clear triggers GC for all the allocated chunks and reset the list
 func (l *List) Clear() {
-	l.memTracker.Consume(-l.memTracker.BytesConsumed())
+	l.memTracker.Release(l.memTracker.BytesConsumed())
 	l.freelist = nil
 	l.chunks = nil
 	l.length = 0

@@ -91,11 +91,18 @@ type Tracker struct {
 	bytesConsumed       int64            // Consumed bytes.
 	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
-	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
-	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
+	maxConsumedGCAware  atomic.Pointer[maxConsumedGCAware]
+	SessionID           uint64      // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool // NeedKill indicates whether this session need kill because OOM
 	NeedKillReceived    sync.Once
 	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
+}
+
+// maxConsumedGCAware holds max consumed and bytesConsumed.
+type maxConsumedGCAware struct {
+	maxConsumed   int64
+	bytesConsumed int64
 }
 
 type actionMu struct {
@@ -141,6 +148,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
 	t.maxConsumed.Store(0)
+	t.maxConsumedGCAware.Store(&maxConsumedGCAware{})
 	t.isGlobal = false
 }
 
@@ -158,6 +166,7 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+	t.maxConsumedGCAware.Store(&maxConsumedGCAware{})
 	t.isGlobal = false
 	return t
 }
@@ -172,6 +181,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+	t.maxConsumedGCAware.Store(&maxConsumedGCAware{})
 	t.isGlobal = true
 	return t
 }
@@ -407,11 +417,20 @@ func (t *Tracker) Consume(bs int64) {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
-		if bytesConsumed+bytesReleased >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
-			rootExceed = tracker
-		}
-		if bytesConsumed+bytesReleased >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
-			rootExceedForSoftLimit = tracker
+		if t.label == LabelForGlobalAnalyzeMemory {
+			if bytesConsumed+bytesReleased >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
+				rootExceed = tracker
+			}
+			if bytesConsumed+bytesReleased >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
+				rootExceedForSoftLimit = tracker
+			}
+		} else {
+			if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
+				rootExceed = tracker
+			}
+			if bytesConsumed >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
+				rootExceedForSoftLimit = tracker
+			}
 		}
 
 		for {
@@ -424,6 +443,24 @@ func (t *Tracker) Consume(bs int64) {
 				metrics.MemoryUsage.WithLabelValues(label[0], label[1]).Set(float64(consumed))
 			}
 			break
+		}
+
+		if tracker.IsRootTrackerOfSess {
+			for {
+				maxGCAwareNow := tracker.maxConsumedGCAware.Load()
+				consumed := atomic.LoadInt64(&tracker.bytesConsumed)
+				released := atomic.LoadInt64(&tracker.bytesReleased)
+				memTotal := consumed + released
+				if memTotal > maxGCAwareNow.maxConsumed {
+					if !tracker.maxConsumedGCAware.CompareAndSwap(maxGCAwareNow, &maxConsumedGCAware{
+						maxConsumed:   memTotal,
+						bytesConsumed: consumed,
+					}) {
+						continue
+					}
+				}
+				break
+			}
 		}
 	}
 
@@ -528,7 +565,7 @@ func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
 }
 
 func (t *Tracker) shouldRecordRelease() bool {
-	return EnableGCAwareMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
+	return EnableGCAwareMemoryTrack.Load() && (t.label == LabelForGlobalAnalyzeMemory || t.label == LabelForSession)
 }
 
 func (t *Tracker) recordRelease(bytes int64) {
@@ -566,9 +603,15 @@ func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
 
+func (t *Tracker) MaxConsumedGCAware() (maxConsumed int64, byteConsumed int64) {
+	maxConsumedGCAware := t.maxConsumedGCAware.Load()
+	return maxConsumedGCAware.maxConsumed, maxConsumedGCAware.bytesConsumed
+}
+
 // ResetMaxConsumed should be invoked before executing a new statement in a session.
 func (t *Tracker) ResetMaxConsumed() {
 	t.maxConsumed.Store(t.BytesConsumed())
+	t.maxConsumedGCAware.Store(&maxConsumedGCAware{})
 }
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.

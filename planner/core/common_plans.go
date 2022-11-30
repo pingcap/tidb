@@ -782,12 +782,15 @@ func (e *Explain) RenderResult() error {
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
-			if e.Analyze &&
-				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
-				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			if e.Analyze {
 				row := e.Rows[0]
 				tracker := e.SCtx().GetSessionVars().MemTracker
-				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+				maxConsumedGCAware, bytesConsumeGCAware := tracker.MaxConsumedGCAware()
+				byteReleaseGCAware := maxConsumedGCAware - bytesConsumeGCAware
+				row[7] = row[7] + "(Session Mem: " + tracker.FormatBytes(tracker.MaxConsumed()) + ", " +
+					tracker.FormatBytes(maxConsumedGCAware) + "(" +
+					tracker.FormatBytes(bytesConsumeGCAware) + " + " +
+					tracker.FormatBytes(byteReleaseGCAware) + "))"
 			}
 		}
 	case types.ExplainFormatDOT:
