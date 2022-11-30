@@ -132,6 +132,10 @@ func GetBinaryPlanSuiteData() testdata.TestData {
 	return testDataMap["binary_plan_suite"]
 }
 
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
+}
+
 func GetJSONPlanSuiteData() testdata.TestData {
 	return testDataMap["json_plan_suite"]
 }
