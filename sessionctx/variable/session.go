@@ -1319,6 +1319,8 @@ type SessionVars struct {
 
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
+
+	StoreBatchSize int
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
