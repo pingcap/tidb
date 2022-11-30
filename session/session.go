@@ -2619,11 +2619,14 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if sandboxMode, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
-		return err
-	} else if sandboxMode {
-		// Enter sandbox mode, only execute statement for resetting password.
-		s.EnableSandBoxMode()
+	if err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
+		switch err.(type) {
+		case *privileges.ErrInSandBoxMode:
+			// Enter sandbox mode, only execute statement for resetting password.
+			s.EnableSandBoxMode()
+		default:
+			return err
+		}
 	}
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname

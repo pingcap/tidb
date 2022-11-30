@@ -19,6 +19,12 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
+type ErrInSandBoxMode struct{}
+
+func (e *ErrInSandBoxMode) Error() string {
+	return "The session will enable sandbox mode"
+}
+
 // error definitions.
 var (
 	errInvalidPrivilegeType    = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
