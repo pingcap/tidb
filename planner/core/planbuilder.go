@@ -1040,17 +1040,16 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	parser4binding := parser.New()
 	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		logutil.BgLogger().Debug("[sql-bind] parse origin SQL failed in create binding from history",
-			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+		return nil, err
 	}
-	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+
+	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, false, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		logutil.BgLogger().Debug("[sql-bind] parse bind SQL failed in create binding from history",
-			zap.String("SQL", bindableStmt.Query), zap.Error(err))
+		return nil, err
 	}
-	normdOrigSQL, _ := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
@@ -1060,8 +1059,8 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
-		//SQLDIgest:    sqlDigestWithDB.String(),
-		//Source: bindinfo.History,
+		SQLDigest:    sqlDigestWithDB.String(),
+		Source:       bindinfo.History,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil

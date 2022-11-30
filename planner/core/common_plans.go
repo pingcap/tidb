@@ -265,7 +265,7 @@ type SQLBindPlan struct {
 	Charset      string
 	Collation    string
 	NewStatus    string
-	Source       string
+	Source       string // Source indicate how this binding was created, eg: bindinfo.Manual or bindinfo.History
 	SQLDigest    string
 	PlanDigest   string
 }
