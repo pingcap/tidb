@@ -1064,7 +1064,9 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
-		out.RootBasicExecInfo = basic.String()
+		if basic != nil {
+			out.RootBasicExecInfo = basic.String()
+		}
 		for _, group := range groups {
 			str := group.String()
 			if len(str) > 0 {
