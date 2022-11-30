@@ -208,6 +208,8 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
 
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
@@ -231,8 +233,6 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		// Disable foreign key check when batch create tables.
-		gs.se.GetSessionVars().ForeignKeyChecks = false
 		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, append(cs, ddl.OnExistIgnore)...)
 		if err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
