@@ -458,11 +458,10 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if len(authentication) == 0 {
 		hasPassword = "NO"
 	}
-	accessDenied := false
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
-		return accessDenied, nil
+		return false, nil
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -471,7 +470,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
-		return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
@@ -479,20 +478,20 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if !p.checkSSL(globalPriv, tlsState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	pwd := record.AuthenticationString
 
 	if !p.isValidHash(record) {
-		return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
 			logutil.BgLogger().Error("empty authentication")
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
 		var (
@@ -501,24 +500,23 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		)
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return false, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
-		accessDenied = true
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -527,23 +525,22 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-				return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
-		accessDenied = true
 		if record.AuthPlugin != mysql.AuthSocket {
-			return accessDenied, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return true, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
@@ -551,9 +548,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	locked := record.AccountLocked
 	if locked {
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
-		return accessDenied, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
+		return false, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
-	return accessDenied, nil
+	return false, nil
 }
 
 // AuthSuccess implements the Manager interface.

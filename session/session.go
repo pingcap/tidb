@@ -2620,11 +2620,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			}
 		}
 	}
-	accessDenied, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
+	passwordErr, connVerifErr := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if connVerifErr != nil {
 		//when user enables the account locking function for consecutive login failures,
 		//the system updates the login failure count and determines whether to lock the account when authentication fails
-		if enableAutoLock && accessDenied {
+		if enableAutoLock && passwordErr {
 			if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 				return trackingErr
 			}
