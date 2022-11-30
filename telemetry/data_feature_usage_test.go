@@ -143,7 +143,7 @@ func TestAutoIDNoCache(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoIDNoCache)
-	tk.MustExec("alter table tele_autoid auto_id_cache=0")
+	tk.MustExec("drop table tele_autoid")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.AutoIDNoCache)
@@ -286,6 +286,12 @@ func TestTablePartition(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
+
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionComactCnt)
+	tk.MustExec(`alter table pt2 compact partition p0 tiflash replica;`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionComactCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {
@@ -373,12 +379,18 @@ func TestNonTransactionalUsage(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.InsertCount)
 
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("batch limit 1 delete from t")
+	tk.MustExec("batch limit 1 update t set a = 1")
+	tk.MustExec("batch limit 1 insert into t select * from t")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.InsertCount)
 }
 
 func TestGlobalKillUsageInfo(t *testing.T) {
