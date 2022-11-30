@@ -79,6 +79,7 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+// RandStringRunes generate random string of length n.
 func RandStringRunes(n int) string {
 	b := make([]rune, n)
 	for i := range b {
