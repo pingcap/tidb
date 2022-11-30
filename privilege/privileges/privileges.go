@@ -394,7 +394,7 @@ func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string
 				record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
 		}
 		lds := strconv.FormatInt(lockTime, 10)
-		rds := strconv.FormatInt(int64(math.Ceil(float64(d)/(24*60*60)-float64(lockTime))), 10)
+		rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
 		return "", GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, lds, rds)
 	}
 	return "", nil
