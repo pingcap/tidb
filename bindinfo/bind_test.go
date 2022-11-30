@@ -1241,3 +1241,14 @@ func TestGCBindRecord(t *testing.T) {
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }
+
+func TestCreateBindingFromHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(id int primary key, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int primary key, a int, b int, key(a))")
+
+}
