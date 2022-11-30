@@ -74,6 +74,7 @@ var (
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
 	bytesLimit           atomic.Value
+	maxConsumedGCAware   atomic.Pointer[maxConsumedGCAware] // max number of bytes consumed during execution(GC-aware).
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
 	mu                   struct {
@@ -91,9 +92,8 @@ type Tracker struct {
 	bytesConsumed       int64            // Consumed bytes.
 	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
-	maxConsumedGCAware  atomic.Pointer[maxConsumedGCAware]
-	SessionID           uint64      // SessionID indicates the sessionID the tracker is bound.
-	NeedKill            atomic.Bool // NeedKill indicates whether this session need kill because OOM
+	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
 	NeedKillReceived    sync.Once
 	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
@@ -603,6 +603,7 @@ func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
 
+// MaxConsumedGCAware return max number of bytes consumed during execution and byteConsumed. (GC-aware)
 func (t *Tracker) MaxConsumedGCAware() (maxConsumed int64, byteConsumed int64) {
 	maxConsumedGCAware := t.maxConsumedGCAware.Load()
 	return maxConsumedGCAware.maxConsumed, maxConsumedGCAware.bytesConsumed
