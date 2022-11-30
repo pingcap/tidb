@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"strconv"
 	"strings"
 	"time"
