@@ -92,7 +92,6 @@ type copReqSenderPool struct {
 	results   generic.SyncMap[int, struct{}]
 
 	ctx     context.Context
-	cancel  context.CancelFunc
 	copCtx  *copContext
 	startTS uint64
 
@@ -125,7 +124,7 @@ func (c *copReqSender) run() {
 			zap.Int("id", task.id), zap.String("task", task.String()))
 		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
-			p.sendResult(idxRecResult{id: task.id, err: err})
+			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
 		var done bool
@@ -134,12 +133,12 @@ func (c *copReqSender) run() {
 			idxRec, srcChk := p.getIndexRecordsAndChunks()
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
-				p.sendResult(idxRecResult{id: task.id, err: err})
+				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
 				return
 			}
 			total += len(idxRec)
-			p.sendResult(idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total})
+			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
 		}
 	}
 }
@@ -152,13 +151,11 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		idxBufPool <- make([]*indexRecord, 0, copReadBatchFactor*variable.GetDDLReorgBatchSize())
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, int(copReadBatchFactor*variable.GetDDLReorgBatchSize()))
 	}
-	poolCtx, cancel := context.WithCancel(ctx)
 	return &copReqSenderPool{
 		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
 		results:    generic.NewSyncMap[int, struct{}](10),
-		ctx:        poolCtx,
-		cancel:     cancel,
+		ctx:        ctx,
 		copCtx:     copCtx,
 		startTS:    startTS,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
@@ -170,13 +167,6 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 
 func (c *copReqSenderPool) sendTask(task *reorgBackfillTask) {
 	c.tasksCh <- task
-}
-
-func (c *copReqSenderPool) sendResult(result idxRecResult) {
-	select {
-	case <-c.ctx.Done():
-	case c.resultsCh <- result:
-	}
 }
 
 func (c *copReqSenderPool) adjustSize(n int) {
@@ -206,11 +196,21 @@ func (c *copReqSenderPool) close() {
 	for _, w := range c.senders {
 		w.cancel()
 	}
-	c.cancel()
+	cleanupWg := util.WaitGroupWrapper{}
+	cleanupWg.Run(c.drainResults)
+	// Wait for all cop-req senders to exit.
 	c.wg.Wait()
 	close(c.resultsCh)
+	cleanupWg.Wait()
 	close(c.idxBufPool)
 	close(c.srcChkPool)
+}
+
+func (c *copReqSenderPool) drainResults() {
+	// Consume the rest results because the writers are inactive anymore.
+	for rs := range c.resultsCh {
+		c.recycleIdxRecordsAndChunk(rs.records, rs.chunk)
+	}
 }
 
 func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
