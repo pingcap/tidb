@@ -71,9 +71,12 @@ type Manager interface {
 	// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
 	BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string
 
+	// IsConnectionPasswordFailed verifies user privilege for connection.
+	IsConnectionPasswordFailed(authUser, authHost string, authentication []byte) bool
+
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) (bool, error)
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, tlsState *tls.ConnectionState) error
 
 	// AuthSuccess Auth Success state
 	AuthSuccess(authUser, authHost string)
