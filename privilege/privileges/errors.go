@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
+// ErrInSandBoxMode is used to indicate that the session is in sandbox mode.
 type ErrInSandBoxMode struct{}
 
 func (e *ErrInSandBoxMode) Error() string {
