@@ -1326,11 +1326,12 @@ loopOtherConds:
 }
 
 // removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
-//   t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
-//   In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
-//   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
-//   [0 -1 -1].
-//   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
+//
+//	t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
+//	In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
+//	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
+//	[0 -1 -1].
+//	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
 func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, outerJoinKeys []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {

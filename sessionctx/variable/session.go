@@ -1045,6 +1045,9 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// EnableRecordTiFlashPlan indicates whether to record the tiflash plan
+	EnableRecordTiFlashPlan bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

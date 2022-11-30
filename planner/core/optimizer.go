@@ -292,6 +292,15 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	finalPlan := postOptimize(sctx, physical)
 
+	if sctx.GetSessionVars().EnableRecordTiFlashPlan && !sctx.GetSessionVars().InRestrictedSQL {
+		ok, tiflashTables := hasTiFlashPlan(finalPlan)
+		if ok {
+			logutil.BgLogger().Info("Record the tiflash plan",
+				zap.String("SQL", sctx.GetSessionVars().StmtCtx.OriginalSQL),
+				zap.Any("TiFlashTables", tiflashTables))
+		}
+	}
+
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
@@ -299,6 +308,35 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
 	return finalPlan, cost, nil
+}
+
+func hasTiFlashPlan(p PhysicalPlan) (ok bool, tables []string) {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			for _, tablePlan := range x.GetTableScans() {
+				tables = append(tables, tablePlan.Table.Name.String())
+			}
+			if len(tables) > 0 {
+				ok = true
+			}
+			return
+		default:
+			return
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				hasPlan, tiflashTables := hasTiFlashPlan(plan)
+				if hasPlan {
+					ok = true
+					tables = append(tables, tiflashTables...)
+				}
+			}
+		}
+	}
+	return
 }
 
 // refineCETrace will adjust the content of CETrace.

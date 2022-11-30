@@ -1014,6 +1014,10 @@ var defaultSysVars = []*SysVar{
 		s.allowMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRecordTiFlashPlan, Type: TypeBool, Value: BoolToOnOff(DefTiDBRecordTiFlashPlan), SetSession: func(s *SessionVars, val string) error {
+		s.EnableRecordTiFlashPlan = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPStoreFailTTL, Type: TypeStr, Value: DefTiDBMPPStoreFailTTL, SetSession: func(s *SessionVars, val string) error {
 		s.MPPStoreFailTTL = val
 		return nil
