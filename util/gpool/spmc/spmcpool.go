@@ -154,6 +154,10 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 		}
 		p.cond.Broadcast()
 	}
+	if tid, boostTask := p.taskManager.Boost(); boostTask != nil {
+		p.taskManager.AddSubTask(tid, boostTask)
+		p.taskCh <- boostTask
+	}
 }
 
 // Running returns the number of workers currently running.

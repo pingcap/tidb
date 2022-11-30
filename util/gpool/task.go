@@ -99,6 +99,12 @@ func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
 
+// Clone is to copy the box
+func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
+	newBox := NewTaskBox[T, U, C, CT, TF](t.constArgs, t.contextFunc, t.wg, t.task, t.resultCh, t.taskID)
+	return &newBox
+}
+
 // GPool is a goroutine pool.
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 	Release()

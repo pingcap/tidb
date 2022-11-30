@@ -15,12 +15,14 @@
 package gpool
 
 // Boost is to increase the concurrency of task.
-func (t *TaskManager[T, U, C, CT, TF]) Boost() {
+func (t *TaskManager[T, U, C, CT, TF]) Boost() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
 	if t.concurrency > t.running.Load() {
-	} else {
+		return t.getNeedToBoostTask()
 	}
+	return 0, nil
 }
 
 // Decrease is to decrease the concurrency of task.
 func (t *TaskManager[T, U, C, CT, TF]) Decrease() {
+	t.pauseTask()
 }

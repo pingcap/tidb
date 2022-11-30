@@ -17,6 +17,7 @@ package gpool
 import (
 	"container/list"
 	"sync"
+	"time"
 
 	"go.uber.org/atomic"
 	"golang.org/x/sys/cpu"
@@ -33,36 +34,39 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	_    cpu.CacheLinePad
 }
 
-type stats struct {
+type meta struct {
+	stats       *list.List
+	createTs    time.Time
 	origin      int32
 	concurrency atomic.Int32
 	running     atomic.Int32
 }
 
-func newStats(concurrency int32) *stats {
-	s := &stats{
-		origin: concurrency,
+func newStats(concurrency int32) *meta {
+	s := &meta{
+		createTs: time.Now(),
+		stats:    list.New(),
+		origin:   concurrency,
 	}
 	return s
 }
 
-func (s *stats) setConcurrency(concurrency int32) {
-	s.concurrency.Store(concurrency)
+func (m *meta) setConcurrency(concurrency int32) {
+	m.concurrency.Store(concurrency)
 }
 
-func (s *stats) getConcurrency() int32 {
-	return s.concurrency.Load()
+func (m *meta) getConcurrency() int32 {
+	return m.concurrency.Load()
 }
 
-func (s *stats) getOriginConcurrency() int32 {
-	return s.origin
+func (m *meta) getOriginConcurrency() int32 {
+	return m.origin
 }
 
 // TaskStatusContainer is a container that can control or watch the pool.
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
-	Status  map[uint64]*list.List
-	Running map[uint64]*stats
-	rw      sync.RWMutex
+	stats map[uint64]*meta
+	rw    sync.RWMutex
 }
 
 // TaskManager is a manager that can control or watch the pool.
@@ -77,8 +81,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
 		task[i] = TaskStatusContainer[T, U, C, CT, TF]{
-			Status:  make(map[uint64]*list.List),
-			Running: make(map[uint64]*stats),
+			stats: make(map[uint64]*meta),
 		}
 	}
 	return TaskManager[T, U, C, CT, TF]{
@@ -91,8 +94,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64, concurrency int32) {
 	id := getShardID(task)
 	t.task[id].rw.Lock()
-	t.task[id].Status[task] = list.New()
-	t.task[id].Running[task] = newStats(concurrency)
+	t.task[id].stats[task] = newStats(concurrency)
 	t.task[id].rw.Unlock()
 }
 
@@ -100,8 +102,7 @@ func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64, concurrency int32)
 func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	shardID := getShardID(id)
 	t.task[shardID].rw.Lock()
-	delete(t.task[shardID].Status, id)
-	delete(t.task[shardID].Running, id)
+	delete(t.task[shardID].stats, id)
 	t.task[shardID].rw.Unlock()
 }
 
@@ -111,10 +112,10 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(id uint64, task *TaskBox[T, U,
 	tc := tContainer[T, U, C, CT, TF]{
 		task: task,
 	}
-	t.task[shardID].rw.Lock()
-	t.task[shardID].Status[id].PushBack(tc)
-	t.task[shardID].Running[id].running.Inc()
 	t.running.Inc()
+	t.task[shardID].rw.Lock()
+	t.task[shardID].stats[id].stats.PushBack(tc)
+	t.task[shardID].stats[id].running.Inc()
 	t.task[shardID].rw.Unlock()
 }
 
@@ -122,7 +123,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(id uint64, task *TaskBox[T, U,
 func (t *TaskManager[T, U, C, CT, TF]) ExitSubTask(id uint64) {
 	shardID := getShardID(id)
 	t.task[shardID].rw.Lock()
-	t.task[shardID].Running[id].running.Dec()
+	t.task[shardID].stats[id].running.Dec()
 	t.running.Dec()
 	t.task[shardID].rw.Unlock()
 }
