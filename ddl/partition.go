@@ -2348,10 +2348,10 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// and WriteReorg would only copy existing rows to the new table, so unless it is
 		// deleted it would result in a ghost row!
 		// What about update then?
-		// Updates do not need to be handled for new partitions in DeleteOnly,
-		// since the correct data would still be available during Reorganize phase.
+		// Updates also need to be handled for new partitions in DeleteOnly,
+		// since it would not be overwritten during Reorganize phase.
 		// BUT if the update results in adding in one partition and deleting in another,
-		// THEN the delete must still happen in the new partition set!
+		// THEN only the delete must happen in the new partition set, not the insert!
 	case model.StateDeleteOnly:
 		// This state is to confirm all servers can not see the new partitions when reorg is running,
 		// so that all deletes will be done in both old and new partitions when in either DeleteOnly

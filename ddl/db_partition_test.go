@@ -5160,7 +5160,6 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	wait <- true
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"10 10 10",
-		"12 12 21", // FIXME!!!
 		"12 12b 12",
 		"14 14 14",
 		"15 15 15"))
@@ -5202,7 +5201,6 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	// This reads the new schema (Schema update completed)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"10 10 10",
-		"12 12 21", // FIXME!!!
 		"12 12b 12",
 		"14 14 14",
 		"15 15 15",

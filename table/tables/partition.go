@@ -1529,11 +1529,9 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			}
 		}
 		if newTo == newFrom && newTo != 0 {
-			if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-				tbl := t.GetPartition(newTo)
-				return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
-			}
-			return nil
+			// Update needs to be done in StateDeleteOnly as well
+			tbl := t.GetPartition(newTo)
+			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 		}
 		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			tbl := t.GetPartition(newTo)
@@ -1570,20 +1568,21 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-				tbl = t.GetPartition(newTo)
-				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
-				if err != nil {
-					return errors.Trace(err)
-				}
+			// Update needs to be done in StateDeleteOnly as well
+			tbl = t.GetPartition(newTo)
+			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			return nil
 		}
-		tbl = t.GetPartition(newTo)
-		_, err = tbl.AddRecord(ctx, newData)
-		// TODO: Could there be a case where a duplicate unique key could happen here?
-		if err != nil {
-			return errors.Trace(err)
+		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+			tbl = t.GetPartition(newTo)
+			_, err = tbl.AddRecord(ctx, newData)
+			// TODO: Could there be a case where a duplicate unique key could happen here?
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		tbl = t.GetPartition(newFrom)
 		err = tbl.RemoveRecord(ctx, h, currData)
