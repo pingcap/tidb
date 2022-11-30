@@ -17,8 +17,8 @@
 package testutil
 
 import (
-	"testing"
 	"math/rand"
+	"testing"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -80,10 +80,9 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 func RandStringRunes(n int) string {
-    b := make([]rune, n)
-    for i := range b {
-        b[i] = letterRunes[rand.Intn(len(letterRunes))]
-    }
-    return string(b)
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
 }
-
