@@ -1836,7 +1836,7 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord("SESSION ")
 	}
-	if n.PlanDigest != "" {
+	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
 		ctx.WriteString(n.PlanDigest)
 	} else {
@@ -1858,7 +1858,7 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
-	if n.PlanDigest == "" {
+	if n.OriginNode != nil {
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false

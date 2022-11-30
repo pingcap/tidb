@@ -1041,22 +1041,25 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 }
 
 func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
+	if v.PlanDigest == "" {
+		return nil, errors.New("sql digest is empty")
+	}
 	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
 	if bindableStmt == nil {
-		return nil, errors.New("sql digest '" + v.PlanDigest + "' invalid")
+		return nil, errors.New("can't find any plan for '" + v.PlanDigest + "'")
 	}
 
 	parser4binding := parser.New()
 	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("binding failed: %v", err)
 	}
 
 	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, false, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("binding failed: %v", err)
 	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
 	p := &SQLBindPlan{
@@ -1076,7 +1079,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 }
 
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
-	if v.PlanDigest != "" {
+	if v.OriginNode == nil {
 		return b.buildCreateBindPlanFromPlanDigest(v)
 	}
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()

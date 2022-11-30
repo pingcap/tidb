@@ -298,7 +298,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
-		if node.PlanDigest == "" {
+		if node.OriginNode != nil {
 			// if node.PlanDigest is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
 			EraseLastSemicolon(node.OriginNode)
 			EraseLastSemicolon(node.HintedNode)
