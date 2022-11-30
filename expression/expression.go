@@ -1265,6 +1265,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.GetFormat:
 		return true
+	case ast.Oct:
+		return true
 	}
 	return false
 }
