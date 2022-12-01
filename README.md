@@ -47,7 +47,7 @@ You can join the following groups or channels to discuss or ask questions about 
 - Discuss TiDB's implementation and design
   - [TiDB Internals forum](https://internals.tidb.io/)
 - Seek help when you use TiDB
-  - [Slack channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English)
+  - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
   - [TiDB User Group forum](https://asktug.com) (Chinese)
   - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Get the latest TiDB news or updates
