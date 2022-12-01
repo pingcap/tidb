@@ -5111,6 +5111,8 @@ func TestBinding(t *testing.T) {
 		{"DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", true, "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"},
 		{"DROP SESSION BINDING FOR SQL DIGEST 'a'", true, "DROP SESSION BINDING FOR SQL DIGEST 'a'"},
 		{"drop global binding for sql digest 's'", true, "DROP GLOBAL BINDING FOR SQL DIGEST 's'"},
+		{"create session binding from history using plan digest 'sss'", true, "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
+		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 	}
 	RunTest(t, table, false)
 
