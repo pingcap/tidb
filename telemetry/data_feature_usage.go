@@ -58,6 +58,7 @@ type featureUsage struct {
 	DDLUsageCounter           *m.DDLUsageCounter               `json:"DDLUsageCounter"`
 	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
 	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
+	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
 }
 
 type placementPolicyUsage struct {
@@ -107,6 +108,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
 
 	usage.EnableGlobalMemoryControl = getGlobalMemoryControl()
+
+	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
 
 	return &usage, nil
 }
@@ -244,6 +247,7 @@ var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
 var initialDDLUsageCounter m.DDLUsageCounter
+var initialIndexMergeCounter m.IndexMergeUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -401,4 +405,14 @@ func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 
 func getGlobalMemoryControl() bool {
 	return memory.ServerMemoryLimit.Load() > 0
+}
+
+func postReportIndexMergeUsage() {
+	initialIndexMergeCounter = m.GetIndexMergeCounter()
+}
+
+func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
+	curr := m.GetIndexMergeCounter()
+	diff := curr.Sub(initialIndexMergeCounter)
+	return &diff
 }
