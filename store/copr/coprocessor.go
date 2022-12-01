@@ -25,13 +25,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
-
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -135,6 +134,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	})
 	// TODO: support keep-order batch
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV || req.KeepOrder {
+		req.StoreBatchSize = 0
+	}
+	if req.ReplicaRead != kv.ReplicaReadLeader {
+		// disable batch copr for follower read
 		req.StoreBatchSize = 0
 	}
 
@@ -250,13 +253,14 @@ type copTask struct {
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
 	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
-	batchTaskList  map[uint64]batchedCopTask
+	batchTaskList  map[uint64]*batchedCopTask
 }
 
 type batchedCopTask struct {
-	task   *copTask
-	region coprocessor.RegionInfo
-	peer   *metapb.Peer
+	task    *copTask
+	region  coprocessor.RegionInfo
+	storeID uint64
+	peer    *metapb.Peer
 }
 
 func (r *copTask) String() string {
@@ -281,12 +285,8 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	return pbTasks
 }
 
-const (
-	// rangesPerTask limits the length of the ranges slice sent in one copTask.
-	rangesPerTask = 25000
-	// taskPerBatch limits the batch size of tasks in the same store.
-	taskPerBatch = 20
-)
+// rangesPerTask limits the length of the ranges slice sent in one copTask.
+const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	start := time.Now()
@@ -328,7 +328,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		if req.Paging.Enable {
 			pagingSize = req.Paging.MinPagingSize
 		}
-		storeID := loc.Location.RawRegion.GetLeaderStoreID()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			hint := -1
@@ -368,12 +367,16 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				RowCountHint:  hint,
 			}
 			if req.StoreBatchSize > 0 {
-				if idx, ok := store2Idx[storeID]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
-					tasks = append(tasks, task)
-					store2Idx[storeID] = len(tasks) - 1
+				batchedTask, err := cache.BuildBatchTask(bo, task, req.ReplicaRead)
+				if err != nil {
+					return nil, err
+				}
+				if idx, ok := store2Idx[batchedTask.storeID]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
+					tasks = append(tasks, batchedTask.task)
+					store2Idx[batchedTask.storeID] = len(tasks) - 1
 				} else {
 					if tasks[idx].batchTaskList == nil {
-						tasks[idx].batchTaskList = make(map[uint64]batchedCopTask, req.StoreBatchSize)
+						tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, req.StoreBatchSize)
 						// disable paging for batched task.
 						tasks[idx].paging = false
 						tasks[idx].pagingSize = 0
@@ -381,18 +384,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 					if task.RowCountHint > 0 {
 						tasks[idx].RowCountHint += task.RowCountHint
 					}
-					tasks[idx].batchTaskList[taskID] = batchedCopTask{
-						task: task,
-						region: coprocessor.RegionInfo{
-							RegionId: loc.Location.Region.GetID(),
-							RegionEpoch: &metapb.RegionEpoch{
-								ConfVer: loc.Location.Region.GetConfVer(),
-								Version: loc.Location.Region.GetVer(),
-							},
-							Ranges: task.ranges.ToPBRanges(),
-						},
-						peer: loc.Location.RawRegion.GetPeerOnStore(storeID),
-					}
+					tasks[idx].batchTaskList[taskID] = batchedTask
 				}
 			} else {
 				tasks = append(tasks, task)
@@ -1138,7 +1130,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		if err != nil {
+			return remains, err
+		}
+		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.BatchResponses, task, ch)
 	}
 	var resolveLockDetail *util.ResolveLockDetail
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
@@ -1147,7 +1143,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return nil, err
 		}
-		return []*copTask{task}, nil
+		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1236,11 +1232,24 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	batchResps := resp.pbResp.BatchResponses
 	worker.sendToRespCh(resp, ch, true)
-	return worker.handleBatchCopResponse(bo, batchResps, task.batchTaskList, ch, nil)
+	return worker.handleBatchCopResponse(bo, batchResps, task.batchTaskList, ch)
+}
+
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+	if len(task.batchTaskList) == 0 {
+		return remains, nil
+	}
+	batchedTasks := task.batchTaskList
+	task.batchTaskList = nil
+	batchedRemains, err := worker.handleBatchCopResponse(bo, batchResp, batchedTasks, ch)
+	if err != nil {
+		return nil, err
+	}
+	return append(remains, batchedRemains...), nil
 }
 
 // handle the batched cop response.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]batchedCopTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
 	if len(tasks) == 0 {
 		return nil, nil
 	}
@@ -1257,7 +1266,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		}
 		task := batchedTask.task
 		if regionErr := batchResp.GetRegionError(); regionErr != nil {
-			logutil.BgLogger().Info("DBG region error", zap.String("err", regionErr.String()))
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {

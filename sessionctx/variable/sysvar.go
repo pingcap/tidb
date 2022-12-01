@@ -2105,7 +2105,7 @@ var defaultSysVars = []*SysVar{
 		}},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
-		Type: TypeInt, MinValue: 0, MaxValue: 1024, SetSession: func(s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
 			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
 			return nil
 		},
