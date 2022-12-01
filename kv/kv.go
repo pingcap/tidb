@@ -537,6 +537,8 @@ type Request struct {
 	RequestSource util.RequestSource
 	// FixedRowCountHint is the optimization hint for copr request for task scheduling.
 	FixedRowCountHint []int
+	// StoreBatchSize indicates the batch size of coprocessor in the same store.
+	StoreBatchSize int
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
