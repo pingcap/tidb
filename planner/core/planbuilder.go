@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -1039,7 +1040,48 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
+func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
+	if v.PlanDigest == "" {
+		return nil, errors.New("plan digest is empty")
+	}
+	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
+	if bindableStmt == nil {
+		return nil, errors.New("can't find any plans for '" + v.PlanDigest + "'")
+	}
+
+	parser4binding := parser.New()
+	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		return nil, errors.Errorf("binding failed: %v", err)
+	}
+
+	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, false, bindableStmt.Schema)
+	var hintNode ast.StmtNode
+	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		return nil, errors.Errorf("binding failed: %v", err)
+	}
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: normdOrigSQL,
+		BindSQL:      utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text()),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     hintNode,
+		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
+		Charset:      bindableStmt.Charset,
+		Collation:    bindableStmt.Collation,
+		SQLDigest:    sqlDigestWithDB.String(),
+		Source:       bindinfo.History,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	if v.OriginNode == nil {
+		return b.buildCreateBindPlanFromPlanDigest(v)
+	}
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 
 	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
@@ -1061,6 +1103,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
+		Source:       bindinfo.Manual,
 		SQLDigest:    sqlDigestWithDB.String(),
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
