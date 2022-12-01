@@ -7643,7 +7643,7 @@ func TestPointGetWithSelectLock(t *testing.T) {
 		"explain select a, b from t where a = 1 and b = 2 for update;",
 		"explain select c, d from t1 where c = 1 for update;",
 		"explain select c, d from t1 where c = 1 and d = 1 for update;",
-		"explain select c, d from t1 where c = 1 and d = 1 for update;",
+		"explain select c, d from t1 where (c = 1 or c = 2 )and d = 1 for update;",
 		"explain select c, d from t1 where c in (1,2,3,4) for update;",
 	}
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
