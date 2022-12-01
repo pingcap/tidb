@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1524,6 +1525,8 @@ func TestRenameMultiTables(t *testing.T) {
 }
 
 func TestCreateTableWithTTL(t *testing.T) {
+	parser.TTLFeatureGate = true
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1543,6 +1546,8 @@ func TestCreateTableWithTTL(t *testing.T) {
 }
 
 func TestAlterTTLInfo(t *testing.T) {
+	parser.TTLFeatureGate = true
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
