@@ -1,4 +1,4 @@
-![](docs/logo_with_text.png)
+<img src="docs/tidb-logo-with-text.png" alt="TiDB, a distributed SQL database" height=100></img>
 
 [![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
 [![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
@@ -12,13 +12,13 @@
 
 ## What is TiDB?
 
-TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
+TiDB ("Ti" stands for Titanium) is an open-source distributed SQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
 
 - [Key features](https://docs.pingcap.com/tidb/stable/overview#key-features)
 - [Architecture](#architecture)
-- [MySQL Compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
+- [MySQL compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
 
-For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
+For more details and latest updates, see [TiDB documentation](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
 For future plans, see [TiDB Roadmap](roadmap.md).
 
@@ -38,11 +38,11 @@ See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-wi
 
 ### Start developing TiDB
 
-See [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Dev Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
+See the [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Development Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
 
 ## Community
 
-You can join these groups and chats to discuss and ask TiDB related questions:
+You can join the following groups and chats to discuss or ask TiDB related questions:
 
 - [TiDB Internals Forum](https://internals.tidb.io/)
 - [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
@@ -51,27 +51,27 @@ You can join these groups and chats to discuss and ask TiDB related questions:
 In addition, you may enjoy following:
 
 - [@PingCAP](https://twitter.com/PingCAP) on Twitter
-- Question tagged [#tidb on StackOverflow](https://stackoverflow.com/questions/tagged/tidb)
-- The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
+- Questions tagged [#tidb on Stack Overflow](https://stackoverflow.com/questions/tagged/tidb)
+- The PingCAP [English Blog](https://www.pingcap.com/blog/?from=en) and [Chinese Blog](https://cn.pingcap.com/blog/)
 
 For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ## Contributing
 
-The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how TiDB community is governed, how special interest groups are organized, etc.
+The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how the TiDB community is governed, how teams are organized, etc.
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
-Contributions are welcomed and greatly appreciated. All the contributors are welcomed to claim your reward by filing this [form](https://forms.pingcap.com/f/tidb-contribution-swag). See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
+Contributions are welcomed and greatly appreciated. All the contributors are welcomed to claim your reward by filing this [form](https://forms.pingcap.com/f/tidb-contribution-swag). See [Contribute to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
 
 ## Case studies
 
-- [English](https://pingcap.com/case-studies)
-- [简体中文](https://pingcap.com/cases-cn/)
+- [Case studies in English](https://www.pingcap.com/customers/)
+- [中文用户案例](https://cn.pingcap.com/case/)
 
 ## Architecture
 
-![architecture](./docs/architecture.png)
+![TiDB architecture](./docs/tidb-architecture.png)
 
 ## License
 
