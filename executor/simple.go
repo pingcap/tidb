@@ -791,9 +791,7 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin s
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	return authPlugin == mysql.AuthNativePassword ||
-		authPlugin == mysql.AuthTiDBSM3Password ||
-		authPlugin == mysql.AuthCachingSha2Password
+	return mysql.IsAuthPluginClearText(authPlugin)
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
@@ -1162,9 +1160,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
-		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.ctx).GetCleartextAuthPlugin(spec.User.Username, spec.User.Hostname)
+		if err != nil {
 			return err
-		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+		}
+		if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
 
@@ -1177,11 +1177,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if spec.AuthOpt != nil {
 			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
-				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
-				if err != nil {
-					return err
-				}
-				spec.AuthOpt.AuthPlugin = curAuthplugin
+				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1710,15 +1706,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return rows > 0, err
 }
 
-func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
-	pm := privilege.GetPrivilegeManager(e.ctx)
-	authplugin, err := pm.GetAuthPlugin(name, host)
-	if err != nil {
-		return "", err
-	}
-	return authplugin, nil
-}
-
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	disableSandboxMode := false
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
@@ -1752,7 +1739,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		}
 	}
 
-	authplugin, err := e.userAuthPlugin(u, h)
+	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetCleartextAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}

@@ -278,6 +278,25 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	return "", errors.New("Failed to get plugin for user")
 }
 
+// GetCleartextAuthPlugin gets the cleartext authentication plugin for the account identified by the user and host
+// If the authentication plugin is not a cleartext plugin, return empty string.
+func (p *UserPrivileges) GetCleartextAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	if mysql.IsAuthPluginClearText(record.AuthPlugin) {
+		if p.isValidHash(record) {
+			return record.AuthPlugin, nil
+		}
+	}
+	return "", nil
+}
+
 // MatchIdentity implements the Manager interface.
 func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {

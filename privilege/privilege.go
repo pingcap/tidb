@@ -90,8 +90,11 @@ type Manager interface {
 	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
 	IsDynamicPrivilege(privNameInUpper string) bool
 
-	// Get the authentication plugin for a user
+	// GetAuthPlugin gets the authentication plugin for a user
 	GetAuthPlugin(user, host string) (string, error)
+
+	// GetCleartextAuthPlugin gets the cleartext authentication plugin for the account identified by the user and host
+	GetCleartextAuthPlugin(user, host string) (string, error)
 }
 
 const key keyType = 0
