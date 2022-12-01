@@ -3915,8 +3915,11 @@ DBName:
 PolicyName:
 	Identifier
 
+<<<<<<< HEAD
 ResourceGroupName:
 	Identifier
+=======
+>>>>>>> 43e8715ca (*: add new case)
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -6199,7 +6202,11 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+<<<<<<< HEAD
 |	"RESOURCE"
+=======
+|   "RESOURCE"
+>>>>>>> 43e8715ca (*: add new case)
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"

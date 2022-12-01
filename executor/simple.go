@@ -946,16 +946,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwdlockinfo.passwordExpired = "Y"
 	}
 
-	var userAttributes = ""
+	var userAttributes any = nil
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type != ast.UserResourceGroupName {
-			userAttributes = `{"metadata": {"resource_group": "default"`
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				userAttributes += fmt.Sprintf(`, "comment": "%s"`, s.CommentOrAttributeOption.Value)
+				userAttributes = fmt.Sprintf(`{"metadata": {"resource_group": "default", "comment": "%s"}}`, s.CommentOrAttributeOption.Value)
 			} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-				userAttributes = fmt.Sprintf(`,  %s`, s.CommentOrAttributeOption.Value)
+				userAttributes = fmt.Sprintf(`{"metadata": {"resource_group": "default",  %s}}`, s.CommentOrAttributeOption.Value)
 			}
-			userAttributes += `}}`
 		} else {
 			userAttributes = fmt.Sprintf(`{"metadata": {"resource_group": "%s"}}`, s.CommentOrAttributeOption.Value)
 		}
