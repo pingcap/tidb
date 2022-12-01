@@ -232,7 +232,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	taskId     uint64
+	taskID     uint64
 	region     tikv.RegionVerID
 	bucketsVer uint64
 	ranges     *KeyRanges
@@ -275,7 +275,7 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 			RegionEpoch: task.region.GetRegionEpoch(),
 			Peer:        task.peer,
 			Ranges:      task.region.GetRanges(),
-			TaskId:      task.task.taskId,
+			TaskId:      task.task.taskID,
 		})
 	}
 	return pbTasks
@@ -313,7 +313,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 
 	tasks := make([]*copTask, 0, len(locs))
 	origRangeIdx := 0
-	taskId := uint64(0)
+	taskID := uint64(0)
 	var store2Idx map[uint64]int
 	if req.StoreBatchSize > 0 {
 		store2Idx = make(map[uint64]int, 16)
@@ -328,7 +328,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		if req.Paging.Enable {
 			pagingSize = req.Paging.MinPagingSize
 		}
-		storeId := loc.Location.RawRegion.GetLeaderStoreID()
+		storeID := loc.Location.RawRegion.GetLeaderStoreID()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			hint := -1
@@ -354,7 +354,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				}
 			}
 			task := &copTask{
-				taskId:        taskId,
+				taskID:        taskID,
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
 				ranges:        loc.Ranges.Slice(i, nextI),
@@ -368,19 +368,20 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				RowCountHint:  hint,
 			}
 			if req.StoreBatchSize > 0 {
-				if idx, ok := store2Idx[storeId]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
-					task.RowCountHint = -1
+				if idx, ok := store2Idx[storeID]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
 					tasks = append(tasks, task)
-					store2Idx[storeId] = len(tasks) - 1
+					store2Idx[storeID] = len(tasks) - 1
 				} else {
 					if tasks[idx].batchTaskList == nil {
 						tasks[idx].batchTaskList = make(map[uint64]batchedCopTask, req.StoreBatchSize)
-						// batched task is not a small task.
-						tasks[idx].RowCountHint = -1
+						// disable paging for batched task.
 						tasks[idx].paging = false
 						tasks[idx].pagingSize = 0
 					}
-					tasks[idx].batchTaskList[taskId] = batchedCopTask{
+					if task.RowCountHint > 0 {
+						tasks[idx].RowCountHint += task.RowCountHint
+					}
+					tasks[idx].batchTaskList[taskID] = batchedCopTask{
 						task: task,
 						region: coprocessor.RegionInfo{
 							RegionId: loc.Location.Region.GetID(),
@@ -390,7 +391,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 							},
 							Ranges: task.ranges.ToPBRanges(),
 						},
-						peer: loc.Location.RawRegion.GetPeerOnStore(storeId),
+						peer: loc.Location.RawRegion.GetPeerOnStore(storeID),
 					}
 				}
 			} else {
@@ -400,7 +401,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			if req.Paging.Enable {
 				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
 			}
-			taskId++
+			taskID++
 		}
 	}
 
