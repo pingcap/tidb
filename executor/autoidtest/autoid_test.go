@@ -759,11 +759,11 @@ func TestIssue39528(t *testing.T) {
 	tk.MustExec("insert into issue39528 values ()")
 	tk.MustExec("insert into issue39528 values ()")
 
-	// Make sure the code does not visit tikv on allocate path.
 	ctx := context.Background()
 	var codeRun bool
 	ctx = context.WithValue(ctx, "testIssue39528", &codeRun)
 	_, err := tk.ExecWithContext(ctx, "insert into issue39528 values ()")
 	require.NoError(t, err)
-	require.True(t, codeRun)
+	// Make sure the code does not visit tikv on allocate path.
+	require.False(t, codeRun)
 }
