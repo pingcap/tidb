@@ -47,7 +47,8 @@ var (
 )
 
 type hashJoinCtx struct {
-	sessCtx sessionctx.Context
+	sessCtx   sessionctx.Context
+	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
 	concurrency  uint
 	joinResultCh chan *hashjoinWorkerResult
@@ -305,11 +306,12 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 			return
 		}
 	})
+	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
 	for {
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
-		chk := w.hashJoinCtx.sessCtx.GetSessionVars().GetNewChunkWithCapacity(w.buildSideExec.base().retFieldTypes, w.hashJoinCtx.sessCtx.GetSessionVars().MaxChunkSize, w.hashJoinCtx.sessCtx.GetSessionVars().MaxChunkSize, w.hashJoinCtx.sessCtx.GetSessionVars().ChunkPool.Alloc)
+		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.base().retFieldTypes, sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
 		err = Next(ctx, w.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
