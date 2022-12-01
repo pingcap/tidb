@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cpu",
@@ -7,9 +7,17 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/cgroup",
-        "@com_github_elastic_gosigar//:gosigar",
+        "//util/mathutil",
+        "@com_github_cloudfoundry_gosigar//:go_default_library",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "cpu_test",
+    srcs = ["cpu_test.go"],
+    embed = [":cpu"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

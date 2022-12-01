@@ -16,11 +16,13 @@ package cpu
 
 import (
 	"os"
+	"sync"
 	"time"
 
-	"github.com/elastic/gosigar"
+	"github.com/cloudfoundry/gosigar"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/cgroup"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -38,6 +40,8 @@ type Observer struct {
 	stime int64
 	now   int64
 	exit  chan struct{}
+	cpu   mathutil.ExponentialMovingAverage
+	wg    sync.WaitGroup
 }
 
 // NewCPUObserver returns a cpu observer.
@@ -45,32 +49,34 @@ func NewCPUObserver() *Observer {
 	return &Observer{
 		exit: make(chan struct{}),
 		now:  time.Now().UnixNano(),
+		cpu:  *mathutil.NewExponentialMovingAverage(0.95, 10),
 	}
 }
 
 // Start starts the cpu observer.
 func (c *Observer) Start() {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	const decay = 0.95
-	for {
-		select {
-		case <-ticker.C:
-			// EMA
-			// https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
-			prevCPU := cpuUsage.Load()
-			curr := c.observe()
-			result := prevCPU*decay + curr*(1.0-decay)
-			cpuUsage.Store(result)
-		case <-c.exit:
-			return
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		for {
+			select {
+			case <-ticker.C:
+				curr := c.observe()
+				c.cpu.Add(curr)
+				cpuUsage.Store(c.cpu.Get())
+			case <-c.exit:
+				return
+			}
 		}
-	}
+	}()
 }
 
 // Stop stops the cpu observer.
 func (c *Observer) Stop() {
 	close(c.exit)
+	c.wg.Wait()
 }
 
 func (c *Observer) observe() float64 {
