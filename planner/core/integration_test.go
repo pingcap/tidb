@@ -7616,7 +7616,7 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
-	// // assert point get / batch point get can't work with tiflash in interaction txn
+	// assert point get / batch point get can't work with tiflash in interaction txn
 	for _, sql := range sqls {
 		err = tk.ExecToErr(sql)
 		require.Error(t, err)
