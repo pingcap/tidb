@@ -29,9 +29,8 @@ var (
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
 )
 
-// ErrUserPasswordFailed is used user password failed error
-// ErrUserPasswordFailed struct Contains mysql error
-// compatible mysql error code
+// ErrUserPasswordFailed is used to Verify password failed
+// ErrUserPasswordFailed compatible mysql error. Use s to include mysql errors
 type ErrUserPasswordFailed struct {
 	s string
 }
