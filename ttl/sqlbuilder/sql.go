@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package sqlbuilder
 
 import (
 	"encoding/hex"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
@@ -74,7 +75,7 @@ const (
 
 // SQLBuilder is used to build SQLs for TTL
 type SQLBuilder struct {
-	tbl        *PhysicalTable
+	tbl        *cache.PhysicalTable
 	sb         strings.Builder
 	restoreCtx *format.RestoreCtx
 	state      sqlBuilderState
@@ -84,7 +85,7 @@ type SQLBuilder struct {
 }
 
 // NewSQLBuilder creates a new TTLSQLBuilder
-func NewSQLBuilder(tbl *PhysicalTable) *SQLBuilder {
+func NewSQLBuilder(tbl *cache.PhysicalTable) *SQLBuilder {
 	b := &SQLBuilder{tbl: tbl, state: writeBegin}
 	b.restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &b.sb)
 	return b
@@ -304,7 +305,7 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 
 // ScanQueryGenerator generates SQLs for scan task
 type ScanQueryGenerator struct {
-	tbl           *PhysicalTable
+	tbl           *cache.PhysicalTable
 	expire        time.Time
 	keyRangeStart []types.Datum
 	keyRangeEnd   []types.Datum
@@ -314,7 +315,7 @@ type ScanQueryGenerator struct {
 }
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator
-func NewScanQueryGenerator(tbl *PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
 	if len(rangeStart) > 0 {
 		if err := tbl.ValidateKey(rangeStart); err != nil {
 			return nil, err
@@ -446,7 +447,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 }
 
 // BuildDeleteSQL builds a delete SQL
-func BuildDeleteSQL(tbl *PhysicalTable, rows [][]types.Datum, expire time.Time) (string, error) {
+func BuildDeleteSQL(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) (string, error) {
 	if len(rows) == 0 {
 		return "", errors.New("Cannot build delete SQL with empty rows")
 	}
