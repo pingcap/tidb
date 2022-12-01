@@ -662,7 +662,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 			}
 		} else {
 			return nil, nil, errors.New(
-				"Non-transactional DML, shard column must be fully specified (dbname.tablename.colname) when multiple tables are involved",
+				"Non-transactional DML, shard column must be fully specified (i.e. `BATCH ON dbname.tablename.colname`) when multiple tables are involved",
 			)
 		}
 	}
