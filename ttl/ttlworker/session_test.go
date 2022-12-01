@@ -220,7 +220,6 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, int64(12), rows[0].GetInt64(0))
 	require.Equal(t, 3, s.resetTimeZoneCalls)
-
 }
 
 func TestValidateTTLWork(t *testing.T) {
