@@ -231,6 +231,17 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][2], "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
 // HasPlanForLastExecution checks if the execution plan of the last execution contains specific plan.
 func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
 	connID := tk.session.GetSessionVars().ConnectionID
