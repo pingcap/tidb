@@ -140,7 +140,12 @@ func (e *IndexMergeReaderExecutor) Table() table.Table {
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
-
+	if e.isCorColInTableFilter {
+		e.tableRequest.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+		if err != nil {
+			return err
+		}
+	}
 	if err = e.rebuildRangeForCorCol(); err != nil {
 		return err
 	}
@@ -630,17 +635,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
-	}
-	if e.isCorColInTableFilter {
-		err = func() error {
-			e.tableRequestMu.Lock()
-			defer e.tableRequestMu.Unlock()
-			tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans)
-			return err
-		}()
-		if err != nil {
-			return nil, err
-		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
