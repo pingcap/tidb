@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -1498,11 +1499,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 		var (
 			idxRecords []*indexRecord
+			copChunk   *chunk.Chunk // only used by the coprocessor request sender.
 			nextKey    kv.Key
 			taskDone   bool
 		)
 		if w.copReqSenderPool != nil {
-			idxRecords, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+			idxRecords, copChunk, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+			defer w.copReqSenderPool.recycleIdxRecordsAndChunk(idxRecords, copChunk)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
@@ -1565,10 +1568,6 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				writeBufs.IndexKeyBuf = key
 			}
 			taskCtx.addedCount++
-		}
-
-		if w.copReqSenderPool != nil {
-			w.copReqSenderPool.recycleIdxRecords(idxRecords)
 		}
 
 		return nil
