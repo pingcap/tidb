@@ -21,6 +21,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func BenchmarkDumpColumn(b *testing.B) {
+	info := ColumnInfo{
+		Schema:             "testSchema",
+		Table:              "testTable",
+		OrgTable:           "testOrgTable",
+		Name:               "testName",
+		OrgName:            "testOrgName",
+		ColumnLength:       1,
+		Charset:            106,
+		Flag:               0,
+		Decimal:            1,
+		Type:               14,
+		DefaultValueLength: 2,
+		DefaultValue:       []byte{5, 2},
+	}
+	for n := 0; n < b.N; n++ {
+		info.Dump(nil, nil)
+	}
+}
+
 func TestDumpColumn(t *testing.T) {
 	info := ColumnInfo{
 		Schema:             "testSchema",
