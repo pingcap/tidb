@@ -1042,7 +1042,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 
 func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
 	if v.PlanDigest == "" {
-		return nil, errors.New("sql digest is empty")
+		return nil, errors.New("plan digest is empty")
 	}
 	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
 	if bindableStmt == nil {
