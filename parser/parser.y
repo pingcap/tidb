@@ -10373,6 +10373,7 @@ AuthString:
 RoleNameString:
 	stringLit
 |	identifier
+|	"RESOURCE"
 
 RolenameComposed:
 	StringName '@' StringName
