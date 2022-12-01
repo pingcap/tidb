@@ -45,25 +45,25 @@
         "SQL": "explain format = tidb_json select count(*) from t1",
         "JSONPlan": [
           {
-            "id": "StreamAgg_20",
+            "id": "HashAgg_12",
             "estRows": "1.00",
             "taskType": "root",
-            "operatorInfo": "funcs:count(Column#8)->Column#3",
+            "operatorInfo": "funcs:count(Column#5)->Column#3",
             "subOperators": [
               {
-                "id": "TableReader_21",
+                "id": "TableReader_13",
                 "estRows": "1.00",
                 "taskType": "root",
-                "operatorInfo": "data:StreamAgg_8",
+                "operatorInfo": "data:HashAgg_5",
                 "subOperators": [
                   {
-                    "id": "StreamAgg_8",
+                    "id": "HashAgg_5",
                     "estRows": "1.00",
                     "taskType": "cop[tikv]",
-                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#8",
+                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#5",
                     "subOperators": [
                       {
-                        "id": "TableFullScan_18",
+                        "id": "TableFullScan_10",
                         "estRows": "10000.00",
                         "taskType": "cop[tikv]",
                         "accessObject": "table:t1",
@@ -81,16 +81,16 @@
         "SQL": "explain format = tidb_json select * from t1",
         "JSONPlan": [
           {
-            "id": "TableReader_5",
+            "id": "IndexReader_7",
             "estRows": "10000.00",
             "taskType": "root",
-            "operatorInfo": "data:TableFullScan_4",
+            "operatorInfo": "index:IndexFullScan_6",
             "subOperators": [
               {
-                "id": "TableFullScan_4",
+                "id": "IndexFullScan_6",
                 "estRows": "10000.00",
                 "taskType": "cop[tikv]",
-                "accessObject": "table:t1",
+                "accessObject": "table:t1, index:id(id)",
                 "operatorInfo": "keep order:false, stats:pseudo"
               }
             ]
