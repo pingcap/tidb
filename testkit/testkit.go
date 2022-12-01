@@ -231,6 +231,7 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
 func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
