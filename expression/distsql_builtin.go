@@ -1103,7 +1103,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	}, nil
 }
 
-func findSinglePBScalarFuncs(expr *tipb.Expr, funcCountMap map[tipb.ScalarFuncSig]uint64) () {
+func findSinglePBScalarFuncs(expr *tipb.Expr, funcCountMap map[tipb.ScalarFuncSig]uint64) {
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		return
 	}
