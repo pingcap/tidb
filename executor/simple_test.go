@@ -280,4 +280,12 @@ func TestPasswordExpiration(t *testing.T) {
 	tk.MustGetErrCode(`CREATE USER ''@localhost IDENTIFIED BY 'pass' PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
 	tk.MustExec(`CREATE USER ''@localhost IDENTIFIED BY 'pass'`)
 	tk.MustGetErrCode(`ALTER USER ''@localhost PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
+
+	// different cleartext authentication plugin
+	for _, authplugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
+		tk.MustExec("DROP USER IF EXISTS 'u1'@'localhost'")
+		tk.MustExec(fmt.Sprintf("CREATE USER 'u1'@'localhost' IDENTIFIED WITH '%s'", authplugin))
+		tk.MustExec("ALTER USER 'u1'@'localhost' IDENTIFIED BY 'pass'")
+		tk.MustExec("ALTER USER 'u1'@'localhost' PASSWORD EXPIRE")
+	}
 }
