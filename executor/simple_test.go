@@ -205,11 +205,19 @@ func TestValidatePassword(t *testing.T) {
 	subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
 	subtk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
 	subtk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL validate_password.number_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.special_char_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.length = 0")
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY ''")
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY 'abcd'")
 
 	// CREATE ROLE is not affected by password validation
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustExec("SET GLOBAL validate_password.number_count = default")
+	tk.MustExec("SET GLOBAL validate_password.special_char_count = default")
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = default")
+	tk.MustExec("SET GLOBAL validate_password.length = default")
 	tk.MustExec("CREATE ROLE role1")
 }
 
