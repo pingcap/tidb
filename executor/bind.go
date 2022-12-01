@@ -38,6 +38,7 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	source       string // by manual or from history, only in create stmt
 	sqlDigest    string
 	planDigest   string
 }
@@ -131,7 +132,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Charset:   e.charset,
 		Collation: e.collation,
 		Status:    bindinfo.Enabled,
-		Source:    bindinfo.Manual,
+		Source:    e.source,
 		SQLDigest: e.sqlDigest,
 	}
 	record := &bindinfo.BindRecord{
