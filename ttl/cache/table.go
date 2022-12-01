@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package cache
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -133,7 +134,7 @@ func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
 }
 
 // EvalExpireTime returns the expired time
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se Session, now time.Time) (expire time.Time, err error) {
+func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, now time.Time) (expire time.Time, err error) {
 	tz := se.GetSessionVars().TimeZone
 
 	expireExpr := t.TTLInfo.IntervalExprStr

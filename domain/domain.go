@@ -119,6 +119,7 @@ type Domain struct {
 	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
+	historicalStatsWorker   *HistoricalStatsWorker
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1586,6 +1587,14 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.C
 	}
 }
 
+// SetupHistoricalStatsWorker setups worker
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+	do.historicalStatsWorker = &HistoricalStatsWorker{
+		tblCH: make(chan int64, 16),
+		sctx:  ctx,
+	}
+}
+
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
@@ -1595,11 +1604,17 @@ var planReplayerHandleLease atomic.Uint64
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
+	enableDumpHistoricalStats.Store(true)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
+}
+
+// DisableDumpHistoricalStats4Test disable historical dump worker for test
+func DisableDumpHistoricalStats4Test() {
+	enableDumpHistoricalStats.Store(false)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
@@ -1668,6 +1683,40 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				return
 			case <-gcTicker.C:
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+			}
+		}
+	}()
+}
+
+// GetHistoricalStatsWorker gets historical workers
+func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
+	return do.historicalStatsWorker
+}
+
+// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+var enableDumpHistoricalStats atomic.Bool
+
+// StartHistoricalStatsWorker start historical workers running
+func (do *Domain) StartHistoricalStatsWorker() {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case tblID := <-do.historicalStatsWorker.tblCH:
+				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				if err != nil {
+					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+				}
 			}
 		}
 	}()
