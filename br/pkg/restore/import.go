@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -247,6 +249,8 @@ type FileImporter struct {
 	rawStartKey        []byte
 	rawEndKey          []byte
 	supportMultiIngest bool
+
+	cacheKey string
 }
 
 // NewFileImporter returns a new file importClient.
@@ -261,6 +265,7 @@ func NewFileImporter(
 		backend:      backend,
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
+		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 	}
 }
 
@@ -636,6 +641,7 @@ func (importer *FileImporter) downloadSST(
 		Name:           file.GetName(),
 		RewriteRule:    rule,
 		CipherInfo:     cipher,
+		StorageCacheId: importer.cacheKey,
 	}
 	log.Debug("download SST",
 		logutil.SSTMeta(&sstMeta),
@@ -715,6 +721,7 @@ func (importer *FileImporter) downloadRawKVSST(
 		RewriteRule:    rule,
 		IsRawKv:        true,
 		CipherInfo:     cipher,
+		StorageCacheId: importer.cacheKey,
 	}
 	log.Debug("download SST", logutil.SSTMeta(&sstMeta), logutil.Region(regionInfo.Region))
 
