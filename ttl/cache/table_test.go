@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl_test
+package cache_test
 
 import (
 	"context"
@@ -22,7 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,9 +96,9 @@ func TestNewTTLTable(t *testing.T) {
 		tbl, err := is.TableByName(model.NewCIStr(c.db), model.NewCIStr(c.tbl))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
-		var physicalTbls []*ttl.PhysicalTable
+		var physicalTbls []*cache.PhysicalTable
 		if tblInfo.Partition == nil {
-			ttlTbl, err := ttl.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(""))
+			ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(""))
 			if c.timeCol == "" {
 				require.Error(t, err)
 				continue
@@ -106,7 +107,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-				ttlTbl, err := ttl.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(partition.Name.O))
+				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(partition.Name.O))
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -168,16 +169,16 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	tb, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-	ttlTbl, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
 	require.NoError(t, err)
 
 	tb2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
-	ttlTbl2, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))
+	ttlTbl2, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))
 	require.NoError(t, err)
 
-	se := ttl.NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
 
 	now := time.UnixMilli(0)
 	tz1, err := time.LoadLocation("Asia/Shanghai")
