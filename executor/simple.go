@@ -842,32 +842,34 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// only the last declaration takes effect.
+	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-				break
+				break Loop1
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
-				break
+				break Loop1
 			}
 		}
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
+	Loop2:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpiration.passwordExpired = "Y"
-				break
+				break Loop2
 			case ast.PasswordExpireDefault:
-				break
+				break Loop2
 			case ast.PasswordExpireNever:
 				passwordExpiration.passwordLifetime = 0
-				break
+				break Loop2
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
 					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
 				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
-				break
+				break Loop2
 			}
 		}
 	}
@@ -1049,34 +1051,36 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// only the last declaration takes effect.
+	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-				break
+				break Loop1
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				lockAccount = "N"
-				break
+				break Loop1
 			}
 		}
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
+	Loop2:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpiration.passwordExpired = "Y"
-				break
+				break Loop2
 			case ast.PasswordExpireDefault:
 				passwordExpiration.passwordLifetime = nil
-				break
+				break Loop2
 			case ast.PasswordExpireNever:
 				passwordExpiration.passwordLifetime = 0
-				break
+				break Loop2
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
 					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
 				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
-				break
+				break Loop2
 			}
 		}
 	}
