@@ -28,6 +28,7 @@ go_library(
         "//metrics",
         "//owner",
         "//util/codec",
+        "//util/engine",
         "//util/mathutil",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
