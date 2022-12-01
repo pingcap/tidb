@@ -699,6 +699,7 @@ import (
 	sum                   "SUM"
 	substring             "SUBSTRING"
 	target                "TARGET"
+	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -4970,6 +4971,7 @@ ExplainFormatType:
 |	"BRIEF"
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
+|	"TIDB_JSON"
 
 SavepointStmt:
 	"SAVEPOINT" Identifier
@@ -6535,6 +6537,7 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
+|	"TIDB_JSON"
 
 /************************************************************************************
  *

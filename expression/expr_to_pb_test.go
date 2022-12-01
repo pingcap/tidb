@@ -1078,6 +1078,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// regexp_instr: supported
+	function, err = NewFunction(mock.NewContext(), ast.RegexpInStr, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, intColumn, intColumn, intColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// greatest
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
