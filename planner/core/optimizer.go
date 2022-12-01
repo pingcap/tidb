@@ -605,7 +605,7 @@ func countStarRewriteInternal(plan PhysicalPlan) {
 	rewriteTableScanAndAggArgs(physicalTableScan, physicalAgg.AggFuncs)
 }
 
-// Pick the narrowest and not null column from table
+// rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
 // If there is no not null column in Data Source, the row_id or pk column will be retained
 func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
 	var resultColumnInfo *model.ColumnInfo
