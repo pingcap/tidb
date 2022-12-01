@@ -257,10 +257,20 @@ func (s *subscription) listenOver(cli eventStream) {
 		}
 
 		for _, m := range msg.Events {
+			start, err := decodeKey(m.StartKey)
+			if err != nil {
+				log.Warn("start key not encoded, skipping", logutil.Key("event", m.StartKey), logutil.ShortError(err))
+				continue
+			}
+			end, err := decodeKey(m.EndKey)
+			if err != nil {
+				log.Warn("end key not encoded, skipping", logutil.Key("event", m.EndKey), logutil.ShortError(err))
+				continue
+			}
 			s.output <- spans.Valued{
 				Key: spans.Span{
-					StartKey: decodeKey(m.StartKey),
-					EndKey:   decodeKey(m.EndKey),
+					StartKey: start,
+					EndKey:   end,
 				},
 				Value: m.Checkpoint,
 			}
@@ -283,17 +293,16 @@ func (f *FlushSubscriber) removeSubscription(toStore uint64) {
 }
 
 // decodeKey decodes the key from TiKV, because the region range is encoded in TiKV.
-func decodeKey(key []byte) []byte {
+func decodeKey(key []byte) ([]byte, error) {
 	if len(key) == 0 {
-		return key
+		return key, nil
 	}
 	// Ignore the timestamp...
 	_, data, err := codec.DecodeBytes(key, nil)
 	if err != nil {
-		log.Warn("the key from TiKV isn't encoded properly", logutil.Key("key", key), logutil.ShortError(err))
-		return key
+		return key, err
 	}
-	return data
+	return data, err
 }
 
 func (f *FlushSubscriber) canBeRetried(err error) bool {
