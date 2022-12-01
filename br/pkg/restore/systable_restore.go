@@ -19,6 +19,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const sysUserTableName = "user"
+
 var statsTables = map[string]struct{}{
 	"stats_buckets":    {},
 	"stats_extended":   {},

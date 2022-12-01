@@ -6,6 +6,7 @@ go_library(
         "domain.go",
         "domain_sysvars.go",
         "domainctx.go",
+        "historical_stats.go",
         "optimize_trace.go",
         "plan_replayer.go",
         "plan_replayer_dump.go",
