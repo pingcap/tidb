@@ -781,6 +781,9 @@ const (
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
+	TiDBStoreBatchSize = "tidb_store_batch_size"
 )
 
 // TiDB vars that have only global scope
@@ -1108,6 +1111,7 @@ const (
 	DefTiDBUseAlloc                                  = false
 	DefTiDBEnablePlanReplayerCapture                 = false
 	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
+	DefTiDBStoreBatchSize                            = 0
 )
 
 // Process global variables.
