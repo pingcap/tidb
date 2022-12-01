@@ -135,7 +135,6 @@ func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, erro
 		}
 		return nil, t.cx.Err()
 	}
-
 }
 
 func (t trivialFlushStream) Header() (metadata.MD, error) {
