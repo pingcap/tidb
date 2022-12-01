@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cache",
+    srcs = ["table.go"],
+    importpath = "github.com/pingcap/tidb/ttl/cache",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//table/tables",
+        "//ttl/session",
+        "//types",
+        "//util/chunk",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "cache_test",
+    srcs = [
+        "main_test.go",
+        "table_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":cache",
+        "//parser/model",
+        "//testkit",
+        "//testkit/testsetup",
+        "//ttl/session",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
