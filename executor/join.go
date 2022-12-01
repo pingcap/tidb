@@ -183,6 +183,9 @@ func (e *HashJoinExec) Close() error {
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
 	}
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
@@ -210,7 +213,6 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.concurrency),
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return nil
 }
@@ -1271,7 +1273,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -1282,6 +1283,7 @@ func (e *NestedLoopApplyExec) Close() error {
 			runtimeStats.setCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.outerExec.Close()
 }
@@ -1537,6 +1539,17 @@ func (e *joinRuntimeStats) String() string {
 // Tp implements the RuntimeStats interface.
 func (e *joinRuntimeStats) Tp() int {
 	return execdetails.TpJoinRuntimeStats
+}
+
+func (e *joinRuntimeStats) Clone() execdetails.RuntimeStats {
+	newJRS := &joinRuntimeStats{
+		RuntimeStatsWithConcurrencyInfo: e.RuntimeStatsWithConcurrencyInfo,
+		applyCache:                      e.applyCache,
+		cache:                           e.cache,
+		hasHashStat:                     e.hasHashStat,
+		hashStat:                        e.hashStat,
+	}
+	return newJRS
 }
 
 type hashJoinRuntimeStats struct {

@@ -521,6 +521,9 @@ func TestUpdateBindInfo(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
+
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
 	for _, bindCase := range bindCases {
 		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
@@ -559,6 +562,9 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
 	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
@@ -1016,6 +1022,9 @@ func TestUpgradeToVer85(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
+	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
@@ -1118,4 +1127,147 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	row = chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "0", row.GetString(0))
+}
+
+func TestTiDBCostModelInNewCluster(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	// Indicates we are in a new cluster.
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	// In a new created cluster(above 6.5+), tidb_cost_model_version is 2 by default.
+	mustExec(t, se, "use test;")
+	r := mustExec(t, se, "select @@tidb_cost_model_version;")
+	require.NotNil(t, r)
+
+	ctx := context.Background()
+	chk := r.NewChunk(nil)
+	err = r.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "2", row.GetString(0))
+}
+
+func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 3.0.0 to 6.5+.
+	ver300 := 33
+	seV3 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver300))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	mustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+	mustExec(t, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver300), ver)
+
+	// We are now in 3.0.0, check TiDBCostModelVersion should not exist.
+	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 6.5+, TiDBCostModelVersion should be 1.
+	res = mustExec(t, seCurVer, "select @@tidb_cost_model_version")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "1", row.GetString(0))
+}
+
+func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		func() {
+			ctx := context.Background()
+			store, dom := createStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			// upgrade from 6.1 to 6.5+.
+			ver61 := 91
+			seV61 := createSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			err = m.FinishBootstrap(int64(ver61))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			mustExec(t, seV61, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver61))
+			mustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBCostModelVersion))
+			mustExec(t, seV61, "commit")
+			unsetStoreBootstrapped(store.UUID())
+			ver, err := getBootstrapVersion(seV61)
+			require.NoError(t, err)
+			require.Equal(t, int64(ver61), ver)
+
+			// We are now in 6.1, tidb_cost_model_version is 1.
+			res := mustExec(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+			chk := res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row := chk.GetRow(0)
+			require.Equal(t, 2, row.Len())
+			require.Equal(t, "1", row.GetString(1))
+
+			if i == 0 {
+				// For the first time, We set tidb_cost_model_version to 2.
+				// And after upgrade to 6.5, tidb_cost_model_version should be 2.
+				// For the second it should be 1.
+				mustExec(t, seV61, "set global tidb_cost_model_version = 2")
+			}
+			dom.Close()
+			// Upgrade to 6.5.
+			domCurVer, err := BootstrapSession(store)
+			require.NoError(t, err)
+			defer domCurVer.Close()
+			seCurVer := createSessionAndSetID(t, store)
+			ver, err = getBootstrapVersion(seCurVer)
+			require.NoError(t, err)
+			require.Equal(t, currentBootstrapVersion, ver)
+
+			// We are now in 6.5.
+			res = mustExec(t, seCurVer, "select @@tidb_cost_model_version")
+			chk = res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row = chk.GetRow(0)
+			require.Equal(t, 1, row.Len())
+			if i == 0 {
+				require.Equal(t, "2", row.GetString(0))
+			} else {
+				require.Equal(t, "1", row.GetString(0))
+			}
+		}()
+	}
 }

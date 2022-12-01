@@ -227,6 +227,7 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+	dupIndicator   *atomic.Bool
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
@@ -263,6 +264,8 @@ type ControllerParam struct {
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
+	// DupIndicator can expose the duplicate detection result to the caller
+	DupIndicator *atomic.Bool
 }
 
 func NewRestoreController(
@@ -430,6 +433,7 @@ func NewRestoreControllerWithPauser(
 		errorMgr:       errorMgr,
 		status:         p.Status,
 		taskMgr:        nil,
+		dupIndicator:   p.DupIndicator,
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
@@ -2135,6 +2139,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
+			}
+			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
+			if err := rc.checkCDCPiTR(ctx); err != nil {
+				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
 			}
 		}
 	}
