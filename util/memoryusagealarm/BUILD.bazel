@@ -28,7 +28,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//util",
-        "//util/execdetails",
         "//util/memory",
         "@com_github_stretchr_testify//assert",
     ],

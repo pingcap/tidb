@@ -2506,7 +2506,7 @@ func TestTimestampAdd(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		unit     string
-		interval int64
+		interval float64
 		date     interface{}
 		expect   string
 	}{
@@ -2514,11 +2514,22 @@ func TestTimestampAdd(t *testing.T) {
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
 		{"DAY", 28768, 0, ""},
+		{"QUARTER", 3, "1995-05-01", "1996-02-01 00:00:00"},
+		{"SECOND", 1.1, "1995-05-01", "1995-05-01 00:00:01.100000"},
+		{"SECOND", -1, "1995-05-01", "1995-04-30 23:59:59"},
+		{"SECOND", -1.1, "1995-05-01", "1995-04-30 23:59:58.900000"},
+		{"SECOND", 9.9999e-6, "1995-05-01", "1995-05-01 00:00:00.000009"},
+		{"SECOND", 9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"SECOND", -9.9999e-6, "1995-05-01", "1995-04-30 23:59:59.999991"},
+		{"SECOND", -9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
+		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
 	}
 
 	fc := funcs[ast.TimestampAdd]
 	for _, test := range tests {
-		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewFloat64Datum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(ctx, datumsToConstants(dat))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})

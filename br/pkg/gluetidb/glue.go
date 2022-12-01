@@ -208,6 +208,8 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
 
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
@@ -303,7 +305,8 @@ func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) strin
 
 // mockSession is used for test.
 type mockSession struct {
-	se session.Session
+	se         session.Session
+	globalVars map[string]string
 }
 
 // GetSessionCtx implements glue.Glue
@@ -368,12 +371,16 @@ func (s *mockSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
-	return "true", nil
+	if ret, ok := s.globalVars[name]; ok {
+		return ret, nil
+	}
+	return "True", nil
 }
 
 // MockGlue only used for test
 type MockGlue struct {
-	se session.Session
+	se         session.Session
+	GlobalVars map[string]string
 }
 
 func (m *MockGlue) SetSession(se session.Session) {
@@ -388,7 +395,8 @@ func (*MockGlue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 // CreateSession implements glue.Glue.
 func (m *MockGlue) CreateSession(store kv.Storage) (glue.Session, error) {
 	glueSession := &mockSession{
-		se: m.se,
+		se:         m.se,
+		globalVars: m.GlobalVars,
 	}
 	return glueSession, nil
 }

@@ -68,6 +68,15 @@ type UserPrivileges struct {
 	user string
 	host string
 	*Handle
+	extensionAccessCheckFuncs []extension.AccessCheckFunc
+}
+
+// NewUserPrivileges creates a new UserPrivileges
+func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPrivileges {
+	return &UserPrivileges{
+		Handle:                    handle,
+		extensionAccessCheckFuncs: extension.GetAccessCheckFuncs(),
+	}
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
@@ -128,7 +137,8 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	tblLowerName := strings.ToLower(table)
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
-	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+	semEnabled := sem.IsEnabled()
+	if semEnabled && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
 		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
@@ -154,6 +164,14 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			// PROCESS is the same with SELECT for metrics_schema.
 			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
 				priv |= mysql.ProcessPriv
+			}
+		}
+	}
+
+	for _, fn := range p.extensionAccessCheckFuncs {
+		for _, dynPriv := range fn(db, table, column, priv, semEnabled) {
+			if !p.RequestDynamicVerification(activeRoles, dynPriv, false) {
+				return false
 			}
 		}
 	}

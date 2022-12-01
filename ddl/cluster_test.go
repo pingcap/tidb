@@ -49,7 +49,8 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// 3: (stats_extended)
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
-	require.Len(t, kvRanges, 6)
+	// 6: (stats_table_locked)
+	require.Len(t, kvRanges, 7)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -73,6 +74,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_fm_sketch")
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
+	tk.MustExec("truncate table mysql.stats_table_locked")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 2)
@@ -96,7 +98,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	oldValue := map[string]interface{}{
-		"hot-region-schedule-limit": 1,
+		"merge-schedule-limit": 1,
 	}
 	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
 
@@ -110,7 +112,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		if job.SchemaState == model.StateWriteReorganization {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
 			assert.NoError(t, err)
-			assert.Equal(t, closeValue["hot-region-schedule-limit"], 0)
+			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -126,7 +128,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
-	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))

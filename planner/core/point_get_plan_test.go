@@ -175,6 +175,7 @@ func TestGetExtraColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`CREATE TABLE t (
 	  a int(11) DEFAULT NULL,
 	  b int(11) DEFAULT NULL,

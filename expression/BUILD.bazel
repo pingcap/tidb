@@ -97,6 +97,7 @@ go_library(
         "//util/mathutil",
         "//util/mock",
         "//util/parser",
+        "//util/password-validation",
         "//util/plancodec",
         "//util/printer",
         "//util/sem",
@@ -183,6 +184,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":expression"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",

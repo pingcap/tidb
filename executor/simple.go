@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -783,6 +784,23 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
+	if authOpt == nil || !authOpt.ByAuthString {
+		return false
+	}
+	return authPlugin == mysql.AuthNativePassword ||
+		authPlugin == mysql.AuthTiDBSM3Password ||
+		authPlugin == mysql.AuthCachingSha2Password
+}
+
+func (e *SimpleExec) isValidatePasswordEnabled() bool {
+	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return false
+	}
+	return variable.TiDBOptOn(validatePwdEnable)
+}
+
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Check `CREATE USER` privilege.
@@ -874,14 +892,24 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
+		if e.isValidatePasswordEnabled() && !s.IsCreateRole {
+			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
+				return variable.ErrNotValidPassword.GenWithStackByArgs()
+			}
+			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
+			}
+		}
 		pwd, ok := spec.EncodedPassword()
 
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
-		}
-		authPlugin := mysql.AuthNativePassword
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
-			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 
 		switch authPlugin {
@@ -1071,11 +1099,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
-				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 				if err != nil {
 					return err
 				}
-				spec.AuthOpt.AuthPlugin = authplugin
+				spec.AuthOpt.AuthPlugin = curAuthplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1086,6 +1114,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
+				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
+					return err
+				}
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
@@ -1108,7 +1141,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 
 		switch authTokenOptionHandler {
@@ -1603,6 +1636,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
+	if e.isValidatePasswordEnabled() {
+		if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), s.Password); err != nil {
+			return err
+		}
+	}
 	var pwd string
 	switch authplugin {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
@@ -1776,14 +1814,24 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	var statsIDs []int64
+	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		statsIDs = []int64{s.Table.TableInfo.ID}
+		statsIDs = []int64{s.Tables[0].TableInfo.ID}
 	} else {
-		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
-			return err
-		}
 		if len(s.PartitionNames) == 0 {
-			statsIDs = append(statsIDs, s.Table.TableInfo.ID)
+			for _, table := range s.Tables {
+				partitionStatIds, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				if err != nil {
+					return err
+				}
+				statsIDs = append(statsIDs, partitionStatIds...)
+				statsIDs = append(statsIDs, table.TableInfo.ID)
+			}
+		} else {
+			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
+			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Tables[0].TableInfo, s.PartitionNames); err != nil {
+				return err
+			}
 		}
 	}
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {

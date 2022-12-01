@@ -1180,6 +1180,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Partition = node.(*PartitionOptions)
 	}
+	for i, option := range n.Options {
+		node, ok = option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
+	}
 
 	return v.Leave(n)
 }
@@ -2074,6 +2081,8 @@ const (
 	TableOptionTableCheckSum
 	TableOptionUnion
 	TableOptionEncryption
+	TableOptionTTL
+	TableOptionTTLEnable
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2120,13 +2129,16 @@ const (
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
-	Tp         TableOptionType
-	Default    bool
-	StrValue   string
-	UintValue  uint64
-	BoolValue  bool
-	Value      ValueExpr
-	TableNames []*TableName
+	node
+	Tp            TableOptionType
+	Default       bool
+	StrValue      string
+	UintValue     uint64
+	BoolValue     bool
+	TimeUnitValue *TimeUnitExpr
+	Value         ValueExpr
+	TableNames    []*TableName
+	ColumnName    *ColumnName
 }
 
 func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
@@ -2405,10 +2417,58 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WriteString(n.StrValue)
 		}
+	case TableOptionTTL:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TTL ")
+			ctx.WritePlain("= ")
+			ctx.WriteName(n.ColumnName.Name.String())
+			ctx.WritePlain(" + INTERVAL ")
+			err := n.Value.Restore(ctx)
+			ctx.WritePlain(" ")
+			if err != nil {
+				return err
+			}
+			return n.TimeUnitValue.Restore(ctx)
+		})
+	case TableOptionTTLEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TTL_ENABLE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *TableOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableOption)
+	if n.Value != nil {
+		node, ok := n.Value.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Value = node.(ValueExpr)
+	}
+	if n.TimeUnitValue != nil {
+		node, ok := n.TimeUnitValue.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TimeUnitValue = node.(*TimeUnitExpr)
+	}
+	return v.Leave(n)
 }
 
 // SequenceOptionType is the type for SequenceOption
@@ -2599,6 +2659,7 @@ const (
 	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
+	AlterTableRemoveTTL
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3280,7 +3341,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
-
+	case AlterTableRemoveTTL:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("REMOVE TTL")
+			return nil
+		})
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -3343,6 +3408,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Partition = node.(*PartitionOptions)
+	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
 	}
 	for _, def := range n.PartDefinitions {
 		if !def.acceptInPlace(v) {

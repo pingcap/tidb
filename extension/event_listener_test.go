@@ -308,6 +308,21 @@ func TestExtensionStmtEvents(t *testing.T) {
 				{DB: "test", Table: "t2"},
 			},
 		},
+		{
+			sql:        "create database db1",
+			redactText: "create database `db1`",
+			tables: []stmtctx.TableEntry{
+				{DB: "db1", Table: ""},
+			},
+		},
+		{
+			sql:        "kill query 1",
+			redactText: "kill query ?",
+		},
+		{
+			sql:        "create placement policy p1 followers=1",
+			redactText: "create placement policy `p1` followers = ?",
+		},
 	}
 
 	for i, c := range cases {

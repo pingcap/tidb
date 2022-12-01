@@ -85,6 +85,7 @@ const (
 // Global config name list.
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
+	GlobalConfigSourceID     = "source_id"
 )
 
 func (s ScopeFlag) String() string {
@@ -164,6 +165,8 @@ type SysVar struct {
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
 	GlobalConfigName string
+	// RequireDynamicPrivileges is a function to return a dynamic privilege list to check the set sysvar privilege
+	RequireDynamicPrivileges func(isGlobal bool, sem bool) []string
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.

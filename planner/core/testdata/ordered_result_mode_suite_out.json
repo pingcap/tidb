@@ -310,11 +310,11 @@
       {
         "Plan": [
           "Sort_8 12500.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_20 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─IndexReader_31(Build) 10000.00 root  index:IndexFullScan_30",
-          "  │ └─IndexFullScan_30 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
-          "    └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin_10 12500.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
+          "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {

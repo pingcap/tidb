@@ -108,11 +108,11 @@
       },
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Best": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+        "Best": "IndexJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Best": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+        "Best": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
@@ -538,7 +538,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
-        "Best": "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
@@ -574,7 +574,7 @@
       },
       {
         "SQL": "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
-        "Best": "RightHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
@@ -678,7 +678,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
@@ -743,7 +743,7 @@
       },
       {
         "SQL": "select * from t where a in (select a from t) order by b",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort"
       },
       {
         "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
@@ -751,7 +751,7 @@
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection"
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
@@ -1269,7 +1269,7 @@
       },
       {
         "SQL": "select max(a), b from t;",
-        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select max(a+1) from t;",
@@ -1277,11 +1277,11 @@
       },
       {
         "SQL": "select max(a), min(a) from t;",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(d), min(d) from t where c = 1 and d > 10",
@@ -1289,19 +1289,19 @@
       },
       {
         "SQL": "select max(a), max(c), min(f) from t",
-        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), max(b) from t",
-        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select max(a), max(c) from t where c > 10",
-        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->StreamAgg)->StreamAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->HashAgg)->HashAgg"
       },
       {
         "SQL": "select max(a), min(a) from t where a * 3 + 10 < 100",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->HashAgg)->HashAgg"
       },
       {
         "SQL": "select max(a) from t group by b;",
@@ -1588,7 +1588,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -2422,13 +2422,13 @@
           "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
           "└─PartitionUnion 16000.00 root  ",
           "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
-          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │ └─IndexReader 8000.00 root  index:HashAgg",
           "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  │     └─IndexFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312, index:idx_timestamp(timestamp) keep order:false, stats:pseudo",
           "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
-          "    └─TableReader 8000.00 root  data:HashAgg",
+          "    └─IndexReader 8000.00 root  index:HashAgg",
           "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+          "        └─IndexFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313, index:idx_timestamp(timestamp) keep order:false, stats:pseudo"
         ],
         "Result": null
       }
@@ -2605,13 +2605,13 @@
           "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
           "└─PartitionUnion 16000.00 root  ",
           "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
-          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │ └─IndexReader 8000.00 root  index:HashAgg",
           "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  │     └─IndexFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312, index:idx_timestamp(timestamp) keep order:false, stats:pseudo",
           "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
-          "    └─TableReader 8000.00 root  data:HashAgg",
+          "    └─IndexReader 8000.00 root  index:HashAgg",
           "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+          "        └─IndexFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313, index:idx_timestamp(timestamp) keep order:false, stats:pseudo"
         ],
         "Result": null
       }
@@ -6104,9 +6104,9 @@
           "Projection 1.00 root  test.t1.a, Column#6",
           "└─HashJoin 1.00 root  CARTESIAN left outer join",
           "  ├─Point_Get(Build) 1.00 root table:t2 handle:10",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#15)->Column#6, funcs:firstrow(Column#16)->test.t1.a",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test.t1.a)->Column#15, funcs:firstrow(test.t1.a)->Column#16",
+          "  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#13)->Column#6, funcs:firstrow(Column#14)->test.t1.a",
+          "    └─TableReader 1.00 root  data:HashAgg",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:sum(test.t1.a)->Column#13, funcs:firstrow(test.t1.a)->Column#14",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -6236,7 +6236,7 @@
           "  └─MaxOneRow(Probe) 250.00 root  ",
           "    └─StreamAgg 250.00 root  funcs:sum(Column#33)->Column#18",
           "      └─Projection 1998.00 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#33",
-          "        └─IndexJoin 1998.00 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
+          "        └─IndexHashJoin 1998.00 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
           "          ├─IndexLookUp(Build) 2497.50 root  ",
           "          │ ├─IndexRangeScan(Build) 2500.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
           "          │ └─Selection(Probe) 2497.50 cop[tikv]  not(isnull(test.tb.name))",
@@ -6339,16 +6339,18 @@
         "Plan": [
           "HashJoin 159.84 root  inner join, equal:[eq(test.ta.id, test.td.id)]",
           "├─Selection(Build) 159.84 root  gt(Column#19, 100)",
-          "│ └─HashAgg 199.80 root  group by:test.td.id, funcs:max(test.td.id)->Column#19, funcs:firstrow(test.td.id)->test.td.id",
-          "│   └─TableReader 249.75 root  data:Selection",
-          "│     └─Selection 249.75 cop[tikv]  like(test.td.name, \"chad999%\", 92), not(isnull(test.td.id))",
-          "│       └─TableFullScan 10000.00 cop[tikv] table:td keep order:false, stats:pseudo",
+          "│ └─HashAgg 199.80 root  group by:test.td.id, funcs:max(Column#32)->Column#19, funcs:firstrow(test.td.id)->test.td.id",
+          "│   └─TableReader 199.80 root  data:HashAgg",
+          "│     └─HashAgg 199.80 cop[tikv]  group by:test.td.id, funcs:max(test.td.id)->Column#32",
+          "│       └─Selection 249.75 cop[tikv]  like(test.td.name, \"chad999%\", 92), not(isnull(test.td.id))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:td keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 200.00 root  inner join, equal:[eq(test.ta.name, test.tc.name)]",
           "  ├─Selection(Build) 160.00 root  gt(Column#14, 100)",
-          "  │ └─HashAgg 200.00 root  group by:test.tc.name, funcs:max(test.tc.id)->Column#14, funcs:firstrow(test.tc.name)->test.tc.name",
-          "  │   └─TableReader 250.00 root  data:Selection",
-          "  │     └─Selection 250.00 cop[tikv]  like(test.tc.name, \"chad99%\", 92), not(isnull(test.tc.name))",
-          "  │       └─TableFullScan 10000.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  │ └─HashAgg 200.00 root  group by:test.tc.name, funcs:max(Column#24)->Column#14, funcs:firstrow(test.tc.name)->test.tc.name",
+          "  │   └─TableReader 200.00 root  data:HashAgg",
+          "  │     └─HashAgg 200.00 cop[tikv]  group by:test.tc.name, funcs:max(test.tc.id)->Column#24",
+          "  │       └─Selection 250.00 cop[tikv]  like(test.tc.name, \"chad99%\", 92), not(isnull(test.tc.name))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:tc keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 7976.02 root  semi join, equal:[eq(test.ta.code, test.tb.code)]",
           "    ├─TableReader(Build) 249.75 root  data:Selection",
           "    │ └─Selection 249.75 cop[tikv]  like(test.tb.name, \"chad9%\", 92), not(isnull(test.tb.code))",
@@ -6366,7 +6368,7 @@
           "Projection 249.75 root  test.ta.name",
           "└─Apply 249.75 root  CARTESIAN inner join",
           "  ├─Apply(Build) 249.75 root  CARTESIAN inner join",
-          "  │ ├─IndexJoin(Build) 249.75 root  inner join, inner:IndexLookUp, outer key:test.tb.code, inner key:test.ta.code, equal cond:eq(test.tb.code, test.ta.code)",
+          "  │ ├─IndexHashJoin(Build) 249.75 root  inner join, inner:IndexLookUp, outer key:test.tb.code, inner key:test.ta.code, equal cond:eq(test.tb.code, test.ta.code)",
           "  │ │ ├─HashAgg(Build) 199.80 root  group by:test.tb.code, funcs:firstrow(test.tb.code)->test.tb.code",
           "  │ │ │ └─TableReader 249.75 root  data:Selection",
           "  │ │ │   └─Selection 249.75 cop[tikv]  like(test.tb.name, \"chad9%\", 92), not(isnull(test.tb.code))",
@@ -6433,6 +6435,277 @@
           "                └─TableRowIDScan 99900.00 cop[tikv] table:td keep order:false, stats:pseudo"
         ],
         "Result": null,
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestCountStarForTikv",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t._tidb_rowid)->Column#12",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(1), count(3.1415), count(0), count(null) from t -- be rewritten count(row_id) but count(null)",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#18)->Column#10, funcs:count(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:count(Column#21)->Column#13",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t._tidb_rowid)->Column#18, funcs:count(test.t._tidb_rowid)->Column#19, funcs:count(test.t._tidb_rowid)->Column#20, funcs:count(NULL)->Column#21",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t where a=1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#12",
+          "    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t_pick_row_id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#5",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t_pick_row_id keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive, be rewritten count(row_id)",
+        "Plan": [
+          "HashJoin 1.25 root  inner join, equal:[eq(test.t.a, Column#10)]",
+          "├─StreamAgg(Build) 1.00 root  funcs:count(Column#21)->Column#10",
+          "│ └─TableReader 1.00 root  data:StreamAgg",
+          "│   └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t._tidb_rowid)->Column#21",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+        "Plan": [
+          "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
+          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:out keep order:false, stats:pseudo",
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
+          "    └─TableReader 10000.00 root  data:StreamAgg",
+          "      └─StreamAgg 10000.00 cop[tikv]  funcs:count(test.t.a)->Column#21",
+          "        └─Selection 80000000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
+          "          └─TableFullScan 100000000.00 cop[tikv] table:inn keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#19",
+          "└─HashJoin 12500.00 root  inner join, equal:[eq(test.t.a, test.t.e)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(distinct 1) from t -- shouldn't be rewritten",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(distinct 1)->Column#10",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(1), count(a), count(b) from t -- count(1) to count(a)",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#16)->Column#10, funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#16, funcs:count(test.t.a)->Column#17, funcs:count(test.t.b)->Column#18",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select a, count(*) from t group by a -- shouldn't be rewritten",
+        "Plan": [
+          "Projection 8000.00 root  test.t.a, Column#10",
+          "└─HashAgg 8000.00 root  group by:test.t.a, funcs:count(1)->Column#10, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:sum(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#12",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestCountStarForTiFlash",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#19)->Column#10",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#19",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#25)->Column#10, funcs:count(Column#26)->Column#11, funcs:count(Column#27)->Column#12, funcs:count(Column#28)->Column#13",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#25, funcs:count(test.t.d)->Column#26, funcs:count(test.t.d)->Column#27, funcs:count(NULL)->Column#28",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t where a=1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.a)->Column#12",
+          "      └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t_pick_row_id",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#5",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t_pick_row_id keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
+        "Plan": [
+          "HashJoin 1.25 root  inner join, equal:[eq(test.t.a, Column#10)]",
+          "├─HashAgg(Build) 1.00 root  funcs:count(Column#29)->Column#10",
+          "│ └─TableReader 1.00 root  data:ExchangeSender",
+          "│   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#29",
+          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+        "Plan": [
+          "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
+          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:out keep order:false, stats:pseudo",
+          "  └─HashAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
+          "    └─TableReader 10000.00 root  data:ExchangeSender",
+          "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─HashAgg 10000.00 mpp[tiflash]  funcs:count(test.t.a)->Column#21",
+          "          └─Selection 80000000.00 mpp[tiflash]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
+          "            └─TableFullScan 100000000.00 mpp[tiflash] table:inn keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#20)->Column#19",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#20",
+          "      └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
+          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(distinct 1) from t -- shouldn't be rewritten",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#19)->Column#10",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:1, ",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(1), count(a), count(b) from t -- count(1) to count(a)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#16)->Column#10, funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.a)->Column#16, funcs:count(test.t.a)->Column#17, funcs:count(test.t.b)->Column#18",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select a, count(*) from t group by a -- shouldn't be rewritten",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#10",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#10, test.t.a",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, funcs:count(1)->Column#10, funcs:firstrow(test.t.a)->test.t.a",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#12)->Column#10",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#12",
+          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#15",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
         "Warning": null
       }
     ]

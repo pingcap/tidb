@@ -695,7 +695,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		}
 		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, partitionIDs)
 	} else {
-		ranges := NewKeyRanges(req.KeyRanges)
+		// TODO: merge the if branch.
+		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
 		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0)
 	}
 

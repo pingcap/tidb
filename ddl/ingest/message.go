@@ -28,7 +28,7 @@ const (
 	LitErrStatDirFail       string = "[ddl-ingest] stat lightning sort path error"
 	LitErrDeleteDirFail     string = "[ddl-ingest] delete lightning sort path error"
 	LitErrCreateBackendFail string = "[ddl-ingest] build lightning backend failed, will use kernel index reorg method to backfill the index"
-	LitErrGetBackendFail    string = "[ddl-ingest]: Can not get cached backend"
+	LitErrGetBackendFail    string = "[ddl-ingest] can not get cached backend"
 	LitErrCreateEngineFail  string = "[ddl-ingest] build lightning engine failed, will use kernel index reorg method to backfill the index"
 	LitErrCreateContextFail string = "[ddl-ingest] build lightning worker context failed, will use kernel index reorg method to backfill the index"
 	LitErrGetEngineFail     string = "[ddl-ingest] can not get cached engine info"

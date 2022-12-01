@@ -185,6 +185,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.ExecutorConcurrency = 4
 	sessionVars.SetDistSQLScanConcurrency(15)
@@ -220,6 +221,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -476,6 +478,7 @@ func TestAggEliminator(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
@@ -839,6 +842,7 @@ func TestHintScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -1325,6 +1329,7 @@ func TestPushdownDistinctEnable(t *testing.T) {
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 		"set session tidb_opt_agg_push_down = 1",
+		"set tidb_cost_model_version = 2",
 	}
 	doTestPushdownDistinct(t, vars, input, output)
 }
@@ -1362,6 +1367,7 @@ func TestPushdownDistinctEnableAggPushDownDisable(t *testing.T) {
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 		"set session tidb_opt_agg_push_down = 0",
+		"set tidb_cost_model_version=2",
 	}
 	doTestPushdownDistinct(t, vars, input, output)
 }
@@ -1702,13 +1708,14 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tests := []struct {
 		sql  string
 		plan string
 	}{
 		{
 			sql:  "select avg(a),avg(b),avg(c) from t",
-			plan: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+			plan: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG() */ avg(a),avg(b),avg(c) from t",
@@ -2365,6 +2372,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
@@ -2404,7 +2412,7 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	ls.ByItems = append(ls.ByItems, &util.ByItems{})
 	require.Greater(t, ls.MemoryUsage(), size)
 
-	//PhysicalProperty
+	// PhysicalProperty
 	pp := property.PhysicalProperty{}
 	size = pp.MemoryUsage()
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
@@ -2450,5 +2458,78 @@ func TestNoDecorrelateHint(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
+func TestCountStarForTikv(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
+	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
+	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
+
+	// tikv
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestCountStarForTiFlash(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
+	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
+	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
+
+	// tiflash
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		tableName := tblInfo.Name.L
+		if tableName == "t" || tableName == "t_pick_row_id" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }

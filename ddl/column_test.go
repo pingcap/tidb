@@ -959,3 +959,29 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
 }
+
+func TestIssue39080(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1(id INTEGER PRIMARY KEY, authorId INTEGER AUTO_INCREMENT UNIQUE)")
+
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|", ""+
+		"t1 CREATE TABLE `t1` (\n"+
+		"  `id` int(11) NOT NULL,\n"+
+		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+		"  UNIQUE KEY `authorId` (`authorId`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	//Do not affect the specified name
+	tk.MustExec("CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`))")
+
+	tk.MustQuery("show create table t2").Check(testkit.RowsWithSep("|", ""+
+		"t2 CREATE TABLE `t2` (\n"+
+		"  `id` int(11) NOT NULL,\n"+
+		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+		"  UNIQUE KEY `authorIdx` (`authorId`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
