@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -135,13 +136,14 @@ func (c *copReqSender) run() {
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
+				terror.Call(rs.Close)
 				_ = rs.Close()
 				return
 			}
 			total += len(idxRec)
 			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
 		}
-		_ = rs.Close()
+		terror.Call(rs.Close)
 	}
 }
 
