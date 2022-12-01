@@ -186,7 +186,11 @@ type sessionPool interface {
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*Handle, error) {
 	handle := &Handle{
+<<<<<<< HEAD
 		ddlEventCh:       make(chan *util.Event, 100),
+=======
+		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
+>>>>>>> 12e527213f (statistics: enlarge capacity of ddlEventCh to 1000 (#39532))
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
