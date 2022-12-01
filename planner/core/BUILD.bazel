@@ -138,6 +138,7 @@ go_library(
         "//util/set",
         "//util/size",
         "//util/sqlexec",
+        "//util/stmtsummary",
         "//util/stringutil",
         "//util/texttree",
         "//util/tracing",
