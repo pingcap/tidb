@@ -84,9 +84,9 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				t.statistics.IncErrorRows(len(delBatch))
 			}
 			continue
-		} else {
-			t.statistics.IncSuccessRows(len(delBatch))
 		}
+
+		t.statistics.IncSuccessRows(len(delBatch))
 	}
 	return retryRows
 }
