@@ -166,10 +166,10 @@ func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColu
 		}
 	}
 
+	if shardColumnInfo == nil {
+		return nil
+	}
 	for _, assignment := range assignments {
-		if shardColumnInfo == nil {
-			continue
-		}
 		sameDB := (assignment.Column.Schema.L == tableName.Schema.L) ||
 			(assignment.Column.Schema.L == "" && tableName.Schema.L == se.GetSessionVars().CurrentDB)
 		if !sameDB {
