@@ -4680,9 +4680,6 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"1 1 1",
 		"12 12 21",
 		"23 23 32"))
-	//tk.MustExec(`create table t2 (a int unsigned PRIMARY KEY, b varchar(255))`)
-	//tk.MustExec(`insert into t2 values (1, "1"), (12, "12"),(23,"23"),(34,"34"),(45,"45"),(56,"56")`)
-	//tk.MustExec(`alter table t2 modify b varchar(200) charset latin1`)
 	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -4715,14 +4712,12 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
-	//tk.MustQuery(`explain select * from t where b > "1"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select * from t where b > "1"`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"23 23 32",
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
-	//tk.MustQuery(`explain select * from t where c < 40`).Check(testkit.Rows(""))
 	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
 		"1 1 1",
 		"12 12 21",

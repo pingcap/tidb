@@ -3787,7 +3787,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 }
 
 // getReorganizedDefinitions return the definitions as they would look like after the REORGANIZE PARTITION is done.
-func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
+func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) []model.PartitionDefinition {
 	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
 	if pi.Type == model.PartitionTypeList {
 		replaced := false
@@ -3816,9 +3816,9 @@ func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartId
 	return tmpDefs
 }
 
-func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]interface{}, error) {
-	idMap := make(map[int]interface{})
-	var firstPartIdx, lastPartIdx int = -1, -1
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
+	idMap := make(map[int]struct{})
+	var firstPartIdx, lastPartIdx = -1, -1
 	for _, name := range names {
 		partIdx := pi.FindPartitionDefinitionByName(name.L)
 		if partIdx == -1 {
@@ -3827,7 +3827,7 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 		if _, ok := idMap[partIdx]; ok {
 			return 0, 0, nil, errors.Trace(dbterror.ErrSameNamePartition)
 		}
-		idMap[partIdx] = nil
+		idMap[partIdx] = struct{}{}
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
@@ -3846,13 +3846,13 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
 
 	meta := t.Meta()
 	pi := meta.GetPartitionInfo()
 	if pi == nil {
-		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
 
 	// TODO:
@@ -3933,7 +3933,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) error {
+func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
