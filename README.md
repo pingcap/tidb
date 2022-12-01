@@ -12,7 +12,7 @@
 
 ## What is TiDB?
 
-TiDB ("Ti" stands for Titanium) is an open-source distributed SQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
+TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source distributed SQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
 
 - [Key features](https://docs.pingcap.com/tidb/stable/overview#key-features)
 - [Architecture](#architecture)
