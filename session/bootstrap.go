@@ -104,7 +104,7 @@ const (
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
-		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+    	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
     	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
     	Password_lifetime		SMALLINT UNSIGNED,
 		PRIMARY KEY (Host, User));`
@@ -692,13 +692,16 @@ const (
 	version103 = 103
 	// version104 add `sql_digest` and `plan_digest` to `bind_info`
 	version104 = 104
-	// version105 add columns related to password expiration
+	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
+	// This will only happens when we upgrade a cluster before 6.0.
 	version105 = 105
+	// version106 add columns related to password expiration
+	version106 = 106
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version105
+var currentBootstrapVersion int64 = version106
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -808,6 +811,7 @@ var (
 		upgradeToVer103,
 		upgradeToVer104,
 		upgradeToVer105,
+		upgradeToVer106,
 	}
 )
 
@@ -2102,8 +2106,28 @@ func upgradeToVer104(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
 
+// For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost model2 by default to keep plans unchanged.
 func upgradeToVer105(s Session, ver int64) {
 	if ver >= version105 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion, "1")
+}
+
+func upgradeToVer106(s Session, ver int64) {
+	if ver >= version106 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
