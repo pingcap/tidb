@@ -9,6 +9,7 @@ go_library(
         "lexer.go",
         "misc.go",
         "parser.go",
+        "ttlfeaturegate.go",
         "yy_parser.go",
     ],
     importpath = "github.com/pingcap/tidb/parser",
