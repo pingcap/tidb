@@ -462,6 +462,7 @@ func TestPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
