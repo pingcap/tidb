@@ -359,12 +359,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		}
 
 		if succ {
-			if variable.EnableMDL.Load() {
-				_, err = s.etcdCli.Delete(ctx, path, clientv3.WithPrefix())
-				if err != nil {
-					logutil.BgLogger().Warn("[ddl] syncer delete versions failed", zap.Any("job id", jobID), zap.Error(err))
-				}
-			}
 			return nil
 		}
 		time.Sleep(checkVersInterval)
