@@ -302,7 +302,7 @@ func MakeSourceFileRegion(
 	// set fileSize to INF to make sure compressed files can be read until EOF. Because we can't get the exact size of the compressed files.
 	// TODO: update progress bar calculation for compressed files.
 	if fi.FileMeta.Compression != CompressionNone {
-		rowIDMax = fileSize * 100 / divisor // FIXME: this is not accurate. Need more tests and fix solution.
+		rowIDMax = fileSize * 500 / divisor // FIXME: this is not accurate. Need more tests and fix solution.
 		fileSize = TableFileSizeINF
 	}
 	tableRegion := &TableRegion{
