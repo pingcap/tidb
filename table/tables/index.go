@@ -322,6 +322,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		// If the index is in public state, delete this index means it must exists.
 		doAssert := true
 		if c.tblInfo.Partition != nil {
+			// TODO: Are there no more effective way?
+			// Is it not possible to use the partitionTable.doubleWritePartitions[c.phyTblID] instead?
 			defs := c.tblInfo.Partition.AddingDefinitions
 			for i := range defs {
 				if c.phyTblID == defs[i].ID {
