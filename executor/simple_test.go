@@ -287,5 +287,6 @@ func TestPasswordExpiration(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("CREATE USER 'u1'@'localhost' IDENTIFIED WITH '%s'", authplugin))
 		tk.MustExec("ALTER USER 'u1'@'localhost' IDENTIFIED BY 'pass'")
 		tk.MustExec("ALTER USER 'u1'@'localhost' PASSWORD EXPIRE")
+		tk.MustQuery("SELECT password_expired FROM mysql.user WHERE user = 'u1'").Check(testkit.Rows("Y"))
 	}
 }

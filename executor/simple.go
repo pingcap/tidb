@@ -62,6 +62,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const notSpecified = -1
+
 var (
 	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
 	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
@@ -830,27 +832,48 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	lockAccount := "N"
-	passwordExpire := "N"
-	var passwordExpireInterval any = nil
+	passwordExpiration := struct {
+		passwordExpired  string
+		passwordLifetime any
+	}{
+		"N",
+		nil,
+	}
 	if length := len(s.PasswordOrLockOptions); length > 0 {
-		for i := 0; i < length; i++ {
-			switch s.PasswordOrLockOptions[i].Type {
-			case ast.Lock:
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// only the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-			case ast.Unlock:
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				break
+			}
+		}
+		// If "PASSWORD EXPIRE ..." appears many times,
+		// only the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
-				passwordExpire = "Y"
+				passwordExpiration.passwordExpired = "Y"
+				break
 			case ast.PasswordExpireDefault:
+				break
 			case ast.PasswordExpireNever:
-				passwordExpireInterval = 0
+				passwordExpiration.passwordLifetime = 0
+				break
 			case ast.PasswordExpireInterval:
-				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
+				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
+					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
+				}
+				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
+				break
 			}
 		}
 	}
 	if s.IsCreateRole {
 		lockAccount = "Y"
-		passwordExpire = "Y"
+		passwordExpiration.passwordExpired = "Y"
 	}
 
 	var userAttributes any = nil
@@ -880,7 +903,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
-		if len(spec.User.Username) == 0 && passwordExpire == "Y" {
+		if len(spec.User.Username) == 0 && passwordExpiration.passwordExpired == "Y" {
 			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
@@ -943,7 +966,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-			hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer, passwordExpire, passwordExpireInterval)
+			hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer, passwordExpiration.passwordExpired, passwordExpiration.passwordLifetime)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -991,6 +1014,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
+	disableSandBoxMode := false
+	var err error
+	if e.ctx.InSandBoxMode() {
+		if err = e.checkSandboxMode(s.Specs); err != nil {
+			return err
+		}
+		disableSandBoxMode = true
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
@@ -1008,26 +1039,44 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	lockAccount := ""
-	passwordExpire := ""
-	var passwordExpireInterval any = -1
+	passwordExpiration := struct {
+		passwordExpired  string
+		passwordLifetime any
+	}{
+		"",
+		notSpecified,
+	}
 	if length := len(s.PasswordOrLockOptions); length > 0 {
-		for i := 0; i < length; i++ {
-			switch s.PasswordOrLockOptions[i].Type {
-			case ast.Lock:
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// only the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-			case ast.Unlock:
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				lockAccount = "N"
+				break
+			}
+		}
+		// If "PASSWORD EXPIRE ..." appears many times,
+		// only the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
-				passwordExpire = "Y"
+				passwordExpiration.passwordExpired = "Y"
+				break
 			case ast.PasswordExpireDefault:
-				passwordExpireInterval = nil
+				passwordExpiration.passwordLifetime = nil
+				break
 			case ast.PasswordExpireNever:
-				passwordExpireInterval = 0
+				passwordExpiration.passwordLifetime = 0
+				break
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
 					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
-				passwordExpireInterval = s.PasswordOrLockOptions[i].Count
+				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
+				break
 			}
 		}
 	}
@@ -1122,11 +1171,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
-			if !spec.AuthOpt.ByAuthString && !spec.AuthOpt.ByHashString {
-				if e.ctx.InSandBoxMode() && (spec.User.CurrentUser || e.ctx.GetSessionVars().User.Username == spec.User.Username) {
-					return errMustChangePassword.GenWithStackByArgs()
-				}
-			}
 			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
 				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
@@ -1159,11 +1203,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
 			}
 			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
-				if passwordExpire == "" {
-					passwordExpire = "N"
-				}
-				if e.ctx.InSandBoxMode() && (e.ctx.GetSessionVars().User.Username == spec.User.Username || spec.User.CurrentUser) {
-					e.ctx.DisableSandBoxMode()
+				if passwordExpiration.passwordExpired == "" {
+					passwordExpiration.passwordExpired = "N"
 				}
 			}
 		}
@@ -1172,14 +1213,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"account_locked=%?", lockAccount})
 		}
 
-		if len(passwordExpire) != 0 {
-			if len(spec.User.Username) == 0 && passwordExpire == "Y" {
+		if len(passwordExpiration.passwordExpired) != 0 {
+			if len(spec.User.Username) == 0 && passwordExpiration.passwordExpired == "Y" {
 				return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 			}
-			fields = append(fields, alterField{"password_expired=%?", passwordExpire})
+			fields = append(fields, alterField{"password_expired=%?", passwordExpiration.passwordExpired})
 		}
-		if passwordExpireInterval != -1 {
-			fields = append(fields, alterField{"password_lifetime=%?", passwordExpireInterval})
+		if passwordExpiration.passwordLifetime != notSpecified {
+			fields = append(fields, alterField{"password_lifetime=%?", passwordExpiration.passwordLifetime})
 		}
 
 		if s.CommentOrAttributeOption != nil {
@@ -1257,7 +1298,27 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		}
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege(); err != nil {
+		return err
+	}
+	if disableSandBoxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
+}
+
+func (e *SimpleExec) checkSandboxMode(specs []*ast.UserSpec) error {
+	for _, spec := range specs {
+		if spec.AuthOpt == nil {
+			continue
+		}
+		if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
+			if spec.User.CurrentUser || e.ctx.GetSessionVars().User.Username == spec.User.Username {
+				return nil
+			}
+		}
+	}
+	return errMustChangePassword.GenWithStackByArgs()
 }
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
@@ -1655,6 +1716,7 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
+	disableSandboxMode := false
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	var u, h string
 	if s.User == nil || s.User.CurrentUser {
@@ -1679,6 +1741,12 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if !exists {
 		return errors.Trace(ErrPasswordNoMatch)
 	}
+	if e.ctx.InSandBoxMode() {
+		if s.User == nil || s.User.CurrentUser ||
+			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
+			disableSandboxMode = true
+		}
+	}
 
 	authplugin, err := e.userAuthPlugin(u, h)
 	if err != nil {
@@ -1700,23 +1768,22 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
-	if e.ctx.InSandBoxMode() &&
-		(s.User == nil || s.User.CurrentUser || e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
-		e.ctx.DisableSandBoxMode()
-	}
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	_, _, err = exec.ExecRestrictedSQL(ctx, nil,
 		`UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`,
-		mysql.SystemDB,
-		mysql.UserTable,
-		pwd,
-		u,
-		strings.ToLower(h))
+		mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	if err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	if disableSandboxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
