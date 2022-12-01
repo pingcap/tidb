@@ -32,6 +32,8 @@ import (
 var (
 	scanTaskExecuteSQLMaxRetry      = 5
 	scanTaskExecuteSQLRetryInterval = 2 * time.Second
+	taskStartCheckErrorRateCnt      = 10000
+	taskMaxErrorRate                = 0.4
 )
 
 type ttlStatistics struct {
@@ -102,6 +104,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	for {
 		if err = ctx.Err(); err != nil {
 			return t.result(err)
+		}
+
+		if total := t.statistics.TotalRows.Load(); total > uint64(taskStartCheckErrorRateCnt) {
+			if t.statistics.ErrorRows.Load() > uint64(float64(total)*taskMaxErrorRate) {
+				return t.result(errors.Errorf("error exceeds the limit"))
+			}
 		}
 
 		sql := retrySQL
