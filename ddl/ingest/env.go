@@ -47,6 +47,13 @@ const maxMemoryQuota = 2 * size.GB
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv() {
 	log.SetAppLogger(logutil.BgLogger())
+	globalCfg := config.GetGlobalConfig()
+	if globalCfg.Store != "tikv" {
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("storage limitation", "only support TiKV storage"),
+			zap.String("current storage", globalCfg.Store),
+			zap.Bool("lightning is initialized", LitInitialized))
+	}
 	sPath, err := genLightningDataDir()
 	if err != nil {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail, zap.Error(err),

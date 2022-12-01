@@ -217,7 +217,7 @@ func TestMakeSourceFileRegion(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, regions, 1)
 	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
-	assert.Equal(t, fileInfo.FileMeta.FileSize, regions[0].Chunk.EndOffset)
+	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
 	assert.Len(t, regions[0].Chunk.Columns, 0)
 }
 

@@ -227,6 +227,7 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+	dupIndicator   *atomic.Bool
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
@@ -263,6 +264,8 @@ type ControllerParam struct {
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
+	// DupIndicator can expose the duplicate detection result to the caller
+	DupIndicator *atomic.Bool
 }
 
 func NewRestoreController(
@@ -430,6 +433,7 @@ func NewRestoreControllerWithPauser(
 		errorMgr:       errorMgr,
 		status:         p.Status,
 		taskMgr:        nil,
+		dupIndicator:   p.DupIndicator,
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
@@ -1841,7 +1845,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 
 	// wait until any existing level-1 compact to complete first.
 	task := log.FromContext(ctx).Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
-	for !rc.compactState.CAS(compactStateIdle, compactStateDoing) {
+	for !rc.compactState.CompareAndSwap(compactStateIdle, compactStateDoing) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	task.End(zap.ErrorLevel, nil)
@@ -1901,7 +1905,7 @@ func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode)
 }
 
 func (rc *Controller) enforceDiskQuota(ctx context.Context) {
-	if !rc.diskQuotaState.CAS(diskQuotaStateIdle, diskQuotaStateChecking) {
+	if !rc.diskQuotaState.CompareAndSwap(diskQuotaStateIdle, diskQuotaStateChecking) {
 		// do not run multiple the disk quota check / import simultaneously.
 		// (we execute the lock check in background to avoid blocking the cron thread)
 		return
@@ -2136,6 +2140,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
+			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
+			if err := rc.checkCDCPiTR(ctx); err != nil {
+				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
+			}
 		}
 	}
 
@@ -2199,23 +2207,7 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	var (
-		reader       storage.ReadSeekCloser
-		compressType storage.CompressType
-		err          error
-	)
-	switch {
-	case chunk.FileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
-	case chunk.FileMeta.Compression != mydump.CompressionNone:
-		compressType, err = mydump.ToStorageCompressType(chunk.FileMeta.Compression)
-		if err != nil {
-			break
-		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, chunk.FileMeta.Path)
-	default:
-		reader, err = store.Open(ctx, chunk.FileMeta.Path)
-	}
+	reader, err := openReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2789,4 +2781,21 @@ func (cr *chunkRestore) restore(
 		deliverErr = ctx.Err()
 	}
 	return errors.Trace(firstErr(encodeErr, deliverErr))
+}
+
+func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
+	reader storage.ReadSeekCloser, err error) {
+	switch {
+	case fileMeta.Type == mydump.SourceTypeParquet:
+		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+	case fileMeta.Compression != mydump.CompressionNone:
+		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
+		if err2 != nil {
+			return nil, err2
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
+	default:
+		reader, err = store.Open(ctx, fileMeta.Path)
+	}
+	return
 }

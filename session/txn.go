@@ -151,7 +151,6 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 }
 
 // resetTxnInfo resets the transaction info.
@@ -159,8 +158,7 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 func (txn *LazyTxn) resetTxnInfo(
 	startTS uint64,
 	state txninfo.TxnRunningState,
-	entriesCount,
-	entriesSize uint64,
+	entriesCount uint64,
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
@@ -178,7 +176,7 @@ func (txn *LazyTxn) resetTxnInfo(
 	txninfo.TxnStatusEnteringCounter(state).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
-	txn.mu.TxnInfo.EntriesSize = entriesSize
+
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
 }
@@ -189,6 +187,22 @@ func (txn *LazyTxn) Size() int {
 		return 0
 	}
 	return txn.Transaction.Size()
+}
+
+// Mem implements the MemBuffer interface.
+func (txn *LazyTxn) Mem() uint64 {
+	if txn.Transaction == nil {
+		return 0
+	}
+	return txn.Transaction.Mem()
+}
+
+// SetMemoryFootprintChangeHook sets the hook to be called when the memory footprint of this transaction changes.
+func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
 // Valid implements the kv.Transaction interface.
@@ -275,7 +289,6 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		t.StartTS(),
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
 
@@ -433,7 +446,6 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.updateState(originState)
 	txn.mu.TxnInfo.BlockStartTime.Valid = false
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 	return err
 }
 
