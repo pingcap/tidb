@@ -198,6 +198,7 @@ type TelemetryInfo struct {
 	UseFlashbackToCluster bool
 	PartitionTelemetry    *PartitionTelemetryInfo
 	AccountLockTelemetry  *AccountLockTelemetryInfo
+	UseIndexMerge         bool
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -215,6 +216,7 @@ type PartitionTelemetryInfo struct {
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
@@ -467,8 +469,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if !ok {
 			oriIso = "REPEATABLE-READ"
 		}
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
-		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBAutoBuildStatsConcurrency)
+		terror.Log(err1)
+		if err1 == nil {
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+		}
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBSysProcScanConcurrency)
+		terror.Log(err2)
+		if err2 == nil {
+			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
+			terror.Log(err3)
+			if err3 == nil {
+				sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
+			}
+		}
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
@@ -591,10 +605,6 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 	if !ok {
 		return nil
 	}
-	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
-	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
-	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
 		err := fkCheck.doCheck(ctx)
@@ -624,11 +634,25 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 //  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
 //  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCascadeRuntimeStats{}
+		defer a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.plan.ID(), fkc.stats)
+	}
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
+	if fkc.stats != nil {
+		start := time.Now()
+		defer func() {
+			fkc.stats.Total += time.Since(start)
+		}()
 	}
 	for {
 		e, err := fkc.buildExecutor(ctx)

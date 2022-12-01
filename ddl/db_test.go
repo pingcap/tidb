@@ -898,11 +898,11 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table if exists global_temp_auto_id")
 	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) on commit delete rows")
 	tk.MustExec("begin")
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 _TIDB_ROWID"))
 	tk.MustExec("insert into global_temp_auto_id value(null)")
 	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("1"))
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 _TIDB_ROWID"))
 	tk.MustExec("commit")
 	tk.MustExec("drop table global_temp_auto_id")
 
@@ -914,12 +914,12 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 _TIDB_ROWID"))
 		tk.MustExec("begin")
 		tk.MustExec("insert into global_temp_auto_id value(null)")
 		tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
 		tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("100"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 _TIDB_ROWID"))
 		tk.MustExec("commit")
 	}
 	tk.MustExec("drop table global_temp_auto_id")
@@ -985,6 +985,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
@@ -1385,6 +1386,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	prepareFn := func() {

@@ -692,8 +692,8 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
 
-	// Default off
-	require.Equal(t, fastDDL.Value, Off)
+	// Default true
+	require.Equal(t, fastDDL.Value, On)
 
 	// Set to On
 	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableFastReorg, On)

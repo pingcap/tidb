@@ -72,6 +72,7 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
+	flagCountStarRewriter
 )
 
 var optRuleList = []logicalOptRule{
@@ -94,6 +95,7 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&countStarRewriter{},
 }
 
 type logicalOptimizeOp struct {
@@ -666,6 +668,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
 		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
 	}
 }
 

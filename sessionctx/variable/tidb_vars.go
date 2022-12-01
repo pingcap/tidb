@@ -425,6 +425,9 @@ const (
 	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
 
+	// TiDBIndexMergeIntersectionConcurrency is used for parallel worker of index merge intersection.
+	TiDBIndexMergeIntersectionConcurrency = "tidb_index_merge_intersection_concurrency"
+
 	// TiDBEnableParallelApply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
@@ -555,6 +558,9 @@ const (
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
 	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
+	// TiDBCDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	TiDBCDCWriteSource = "tidb_cdc_write_source"
+
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
@@ -626,6 +632,9 @@ const (
 
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBSourceID indicates the source ID of the TiDB server.
+	TiDBSourceID = "tidb_source_id"
 
 	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
 	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
@@ -772,6 +781,9 @@ const (
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
+	TiDBStoreBatchSize = "tidb_store_batch_size"
 )
 
 // TiDB vars that have only global scope
@@ -840,6 +852,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
@@ -926,7 +942,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
@@ -1065,7 +1081,7 @@ const (
 	DefTiFlashFastScan                             = false
 	DefMemoryUsageAlarmRatio                       = 0.7
 	DefMemoryUsageAlarmKeepRecordNum               = 5
-	DefTiDBEnableFastReorg                         = false
+	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1075,23 +1091,27 @@ const (
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	DefTiDBAutoBuildStatsConcurrency             = 1
+	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = false
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 1
+	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
 	DefTiDBMergePartitionStatsConcurrency        = 1
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold        float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan          = true
-	DefTiDBExternalTS                        = 0
-	DefTiDBEnableExternalTSRead              = false
-	DefTiDBEnableReusechunk                  = true
-	DefTiDBUseAlloc                          = false
-	DefTiDBEnablePlanReplayerCapture         = false
+	DefTiDBGOGCTunerThreshold                float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                  = true
+	DefTiDBExternalTS                                = 0
+	DefTiDBEnableExternalTSRead                      = false
+	DefTiDBEnableReusechunk                          = true
+	DefTiDBUseAlloc                                  = false
+	DefTiDBEnablePlanReplayerCapture                 = false
+	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
+	DefTiDBStoreBatchSize                            = 0
 )
 
 // Process global variables.
@@ -1150,6 +1170,11 @@ var (
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
+
+	PasswordValidationLength           = atomic.NewInt32(8)
+	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
+	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
+	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 )
 
 var (

@@ -267,20 +267,8 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	if !historicalStatsEnabled {
 		return nil
 	}
-
-	is := domain.GetDomain(sctx).InfoSchema()
-	tbl, existed := is.TableByID(tableID)
-	if !existed {
-		return errors.Errorf("cannot get table by id %d", tableID)
-	}
-	tblInfo := tbl.Meta()
-	dbInfo, existed := is.SchemaByTable(tblInfo)
-	if !existed {
-		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
-	}
-	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
-	}
+	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
+	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
 	return nil
 }
 
@@ -325,8 +313,9 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 
 		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+			tableID := results.TableID.TableID
 			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)

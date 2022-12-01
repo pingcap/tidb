@@ -2083,7 +2083,6 @@ const (
 	TableOptionEncryption
 	TableOptionTTL
 	TableOptionTTLEnable
-	TableOptionNoTTL
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2138,7 +2137,6 @@ type TableOption struct {
 	BoolValue     bool
 	TimeUnitValue *TimeUnitExpr
 	Value         ValueExpr
-	Expression    ExprNode
 	TableNames    []*TableName
 	ColumnName    *ColumnName
 }
@@ -2425,7 +2423,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.ColumnName.Name.String())
 			ctx.WritePlain(" + INTERVAL ")
-			err := n.Expression.Restore(ctx)
+			err := n.Value.Restore(ctx)
 			ctx.WritePlain(" ")
 			if err != nil {
 				return err
@@ -2443,11 +2441,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
-	case TableOptionNoTTL:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			ctx.WriteKeyWord("NO_TTL")
-			return nil
-		})
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -2461,12 +2454,12 @@ func (n *TableOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableOption)
-	if n.Expression != nil {
-		node, ok := n.Expression.Accept(v)
+	if n.Value != nil {
+		node, ok := n.Value.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expression = node.(ExprNode)
+		n.Value = node.(ValueExpr)
 	}
 	if n.TimeUnitValue != nil {
 		node, ok := n.TimeUnitValue.Accept(v)
@@ -2666,6 +2659,7 @@ const (
 	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
+	AlterTableRemoveTTL
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3347,7 +3341,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
-
+	case AlterTableRemoveTTL:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("REMOVE TTL")
+			return nil
+		})
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
