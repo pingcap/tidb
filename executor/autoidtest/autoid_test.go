@@ -751,7 +751,7 @@ func TestMockAutoIDServiceError(t *testing.T) {
 }
 
 func TestIssue39528(t *testing.T) {
-	// When AUTO_ID_CACHE is 1, it should not affect row id setting when autoid and rowid are seperated.
+	// When AUTO_ID_CACHE is 1, it should not affect row id setting when autoid and rowid are separated.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
