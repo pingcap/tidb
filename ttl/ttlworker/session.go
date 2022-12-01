@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -32,13 +33,13 @@ type sessionPool interface {
 	Put(pools.Resource)
 }
 
-func getSession(pool sessionPool) (ttl.Session, error) {
+func getSession(pool sessionPool) (session.Session, error) {
 	resource, err := pool.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	if se, ok := resource.(ttl.Session); ok {
+	if se, ok := resource.(session.Session); ok {
 		// Only for test, in this case, the return session is mockSession
 		return se, nil
 	}
@@ -55,7 +56,7 @@ func getSession(pool sessionPool) (ttl.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
 	}
 
-	se := ttl.NewSession(sctx, exec, func() {
+	se := session.NewSession(sctx, exec, func() {
 		pool.Put(resource)
 	})
 
@@ -67,7 +68,7 @@ func getSession(pool sessionPool) (ttl.Session, error) {
 	return se, nil
 }
 
-func newTableSession(se ttl.Session, tbl *ttl.PhysicalTable, expire time.Time) *ttlTableSession {
+func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) *ttlTableSession {
 	return &ttlTableSession{
 		Session: se,
 		tbl:     tbl,
@@ -76,8 +77,8 @@ func newTableSession(se ttl.Session, tbl *ttl.PhysicalTable, expire time.Time) *
 }
 
 type ttlTableSession struct {
-	ttl.Session
-	tbl    *ttl.PhysicalTable
+	session.Session
+	tbl    *cache.PhysicalTable
 	expire time.Time
 }
 
@@ -113,7 +114,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	return rows, false, nil
 }
 
-func validateTTLWork(ctx context.Context, s ttl.Session, tbl *ttl.PhysicalTable, expire time.Time) error {
+func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {
 	curTbl, err := s.SessionInfoSchema().TableByName(tbl.Schema, tbl.Name)
 	if err != nil {
 		return err
@@ -128,7 +129,12 @@ func validateTTLWork(ctx context.Context, s ttl.Session, tbl *ttl.PhysicalTable,
 		return errors.New("table id changed")
 	}
 
-	newTTLTbl, err := ttl.NewPhysicalTable(tbl.Schema, newTblInfo, tbl.Partition)
+	var partitionID int64
+	if tbl.PartitionDef != nil {
+		partitionID = tbl.PartitionDef.ID
+	}
+
+	newTTLTbl, err := cache.NewPhysicalTable(tbl.Schema, newTblInfo, partitionID)
 	if err != nil {
 		return err
 	}
@@ -153,8 +159,12 @@ func validateTTLWork(ctx context.Context, s ttl.Session, tbl *ttl.PhysicalTable,
 
 	if newTblInfo.TTLInfo.IntervalExprStr != tbl.TTLInfo.IntervalExprStr ||
 		newTblInfo.TTLInfo.IntervalTimeUnit != tbl.TTLInfo.IntervalTimeUnit {
-		newExpireTime, err := s.EvalExpireTime(ctx, newTTLTbl, time.Now())
-		if err != nil || newExpireTime.Before(expire) {
+		newExpireTime, err := newTTLTbl.EvalExpireTime(ctx, s, time.Now())
+		if err != nil {
+			return err
+		}
+
+		if newExpireTime.Before(expire) {
 			return errors.New("expire interval changed")
 		}
 	}

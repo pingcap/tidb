@@ -17,6 +17,7 @@ package ttlworker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
-func newMockTTLTbl(t *testing.T, name string) *ttl.PhysicalTable {
+func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 		Columns: []*model.ColumnInfo{
@@ -54,7 +55,7 @@ func newMockTTLTbl(t *testing.T, name string) *ttl.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-	tbl, err := ttl.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
+	tbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, 0)
 	require.NoError(t, err)
 	return tbl
 }
@@ -85,7 +86,7 @@ func (r *mockRows) Append(row ...interface{}) *mockRows {
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
 			tm, ok := row[i].(time.Time)
 			require.True(r.t, ok)
-			r.AppendTime(i, types.NewTime(types.FromGoTime(tm.In(time.UTC)), tp, types.DefaultFsp))
+			r.AppendTime(i, types.NewTime(types.FromGoTime(tm), tp, types.DefaultFsp))
 		case mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			val, ok := row[i].(int)
 			require.True(r.t, ok)
@@ -119,7 +120,7 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 
 func (p *mockSessionPool) Put(pools.Resource) {}
 
-func newMockSessionPool(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSessionPool {
+func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
 		se: newMockSession(t, tbl...),
 	}
@@ -138,7 +139,7 @@ type mockSession struct {
 	closed             bool
 }
 
-func newMockSession(t *testing.T, tbl ...*ttl.PhysicalTable) *mockSession {
+func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	tbls := make([]*model.TableInfo, len(tbl))
 	for i, ttlTbl := range tbl {
 		tbls[i] = ttlTbl.TableInfo
@@ -165,6 +166,10 @@ func (s *mockSession) GetSessionVars() *variable.SessionVars {
 
 func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	require.False(s.t, s.closed)
+	if strings.HasPrefix(strings.ToUpper(sql), "SELECT FROM_UNIXTIME") {
+		return newMockRows(s.t, types.NewFieldType(mysql.TypeTimestamp)).Append(s.evalExpire.In(s.GetSessionVars().TimeZone)).Rows(), nil
+	}
+
 	if s.executeSQL != nil {
 		return s.executeSQL(ctx, sql, args)
 	}
@@ -180,11 +185,6 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 	require.False(s.t, s.closed)
 	s.resetTimeZoneCalls++
 	return nil
-}
-
-func (s *mockSession) EvalExpireTime(_ context.Context, _ *ttl.PhysicalTable, _ time.Time) (expire time.Time, err error) {
-	require.False(s.t, s.closed)
-	return s.evalExpire, nil
 }
 
 func (s *mockSession) Close() {
@@ -307,14 +307,14 @@ func TestValidateTTLWork(t *testing.T) {
 			{ID: 1023, Name: model.NewCIStr("p0")},
 		},
 	}
-	tbl, err = ttl.NewPhysicalTable(model.NewCIStr("test"), tp, model.NewCIStr("p0"))
+	tbl, err = cache.NewPhysicalTable(model.NewCIStr("test"), tp, 1023)
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()
 	tbl2.Partition.Definitions[0].Name = model.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
-	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")
+	require.EqualError(t, err, "partition name changed")
 
 	// test table partition id changed
 	tbl2 = tp.Clone()
@@ -322,5 +322,5 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Partition.Definitions[0].ID += 100
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
-	require.EqualError(t, err, "physical id changed")
+	require.EqualError(t, err, "partition with ID 1023 is not found in ttl table 'test.t1'")
 }

@@ -2136,6 +2136,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
+			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
+			if err := rc.checkCDCPiTR(ctx); err != nil {
+				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
+			}
 		}
 	}
 

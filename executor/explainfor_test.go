@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -462,12 +463,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
-		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
-		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
-		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 1)`,
-		`      └─TableRangeScan_11 0.80 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
+		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─Selection_42(Build) 10.00 root  eq(test.t1.a, 1)`,
+		`  │ └─TableReader_41 10.00 root  data:TableRangeScan_40`,
+		`  │   └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
+		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
+		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -478,12 +479,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
-		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
-		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
-		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 2)`,
-		`      └─TableRangeScan_11 0.80 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
+		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─Selection_42(Build) 10.00 root  eq(test.t1.a, 2)`,
+		`  │ └─TableReader_41 10.00 root  data:TableRangeScan_40`,
+		`  │   └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
+		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
+		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -1394,4 +1395,75 @@ func TestIssue28792(t *testing.T) {
 	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
 	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
 	require.Equal(t, r2, r1)
+}
+
+func TestExplainForJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int);")
+	tk1.MustQuery("select * from t1;")
+	tk1RootProcess := tk1.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tk1RootProcess}
+	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+
+	j := new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows := make([]*core.ExplainInfoForEncode, 0)
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].TaskType, row[2])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
+	}
+
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk1.MustExec("drop table if exists t2")
+	tk1.MustExec("create table t2(id int);")
+	tk1.MustQuery("select * from t2;")
+	tk1RootProcess = tk1.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tk1RootProcess}
+	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+
+	j = new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows = []*core.ExplainInfoForEncode{}
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].ActRows, row[2])
+		require.Equal(t, flatJSONRows[i].TaskType, row[3])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
+		// executeInfo, memory, disk maybe vary in multi execution
+		require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+		require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
+	}
+	// test syntax
+	tk2.MustExec(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
 }

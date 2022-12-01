@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -108,7 +108,7 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 	return nil
 }
 
-func (w *mockScanWorker) setOneRowResult(tbl *ttl.PhysicalTable, val ...interface{}) {
+func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...interface{}) {
 	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
 	w.sessPoll.se.rows = newMockRows(w.t, tbl.KeyColumnTypes...).Append(val...).Rows()
 }
@@ -203,7 +203,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 type mockScanTask struct {
 	*ttlScanTask
 	t        *testing.T
-	tbl      *ttl.PhysicalTable
+	tbl      *cache.PhysicalTable
 	sessPool *mockSessionPool
 	sqlRetry []int
 

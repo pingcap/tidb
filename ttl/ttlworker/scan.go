@@ -21,7 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/ttl"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,7 +41,7 @@ type ttlStatistics struct {
 }
 
 type ttlScanTask struct {
-	tbl        *ttl.PhysicalTable
+	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rangeStart []types.Datum
 	rangeEnd   []types.Datum
@@ -72,7 +73,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer rawSess.Close()
 
 	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := ttl.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
 	if err != nil {
 		return t.result(err)
 	}

@@ -205,16 +205,36 @@ type Allocator interface {
 }
 
 // Allocators represents a set of `Allocator`s.
-type Allocators []Allocator
+type Allocators struct {
+	SepAutoInc bool
+	Allocs     []Allocator
+}
 
 // NewAllocators packs multiple `Allocator`s into Allocators.
-func NewAllocators(allocators ...Allocator) Allocators {
-	return allocators
+func NewAllocators(sepAutoInc bool, allocators ...Allocator) Allocators {
+	return Allocators{
+		SepAutoInc: sepAutoInc,
+		Allocs:     allocators,
+	}
+}
+
+// Append add an allocator to the allocators.
+func (all Allocators) Append(a Allocator) Allocators {
+	return Allocators{
+		SepAutoInc: all.SepAutoInc,
+		Allocs:     append(all.Allocs, a),
+	}
 }
 
 // Get returns the Allocator according to the AllocatorType.
 func (all Allocators) Get(allocType AllocatorType) Allocator {
-	for _, a := range all {
+	if !all.SepAutoInc {
+		if allocType == AutoIncrementType {
+			allocType = RowIDAllocType
+		}
+	}
+
+	for _, a := range all.Allocs {
 		if a.GetType() == allocType {
 			return a
 		}
@@ -224,13 +244,16 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 
 // Filter filters all the allocators that match pred.
 func (all Allocators) Filter(pred func(Allocator) bool) Allocators {
-	var ret Allocators
-	for _, a := range all {
+	var ret []Allocator
+	for _, a := range all.Allocs {
 		if pred(a) {
 			ret = append(ret, a)
 		}
 	}
-	return ret
+	return Allocators{
+		SepAutoInc: all.SepAutoInc,
+		Allocs:     ret,
+	}
 }
 
 type allocator struct {
@@ -593,7 +616,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	}
 
 	// Use the MySQL compatible AUTO_INCREMENT mode.
-	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 && alloc.tbVersion >= model.TableInfoVersion5 {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1
@@ -630,6 +653,10 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
+	if hasAutoIncID {
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
+		allocs = append(allocs, alloc)
+	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
@@ -638,7 +665,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	if tblInfo.IsSequence() {
 		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
 	}
-	return NewAllocators(allocs...)
+	return NewAllocators(tblInfo.SepAutoInc(), allocs...)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
@@ -839,7 +866,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		var newBase, newEnd int64
 		startTime := time.Now()
 		nextStep := alloc.step
-		if !alloc.customStep {
+		if !alloc.customStep && alloc.end > 0 {
 			// Although it may skip a segment here, we still think it is consumed.
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)

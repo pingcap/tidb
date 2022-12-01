@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package cache
 
 import (
+	"context"
+	"fmt"
+	"time"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, error) {
@@ -67,7 +74,7 @@ type PhysicalTable struct {
 }
 
 // NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partitionID int64) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
 	}
@@ -88,36 +95,38 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 	}
 
 	var physicalID int64
+	var partitionName model.CIStr
 	var partitionDef *model.PartitionDefinition
 	if tbl.Partition == nil {
-		if partition.L != "" {
+		if partitionID > 0 {
 			return nil, errors.Errorf("table '%s.%s' is not a partitioned table", schema, tbl.Name)
 		}
 		physicalID = tbl.ID
 	} else {
-		if partition.L == "" {
+		if partitionID <= 0 {
 			return nil, errors.Errorf("partition name is required, table '%s.%s' is a partitioned table", schema, tbl.Name)
 		}
 
 		for i := range tbl.Partition.Definitions {
 			def := &tbl.Partition.Definitions[i]
-			if def.Name.L == partition.L {
+			if def.ID == partitionID {
 				partitionDef = def
 			}
 		}
 
 		if partitionDef == nil {
-			return nil, errors.Errorf("partition '%s' is not found in ttl table '%s.%s'", partition.O, schema, tbl.Name)
+			return nil, errors.Errorf("partition with ID %d is not found in ttl table '%s.%s'", partitionID, schema, tbl.Name)
 		}
 
 		physicalID = partitionDef.ID
+		partitionName = partitionDef.Name
 	}
 
 	return &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
-		Partition:      partition,
+		Partition:      partitionName,
 		PartitionDef:   partitionDef,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
@@ -131,4 +140,26 @@ func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
 		return errors.Errorf("invalid key length: %d, expected %d", len(key), len(t.KeyColumns))
 	}
 	return nil
+}
+
+// EvalExpireTime returns the expired time
+func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, now time.Time) (expire time.Time, err error) {
+	tz := se.GetSessionVars().TimeZone
+
+	expireExpr := t.TTLInfo.IntervalExprStr
+	unit := ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)
+
+	var rows []chunk.Row
+	rows, err = se.ExecuteSQL(
+		ctx,
+		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>` to present current time
+		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
+	)
+
+	if err != nil {
+		return
+	}
+
+	tm := rows[0].GetTime(0)
+	return tm.CoreTime().GoTime(tz)
 }
