@@ -1662,11 +1662,20 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			inputRows = t.count()
 			attachPlan2Task(p, t)
 		} else {
+<<<<<<< HEAD
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if finalAgg != nil {
 				final = finalAgg.(*PhysicalStreamAgg)
 			}
+=======
+			storeType := cop.getStoreType()
+			// TiFlash doesn't support Stream Aggregation
+			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
+				return invalidTask
+			}
+			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
+>>>>>>> 38b0ab7333 (planner: prohibit StreamAgg with group keys for TiFlash (#39547))
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
