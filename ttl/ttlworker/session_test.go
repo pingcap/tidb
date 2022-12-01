@@ -55,7 +55,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-	tbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, 0)
+	tbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
 	require.NoError(t, err)
 	return tbl
 }
@@ -307,14 +307,14 @@ func TestValidateTTLWork(t *testing.T) {
 			{ID: 1023, Name: model.NewCIStr("p0")},
 		},
 	}
-	tbl, err = cache.NewPhysicalTable(model.NewCIStr("test"), tp, 1023)
+	tbl, err = cache.NewPhysicalTable(model.NewCIStr("test"), tp, model.NewCIStr("p0"))
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()
 	tbl2.Partition.Definitions[0].Name = model.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
-	require.EqualError(t, err, "partition name changed")
+	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")
 
 	// test table partition id changed
 	tbl2 = tp.Clone()
@@ -322,5 +322,5 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Partition.Definitions[0].ID += 100
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
-	require.EqualError(t, err, "partition with ID 1023 is not found in ttl table 'test.t1'")
+	require.EqualError(t, err, "physical id changed")
 }

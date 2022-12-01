@@ -98,7 +98,7 @@ func TestNewTTLTable(t *testing.T) {
 		tblInfo := tbl.Meta()
 		var physicalTbls []*cache.PhysicalTable
 		if tblInfo.Partition == nil {
-			ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, 0)
+			ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(""))
 			if c.timeCol == "" {
 				require.Error(t, err)
 				continue
@@ -107,7 +107,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, partition.ID)
+				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, partition.Name)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -171,13 +171,13 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	tb, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, 0)
+	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
 	require.NoError(t, err)
 
 	tb2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
-	ttlTbl2, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, 0)
+	ttlTbl2, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))
 	require.NoError(t, err)
 
 	se := session.NewSession(tk.Session(), tk.Session(), nil)

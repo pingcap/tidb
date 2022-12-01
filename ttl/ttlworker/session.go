@@ -129,12 +129,7 @@ func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.Physical
 		return errors.New("table id changed")
 	}
 
-	var partitionID int64
-	if tbl.PartitionDef != nil {
-		partitionID = tbl.PartitionDef.ID
-	}
-
-	newTTLTbl, err := cache.NewPhysicalTable(tbl.Schema, newTblInfo, partitionID)
+	newTTLTbl, err := cache.NewPhysicalTable(tbl.Schema, newTblInfo, tbl.Partition)
 	if err != nil {
 		return err
 	}

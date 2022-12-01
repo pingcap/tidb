@@ -74,7 +74,7 @@ type PhysicalTable struct {
 }
 
 // NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partitionID int64) (*PhysicalTable, error) {
+func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
 	}
@@ -95,38 +95,36 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partitionID int6
 	}
 
 	var physicalID int64
-	var partitionName model.CIStr
 	var partitionDef *model.PartitionDefinition
 	if tbl.Partition == nil {
-		if partitionID > 0 {
+		if partition.L != "" {
 			return nil, errors.Errorf("table '%s.%s' is not a partitioned table", schema, tbl.Name)
 		}
 		physicalID = tbl.ID
 	} else {
-		if partitionID <= 0 {
+		if partition.L == "" {
 			return nil, errors.Errorf("partition name is required, table '%s.%s' is a partitioned table", schema, tbl.Name)
 		}
 
 		for i := range tbl.Partition.Definitions {
 			def := &tbl.Partition.Definitions[i]
-			if def.ID == partitionID {
+			if def.Name.L == partition.L {
 				partitionDef = def
 			}
 		}
 
 		if partitionDef == nil {
-			return nil, errors.Errorf("partition with ID %d is not found in ttl table '%s.%s'", partitionID, schema, tbl.Name)
+			return nil, errors.Errorf("partition '%s' is not found in ttl table '%s.%s'", partition.O, schema, tbl.Name)
 		}
 
 		physicalID = partitionDef.ID
-		partitionName = partitionDef.Name
 	}
 
 	return &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
-		Partition:      partitionName,
+		Partition:      partition,
 		PartitionDef:   partitionDef,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
