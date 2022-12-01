@@ -2300,7 +2300,7 @@ type deliveredKVs struct {
 	offset  int64
 	rowID   int64
 
-	realOffset int64
+	realOffset int64 // indicates file reader's current position, only used for compressed files
 }
 
 type deliverResult struct {
