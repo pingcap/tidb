@@ -1428,14 +1428,23 @@ func TestCreateBindingFromHistory(t *testing.T) {
 			tk.MustExec(bindSQL)
 			planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", bindSQL)).Rows()
 			tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+			showRes := tk.MustQuery("show bindings").Rows()
+			require.Equal(t, len(showRes), 1)
+			require.Equal(t, planDigest[0][0], showRes[0][10])
 			for _, sql := range testCase.sqls {
 				tk.MustExec(fmt.Sprintf(sql, ""))
 				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 			}
 		}
+		showRes := tk.MustQuery("show bindings").Rows()
+		require.Equal(t, len(showRes), 1)
+		tk.MustExec(fmt.Sprintf("drop binding for sql digest '%s'", showRes[0][9]))
 	}
 
 	// exception cases
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", "1"), "can't find any plans for '1'")
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", ""), "plan digest is empty")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.id = t2.id")
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, showRes[0][10], "") // plan digest should be nil by create for
 }
