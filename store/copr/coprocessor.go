@@ -132,11 +132,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
 		req.FixedRowCountHint = nil
 	})
-	// TODO: support keep-order batch
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV || req.KeepOrder {
+	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
 		req.StoreBatchSize = 0
 	}
-	// TODO: enable keep-order batch
+	// TODO: support keep-order batch
 	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
 		// disable batch copr for follower read
 		req.StoreBatchSize = 0
