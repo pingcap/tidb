@@ -1385,7 +1385,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	}
 
 	// exception cases
-	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for `1`")
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
 }
 
@@ -1434,4 +1434,8 @@ func TestCreateBindingFromHistory(t *testing.T) {
 			}
 		}
 	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", "1"), "can't find any plans for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", ""), "plan digest is empty")
 }
