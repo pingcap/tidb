@@ -115,7 +115,7 @@ func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliv
 		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
-		cacheId:       fmt.Sprintf("DEBUG-%s-%d-%s", time.Now().Format("20060102150405"), rand.Int63(), hn),
+		cacheId:       fmt.Sprintf("BR-%s-%d-%s", time.Now().Format("20060102150405"), rand.Int63(), hn),
 	}
 }
 
