@@ -135,11 +135,13 @@ func (c *copReqSender) run() {
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
+				_ = rs.Close()
 				return
 			}
 			total += len(idxRec)
 			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
 		}
+		_ = rs.Close()
 	}
 }
 
@@ -413,7 +415,7 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		return nil, false, errors.Trace(err)
 	}
 	if chk.NumRows() == 0 {
-		return buf, true, result.Close()
+		return buf, true, nil
 	}
 	iter := chunk.NewIterator4Chunk(chk)
 	err = table.FillVirtualColumnValue(c.virtualColFieldTps, c.virtualColOffsets, c.expColInfos, c.colInfos, c.sessCtx, chk)
