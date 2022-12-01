@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -106,6 +107,7 @@ type copReqSenderPool struct {
 	ctx    context.Context
 	copCtx *copContext
 	store  kv.Storage
+	jobID  int64
 
 	senders []*copReqSender
 	wg      sync.WaitGroup
@@ -155,21 +157,27 @@ func (c *copReqSender) run() {
 		})
 		var done bool
 		for !done {
+			finish := ddlutil.InjectSpan(p.jobID, "getChunk")
 			srcChk := p.getChunk()
+			finish()
+			finish = ddlutil.InjectSpan(p.jobID, "fetchTableScanResult")
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
+			finish()
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return
 			}
+			finish = ddlutil.InjectSpan(p.jobID, "sendResult")
 			p.resultsCh <- idxRecResult{id: task.id, chunk: srcChk, done: done}
+			finish()
 		}
 		terror.Call(rs.Close)
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage, jobID int64) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
@@ -182,6 +190,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		ctx:        ctx,
 		copCtx:     copCtx,
 		store:      store,
+		jobID:      jobID,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:         sync.WaitGroup{},
 		srcChkPool: srcChkPool,

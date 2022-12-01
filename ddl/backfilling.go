@@ -241,15 +241,17 @@ func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 
 type backfillWorker struct {
 	backfiller
+	id       int
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
 	ctx      context.Context
 	cancel   func()
 }
 
-func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
+func newBackfillWorker(ctx context.Context, bf backfiller, i int) *backfillWorker {
 	bfCtx, cancel := context.WithCancel(ctx)
 	return &backfillWorker{
+		id:         i,
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
@@ -460,6 +462,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			logutil.BgLogger().Info("[ddl] backfill worker exit", zap.Stringer("worker", w))
 			return
 		}
+
+		var finish func()
+		if w.id == 0 {
+			finish = ddlutil.InjectSpan(job.ID, fmt.Sprintf("handleBackfillTask-w%d", w.id))
+		}
 		curTaskID = task.id
 		d.setDDLLabelForTopSQL(job.ID, job.Query)
 
@@ -484,6 +491,9 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		// Change the batch size dynamically.
 		w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task, bf)
+		if finish != nil {
+			finish()
+		}
 		w.resultCh <- result
 		if result.err != nil {
 			logutil.BgLogger().Info("[ddl] backfill worker exit on error",
@@ -574,6 +584,7 @@ func drainTasks(taskCh chan *reorgBackfillTask) int {
 // there are taskCnt running workers.
 func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount *int64,
 	batchTasks []*reorgBackfillTask) error {
+	defer ddlutil.InjectSpan(scheduler.reorgInfo.ID, "sendTasksAndWait")()
 	reorgInfo := scheduler.reorgInfo
 	for _, task := range batchTasks {
 		if scheduler.copReqSenderPool != nil {
@@ -880,7 +891,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 					return err
 				}
 				idxWorker.copReqSenderPool = b.copReqSenderPool
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
+				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker, i)
 				worker = idxWorker
 			} else {
 				idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
@@ -888,30 +899,30 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 				if err != nil {
 					return err
 				}
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
+				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker, i)
 				worker = idxWorker
 			}
 		case typeAddIndexMergeTmpWorker:
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.currElement.ID)
-			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
+			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker, i)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
 			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
 			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker)
+			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker, i)
 			worker = updateWorker
 		case typeCleanUpIndexWorker:
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
+			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker, i)
 			worker = idxWorker
 		case typeReorgPartitionWorker:
 			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(jc.ddlJobCtx, partWorker)
+			runner = newBackfillWorker(jc.ddlJobCtx, partWorker, i)
 			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")
@@ -955,7 +966,7 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.reorgInfo.ID)
 }
 
 func canSkipError(jobID int64, workerCnt int, err error) bool {

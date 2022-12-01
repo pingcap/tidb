@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -611,6 +612,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+		ddlutil.InitializeTrace(job.ID)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -694,6 +696,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
+		details := ddlutil.CollectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] finish add index job", zap.String("job", job.String()),
+			zap.String("time details", details))
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
@@ -1852,16 +1857,27 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
+		var finish func()
+		if w.id == 0 {
+			finish = ddlutil.InjectSpan(jobID, "BackfillDataInTxn-Read")
+		}
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
+		if finish != nil {
+			finish()
+		}
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		if w.id == 0 {
+			finish = ddlutil.InjectSpan(jobID, "BackfillDataInTxn-Write")
 		}
 
 		for _, idxRecord := range idxRecords {
@@ -1889,6 +1905,9 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 			}
 			taskCtx.addedCount++
 		}
+		if finish != nil {
+			finish()
+		}
 
 		return nil
 	})
@@ -1913,9 +1932,11 @@ var MockDMLExecutionStateMerging func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
+		defer ddlutil.InjectSpan(reorgInfo.ID, "writePhysicalTableRecord-Merge")()
 		logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 		return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
+	defer ddlutil.InjectSpan(reorgInfo.ID, "writePhysicalTableRecord-Backfill")()
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }

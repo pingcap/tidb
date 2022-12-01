@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -43,6 +44,7 @@ type BackendContext struct {
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Table) error {
+	defer ddlutil.InjectSpan(bc.jobID, "FinishImport")()
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
