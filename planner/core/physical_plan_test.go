@@ -2476,6 +2476,7 @@ func TestCountStarForTikv(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
 	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
 
@@ -2504,6 +2505,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
 	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
 

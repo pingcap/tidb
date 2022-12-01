@@ -12,9 +12,7 @@ go_test(
     deps = [
         "//statistics/handle",
         "//testkit",
-        "//testkit/testsetup",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

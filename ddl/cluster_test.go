@@ -98,7 +98,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	oldValue := map[string]interface{}{
-		"hot-region-schedule-limit": 1,
+		"merge-schedule-limit": 1,
 	}
 	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
 
@@ -112,7 +112,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		if job.SchemaState == model.StateWriteReorganization {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
 			assert.NoError(t, err)
-			assert.Equal(t, closeValue["hot-region-schedule-limit"], 0)
+			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -128,7 +128,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
-	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))

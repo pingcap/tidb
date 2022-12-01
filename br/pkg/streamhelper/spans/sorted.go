@@ -142,11 +142,19 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 
 // overlapped inserts the overlapped ranges of the span into the `result` slice.
 func (f *ValuedFull) overlapped(k Span, result *[]Valued) {
-	var first Span
+	var (
+		first    Span
+		hasFirst bool
+	)
+	// Firstly, let's find whether there is a overlapped region with less start key.
 	f.inner.DescendLessOrEqual(Valued{Key: k}, func(item btree.Item) bool {
 		first = item.(Valued).Key
+		hasFirst = true
 		return false
 	})
+	if !hasFirst || !Overlaps(first, k) {
+		first = k
+	}
 
 	f.inner.AscendGreaterOrEqual(Valued{Key: first}, func(item btree.Item) bool {
 		r := item.(Valued)

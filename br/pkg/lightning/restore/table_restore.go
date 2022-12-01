@@ -813,6 +813,11 @@ func (tr *TableRestore) postProcess(
 			}
 		}
 
+		if rc.dupIndicator != nil {
+			tr.logger.Debug("set dupIndicator", zap.Bool("has-duplicate", hasDupe))
+			rc.dupIndicator.CompareAndSwap(false, hasDupe)
+		}
+
 		nextStage := checkpoints.CheckpointStatusChecksummed
 		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {
 			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
