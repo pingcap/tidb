@@ -401,6 +401,7 @@ func TestIssue27138(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists t1,t2")
 
 	tk.MustExec("set @old_tidb_partition_prune_mode=@@tidb_partition_prune_mode")
