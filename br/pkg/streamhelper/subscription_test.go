@@ -167,14 +167,9 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 	}
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	m := new(sync.Mutex)
-outer:
-	for {
-		select {
-		case k := <-sub.Events():
-			s.Merge(k)
-		default:
-			break outer
-		}
+	sub.Drop()
+	for k := range sub.Events() {
+		s.Merge(k)
 	}
 
 	rngs := make([]spans.Span, 0)
@@ -188,12 +183,18 @@ outer:
 		defer m.Unlock()
 		s.Merge(spans.Valued{Key: kr, Value: u})
 	})
+	ld := uint64(0)
 	for _, rng := range rngs {
 		iter := streamhelper.IterateRegion(c, rng.StartKey, rng.EndKey)
 		for !iter.Done() {
 			rs, err := iter.Next(ctx)
 			req.NoError(err)
 			for _, r := range rs {
+				if ld == 0 {
+					ld = r.Leader.StoreId
+				} else {
+					req.Equal(r.Leader.StoreId, ld, "the leader is from different store: some of events not pushed")
+				}
 				coll.CollectRegion(r)
 			}
 		}
