@@ -40,6 +40,18 @@ type ttlStatistics struct {
 	ErrorRows   atomic.Uint64
 }
 
+func (s *ttlStatistics) IncTotalRows(cnt int) {
+	s.TotalRows.Add(uint64(cnt))
+}
+
+func (s *ttlStatistics) IncSuccessRows(cnt int) {
+	s.SuccessRows.Add(uint64(cnt))
+}
+
+func (s *ttlStatistics) IncErrorRows(cnt int) {
+	s.ErrorRows.Add(uint64(cnt))
+}
+
 func (s *ttlStatistics) Reset() {
 	s.SuccessRows.Store(0)
 	s.ErrorRows.Store(0)
@@ -144,7 +156,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		case <-ctx.Done():
 			return t.result(ctx.Err())
 		case delCh <- delTask:
-			t.statistics.TotalRows.Add(uint64(len(lastResult)))
+			t.statistics.IncTotalRows(len(lastResult))
 		}
 	}
 }
