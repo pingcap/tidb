@@ -1275,12 +1275,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			remainTasks = append(remainTasks, remains...)
 			continue
 		}
-		//TODO: handle resolveLockDetail
+		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
 			remainTasks = append(remainTasks, task)
+			continue
 		}
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
 			err := errors.Errorf("other error: %s", otherErr)
