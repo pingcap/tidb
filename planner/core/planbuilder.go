@@ -1046,7 +1046,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	}
 	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
 	if bindableStmt == nil {
-		return nil, errors.New("can't find any plan for '" + v.PlanDigest + "'")
+		return nil, errors.New("can't find any plans for '" + v.PlanDigest + "'")
 	}
 
 	parser4binding := parser.New()
