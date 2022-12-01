@@ -895,6 +895,22 @@ func TestInsertErrorMsg(t *testing.T) {
 	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
 	tk.MustContainErrMsg(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`,
 		"Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1")
+
+	// test for Issue #35289
+	tk.MustExec("CREATE TABLE t1 (a BINARY(16) PRIMARY KEY);")
+	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
+	err := tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
+	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '{ W]\xA1\x06u\x9D\xBD\xB1\xA3.\xE2\xD9\xA7t' for key 't1.PRIMARY'`)
+
+	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
+	err = tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
+	require.Error(t, err, "ERROR 1062 (23000): Duplicate entry '\\x0C\\x1E\\x8DG`\\xEB\\x93 F&BC\\xF0\\xB5\\xF4\\xB7' for key 't1.PRIMARY'")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a bit primary key) engine=innodb;")
+	tk.MustExec("insert into t1 values (b'0');")
+	err = tk.ExecToErr(`insert into t1 values (b'0');`)
+	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '\x00' for key 't1.PRIMARY'`)
 }
 
 func TestIssue16366(t *testing.T) {
