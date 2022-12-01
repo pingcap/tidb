@@ -125,7 +125,7 @@ func updateSFPushDownCount(exprs []*tipb.Expr, storeType kv.StoreType) () {
 		for sig, count := range funcCountMap {
 			switch sig {
 			case tipb.ScalarFuncSig_JsonExtractSig:
-				telemetry.CurrentTiflashJsonExtractPushDownCount.Add(count)
+				telemetry.CurrentTiflashJSONExtractPushDownCount.Add(count)
 			case tipb.ScalarFuncSig_RegexpLikeSig:
 				telemetry.CurrentTiflashRegexpLikePushDownCount.Add(count)
 			case tipb.ScalarFuncSig_RegexpInStrSig:

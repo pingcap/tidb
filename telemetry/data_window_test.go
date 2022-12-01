@@ -126,12 +126,12 @@ func TestTiflashFunctionPushDownUsage(t *testing.T) {
 	}
 
 	telemetry.CurrentTiFlashPushDownCount.Swap(0)
-	telemetry.CurrentTiflashJsonExtractPushDownCount.Swap(0)
+	telemetry.CurrentTiflashJSONExtractPushDownCount.Swap(0)
 	telemetry.CurrentTiflashRegexpLikePushDownCount.Swap(0)
 	telemetry.CurrentTiflashRegexpSubstrPushDownCount.Swap(0)
 	telemetry.CurrentTiflashRegexpInStrPushDownCount.Swap(0)
 
-	require.Equal(t, telemetry.CurrentTiflashJsonExtractPushDownCount.String(), "0")
+	require.Equal(t, telemetry.CurrentTiflashJSONExtractPushDownCount.String(), "0")
 	require.Equal(t, telemetry.CurrentTiflashRegexpSubstrPushDownCount.String(), "0")
 	require.Equal(t, telemetry.CurrentTiflashRegexpInStrPushDownCount.String(), "0")
 	require.Equal(t, telemetry.CurrentTiflashRegexpLikePushDownCount.String(), "0")
@@ -143,7 +143,7 @@ func TestTiflashFunctionPushDownUsage(t *testing.T) {
 	tk.MustQuery(`select regexp_like(expr, pattern, match_type) from t`)
 
 	tk.Session().Close()
-	require.Equal(t, telemetry.CurrentTiflashJsonExtractPushDownCount.String(), "1")
+	require.Equal(t, telemetry.CurrentTiflashJSONExtractPushDownCount.String(), "1")
 	require.Equal(t, telemetry.CurrentTiflashRegexpSubstrPushDownCount.String(), "1")
 	require.Equal(t, telemetry.CurrentTiflashRegexpInStrPushDownCount.String(), "1")
 	require.Equal(t, telemetry.CurrentTiflashRegexpLikePushDownCount.String(), "1")
