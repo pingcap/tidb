@@ -348,12 +348,13 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
 		// case 1: tiflash
-		if ds.tableInfo.TiFlashReplica != nil {
-			handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
-		} else {
-			// case 2: tikv
-			handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
-		}
+		/*		if ds.tableInfo.TiFlashReplica != nil {
+					handleCol, handleColInfo = preferNotNullColumnFromTable(ds)
+				} else {
+					// case 2: tikv
+					handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
+				}*/
+		handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
