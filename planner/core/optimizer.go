@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -573,14 +572,10 @@ func countStarRewrite(plan PhysicalPlan) {
 			countStarRewrite(child)
 		}
 	}
-
 }
 
 func countStarRewriteInternal(plan PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
-	if !plan.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("")
-	}
 	var physicalAgg *basePhysicalAgg
 	switch x := plan.(type) {
 	case *PhysicalHashAgg:
