@@ -3967,6 +3967,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 			if oldGtNew {
 				return errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
+			return nil
 		}
 
 		isUnsigned := isPartExprUnsigned(tblInfo)

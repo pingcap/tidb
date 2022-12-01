@@ -2311,7 +2311,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
-
 		if !done {
 			return ver, err
 		}
