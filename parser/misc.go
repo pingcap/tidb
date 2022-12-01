@@ -727,6 +727,7 @@ var tokenMap = map[string]int{
 	"THEN":                     then,
 	"TIDB":                     tidb,
 	"TIDB_CURRENT_TSO":         tidbCurrentTSO,
+	"TIDB_JSON":                tidbJson,
 	"TIFLASH":                  tiFlash,
 	"TIKV_IMPORTER":            tikvImporter,
 	"TIME":                     timeType,
