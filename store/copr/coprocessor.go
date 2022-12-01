@@ -136,7 +136,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV || req.KeepOrder {
 		req.StoreBatchSize = 0
 	}
-	if req.ReplicaRead != kv.ReplicaReadLeader {
+	// TODO: enable keep-order batch
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
 		// disable batch copr for follower read
 		req.StoreBatchSize = 0
 	}
@@ -1136,11 +1137,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.BatchResponses, task, ch)
 	}
-	var resolveLockDetail *util.ResolveLockDetail
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		var err error
-		resolveLockDetail, err = worker.handleLockErr(bo, lockErr, task)
-		if err != nil {
+		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
 		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
@@ -1172,7 +1170,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
 		coprCacheCounterHit.Add(1)
@@ -1280,7 +1278,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		}
 		//TODO: handle resolveLockDetail
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-			if _, err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
+			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
 			remainTasks = append(remainTasks, task)
@@ -1313,9 +1311,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 	return remainTasks, nil
 }
 
-func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) (*util.ResolveLockDetail, error) {
+func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
 	if lockErr == nil {
-		return nil, nil
+		return nil
 	}
 	resolveLockDetail := worker.getLockResolverDetails()
 	// Be care that we didn't redact the SQL statement because the log is DEBUG level.
@@ -1335,15 +1333,15 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
 	err1 = derr.ToTiDBErr(err1)
 	if err1 != nil {
-		return resolveLockDetail, errors.Trace(err1)
+		return errors.Trace(err1)
 	}
 	msBeforeExpired := resolveLocksRes.TTL
 	if msBeforeExpired > 0 {
 		if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
-			return resolveLockDetail, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return resolveLockDetail, nil
+	return nil
 }
 
 func (worker *copIteratorWorker) handleOtherErr(otherErr string, task *copTask) {
@@ -1360,7 +1358,7 @@ func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetai
 	return &util.ResolveLockDetail{}
 }
 
-func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, resolveLockDetail *util.ResolveLockDetail) {
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
@@ -1388,9 +1386,6 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	sd := &util.ScanDetail{}
-	if resolveLockDetail != nil {
-		sd.ResolveLock = resolveLockDetail
-	}
 	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
