@@ -26,6 +26,7 @@ go_test(
     flaky = True,
     deps = [
         ":cache",
+        "//parser",
         "//parser/model",
         "//testkit",
         "//testkit/testsetup",
