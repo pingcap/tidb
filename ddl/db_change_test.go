@@ -1719,8 +1719,6 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// TODO: Will check why tidb_ddl_enable_fast_reorg could not default be on in another PR.
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
@@ -1740,8 +1738,6 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

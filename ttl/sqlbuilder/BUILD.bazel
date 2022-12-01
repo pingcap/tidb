@@ -1,34 +1,31 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "ttl",
-    srcs = [
-        "sql.go",
-        "table.go",
-    ],
-    importpath = "github.com/pingcap/tidb/ttl",
+    name = "sqlbuilder",
+    srcs = ["sql.go"],
+    importpath = "github.com/pingcap/tidb/ttl/sqlbuilder",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/ast",
         "//parser/format",
         "//parser/model",
         "//parser/mysql",
+        "//ttl/cache",
         "//types",
         "//util/sqlexec",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pkg_errors//:errors",
     ],
 )
 
 go_test(
-    name = "ttl_test",
+    name = "sqlbuilder_test",
     srcs = [
         "main_test.go",
         "sql_test.go",
     ],
     flaky = True,
     deps = [
-        ":ttl",
+        ":sqlbuilder",
         "//kv",
         "//parser",
         "//parser/ast",
@@ -36,6 +33,7 @@ go_test(
         "//parser/mysql",
         "//testkit",
         "//testkit/testsetup",
+        "//ttl/cache",
         "//types",
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",

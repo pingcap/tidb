@@ -742,6 +742,11 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
+
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
@@ -1389,7 +1394,12 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	if sc == s.StmtCtx {
 		sc = &s.cachedStmtCtx[1]
 	}
-	*sc = stmtctx.StatementContext{}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
 	return sc
 }
 
@@ -1666,18 +1676,19 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:     DefIndexLookupConcurrency,
-		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		projectionConcurrency:      DefTiDBProjectionConcurrency,
-		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		windowConcurrency:          DefTiDBWindowConcurrency,
-		mergeJoinConcurrency:       DefTiDBMergeJoinConcurrency,
-		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
-		ExecutorConcurrency:        DefExecutorConcurrency,
+		indexLookupConcurrency:            DefIndexLookupConcurrency,
+		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency:        DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
+		projectionConcurrency:             DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:                 DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:              DefTiDBMergeJoinConcurrency,
+		streamAggConcurrency:              DefTiDBStreamAggConcurrency,
+		indexMergeIntersectionConcurrency: DefTiDBIndexMergeIntersectionConcurrency,
+		ExecutorConcurrency:               DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
@@ -2392,6 +2403,10 @@ type Concurrency struct {
 	// streamAggConcurrency is deprecated, use ExecutorConcurrency instead.
 	streamAggConcurrency int
 
+	// indexMergeIntersectionConcurrency is the number of indexMergeProcessWorker
+	// Only meaningful for dynamic pruned partition table.
+	indexMergeIntersectionConcurrency int
+
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
 
@@ -2450,6 +2465,11 @@ func (c *Concurrency) SetMergeJoinConcurrency(n int) {
 // SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
 func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
+}
+
+// SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
+func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
+	c.indexMergeIntersectionConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -2530,6 +2550,14 @@ func (c *Concurrency) MergeJoinConcurrency() int {
 func (c *Concurrency) StreamAggConcurrency() int {
 	if c.streamAggConcurrency != ConcurrencyUnset {
 		return c.streamAggConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexMergeIntersectionConcurrency return the number of concurrent process worker.
+func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
+	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
+		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
 }

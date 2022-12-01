@@ -416,4 +416,11 @@ var (
 	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
 	// ErrNoReferencedRow2 returns when there are rows in child table don't have related foreign key value in refer table.
 	ErrNoReferencedRow2 = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
+
+	// ErrUnsupportedColumnInTTLConfig returns when a column type is not expected in TTL config
+	ErrUnsupportedColumnInTTLConfig = ClassDDL.NewStd(mysql.ErrUnsupportedColumnInTTLConfig)
+	// ErrTTLColumnCannotDrop returns when a column is dropped while referenced by TTL config
+	ErrTTLColumnCannotDrop = ClassDDL.NewStd(mysql.ErrTTLColumnCannotDrop)
+	// ErrSetTTLEnableForNonTTLTable returns when the `TTL_ENABLE` option is set on a non-TTL table
+	ErrSetTTLEnableForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLEnableForNonTTLTable)
 )

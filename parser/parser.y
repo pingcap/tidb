@@ -373,6 +373,7 @@ import (
 	deallocate            "DEALLOCATE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
 	disabled              "DISABLED"
@@ -698,6 +699,7 @@ import (
 	sum                   "SUM"
 	substring             "SUBSTRING"
 	target                "TARGET"
+	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -4971,6 +4973,7 @@ ExplainFormatType:
 |	"BRIEF"
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
+|	"TIDB_JSON"
 
 SavepointStmt:
 	"SAVEPOINT" Identifier
@@ -6402,6 +6405,7 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"DIGEST"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6535,6 +6539,7 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
+|	"TIDB_JSON"
 
 /************************************************************************************
  *
@@ -13164,6 +13169,15 @@ DropBindingStmt:
 
 		$$ = x
 	}
+|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.DropBindingStmt{
+			GlobalScope: $2.(bool),
+			SQLDigest:   $7,
+		}
+
+		$$ = x
+	}
 
 SetBindingStmt:
 	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
@@ -13897,6 +13911,7 @@ ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 DryRunOptions:
 	{

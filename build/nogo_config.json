@@ -365,6 +365,8 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
+      "ddl/ttl.go": "ddl/ttl.go",
+      "ddl/ttl_test.go": "ddl/ttl_test.go",
       "ddl/ingest/": "ddl/ingest/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
