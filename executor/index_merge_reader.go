@@ -632,12 +632,15 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
-		e.tableRequestMu.Lock()
-		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
-			e.tableRequestMu.Unlock()
+		err = func() error {
+			e.tableRequestMu.Lock()
+			defer e.tableRequestMu.Unlock()
+			tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+			return err
+		}()
+		if err != nil {
 			return nil, err
 		}
-		e.tableRequestMu.Unlock()
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
