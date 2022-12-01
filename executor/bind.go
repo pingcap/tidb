@@ -38,7 +38,7 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
-	source       string
+	source       string // by manual or from history, only in create stmt
 	sqlDigest    string
 	planDigest   string
 }
