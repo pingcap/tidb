@@ -15,6 +15,7 @@
 package util
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -173,4 +174,31 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	return logFields
+}
+
+// PrintableASCII detects if b is a printable ASCII character.
+// Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
+func PrintableASCII(b byte) bool {
+	if b >= 0 && b < 32 || b > 127 {
+		return false
+	}
+
+	return true
+}
+
+// FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
+func FmtNonASCIIPrintableCharToHex(str string) string {
+	var b bytes.Buffer
+	b.Grow(len(str) * 2)
+	for i := 0; i < len(str); i++ {
+		if PrintableASCII(str[i]) {
+			b.WriteByte(str[i])
+			continue
+		}
+
+		b.WriteString(`\x`)
+		// turns non-printable-ASCII character into hex-string
+		b.WriteString(fmt.Sprintf("%02X", str[i]))
+	}
+	return b.String()
 }
