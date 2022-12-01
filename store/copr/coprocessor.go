@@ -1344,13 +1344,6 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 	return nil
 }
 
-func (worker *copIteratorWorker) handleOtherErr(otherErr string, task *copTask) {
-	if otherErr == "" {
-		return
-	}
-
-}
-
 func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
 	if !worker.enableCollectExecutionInfo {
 		return nil
