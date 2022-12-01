@@ -40,6 +40,12 @@ type ttlStatistics struct {
 	ErrorRows   atomic.Uint64
 }
 
+func (s *ttlStatistics) Reset() {
+	s.SuccessRows.Store(0)
+	s.ErrorRows.Store(0)
+	s.TotalRows.Store(0)
+}
+
 type ttlScanTask struct {
 	tbl        *cache.PhysicalTable
 	expire     time.Time
@@ -129,6 +135,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		}
 
 		delTask := &ttlDeleteTask{
+			tbl:        t.tbl,
+			expire:     t.expire,
 			rows:       lastResult,
 			statistics: t.statistics,
 		}

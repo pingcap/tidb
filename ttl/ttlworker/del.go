@@ -14,9 +14,16 @@
 
 package ttlworker
 
-import "github.com/pingcap/tidb/types"
+import (
+	"time"
+
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/types"
+)
 
 type ttlDeleteTask struct {
+	tbl        *cache.PhysicalTable
+	expire     time.Time
 	rows       [][]types.Datum
 	statistics *ttlStatistics
 }

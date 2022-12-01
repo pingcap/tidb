@@ -98,6 +98,8 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 	case del := <-w.delCh:
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
+		require.Same(w.t, w.curTask.tbl, del.tbl)
+		require.Equal(w.t, w.curTask.expire, del.expire)
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -240,6 +242,7 @@ func (t *mockScanTask) selectSQL(i int) string {
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
+	t.ttlScanTask.statistics.Reset()
 	origLimit := variable.TTLScanBatchSize.Load()
 	variable.TTLScanBatchSize.Store(3)
 	origRetryInterval := scanTaskExecuteSQLRetryInterval
@@ -292,10 +295,13 @@ loop:
 	}
 
 	require.Equal(t.t, delTaskCnt, len(t.delTasks))
+	expectTotalRows := 0
 	for i, del := range t.delTasks {
 		require.NotNil(t.t, del)
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
+		require.Same(t.t, t.tbl, del.tbl)
+		require.Equal(t.t, t.expire, del.expire)
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
@@ -307,7 +313,9 @@ loop:
 		require.Equal(t.t, int64(i*100+1), del.rows[0][0].GetInt64())
 		require.Equal(t.t, 1, len(del.rows[0]))
 		require.Equal(t.t, int64(i*100+2), del.rows[1][0].GetInt64())
+		expectTotalRows += len(del.rows)
 	}
+	require.Equal(t.t, expectTotalRows, int(t.statistics.TotalRows.Load()))
 	return r
 }
 
