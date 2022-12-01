@@ -13140,6 +13140,15 @@ CreateBindingStmt:
 
 		$$ = x
 	}
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+	{
+		x := &ast.CreateBindingStmt{
+			GlobalScope: $2.(bool),
+			PlanDigest:  $9,
+		}
+
+		$$ = x
+	}
 
 /*******************************************************************
  *

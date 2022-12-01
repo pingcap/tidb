@@ -1826,6 +1826,7 @@ type CreateBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
+	PlanDigest  string
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -1835,13 +1836,18 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord("SESSION ")
 	}
-	ctx.WriteKeyWord("BINDING FOR ")
-	if err := n.OriginNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	ctx.WriteKeyWord(" USING ")
-	if err := n.HintedNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
+	if n.OriginNode == nil {
+		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
+		ctx.WriteString(n.PlanDigest)
+	} else {
+		ctx.WriteKeyWord("BINDING FOR ")
+		if err := n.OriginNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		ctx.WriteKeyWord(" USING ")
+		if err := n.HintedNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -1852,16 +1858,18 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
-	origNode, ok := n.OriginNode.Accept(v)
-	if !ok {
-		return n, false
+	if n.OriginNode != nil {
+		origNode, ok := n.OriginNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OriginNode = origNode.(StmtNode)
+		hintedNode, ok := n.HintedNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HintedNode = hintedNode.(StmtNode)
 	}
-	n.OriginNode = origNode.(StmtNode)
-	hintedNode, ok := n.HintedNode.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.HintedNode = hintedNode.(StmtNode)
 	return v.Leave(n)
 }
 
