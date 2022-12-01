@@ -1140,7 +1140,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 
-	// In a new created cluster(above 6.5+), tidb_cost_model_version is 1 by default.
+	// In a new created cluster(above 6.5+), tidb_cost_model_version is 2 by default.
 	mustExec(t, se, "use test;")
 	r := mustExec(t, se, "select @@tidb_cost_model_version;")
 	require.NotNil(t, r)
@@ -1193,7 +1193,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 
-	// We are now in 6.5+, TiDBCostModelVersion should be off.
+	// We are now in 6.5+, TiDBCostModelVersion should be 1.
 	res = mustExec(t, seCurVer, "select @@tidb_cost_model_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)

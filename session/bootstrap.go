@@ -689,7 +689,7 @@ const (
 	version103 = 103
 	// version104 add `sql_digest` and `plan_digest` to `bind_info`
 	version104 = 104
-	// version104 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
+	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
 	// This will only happens when we upgrade a cluster before 6.0.
 	version105 = 105
 )
