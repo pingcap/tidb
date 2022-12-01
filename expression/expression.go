@@ -1165,7 +1165,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Regexp, ast.RegexpLike:
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
 		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
