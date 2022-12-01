@@ -653,6 +653,37 @@ type SelectInto struct {
 	IntoOpt    *ast.SelectIntoOption
 }
 
+// ExplainInfoForEncode store explain info for JSON encode
+type ExplainInfoForEncode struct {
+	ID                  string                  `json:"id"`
+	EstRows             string                  `json:"estRows"`
+	ActRows             string                  `json:"actRows,omitempty"`
+	TaskType            string                  `json:"taskType"`
+	AccessObject        string                  `json:"accessObject,omitempty"`
+	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
+	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
+	EstCost             string                  `json:"estCost,omitempty"`
+	CostFormula         string                  `json:"costFormula,omitempty"`
+	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
+	DiskInfo            string                  `json:"diskInfo,omitempty"`
+	TotalMemoryConsumed string                  `json:"totalMemoryConsumed,omitempty"`
+	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
+}
+
+// JSONToString convert json to string
+func JSONToString(j []*ExplainInfoForEncode) (string, error) {
+	byteBuffer := bytes.NewBuffer([]byte{})
+	encoder := json.NewEncoder(byteBuffer)
+	// avoid wrongly embedding
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "    ")
+	err := encoder.Encode(j)
+	if err != nil {
+		return "", err
+	}
+	return byteBuffer.String(), nil
+}
+
 // Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer
@@ -718,6 +749,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"hint"}
 	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
+	case format == types.ExplainFormatTiDBJSON:
+		fieldNames = []string{"TiDB_JSON"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -805,6 +838,21 @@ func (e *Explain) RenderResult() error {
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatTiDBJSON:
+		flat := FlattenPhysicalPlan(e.TargetPlan, true)
+		encodes := e.explainFlatPlanInJSONFormat(flat)
+		if e.Analyze && len(encodes) > 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			encodeRoot := encodes[0]
+			tracker := e.SCtx().GetSessionVars().MemTracker
+			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
+		}
+		if str, err := JSONToString(encodes); err == nil {
+			e.Rows = append(e.Rows, []string{str})
+		} else {
+			return err
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -823,6 +871,43 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 			e.explainFlatOpInRowFormat(flatOp)
 		}
 	}
+}
+
+func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+		return
+	}
+	// flat.Main[0] must be the root node of tree
+	encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
+
+	for _, cte := range flat.CTEs {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
+	}
+	return
+}
+
+func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
+	taskTp := ""
+	if flatOp.IsRoot {
+		taskTp = "root"
+	} else {
+		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
+	}
+	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
+
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+		}
+	}
+
+	for _, idx := range flatOp.ChildrenIdx {
+		cur.SubOperators = append(cur.SubOperators,
+			e.explainOpRecursivelyInJSONFormat(flats[idx], flats))
+	}
+	return cur
 }
 
 func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
@@ -925,6 +1010,27 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	e.Rows = append(e.Rows, row)
+}
+
+func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+	if p.ExplainID().String() == "_0" {
+		return nil
+	}
+
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	jsonRow := &ExplainInfoForEncode{
+		ID:           explainID,
+		EstRows:      estRows,
+		TaskType:     taskType,
+		AccessObject: accessObject,
+		OperatorInfo: operatorInfo,
+		SubOperators: make([]*ExplainInfoForEncode, 0),
+	}
+
+	if e.Analyze || e.RuntimeStatsColl != nil {
+		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
+	}
+	return jsonRow
 }
 
 func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
