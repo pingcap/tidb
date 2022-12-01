@@ -623,7 +623,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 				return alloc1
 			}
 		} else if allocType == RowIDAllocType {
-			// Now that the autoid and rowid allocator are seperated, the AUTO_ID_CACHE 1 setting should not make
+			// Now that the autoid and rowid allocator are separated, the AUTO_ID_CACHE 1 setting should not make
 			// the rowid allocator do not use cache.
 			alloc.customStep = false
 			alloc.step = step
