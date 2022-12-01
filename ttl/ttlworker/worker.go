@@ -98,21 +98,15 @@ func (w *baseWorker) Error() error {
 func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	go func() {
-		defer cancel()
 		w.wg.Wait()
+		cancel()
 	}()
 
-	select {
-	case <-ctx.Done():
-		w.Lock()
-		stopped := w.status == workerStatusStopped
-		w.Unlock()
-
-		if stopped {
-			return nil
-		}
+	<-ctx.Done()
+	if w.Status() != workerStatusStopped {
 		return ctx.Err()
 	}
+	return nil
 }
 
 func (w *baseWorker) loop() {
