@@ -86,7 +86,7 @@ func TestSortedBasic(t *testing.T) {
 			},
 			RetainLessThan: 11,
 			Result: []spans.Valued{
-				kv(s("0001", "0004"), 5),
+				kv(s("0001", "0008"), 5),
 				kv(s("0008", ""), 10),
 			},
 		},
