@@ -522,6 +522,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		Glue:              g,
 		CheckpointStorage: o.checkpointStorage,
 		CheckpointName:    o.checkpointName,
+		DupIndicator:      o.dupIndicator,
 	}
 
 	var procedure *restore.Controller
