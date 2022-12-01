@@ -439,6 +439,31 @@ func TestOrderByandLimit(t *testing.T) {
 	tk.MustExec("insert into thash_clustered values " + strings.Join(dedupValsAB, ","))
 	tk.MustExec("insert into tregular_clustered values " + strings.Join(dedupValsAB, ","))
 
+	tk.MustExec("analyze table trange")
+	tk.MustExec("analyze table trange_intpk")
+	tk.MustExec("analyze table trange_clustered")
+	tk.MustExec("analyze table thash")
+	tk.MustExec("analyze table thash_intpk")
+	tk.MustExec("analyze table thash_clustered")
+	tk.MustExec("analyze table tregular")
+	tk.MustExec("analyze table tregular_intpk")
+	tk.MustExec("analyze table tregular_clustered")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
+
 	// test indexLookUp
 	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
@@ -529,6 +554,45 @@ func TestOrderByandLimit(t *testing.T) {
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
+
+		tk.MustExec(" set @@tidb_allow_mpp=1;")
+		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash,tikv\"")
+		queryPartitionWithTiFlash := fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_intpk]) */ * from trange_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_intpk]) */ /*+ LIMIT_TO_COP() */ * from trange_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_clustered]) */ * from trange_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_clustered]) */ /*+ LIMIT_TO_COP() */ * from trange_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_intpk]) */ * from thash_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_intpk]) */ /*+ LIMIT_TO_COP() */ * from thash_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_clustered]) */ * from thash_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_clustered]) */ /*+ LIMIT_TO_COP() */ * from thash_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustExec(" set @@tidb_allow_mpp=0;")
+		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 	}
 
 	// test indexReader
