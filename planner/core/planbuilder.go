@@ -1079,8 +1079,9 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
-		SQLDigest:    sqlDigestWithDB.String(),
 		Source:       bindinfo.History,
+		SQLDigest:    sqlDigestWithDB.String(),
+		PlanDigest:   v.PlanDigest,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
