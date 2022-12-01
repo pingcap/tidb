@@ -51,7 +51,7 @@ You can join the following groups and chats to discuss or ask TiDB related quest
 In addition, you may enjoy following:
 
 - [@PingCAP](https://twitter.com/PingCAP) on Twitter
-- Questions tagged [#tidb on Stack Overflow](https://stackoverflow.com/questions/tagged/tidb)
+- Questions tagged with [#tidb on Stack Overflow](https://stackoverflow.com/questions/tagged/tidb)
 - The PingCAP [English Blog](https://www.pingcap.com/blog/?from=en) and [Chinese Blog](https://cn.pingcap.com/blog/)
 
 For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
