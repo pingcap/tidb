@@ -117,7 +117,11 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
-		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		prepared.UseCache = cacheable
+		if !cacheable {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
+		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""

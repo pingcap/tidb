@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -1394,4 +1395,75 @@ func TestIssue28792(t *testing.T) {
 	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
 	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
 	require.Equal(t, r2, r1)
+}
+
+func TestExplainForJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int);")
+	tk1.MustQuery("select * from t1;")
+	tk1RootProcess := tk1.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tk1RootProcess}
+	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+
+	j := new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows := make([]*core.ExplainInfoForEncode, 0)
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].TaskType, row[2])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
+	}
+
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk1.MustExec("drop table if exists t2")
+	tk1.MustExec("create table t2(id int);")
+	tk1.MustQuery("select * from t2;")
+	tk1RootProcess = tk1.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tk1RootProcess}
+	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+
+	j = new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows = []*core.ExplainInfoForEncode{}
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].ActRows, row[2])
+		require.Equal(t, flatJSONRows[i].TaskType, row[3])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
+		// executeInfo, memory, disk maybe vary in multi execution
+		require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+		require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
+	}
+	// test syntax
+	tk2.MustExec(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
 }
