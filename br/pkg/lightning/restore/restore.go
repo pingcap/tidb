@@ -938,7 +938,7 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 					if _, ok := fileChunks[c.Key.Path]; !ok {
 						fileChunks[c.Key.Path] = 0.0
 					}
-					remainChunkCnt := float64(c.Chunk.EndOffset-c.Chunk.Offset) / float64(c.Chunk.EndOffset-c.Key.Offset)
+					remainChunkCnt := float64(c.UnfinishedSize()) / float64(c.TotalSize())
 					fileChunks[c.Key.Path] += remainChunkCnt
 				}
 			}
@@ -1619,7 +1619,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			} else {
 				for _, eng := range cp.Engines {
 					for _, chunk := range eng.Chunks {
-						totalDataSizeToRestore += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+						totalDataSizeToRestore += chunk.UnfinishedSize()
 					}
 				}
 			}
@@ -2299,6 +2299,8 @@ type deliveredKVs struct {
 	columns []string
 	offset  int64
 	rowID   int64
+
+	realOffset int64 // indicates file reader's current position, only used for compressed files
 }
 
 type deliverResult struct {
@@ -2327,6 +2329,8 @@ func (cr *chunkRestore) deliverLoop(
 
 	dataSynced := true
 	hasMoreKVs := true
+	var startRealOffset, currRealOffset int64 // save to 0 at first
+
 	for hasMoreKVs {
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var columns []string
@@ -2335,6 +2339,8 @@ func (cr *chunkRestore) deliverLoop(
 		// chunk checkpoint should stay the same
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
+		startRealOffset = cr.chunk.Chunk.RealOffset
+		currRealOffset = startRealOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
@@ -2349,12 +2355,14 @@ func (cr *chunkRestore) deliverLoop(
 					if p.kvs == nil {
 						// This is the last message.
 						currOffset = p.offset
+						currRealOffset = p.realOffset
 						hasMoreKVs = false
 						break populate
 					}
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
+					currRealOffset = p.realOffset
 					rowID = p.rowID
 				}
 			case <-ctx.Done():
@@ -2421,6 +2429,7 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
+		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
@@ -2428,16 +2437,21 @@ func (cr *chunkRestore) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-
-			delta := currOffset - startOffset
+			var lowOffset, highOffset int64
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				lowOffset, highOffset = startRealOffset, currRealOffset
+			} else {
+				lowOffset, highOffset = startOffset, currOffset
+			}
+			delta := highOffset - lowOffset
 			if delta >= 0 {
 				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
 			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
-					zap.Int64("start", startOffset))
+				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
+					zap.Int64("start", lowOffset))
 			}
 		}
 
@@ -2618,14 +2632,22 @@ func (cr *chunkRestore) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID int64
+		var newOffset, rowID, realOffset int64
 		var kvSize uint64
+		var realOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				realOffset, realOffsetErr = cr.parser.RealPos()
+				if realOffsetErr != nil {
+					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
+						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+			}
 
 			switch errors.Cause(err) {
 			case nil:
@@ -2687,7 +2709,8 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
+				rowID: rowID, realOffset: realOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -2719,7 +2742,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset}})
+	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
 }
 
