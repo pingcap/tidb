@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
@@ -283,15 +285,15 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
 	}()
 
-	variable.TTLDeleteRateLimit.Store(10000)
-	start := time.Now()
-	cnt := int64(0)
-	for time.Since(start) < time.Millisecond*10 {
-		cnt++
-		require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
-	}
-	require.Greater(t, cnt, int64(95))
-	require.Less(t, cnt, int64(105))
+	variable.TTLDeleteRateLimit.Store(100000)
+	require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
+	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.limiter.Limit())
+	require.Equal(t, int64(100000), globalDelRateLimiter.limit.Load())
+
+	variable.TTLDeleteRateLimit.Store(0)
+	require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
+	require.Equal(t, rate.Limit(0), globalDelRateLimiter.limiter.Limit())
+	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
 }
 
 func TestTTLDeleteTaskWorker(t *testing.T) {
