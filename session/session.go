@@ -2646,8 +2646,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			// Enter sandbox mode, only execute statement for resetting password.
 			s.EnableSandBoxMode()
 		case *privileges.ErrUserPasswordFailed:
-			//when user enables the account locking function for consecutive login failures,
-			//the system updates the login failure count and determines whether to lock the account when authentication fails
+			// when user enables the account locking function for consecutive login failures,
+			// the system updates the login failure count and determines whether to lock the account when authentication fails
 			if enableAutoLock {
 				if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 					return trackingErr
@@ -2657,7 +2657,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		default:
 			return err
 		}
-		return err
 	}
 	if enableAutoLock {
 		return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
