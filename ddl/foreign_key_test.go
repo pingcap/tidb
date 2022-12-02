@@ -1513,6 +1513,42 @@ func TestAddForeignKey(t *testing.T) {
 	tbl2Info = getTableInfo(t, dom, "test", "t2")
 	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
 	tk.MustGetDBError("alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)", dbterror.ErrDropIndexNeededInForeignKey)
+
+	// Test circular dependency add foreign key failed.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key,a int, index(a));")
+	tk.MustExec("create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1,1);")
+	err := tk.ExecToErr("ALTER TABLE t1 ADD foreign key fk(a) references t2(id) ON DELETE CASCADE;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`) ON DELETE CASCADE)", err.Error())
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
+	referredFKs := dom.InfoSchema().GetTableReferredForeignKeys("test", "t2")
+	require.Equal(t, 0, len(referredFKs))
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `a` (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test add foreign key with auto-create index failed.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key,a int);")
+	tk.MustExec("create table t2 (id int key);")
+	tk.MustExec("insert into t1 values (1,1);")
+	err = tk.ExecToErr("ALTER TABLE t1 ADD foreign key fk(a) references t2(id) ON DELETE CASCADE;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`) ON DELETE CASCADE)", err.Error())
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
+	referredFKs = dom.InfoSchema().GetTableReferredForeignKeys("test", "t2")
+	require.Equal(t, 0, len(referredFKs))
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestAddForeignKey2(t *testing.T) {
