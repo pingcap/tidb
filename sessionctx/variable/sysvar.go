@@ -570,6 +570,9 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
+	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
+	}},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -2222,6 +2225,10 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// DefaultPasswordLifetime is the name for 'default_password_lifetime' system variable.
+	DefaultPasswordLifetime = "default_password_lifetime"
+	// DisconnectOnExpiredPassword is the name for 'disconnect_on_expired_password' system variable.
+	DisconnectOnExpiredPassword = "disconnect_on_expired_password"
 	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
 	SQLSelectLimit = "sql_select_limit"
 	// MaxConnectErrors is the name for 'max_connect_errors' system variable.
