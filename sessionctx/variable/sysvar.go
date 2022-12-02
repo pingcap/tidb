@@ -506,7 +506,13 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
+			newVal := int32(TidbOptInt64(val, 8))
+			// Since `length` should satisfy `length >= number_count + special_char_count + 2 * mixed_case_count`,
+			// and may be increased while setting the other sysvar, just ignore the other statemennts that may decrease `length`
+			if !isSetSysVarStmtForValidatePwdLength(s.StmtCtx.OriginalSQL) && newVal < PasswordValidationLength.Load() {
+				return nil
+			}
+			PasswordValidationLength.Store(newVal)
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(int64(PasswordValidationLength.Load()), 10), nil

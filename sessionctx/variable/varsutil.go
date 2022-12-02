@@ -531,6 +531,12 @@ func collectAllowFuncName4ExpressionIndex() string {
 	return strings.Join(str, ", ")
 }
 
+// isSetSysVarStmtForValidatePwdLength returns true if `sql` is a setting statement like `set ... validate_password.length`
+func isSetSysVarStmtForValidatePwdLength(sql string) bool {
+	sql = strings.ToLower(sql)
+	return strings.Contains(sql, "set") && strings.Contains(sql, ValidatePasswordLength)
+}
+
 // GAFunction4ExpressionIndex stores functions GA for expression index.
 var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Lower:      {},
