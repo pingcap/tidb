@@ -139,7 +139,12 @@ func (e *IndexMergeReaderExecutor) Table() table.Table {
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
-
+	if e.isCorColInTableFilter {
+		e.tableRequest.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+		if err != nil {
+			return err
+		}
+	}
 	if err = e.rebuildRangeForCorCol(); err != nil {
 		return err
 	}
@@ -630,11 +635,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		plans:            e.tblPlans,
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
-	if e.isCorColInTableFilter {
-		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
-			return nil, err
-		}
-	}
 	tableReaderExec.buildVirtualColumnInfo()
 	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
 	// Also it's good for performance.
@@ -950,11 +950,12 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}, w.handleLoopFetcherPanic(ctx, resultCh, "IndexMergeIntersectionProcessWorker", errCh))
 		workers = append(workers, worker)
 	}
+loop:
 	for task := range fetchCh {
 		select {
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case <-errCh:
-			break
+			break loop
 		}
 	}
 	for _, processWorker := range workers {

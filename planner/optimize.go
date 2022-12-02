@@ -428,9 +428,11 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
-	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	if !sctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
+		sctx.GetSessionVars().PlanID = 0
+		sctx.GetSessionVars().PlanColumnID = 0
+		sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	}
 
 	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec

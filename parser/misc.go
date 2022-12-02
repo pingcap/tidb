@@ -289,6 +289,7 @@ var tokenMap = map[string]int{
 	"DEPTH":                    depth,
 	"DESC":                     desc,
 	"DESCRIBE":                 describe,
+	"DIGEST":                   digest,
 	"DIRECTORY":                directory,
 	"DISABLE":                  disable,
 	"DISABLED":                 disabled,
@@ -726,6 +727,7 @@ var tokenMap = map[string]int{
 	"THEN":                     then,
 	"TIDB":                     tidb,
 	"TIDB_CURRENT_TSO":         tidbCurrentTSO,
+	"TIDB_JSON":                tidbJson,
 	"TIFLASH":                  tiFlash,
 	"TIKV_IMPORTER":            tikvImporter,
 	"TIME":                     timeType,
@@ -814,6 +816,7 @@ var tokenMap = map[string]int{
 	"WAIT":                     wait,
 	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
 	"PASSWORD_LOCK_TIME":       passwordLockTime,
+	"REUSE":                    reuse,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
