@@ -136,7 +136,8 @@ func (e *baseExecutor) releaseSysSession(ctx context.Context, sctx sessionctx.Co
 	sysSessionPool.Put(sctx.(pools.Resource))
 }
 
-// Since the environment variables in the session are changed, closing the session does not return the session
+// clearSysSession close the session does not return the session
+// Since the environment variables in the session are changed, the session object is not returned
 func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
@@ -1095,22 +1096,11 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	req := recordSet.NewChunk(nil)
-	err = recordSet.Next(ctx, req)
-	var rowsNum int = 0
-	if err == nil {
-		rowsNum = req.NumRows()
-	}
-	errClose := recordSet.Close()
-	if errClose != nil {
-		return nil, errClose
-	}
-	if rowsNum != 1 {
-		err := fmt.Errorf("Unable to confirm `%s`@`%s` password reuse configuration information", name, strings.ToLower(host))
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	if err != nil {
 		return nil, err
 	}
-	iter := chunk.NewIterator4Chunk(req)
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+	for _, row := range rows {
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
@@ -1131,7 +1121,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return res, nil
 }
 
-// get the boundary of password valid time
+// getValidTime get the boundary of password valid time
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
@@ -1387,6 +1377,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	// session isolation level changed to READ-COMMITTED
+	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
+	// When operating the same user concurrently, it may happen that historical versions are read.
+	// In order to avoid this risk, change the isolation level to RC.
 	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
@@ -2017,7 +2010,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	// session isolation level changed to READ-COMMITTED
+	// session isolation level changed to READ-COMMITTED.
+	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
+	// When operating the same user concurrently, it may happen that historical versions are read.
+	// In order to avoid this risk, change the isolation level to RC.
 	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
 	if err != nil {
 		return err
