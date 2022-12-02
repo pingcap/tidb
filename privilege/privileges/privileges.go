@@ -360,7 +360,6 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 }
 
 // GenerateAccountAutoLockErr implements the Manager interface.
-// Generate AccountAutoLock Error
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
 	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
@@ -372,7 +371,6 @@ func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 }
 
 // VerifyAccountAutoLock implements the Manager interface.
-// Verification Account Auto Lock
 func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string, error) {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
@@ -401,7 +399,6 @@ func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string
 }
 
 // IsAccountAutoLockEnabled implements the Manager interface.
-// Account enable Auto Lock
 func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool {
 	if SkipWithGrant {
 		p.user = user
@@ -420,14 +417,12 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 }
 
 // BuildPasswordLockingJSON implements the Manager interface.
-// Build PasswordLocking Json
 func (p *UserPrivileges) BuildPasswordLockingJSON(failedLoginAttempts int64,
 	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
 	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 }
 
 // BuildSuccessPasswordLockingJSON implements the Manager interface.
-// Build Success PasswordLocking Json
 func (p *UserPrivileges) BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
 	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
 }
