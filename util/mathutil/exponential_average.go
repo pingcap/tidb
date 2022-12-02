@@ -23,7 +23,7 @@ type ExponentialMovingAverage struct {
 	count        int
 }
 
-// NewExponentialMovingAverage will create a new ExponentialMovingAverage
+// NewExponentialMovingAverage will create a new ExponentialMovingAverage.
 func NewExponentialMovingAverage(
 	factor float64,
 	warmupWindow int,
