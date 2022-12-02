@@ -285,15 +285,29 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
 	}()
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+	}()
+
 	variable.TTLDeleteRateLimit.Store(100000)
-	require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
+	require.NoError(t, globalDelRateLimiter.Wait(ctx))
 	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.limiter.Limit())
 	require.Equal(t, int64(100000), globalDelRateLimiter.limit.Load())
 
 	variable.TTLDeleteRateLimit.Store(0)
-	require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
+	require.NoError(t, globalDelRateLimiter.Wait(ctx))
 	require.Equal(t, rate.Limit(0), globalDelRateLimiter.limiter.Limit())
 	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
+
+	// 0 stands for no limit
+	require.NoError(t, globalDelRateLimiter.Wait(ctx))
+	// cancel ctx returns an error
+	cancel()
+	cancel = nil
+	require.EqualError(t, globalDelRateLimiter.Wait(ctx), "context canceled")
 }
 
 func TestTTLDeleteTaskWorker(t *testing.T) {
