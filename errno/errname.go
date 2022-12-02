@@ -887,6 +887,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
+	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),
 	ErrForeignKeyCannotDropParent:                            mysql.Message("Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.", nil),
 	ErrForeignKeyCannotUseVirtualColumn:                      mysql.Message("Foreign key '%s' uses virtual column '%s' which is not supported.", nil),
 	ErrForeignKeyNoColumnInParent:                            mysql.Message("Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'", nil),

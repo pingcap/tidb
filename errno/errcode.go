@@ -892,6 +892,7 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrExistsInHistoryPassword                               = 3638
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrForeignKeyNoColumnInParent                            = 3734
