@@ -1034,6 +1034,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnsupportedColumnInTTLConfig:  mysql.Message("Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP", nil),
 	ErrTTLColumnCannotDrop:           mysql.Message("Cannot drop column '%-.192s': needed in TTL config", nil),
 	ErrSetTTLEnableForNonTTLTable:    mysql.Message("Cannot set TTL_ENABLE on a table without TTL config", nil),
+	ErrTempTableNotAllowedWithTTL:    mysql.Message("Set TTL for temporary table is not allowed", nil),
+	ErrUnsupportedTTLReferencedByFK:  mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
