@@ -506,13 +506,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			newVal := int32(TidbOptInt64(val, 8))
-			// Since `length` should satisfy `length >= number_count + special_char_count + 2 * mixed_case_count`,
-			// and may be increased while setting the other sysvar, just ignore the other statemennts that may decrease `length`
-			if !isSetSysVarStmtForValidatePwdLength(s.StmtCtx.OriginalSQL) && newVal < PasswordValidationLength.Load() {
-				return nil
-			}
-			PasswordValidationLength.Store(newVal)
+			PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(int64(PasswordValidationLength.Load()), 10), nil
@@ -526,7 +520,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := numberCount + specialCharCount + 2*int32(mixedCaseCount); length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
@@ -545,7 +542,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := int32(numberCount) + specialCharCount + 2*mixedCaseCount; length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
@@ -564,7 +564,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := numberCount + int32(specialCharCount) + 2*mixedCaseCount; length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
