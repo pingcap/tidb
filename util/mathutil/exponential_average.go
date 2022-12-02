@@ -14,17 +14,13 @@
 
 package mathutil
 
-import "sync"
-
-// ExponentialMovingAverage is an exponential moving average measurement implementation.
+// ExponentialMovingAverage is an exponential moving average measurement implementation. it is not thread-safe.
 type ExponentialMovingAverage struct {
 	value        float64
 	sum          float64
 	factor       float64
 	warmupWindow int
 	count        int
-
-	mu sync.RWMutex
 }
 
 // NewExponentialMovingAverage will create a new ExponentialMovingAverage
@@ -43,8 +39,6 @@ func NewExponentialMovingAverage(
 
 // Add a single sample and update the internal state.
 func (m *ExponentialMovingAverage) Add(value float64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.count < m.warmupWindow {
 		m.count++
 		m.sum += value
@@ -56,7 +50,5 @@ func (m *ExponentialMovingAverage) Add(value float64) {
 
 // Get the current value.
 func (m *ExponentialMovingAverage) Get() float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.value
 }
