@@ -94,7 +94,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
-func (e *ProjectionExec) open(ctx context.Context) error {
+func (e *ProjectionExec) open(_ context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
@@ -364,13 +364,13 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 	}()
 
 	for {
-		input := readProjectionInput(f.inputCh, f.globalFinishCh)
+		input := readProjection[*projectionInput](f.inputCh, f.globalFinishCh)
 		if input == nil {
 			return
 		}
 		targetWorker := input.targetWorker
 
-		output = readProjectionOutput(f.outputCh, f.globalFinishCh)
+		output = readProjection[*projectionOutput](f.outputCh, f.globalFinishCh)
 		if output == nil {
 			f.proj.memTracker.Consume(-input.chk.MemoryUsage())
 			return
@@ -431,12 +431,12 @@ func (w *projectionWorker) run(ctx context.Context) {
 		w.proj.wg.Done()
 	}()
 	for {
-		input := readProjectionInput(w.inputCh, w.globalFinishCh)
+		input := readProjection[*projectionInput](w.inputCh, w.globalFinishCh)
 		if input == nil {
 			return
 		}
 
-		output = readProjectionOutput(w.outputCh, w.globalFinishCh)
+		output = readProjection[*projectionOutput](w.outputCh, w.globalFinishCh)
 		if output == nil {
 			return
 		}
@@ -462,26 +462,14 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
-func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {
+func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) T {
 	select {
 	case <-finishCh:
 		return nil
-	case input, ok := <-inputCh:
+	case t, ok := <-ch:
 		if !ok {
 			return nil
 		}
-		return input
-	}
-}
-
-func readProjectionOutput(outputCh <-chan *projectionOutput, finishCh <-chan struct{}) *projectionOutput {
-	select {
-	case <-finishCh:
-		return nil
-	case output, ok := <-outputCh:
-		if !ok {
-			return nil
-		}
-		return output
+		return t
 	}
 }
