@@ -131,7 +131,7 @@ func TestUserAttributes(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	subtk := testkit.NewTestKit(t, store)
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
