@@ -1058,11 +1058,11 @@ func TestShowCreateUser(t *testing.T) {
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'%'").
-		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
 
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED BY 'test';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'localhost';").
-		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
 
 	// Case: the user exists but the host portion doesn't match
 	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
@@ -1074,10 +1074,10 @@ func TestShowCreateUser(t *testing.T) {
 
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
 	tk.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT"))
 
 	tk.MustQuery("show create user current_user()").
-		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT"))
 
 	tk.MustExec("create user 'check_priv'")
 
@@ -1090,9 +1090,9 @@ func TestShowCreateUser(t *testing.T) {
 
 	// "show create user" for current user doesn't check privileges.
 	tk1.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT"))
 
-	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`.
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
 	// Compare only the start of the output as the salt changes every time.
@@ -1103,29 +1103,37 @@ func TestShowCreateUser(t *testing.T) {
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock'@'%'")
-	require.Equal(t, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT", rows.Rows()[0][0].(string))
 	tk.MustExec("CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3'")
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock2'@'%'")
-	require.Equal(t, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT", rows.Rows()[0][0].(string))
 
-	// Test ACCOUNT LOCK/UNLOCK
+	// Test ACCOUNT LOCK/UNLOCK.
 	tk.MustExec("CREATE USER 'lockness'@'%' IDENTIFIED BY 'monster' ACCOUNT LOCK")
 	rows = tk.MustQuery("SHOW CREATE USER 'lockness'@'%'")
-	require.Equal(t, "CREATE USER 'lockness'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*BC05309E7FE12AFD4EBB9FFE7E488A6320F12FF3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'lockness'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*BC05309E7FE12AFD4EBB9FFE7E488A6320F12FF3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT", rows.Rows()[0][0].(string))
 
-	// Test COMMENT and ATTRIBUTE
+	// Test COMMENT and ATTRIBUTE.
 	tk.MustExec("CREATE USER commentUser COMMENT '1234'")
-	tk.MustQuery("SHOW CREATE USER commentUser").Check(testkit.Rows(`CREATE USER 'commentUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"comment": "1234"}`))
+	tk.MustQuery("SHOW CREATE USER commentUser").Check(testkit.Rows(`CREATE USER 'commentUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"comment": "1234"} PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
 	tk.MustExec(`CREATE USER attributeUser attribute '{"name": "Tom", "age": 19}'`)
-	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"age": 19, "name": "Tom"}`))
+	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"age": 19, "name": "Tom"} PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
 
-	// Creating users with 'IDENTIFIED WITH 'tidb_auth_token''
+	// Creating users with IDENTIFIED WITH 'tidb_auth_token'.
 	tk.MustExec(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
-	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"} PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
 	tk.MustExec(`ALTER USER 'token_user'@'%' REQUIRE token_issuer 'issuer-ABC'`)
-	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"} PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT`))
+
+	// create users with password reuse.
+	tk.MustExec(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`))
+	tk.MustExec(`ALTER USER 'reuse_user'@'%' PASSWORD HISTORY 50`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 3 DAY`))
+	tk.MustExec(`ALTER USER 'reuse_user'@'%' PASSWORD REUSE INTERVAL 31 DAY`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 31 DAY`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
