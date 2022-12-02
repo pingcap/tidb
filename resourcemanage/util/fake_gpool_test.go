@@ -41,12 +41,12 @@ func NewFakeGPool() *FakeGPool {
 	}
 }
 
-func (f *FakeGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64, cap int, longRTT float64, shortRTT uint64, queueSize int64, running int) {
+func (f *FakeGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64, capa int, longRTT float64, shortRTT uint64, queueSize int64, running int) {
 	f.maxInFlight = append(f.maxInFlight, maxInFlight)
 	f.inFlight = append(f.inFlight, inFlight)
 	f.minRT = append(f.minRT, minRT)
 	f.maxPASS = append(f.maxPASS, maxPASS)
-	f.cap = append(f.cap, cap)
+	f.cap = append(f.cap, capa)
 	f.longRTT = append(f.longRTT, longRTT)
 	f.shortRTT = append(f.shortRTT, shortRTT)
 	f.queueSize = append(f.queueSize, queueSize)
