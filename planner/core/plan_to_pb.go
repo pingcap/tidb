@@ -119,7 +119,7 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec, ExecutorId: &executorID}, nil
 }
 
-func updateSFPushDownCount(exprs []*tipb.Expr, storeType kv.StoreType) () {
+func updateSFPushDownCount(exprs []*tipb.Expr, storeType kv.StoreType) {
 	if storeType == kv.TiFlash {
 		funcCountMap := expression.FindPBScalarFuncs(exprs)
 		for sig, count := range funcCountMap {

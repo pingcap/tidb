@@ -249,7 +249,7 @@ func RotateSubWindow() {
 			JSONExtractPushDown:   CurrentTiflashJSONExtractPushDownCount.Swap(0),
 			RegexpLikePushDown:    CurrentTiflashRegexpLikePushDownCount.Swap(0),
 			RegexpInStrPushDown:   CurrentTiflashRegexpInStrPushDownCount.Swap(0),
-			RegexpSubstrPushDown:   CurrentTiflashRegexpSubstrPushDownCount.Swap(0),
+			RegexpSubstrPushDown:  CurrentTiflashRegexpSubstrPushDownCount.Swap(0),
 		},
 		CoprCacheUsage: coprCacheUsageData{
 			GTE0:   CurrentCoprCacheHitRatioGTE0Count.Swap(0),
