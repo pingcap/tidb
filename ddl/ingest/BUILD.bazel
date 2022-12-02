@@ -33,6 +33,7 @@ go_library(
         "//sessionctx/variable",
         "//table",
         "//util",
+        "//util/dbterror",
         "//util/generic",
         "//util/logutil",
         "//util/mathutil",
