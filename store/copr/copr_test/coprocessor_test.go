@@ -144,4 +144,26 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, len(tasks), 1)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
+
+	// paging will disable store batch.
+	req = &kv.Request{
+		Tp:                kv.ReqTypeDAG,
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
+		FixedRowCountHint: []int{1, 1, 3, 3},
+		Concurrency:       15,
+		StoreBatchSize:    3,
+		Paging: struct {
+			Enable        bool
+			MinPagingSize uint64
+			MaxPagingSize uint64
+		}{
+			Enable:        true,
+			MinPagingSize: 1,
+			MaxPagingSize: 1024,
+		},
+	}
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 4)
 }
