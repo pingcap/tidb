@@ -24,9 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -2167,7 +2170,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─Point_Get_.*" +
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
 				"  └─Update_.*" +
-				"    ├─Batch_Point_Get_.*" +
+				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.*",
 		},
 		{
@@ -2180,7 +2183,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
 				"  └─Update_.*" +
-				"    ├─Batch_Point_Get_.*" +
+				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
 		},
 		// Test foreign key use index.
@@ -2201,7 +2204,8 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		},
 		{
 			sql: "explain analyze delete from t3 where id in (2,3)",
-			plan: "Delete_.*├─Batch_Point_Get_.*" +
+			plan: "Delete_.*" +
+				"├─Batch_Point_Get_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
 		},
 		{
@@ -2428,4 +2432,91 @@ func TestForeignKeyRuntimeStats(t *testing.T) {
 	require.Equal(t, "total:1s, foreign_keys:10", cascadeStats.String())
 	cascadeStats.Merge(cascadeStats.Clone())
 	require.Equal(t, "total:2s, foreign_keys:20", cascadeStats.String())
+}
+
+func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	cases := []struct {
+		prepares []string
+		sql      string
+		err      error
+		t1Rows   []string
+		t2Rows   []string
+	}{
+		{
+			prepares: []string{"grant insert on test.t2 to 'u1'@'%';"},
+			sql:      "insert into t2 values (1), (2), (3);",
+			t1Rows:   []string{"1", "2", "3"},
+			t2Rows:   []string{"1", "2", "3"},
+		},
+		{
+			prepares: []string{"grant select, delete on test.t1 to 'u1'@'%';"},
+			sql:      "delete from t1 where id=1;",
+			t1Rows:   []string{"2", "3"},
+			t2Rows:   []string{"2", "3"},
+		},
+		{
+			prepares: []string{"grant select, update on test.t1 to 'u1'@'%';"},
+			sql:      "update t1 set id=id+10 where id=2;",
+			t1Rows:   []string{"3", "12"},
+			t2Rows:   []string{"3", "12"},
+		},
+	}
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	for _, ca := range cases {
+		tk.MustExec("drop user if exists 'u1'@'%'")
+		tk.MustExec("create user 'u1'@'%' identified by '';")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		err := tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+		require.NoError(t, err)
+		if ca.err == nil {
+			tk2.MustExec(ca.sql)
+		} else {
+			err = tk2.ExecToErr(ca.sql)
+			require.Error(t, err)
+		}
+		tk.MustQuery("select * from t1 order by id").Check(testkit.Rows(ca.t1Rows...))
+		tk.MustQuery("select * from t2 order by id").Check(testkit.Rows(ca.t2Rows...))
+	}
+}
+
+func TestTableLockInForeignKeyCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	// enable table lock
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableTableLock = false
+		})
+	}()
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("insert into t2 values (1), (2), (3);")
+	tk.MustExec("lock table t2 read;")
+	tk2.MustGetDBError("delete from t1 where id = 1", infoschema.ErrTableLocked)
+	tk.MustExec("unlock tables;")
+	tk2.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
 }

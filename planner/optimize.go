@@ -289,6 +289,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+// OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
+// The node must be prepared first.
+// Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
+// doesn't consider plan cache and plan binding, also doesn't do privilege check.
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	builder.Init(sctx, is, hintProcessor)
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
@@ -428,11 +447,9 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	if !sctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
-		sctx.GetSessionVars().PlanID = 0
-		sctx.GetSessionVars().PlanColumnID = 0
-		sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
-	}
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
