@@ -136,8 +136,8 @@ func (e *baseExecutor) releaseSysSession(ctx context.Context, sctx sessionctx.Co
 	sysSessionPool.Put(sctx.(pools.Resource))
 }
 
-// clearSysSession close the session does not return the session
-// Since the environment variables in the session are changed, the session object is not returned
+// clearSysSession close the session does not return the session.
+// Since the environment variables in the session are changed, the session object is not returned.
 func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
@@ -1298,12 +1298,12 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 }
 
 func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context) error {
-	// read password reuse info from mysql.user and global variables
+	// read password reuse info from mysql.user and global variables.
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
 		return err
 	}
-	// check whether password can be used
+	// check whether password can be used.
 	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx)
 	if err != nil {
 		return err
@@ -1736,7 +1736,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
-		// rename passwordhistory from  PasswordHistoryTable
+		// rename passwordhistory from  PasswordHistoryTable.
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.PasswordHistoryTable, "USER", "HOST", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.PasswordHistoryTable + " error"
 			break
@@ -1846,7 +1846,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
-		// delete password history from mysql.password_history
+		// delete password history from mysql.password_history.
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(user.Hostname), user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -2066,7 +2066,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		pwd = auth.EncodePassword(s.Password)
 	}
 
-	// for Support Password Reuse Policy
+	// for Support Password Reuse Policy.
 	passwdlockinfo :=
 		&passwordLockInfo{lockAccount: "", passwordHistory: notSpecified,
 			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,

@@ -868,9 +868,9 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
-	// PasswordReuseHistory limit a few passwords to reuse
+	// PasswordReuseHistory limit a few passwords to reuse.
 	PasswordReuseHistory = "password_history"
-	// PasswordReuseTime limit how long passwords can be reused
+	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
 )
 

@@ -465,7 +465,7 @@ const (
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
 
-	// CreatePasswordHistory is a table save history passwd
+	// CreatePasswordHistory is a table save history passwd.
 	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
          Host char(255)  NOT NULL DEFAULT '',
          User char(32)  NOT NULL DEFAULT '',
@@ -703,7 +703,7 @@ const (
 	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
 	// This will only happens when we upgrade a cluster before 6.0.
 	version105 = 105
-	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user
+	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
 	version106 = 106
 )
 
@@ -2180,7 +2180,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	// Create user table.
 	mustExecute(s, CreateUserTable)
-	// Create password history
+	// Create password history.
 	mustExecute(s, CreatePasswordHistory)
 	// Create privilege tables.
 	mustExecute(s, CreateGlobalPrivTable)
