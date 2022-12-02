@@ -170,6 +170,10 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 		return newMockRows(s.t, types.NewFieldType(mysql.TypeTimestamp)).Append(s.evalExpire.In(s.GetSessionVars().TimeZone)).Rows(), nil
 	}
 
+	if strings.HasPrefix(strings.ToUpper(sql), "SET ") {
+		return nil, nil
+	}
+
 	if s.executeSQL != nil {
 		return s.executeSQL(ctx, sql, args)
 	}

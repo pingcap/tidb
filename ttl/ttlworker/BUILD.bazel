@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/ttlworker",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
         "//ttl/cache",
