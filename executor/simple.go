@@ -954,10 +954,17 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 }
 
 func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
-	alterUserInfo := &alterUserPasswordLocking{0, 0, false, false, false}
+	alterUserInfo := &alterUserPasswordLocking{
+		failedLoginAttempts:            0,
+		passwordLockTime:               0,
+		failedLoginAttemptsNotFound:    false,
+		passwordLockTimeChangeNotFound: false,
+		commentIsNull:                  false}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT  JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
-	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))          FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	sqlexec.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
+        JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
+	    JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))  FROM %n.%n WHERE User=%? AND Host=%?;`,
+		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return nil, err
@@ -970,9 +977,9 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	if pLO.failedLoginAttemptsChange {
 		alterUserInfo.failedLoginAttempts = pLO.failedLoginAttempts
 	} else {
-		FailedLoginAttempts := rows[0].GetString(0)
-		if len(FailedLoginAttempts) > 0 {
-			alterUserInfo.failedLoginAttempts, err = strconv.ParseInt(FailedLoginAttempts, 10, 64)
+		failedLoginAttempts := rows[0].GetString(0)
+		if len(failedLoginAttempts) > 0 {
+			alterUserInfo.failedLoginAttempts, err = strconv.ParseInt(failedLoginAttempts, 10, 64)
 			if err != nil {
 				return nil, err
 			}
@@ -990,9 +997,9 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	if pLO.passwordLockTimeChange {
 		alterUserInfo.passwordLockTime = pLO.passwordLockTime
 	} else {
-		PasswordLockTime := rows[0].GetString(1)
-		if len(PasswordLockTime) > 0 {
-			alterUserInfo.passwordLockTime, err = strconv.ParseInt(PasswordLockTime, 10, 64)
+		passwordLockTime := rows[0].GetString(1)
+		if len(passwordLockTime) > 0 {
+			alterUserInfo.passwordLockTime, err = strconv.ParseInt(passwordLockTime, 10, 64)
 			if err != nil {
 				return nil, err
 			}
@@ -1113,7 +1120,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plInfo)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)

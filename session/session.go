@@ -2621,8 +2621,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	//Check whether continuous login failure is enabled to lock the account.
-	//If enabled, determine whether to unlock the account and notify TiDB to update the cache
+	// Check whether continuous login failure is enabled to lock the account.
+	// If enabled, determine whether to unlock the account and notify TiDB to update the cache
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
 		passwordLockingJSON, err := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
@@ -2641,7 +2641,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	}
 	err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
 	if err != nil {
-		switch err.(type) {
+		switch typeErr := err.(type) {
 		case *privileges.ErrInSandBoxMode:
 			// Enter sandbox mode, only execute statement for resetting password.
 			s.EnableSandBoxMode()
@@ -2653,7 +2653,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 					return trackingErr
 				}
 			}
-			return err.(*privileges.ErrUserPasswordFailed).Err
+			return typeErr.Err
 		default:
 			return err
 		}

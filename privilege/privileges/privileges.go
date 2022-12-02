@@ -934,7 +934,7 @@ type PasswordLocking struct {
 	FailedLoginAttempts   int64
 }
 
-// PasswordLockingParser parser PasswordLocking info
+// PasswordLockingParser parses information about PasswordLocking.
 func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSON types.BinaryJSON) error {
 	var found bool
 	var parserErr error
@@ -988,7 +988,7 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	return nil
 }
 
-// PasswordLockingInt64Parser parser Int64 PasswordLocking info
+// PasswordLockingInt64Parser parses information about PasswordLocking Int64.
 func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
@@ -1000,7 +1000,7 @@ func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr s
 	return 0, false, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
-// PasswordLockingTimeUnixParser parser TimeUnix PasswordLocking info
+// PasswordLockingTimeUnixParser parses information about PasswordLocking TimeUnix.
 func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
@@ -1020,7 +1020,7 @@ func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExp
 	return 0, false, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
-// PasswordLockingBoolParser parser Bool PasswordLocking info
+// PasswordLockingBoolParser parses information about PasswordLocking bool.
 func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (bool, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
