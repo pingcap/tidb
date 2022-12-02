@@ -164,6 +164,16 @@ l_for:
 	return nil
 }
 
+// IsRollback checks whether the value in cf is a `rollback` record.
+func (v *RawWriteCFValue) IsRollback() bool {
+	return v.GetWriteType() == WriteTypeRollback
+}
+
+// IsRollback checks whether the value in cf is a `delete` record.
+func (v *RawWriteCFValue) IsDelete() bool {
+	return v.GetWriteType() == WriteTypeDelete
+}
+
 // HasShortValue checks whether short value is stored in write cf.
 func (v *RawWriteCFValue) HasShortValue() bool {
 	return len(v.shortValue) > 0
