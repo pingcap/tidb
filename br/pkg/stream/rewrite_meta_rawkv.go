@@ -467,6 +467,9 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 
 		shortValue, needWrite, err := rewrite(rawWriteCFValue.GetShortValue())
 		if err != nil {
+			log.Info("", zap.ByteString("write-type", []byte{rawWriteCFValue.GetWriteType()}),
+				zap.Int32("short-value-len", int32(len(rawWriteCFValue.GetShortValue()))),
+				zap.ByteString("short-value", rawWriteCFValue.GetShortValue()))
 			return rewriteResult{}, errors.Trace(err)
 		}
 		if !needWrite {
