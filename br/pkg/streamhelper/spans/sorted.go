@@ -1,3 +1,5 @@
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+
 package spans
 
 import (
@@ -52,12 +54,29 @@ func NewFullWith(initSpans []Span, init Value) *ValuedFull {
 	return &ValuedFull{inner: t}
 }
 
+// Merge merges a new interval into the span set. The value of overlapped
+// part with other spans would be "merged" by the `join` function.
+// An example:
+/*
+|___________________________________________________________________________|
+^-----------------^-----------------^-----------------^---------------------^
+|      c = 42     |      c = 43     |     c = 45      |      c = 41         |
+                       ^--------------------------^
+                 merge(|          c = 44          |)
+Would Give:
+|___________________________________________________________________________|
+^-----------------^----^------------^-------------^---^---------------------^
+|      c = 42     | 43 |   c = 44   |     c = 45      |      c = 41         |
+                                    |-------------|
+                                    Unchanged, because 44 < 45.
+*/
 func (f *ValuedFull) Merge(val Valued) {
 	overlaps := make([]Valued, 0, 16)
 	f.overlapped(val.Key, &overlaps)
 	f.mergeWithOverlap(val, overlaps, nil)
 }
 
+// Traverse traverses all ranges by order.
 func (f *ValuedFull) Traverse(m func(Valued) bool) {
 	f.inner.Ascend(func(item btree.Item) bool {
 		return m(item.(Valued))
@@ -142,11 +161,19 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 
 // overlapped inserts the overlapped ranges of the span into the `result` slice.
 func (f *ValuedFull) overlapped(k Span, result *[]Valued) {
-	var first Span
+	var (
+		first    Span
+		hasFirst bool
+	)
+	// Firstly, let's find whether there is a overlapped region with less start key.
 	f.inner.DescendLessOrEqual(Valued{Key: k}, func(item btree.Item) bool {
 		first = item.(Valued).Key
+		hasFirst = true
 		return false
 	})
+	if !hasFirst || !Overlaps(first, k) {
+		first = k
+	}
 
 	f.inner.AscendGreaterOrEqual(Valued{Key: first}, func(item btree.Item) bool {
 		r := item.(Valued)

@@ -913,6 +913,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
 		hashJoinCtx: &hashJoinCtx{
+			sessCtx:         testCase.ctx,
 			joinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 			isOuterJoin:     false,
 			useOuterToBuild: testCase.useOuterToBuild,
@@ -936,13 +937,13 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeWorkers[i] = &probeWorker{
 			workerID:    i,
-			sessCtx:     e.ctx,
 			hashJoinCtx: e.hashJoinCtx,
 			joiner: newJoiner(testCase.ctx, e.joinType, true, defaultValues,
 				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
 			probeKeyColIdx: probeKeysColIdx,
 		}
 	}
+	e.buildWorker.hashJoinCtx = e.hashJoinCtx
 	memLimit := int64(-1)
 	if testCase.disk {
 		memLimit = 1
@@ -1200,7 +1201,7 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 	close(innerResultCh)
 
 	b.StartTimer()
-	if err := exec.buildHashTableForList(innerResultCh); err != nil {
+	if err := exec.buildWorker.buildHashTableForList(innerResultCh); err != nil {
 		b.Fatal(err)
 	}
 
