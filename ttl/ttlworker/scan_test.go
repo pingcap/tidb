@@ -192,8 +192,6 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 
 	require.NoError(t, w.Schedule(task))
 	w.checkWorkerStatus(workerStatusRunning, false, task)
-	w.checkPollResult(false, "")
-
 	msg := w.waitNotifyScanTaskEnd()
 	require.Same(t, task, msg.result.task)
 	require.EqualError(t, msg.result.err, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
