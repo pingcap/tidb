@@ -15,7 +15,7 @@
 package ingest
 
 import (
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -60,7 +60,7 @@ func genBackendAllocMemFailedErr(memRoot MemRoot, jobID int64) error {
 	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
-	return errors.New("memory used up")
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }
 
 func genEngineAllocMemFailedErr(memRoot MemRoot, jobID, idxID int64) error {
@@ -68,5 +68,5 @@ func genEngineAllocMemFailedErr(memRoot MemRoot, jobID, idxID int64) error {
 		zap.Int64("index ID", idxID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
-	return errors.New("memory used up")
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }

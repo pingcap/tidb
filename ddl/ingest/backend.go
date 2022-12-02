@@ -17,13 +17,13 @@ package ingest
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -45,7 +45,7 @@ type BackendContext struct {
 func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Table) error {
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
-		return errors.New("ingest engine not found")
+		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
 	err := ei.ImportAndClean()
@@ -80,7 +80,7 @@ func (bc *BackendContext) Flush(indexID int64) error {
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return errors.New("ingest engine not found")
+		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
 	err := bc.diskRoot.UpdateUsageAndQuota()
