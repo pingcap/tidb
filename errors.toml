@@ -1496,6 +1496,11 @@ error = '''
 Foreign key cascade delete/update exceeds max depth of %v.
 '''
 
+["executor:3016"]
+error = '''
+The password for anonymous user cannot be expired.
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s
@@ -2271,6 +2276,11 @@ error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
 '''
 
+["privilege:1862"]
+error = '''
+Your password has expired. To log in you must change it using a client that supports expired passwords.
+'''
+
 ["privilege:3530"]
 error = '''
 %s is not granted to %s
@@ -2764,6 +2774,11 @@ Display width out of range for column '%-.192s' (max = %d)
 ["types:1441"]
 error = '''
 Datetime function: %-.32s field overflow
+'''
+
+["types:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
 '''
 
 ["types:1690"]

@@ -294,6 +294,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1871,6 +1873,21 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
+}
+
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s Session,
 	sql string, args ...interface{}) (ast.StmtNode, error) {
@@ -2584,7 +2601,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2622,17 +2639,23 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			}
 		}
 	}
-	err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
+	err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
 	if err != nil {
-		//when user enables the account locking function for consecutive login failures,
-		//the system updates the login failure count and determines whether to lock the account when authentication fails
-		if userPasswordFailedErr, ok := err.(*privileges.ErrUserPasswordFailed); ok {
+		switch err.(type) {
+		case *privileges.ErrInSandBoxMode:
+			// Enter sandbox mode, only execute statement for resetting password.
+			s.EnableSandBoxMode()
+		case *privileges.ErrUserPasswordFailed:
+			//when user enables the account locking function for consecutive login failures,
+			//the system updates the login failure count and determines whether to lock the account when authentication fails
 			if enableAutoLock {
 				if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 					return trackingErr
 				}
 			}
-			return userPasswordFailedErr.Err
+			return err.(*privileges.ErrUserPasswordFailed).Err
+		default:
+			return err
 		}
 		return err
 	}
