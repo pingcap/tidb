@@ -3036,21 +3036,6 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		return gid
 	}
 
-	// Rebase _tidb_row_id.
-	tk.MustExec("create table t (a int) AUTO_ID_CACHE 1")
-	tk.MustExec("alter table t force auto_increment = 2;")
-	tk.MustExec("insert into t values (1),(2);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
-	// Cannot set next global ID to 0.
-	tk.MustExec("alter table t force auto_increment = 0;")
-	tk.MustExec("alter table t force auto_increment = 1;")
-	require.Equal(t, uint64(3), getNextGlobalID())
-	// inserting new rows can overwrite the existing data.
-	tk.MustExec("insert into t values (3);")
-	tk.MustExec("insert into t values (3);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2", "3 3", "3 4"))
-	tk.MustExec("drop table if exists t;")
-
 	// When AUTO_ID_CACHE is 1, row id and auto increment id use separate allocator, so the behaviour differs.
 	// "Alter table t force auto_increment" has no effect on row id.
 	tk.MustExec("create table t (a int) AUTO_ID_CACHE 1")
@@ -3060,11 +3045,14 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	// Cannot set next global ID to 0.
 	tk.MustExec("alter table t force auto_increment = 0;")
 	tk.MustExec("alter table t force auto_increment = 1;")
-	require.Equal(t, uint64(3), getNextGlobalID())
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+		"auto_inc_force t _tidb_rowid 5001 _TIDB_ROWID",
+	))
+
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")
 	tk.MustExec("insert into t values (3);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2", "3 3", "3 4"))
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2", "3 5001", "3 5002"))
 	tk.MustExec("drop table if exists t;")
 
 	// Rebase auto_increment.

@@ -128,12 +128,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}()
 
 	bindInfo := bindinfo.Binding{
-		BindSQL:   e.bindSQL,
-		Charset:   e.charset,
-		Collation: e.collation,
-		Status:    bindinfo.Enabled,
-		Source:    e.source,
-		SQLDigest: e.sqlDigest,
+		BindSQL:    e.bindSQL,
+		Charset:    e.charset,
+		Collation:  e.collation,
+		Status:     bindinfo.Enabled,
+		Source:     e.source,
+		SQLDigest:  e.sqlDigest,
+		PlanDigest: e.planDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

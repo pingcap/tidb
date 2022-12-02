@@ -781,6 +781,9 @@ const (
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
+	TiDBStoreBatchSize = "tidb_store_batch_size"
 )
 
 // TiDB vars that have only global scope
@@ -943,7 +946,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
@@ -1114,6 +1117,7 @@ const (
 	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
+	DefTiDBStoreBatchSize                            = 0
 )
 
 // Process global variables.
