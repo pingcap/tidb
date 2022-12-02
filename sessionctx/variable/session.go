@@ -1319,6 +1319,9 @@ type SessionVars struct {
 
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
+
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

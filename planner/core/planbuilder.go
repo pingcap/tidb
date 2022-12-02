@@ -1055,7 +1055,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
 
-	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, false, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
@@ -1071,8 +1071,9 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
-		SQLDigest:    sqlDigestWithDB.String(),
 		Source:       bindinfo.History,
+		SQLDigest:    sqlDigestWithDB.String(),
+		PlanDigest:   v.PlanDigest,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil

@@ -1361,6 +1361,11 @@ error = '''
 Error happened when enable/disable DDL: %s
 '''
 
+["ddl:8247"]
+error = '''
+Ingest failed: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1504,6 +1509,11 @@ Illegal privilege level specified for %s
 ["executor:3636"]
 error = '''
 Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
+'''
+
+["executor:3638"]
+error = '''
+Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
 ["executor:3929"]
