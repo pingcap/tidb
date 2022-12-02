@@ -1506,6 +1506,11 @@ error = '''
 Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
 '''
 
+["executor:3638"]
+error = '''
+Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+'''
+
 ["executor:3929"]
 error = '''
 Dynamic privilege '%s' is not registered with the server.
