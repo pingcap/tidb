@@ -292,7 +292,6 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 	require.Equal(t, "[ddl:1553]Cannot drop index 'idx2': needed in a foreign key constraint", dropErr.Error())
 }
 
-
 func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
