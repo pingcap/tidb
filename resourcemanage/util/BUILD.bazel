@@ -1,8 +1,14 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
     srcs = ["util.go"],
     importpath = "github.com/pingcap/tidb/resourcemanage/util",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "util_test",
+    srcs = ["fake_gpool_test.go"],
+    embed = [":util"],
 )
