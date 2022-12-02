@@ -115,22 +115,29 @@ const (
 	flagTxnSourcePrefix    = byte('S')
 )
 
+// RawWriteCFValue represents the value in write columnFamily.
+// Detail see line: https://github.com/tikv/tikv/blob/release-6.5/components/txn_types/src/write.rs#L70
 type RawWriteCFValue struct {
 	t                     WriteType
 	startTs               uint64
 	shortValue            []byte
 	hasOverlappedRollback bool
+
+	// Records the next version after this version when overlapping rollback
+	// happens on an already existed commit record.
 	//
+	// See [`Write::gc_fence`] for more detail.
 	hasGCFence bool
 	gcFence    uint64
 
-	//
-	lastChangeTs uint64
-
-	//
+	// The number of versions that need skipping from this record
+	// to find the latest PUT/DELETE record.
+	// If versions_to_last_change > 0 but last_change_ts == 0, the key does not
+	// have a PUT/DELETE record before this write record.
+	lastChangeTs         uint64
 	versionsToLastChange uint64
 
-	//
+	// The source of this txn.
 	txnSource uint64
 }
 
@@ -183,7 +190,7 @@ l_for:
 				return errors.Annotate(berrors.ErrInvalidArgument, "decode versions to last change failed")
 			}
 		case flagTxnSourcePrefix:
-			data, v.txnSource, err = codec.DecodeUvarint(data)
+			data, v.txnSource, err = codec.DecodeUvarint(data[1:])
 			if err != nil {
 				return errors.Annotate(berrors.ErrInvalidArgument, "decode txn source failed")
 			}
