@@ -869,8 +869,10 @@ const (
 	TiDBTTLJobEnable = "tidb_ttl_job_enable"
 	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
 	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
-	// TiDBTTLDeleteBatchSize is used control the batch size in the DELETE statement for TTL jobs
+	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
+	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
+	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
 )
 
 // TiDB intentional limits
@@ -1121,6 +1123,7 @@ const (
 	DefTiDBTTLDeleteBatchSize                        = 500
 	DefTiDBTTLDeleteBatchMaxSize                     = 10240
 	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
 )
 
 // Process global variables.
@@ -1187,6 +1190,7 @@ var (
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
+	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
 )
 
 var (

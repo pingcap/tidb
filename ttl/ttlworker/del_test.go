@@ -277,6 +277,23 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 	}
 }
 
+func TestTTLDeleteRateLimiter(t *testing.T) {
+	origDeleteLimit := variable.TTLDeleteRateLimit.Load()
+	defer func() {
+		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
+	}()
+
+	variable.TTLDeleteRateLimit.Store(10000)
+	start := time.Now()
+	cnt := int64(0)
+	for time.Since(start) < time.Millisecond*10 {
+		cnt++
+		require.NoError(t, globalDelRateLimiter.Wait(context.TODO()))
+	}
+	require.Greater(t, cnt, int64(95))
+	require.Less(t, cnt, int64(105))
+}
+
 func TestTTLDeleteTaskWorker(t *testing.T) {
 	origBatchSize := variable.TTLDeleteBatchSize.Load()
 	variable.TTLDeleteBatchSize.Store(3)

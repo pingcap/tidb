@@ -2131,6 +2131,17 @@ var defaultSysVars = []*SysVar{
 		val := TTLDeleteBatchSize.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLDeleteRateLimit, Value: strconv.Itoa(DefTiDBTTLDeleteRateLimit), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLDeleteRateLimit.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		val := TTLDeleteRateLimit.Load()
+		return strconv.FormatInt(val, 10), nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

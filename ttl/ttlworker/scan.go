@@ -126,7 +126,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
 		if sqlErr != nil {
-			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry
+			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
 			logutil.BgLogger().Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),

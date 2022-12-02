@@ -18,6 +18,8 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -34,6 +37,45 @@ const (
 	delRetryBufferSize = 128
 	delRetryInterval   = time.Second * 5
 )
+
+var globalDelRateLimiter = newDelRateLimiter()
+
+type delRateLimiter struct {
+	sync.Mutex
+	limiter *rate.Limiter
+	limit   atomic.Int64
+}
+
+func newDelRateLimiter() *delRateLimiter {
+	limiter := &delRateLimiter{}
+	limiter.limiter = rate.NewLimiter(0, 1)
+	limiter.limit.Store(0)
+	return limiter
+}
+
+func (l *delRateLimiter) Wait(ctx context.Context) error {
+	limit := l.limit.Load()
+	if variable.TTLDeleteRateLimit.Load() != limit {
+		limit = l.reset()
+	}
+
+	if limit == 0 {
+		return ctx.Err()
+	}
+
+	return l.limiter.Wait(ctx)
+}
+
+func (l *delRateLimiter) reset() (newLimit int64) {
+	l.Lock()
+	defer l.Unlock()
+	newLimit = variable.TTLDeleteRateLimit.Load()
+	if newLimit != l.limit.Load() {
+		l.limit.Store(newLimit)
+		l.limiter.SetLimit(rate.Limit(newLimit))
+	}
+	return
+}
 
 type ttlDeleteTask struct {
 	tbl        *cache.PhysicalTable
@@ -58,7 +100,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 
 		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
 		if err != nil {
-			t.statistics.ErrorRows.Add(uint64(len(delBatch)))
+			t.statistics.IncErrorRows(len(delBatch))
 			logutil.BgLogger().Warn(
 				"build delete SQL in TTL failed",
 				zap.Error(err),
@@ -66,16 +108,22 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			)
 		}
 
-		_, shouldRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
+		if err = globalDelRateLimiter.Wait(ctx); err != nil {
+			t.statistics.IncErrorRows(len(delBatch))
+			return
+		}
+
+		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
 		if err != nil {
+			needRetry = needRetry && ctx.Err() == nil
 			logutil.BgLogger().Warn(
 				"delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("SQL", sql),
-				zap.Bool("shouldRetry", shouldRetry),
+				zap.Bool("needRetry", needRetry),
 			)
 
-			if shouldRetry {
+			if needRetry {
 				if retryRows == nil {
 					retryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
 				}

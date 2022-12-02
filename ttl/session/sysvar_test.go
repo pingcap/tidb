@@ -97,3 +97,29 @@ func TestSysVarTTLScanDeleteBatchSize(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_ttl_delete_batch_size").Check(testkit.Rows(strconv.FormatInt(maxVal, 10)))
 	tk.MustQuery("select @@tidb_ttl_delete_batch_size").Check(testkit.Rows(strconv.FormatInt(maxVal, 10)))
 }
+
+func TestSysVarTTLScanDeleteLimit(t *testing.T) {
+	origDeleteLimit := variable.TTLDeleteRateLimit.Load()
+	defer func() {
+		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_ttl_delete_rate_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_ttl_delete_rate_limit=100000")
+	require.Equal(t, int64(100000), variable.TTLDeleteRateLimit.Load())
+	tk.MustQuery("select @@global.tidb_ttl_delete_rate_limit").Check(testkit.Rows("100000"))
+	tk.MustQuery("select @@tidb_ttl_delete_rate_limit").Check(testkit.Rows("100000"))
+
+	tk.MustExec("set @@global.tidb_ttl_delete_rate_limit=0")
+	require.Equal(t, int64(0), variable.TTLDeleteRateLimit.Load())
+	tk.MustQuery("select @@global.tidb_ttl_delete_rate_limit").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_ttl_delete_rate_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_ttl_delete_rate_limit=-1")
+	require.Equal(t, int64(0), variable.TTLDeleteRateLimit.Load())
+	tk.MustQuery("select @@global.tidb_ttl_delete_rate_limit").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_ttl_delete_rate_limit").Check(testkit.Rows("0"))
+}
