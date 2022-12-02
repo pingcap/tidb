@@ -1514,7 +1514,7 @@ func TestAddForeignKey(t *testing.T) {
 	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
 	tk.MustGetDBError("alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)", dbterror.ErrDropIndexNeededInForeignKey)
 
-	// Test cyclical Dependencies add foreign key failed.
+	// Test circular dependency add foreign key failed.
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (id int key,a int, index(a));")
 	tk.MustExec("create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);")
