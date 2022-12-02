@@ -102,13 +102,13 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		User_attributes			json,
-		Token_issuer			VARCHAR(255),
     	Password_reuse_history  smallint unsigned DEFAULT NULL,
 		Password_reuse_time     smallint unsigned DEFAULT NULL,
+		User_attributes			json,
+		Token_issuer			VARCHAR(255),
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
     	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-    	Password_lifetime		SMALLINT UNSIGNED,
+    	Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -708,7 +708,7 @@ const (
 	version105 = 105
 	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
 	version106 = 106
-	// version107 add columns related to password expiration
+	// version107 add columns related to password expiration into mysql.user
 	version107 = 107
 )
 
@@ -2157,7 +2157,7 @@ func upgradeToVer107(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
 		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),"+
-		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED")
+		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
 }
 
 func writeOOMAction(s Session) {

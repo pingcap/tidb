@@ -12972,31 +12972,6 @@ PasswordOrLockOption:
 			Type: ast.Lock,
 		}
 	}
-|	"PASSWORD" "EXPIRE"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.PasswordExpire,
-		}
-	}
-|	"PASSWORD" "EXPIRE" "INTERVAL" Int64Num "DAY"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type:  ast.PasswordExpireInterval,
-			Count: $4.(int64),
-		}
-	}
-|	"PASSWORD" "EXPIRE" "NEVER"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.PasswordExpireNever,
-		}
-	}
-|	"PASSWORD" "EXPIRE" "DEFAULT"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.PasswordExpireDefault,
-		}
-	}
 |	"PASSWORD" "HISTORY" "DEFAULT"
 	{
 		$$ = &ast.PasswordOrLockOption{
@@ -13021,6 +12996,31 @@ PasswordOrLockOption:
 		$$ = &ast.PasswordOrLockOption{
 			Type:  ast.PasswordReuseInterval,
 			Count: $4.(int64),
+		}
+	}
+|	"PASSWORD" "EXPIRE"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordExpire,
+		}
+	}
+|	"PASSWORD" "EXPIRE" "INTERVAL" Int64Num "DAY"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.PasswordExpireInterval,
+			Count: $4.(int64),
+		}
+	}
+|	"PASSWORD" "EXPIRE" "NEVER"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordExpireNever,
+		}
+	}
+|	"PASSWORD" "EXPIRE" "DEFAULT"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordExpireDefault,
 		}
 	}
 

@@ -135,6 +135,6 @@ func match(t *testing.T, row []types.Datum, expected ...interface{}) {
 		}
 		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
-		require.Equal(t, need, got)
+		require.Equal(t, need, got, i)
 	}
 }
