@@ -252,8 +252,8 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
+func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
@@ -278,9 +278,8 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	return "", errors.New("Failed to get plugin for user")
 }
 
-// GetCleartextAuthPlugin gets the cleartext authentication plugin for the account identified by the user and host
-// If the authentication plugin is not a cleartext plugin, return empty string.
-func (p *UserPrivileges) GetCleartextAuthPlugin(user, host string) (string, error) {
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
@@ -289,12 +288,10 @@ func (p *UserPrivileges) GetCleartextAuthPlugin(user, host string) (string, erro
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
-	if mysql.IsAuthPluginClearText(record.AuthPlugin) {
-		if p.isValidHash(record) {
-			return record.AuthPlugin, nil
-		}
+	if !p.isValidHash(record) {
+		return "", errors.New("Failed to get plugin for user")
 	}
-	return "", nil
+	return record.AuthPlugin, nil
 }
 
 // MatchIdentity implements the Manager interface.

@@ -840,34 +840,33 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// only the last declaration takes effect.
-	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-				break Loop1
+				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
-				break Loop1
+				break
 			}
 		}
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
-	Loop2:
+	Loop:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpiration.passwordExpired = "Y"
-				break Loop2
+				break Loop
 			case ast.PasswordExpireDefault:
-				break Loop2
+				break Loop
 			case ast.PasswordExpireNever:
 				passwordExpiration.passwordLifetime = 0
-				break Loop2
+				break Loop
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
 					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
 				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
-				break Loop2
+				break Loop
 			}
 		}
 	}
@@ -1049,36 +1048,35 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// only the last declaration takes effect.
-	Loop1:
 		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
 				lockAccount = "Y"
-				break Loop1
+				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				lockAccount = "N"
-				break Loop1
+				break
 			}
 		}
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
-	Loop2:
+	Loop:
 		for i := length - 1; i >= 0; i-- {
 			switch s.PasswordOrLockOptions[i].Type {
 			case ast.PasswordExpire:
 				passwordExpiration.passwordExpired = "Y"
-				break Loop2
+				break Loop
 			case ast.PasswordExpireDefault:
 				passwordExpiration.passwordLifetime = nil
-				break Loop2
+				break Loop
 			case ast.PasswordExpireNever:
 				passwordExpiration.passwordLifetime = 0
-				break Loop2
+				break Loop
 			case ast.PasswordExpireInterval:
 				if s.PasswordOrLockOptions[i].Count == 0 || s.PasswordOrLockOptions[i].Count > math.MaxUint16 {
 					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", s.PasswordOrLockOptions[i].Count))
 				}
 				passwordExpiration.passwordLifetime = s.PasswordOrLockOptions[i].Count
-				break Loop2
+				break Loop
 			}
 		}
 	}
@@ -1160,7 +1158,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.ctx).GetCleartextAuthPlugin(spec.User.Username, spec.User.Hostname)
+		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1739,7 +1737,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		}
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetCleartextAuthPlugin(u, h)
+	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}

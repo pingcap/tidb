@@ -2601,7 +2601,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
