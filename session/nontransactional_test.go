@@ -1012,3 +1012,16 @@ func TestNameAmbiguity(t *testing.T) {
 	tk.MustExec("batch on id limit 1 insert into t select * from test2.t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2"))
 }
+
+func TestJoinSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int, v int, key (id))")
+	tk.MustExec("create table t2(id int, v int, v2 int, v3 int, key (id))")
+	tk.MustExec("create table t3(id int, v int, key (id))")
+	tk.MustExec("insert into t3 values (1, 1), (2, 2)")
+	tk.MustExec("insert into t1 values (1, 4)")
+	tk.MustExec("batch on test.t3.id limit 1 insert into t2 select * from (select t3.id, t1.v from t1 join t3 on t1.id = t3.id) tt3 join t3 on tt3.id = t3.id")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 4 1 1"))
+}

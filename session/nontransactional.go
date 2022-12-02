@@ -66,6 +66,11 @@ type job struct {
 	sql     string
 }
 
+type tableNameAndAlias struct {
+	tableName *ast.TableName
+	asName    model.CIStr
+}
+
 // statementBuildInfo contains information that is needed to build the split statement in a job
 type statementBuildInfo struct {
 	stmt              *ast.NonTransactionalDMLStmt
@@ -138,7 +143,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 // Note: this is not a comprehensive check.
 // We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
 func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStmt,
-	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
+	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []tableNameAndAlias) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
 		if err := checkUpdateShardColumn(se, s.List, shardColumnInfo, tableName, tableSources, true); err != nil {
@@ -157,12 +162,12 @@ func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStm
 
 // shard column should not be updated.
 func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
-	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
+	tableName *ast.TableName, tableSources []tableNameAndAlias, isUpdate bool) error {
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
 	for _, tableSource := range tableSources {
-		if tableSource.Source.(*ast.TableName).Name.L == aliasedShardColumnTableName && tableSource.AsName.L != "" {
-			aliasedShardColumnTableName = tableSource.AsName.L
+		if tableSource.tableName.Name.L == aliasedShardColumnTableName && tableSource.asName.L != "" {
+			aliasedShardColumnTableName = tableSource.asName.L
 		}
 	}
 
@@ -547,27 +552,26 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 }
 
 func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
-	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
+	*ast.TableName, string, *model.ColumnInfo, []tableNameAndAlias, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
 	if !ok {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
-	tableSources := make([]*ast.TableSource, 0)
-	tableSources, err := collectTableSourcesInJoin(join, tableSources)
+	tableNameAndAlias := make([]tableNameAndAlias, 0)
+	tableNameAndAlias, err := collectTableSourcesInJoin(join, tableNameAndAlias, model.NewCIStr(""))
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
-	if len(tableSources) == 0 {
+	if len(tableNameAndAlias) == 0 {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
 	}
-	leftMostTableSource := tableSources[0]
-	leftMostTableName, ok := leftMostTableSource.Source.(*ast.TableName)
+	leftMostTableAndAlias := tableNameAndAlias[0]
 	if !ok {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
-	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableSources, leftMostTableName, leftMostTableSource)
+	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableNameAndAlias, leftMostTableAndAlias)
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
@@ -589,37 +593,42 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumnInfo, tableSources, nil
+	return tableName, selectSQL, shardColumnInfo, tableNameAndAlias, nil
 }
 
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
-	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableAndAliases []tableNameAndAlias, leftMostTableAndAlias tableNameAndAlias) (
 	*model.ColumnInfo, *ast.TableName, error) {
 	var indexed bool
 	var shardColumnInfo *model.ColumnInfo
 	var selectedTableName *ast.TableName
 
-	if len(tableSources) == 1 {
+	if len(tableAndAliases) == 1 {
 		// single table
-		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(
+			leftMostTableAndAlias.tableName.Schema, leftMostTableAndAlias.tableName.Name,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
-		selectedTableName = leftMostTableName
+		selectedTableName = leftMostTableAndAlias.tableName
 		indexed, shardColumnInfo, err = selectShardColumnFromTheOnlyTable(
-			stmt, leftMostTableName, leftMostTableSource.AsName, leftMostTable)
+			stmt, leftMostTableAndAlias.tableName, leftMostTableAndAlias.asName, leftMostTable)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
 		// multi table join
 		if stmt.ShardColumn == nil {
-			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(
+				leftMostTableAndAlias.tableName.Schema, leftMostTableAndAlias.tableName.Name,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
-			selectedTableName = leftMostTableName
-			indexed, shardColumnInfo, err = selectShardColumnAutomatically(stmt, leftMostTable, leftMostTableName, leftMostTableSource.AsName)
+			selectedTableName = leftMostTableAndAlias.tableName
+			indexed, shardColumnInfo, err = selectShardColumnAutomatically(
+				stmt, leftMostTable, leftMostTableAndAlias.tableName, leftMostTableAndAlias.asName,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -631,9 +640,10 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 			// the specified table must be in the join
 			tableInJoin := false
 			var chosenTableName model.CIStr
-			for _, tableSource := range tableSources {
-				tableSourceName := tableSource.Source.(*ast.TableName)
-				tableSourceFinalTableName := tableSource.AsName // precedence: alias name, then table name
+			for _, tableSource := range tableAndAliases {
+				// tableSourceName := tableSource.Source.(*ast.TableName)
+				tableSourceName := tableSource.tableName
+				tableSourceFinalTableName := tableSource.asName // precedence: alias name, then table name
 				if tableSourceFinalTableName.O == "" {
 					tableSourceFinalTableName = tableSourceName.Name
 				}
@@ -672,31 +682,34 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 	return shardColumnInfo, selectedTableName, nil
 }
 
-func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.TableSource) ([]*ast.TableSource, error) {
+func collectTableSourcesInJoin(node ast.ResultSetNode, tableNameAndAliases []tableNameAndAlias, aliasOfCurrentNode model.CIStr) ([]tableNameAndAlias, error) {
 	if node == nil {
-		return tableSources, nil
+		return tableNameAndAliases, nil
 	}
+	var err error
 	switch x := node.(type) {
 	case *ast.Join:
-		var err error
-		tableSources, err = collectTableSourcesInJoin(x.Left, tableSources)
+		tableNameAndAliases, err = collectTableSourcesInJoin(x.Left, tableNameAndAliases, model.NewCIStr(""))
 		if err != nil {
 			return nil, err
 		}
-		tableSources, err = collectTableSourcesInJoin(x.Right, tableSources)
+		tableNameAndAliases, err = collectTableSourcesInJoin(x.Right, tableNameAndAliases, model.NewCIStr(""))
 		if err != nil {
 			return nil, err
 		}
 	case *ast.TableSource:
-		// assert it's a table name
-		if _, ok := x.Source.(*ast.TableName); !ok {
-			return nil, errors.New("Non-transactional DML, table name not found in join")
-		}
-		tableSources = append(tableSources, x)
+		tableNameAndAliases, err = collectTableSourcesInJoin(x.Source, tableNameAndAliases, x.AsName)
+	case *ast.SelectStmt:
+		tableNameAndAliases, err = collectTableSourcesInJoin(x.From.TableRefs, tableNameAndAliases, model.NewCIStr(""))
+	case *ast.TableName:
+		tableNameAndAliases = append(tableNameAndAliases, tableNameAndAlias{
+			x,
+			aliasOfCurrentNode,
+		})
 	default:
 		return nil, errors.Errorf("Non-transactional DML, unknown type %T in table refs", node)
 	}
-	return tableSources, nil
+	return tableNameAndAliases, nil
 }
 
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
