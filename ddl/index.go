@@ -1415,6 +1415,9 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		if err != nil {
 			str = string(val)
 		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
