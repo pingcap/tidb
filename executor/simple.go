@@ -982,7 +982,7 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return alterUserInfo, nil
 }
 
-// If FailedLoginAttempts = 0 and PasswordLockTime = 0 delete Password_locking info
+// deleteFailedLogin If FailedLoginAttempts = 0 and PasswordLockTime = 0 delete Password_locking info
 func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
 	if alterUser.FailedLoginAttemptsNotFound && alterUser.PasswordLockTimeChangeNotFound {
 		return nil
