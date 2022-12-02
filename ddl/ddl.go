@@ -1329,6 +1329,12 @@ type RecoverSchemaInfo struct {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
+	if variable.EnableMDL.Load() {
+		// If metadata lock is enabled. The transaction of DDL must begin after prewrite of the async commit transaction,
+		// then the commit ts of DDL must be greater than the async commit transaction. In this case, the corresponding schema of the async commit transaction
+		// is correct. But if metadata lock is disabled, we can't ensure that the corresponding schema of the async commit transaction isn't change.
+		return
+	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	duration := cfg.SafeWindow + cfg.AllowedClockDrift
 	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",

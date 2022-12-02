@@ -1512,7 +1512,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer, Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1546,6 +1547,34 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
+	var passwordHistory string
+	if rows[0].IsNull(4) {
+		passwordHistory = "DEFALUT"
+	} else {
+		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
+	}
+
+	var passwordReuseInterval string
+	if rows[0].IsNull(5) {
+		passwordReuseInterval = "DEFALUT"
+	} else {
+		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
+	}
+
+	passwordExpired := rows[0].GetEnum(6).String()
+	passwordLifetime := int64(-1)
+	if !rows[0].IsNull(7) {
+		passwordLifetime = rows[0].GetInt64(7)
+	}
+	passwordExpiredStr := "PASSWORD EXPIRE DEFAULT"
+	if passwordExpired == "Y" {
+		passwordExpiredStr = "PASSWORD EXPIRE"
+	} else if passwordLifetime == 0 {
+		passwordExpiredStr = "PASSWORD EXPIRE NEVER"
+	} else if passwordLifetime > 0 {
+		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1569,8 +1598,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s%s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, userAttributes, passwordHistory, passwordReuseInterval)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
