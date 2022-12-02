@@ -99,6 +99,9 @@ const (
 	ActionFlashbackCluster              ActionType = 62
 	ActionRecoverSchema                 ActionType = 63
 	ActionReorganizePartition           ActionType = 64
+
+	ActionAlterTTLInfo   ActionType = 65
+	ActionAlterTTLRemove ActionType = 67
 )
 
 var actionMap = map[ActionType]string{
@@ -162,7 +165,8 @@ var actionMap = map[ActionType]string{
 	ActionFlashbackCluster:              "flashback cluster",
 	ActionRecoverSchema:                 "flashback schema",
 	ActionReorganizePartition:           "alter table reorganize partition",
-
+	ActionAlterTTLInfo:                  "alter table ttl",
+	ActionAlterTTLRemove:                "alter table no_ttl",
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",

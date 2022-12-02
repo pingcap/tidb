@@ -267,6 +267,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	if sessVars.MemDBFootprint != nil {
+		sessVars.MemDBFootprint.Detach()
+	}
+	sessVars.MemDBFootprint = nil
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)

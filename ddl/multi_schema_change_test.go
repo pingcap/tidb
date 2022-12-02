@@ -1014,6 +1014,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
@@ -1176,7 +1177,7 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 	tk.MustExec("use test;")
 
 	tk.MustExec("create table t (a int, b int);")
-	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
+	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 10;",
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
 }
 

@@ -1409,7 +1409,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -753,13 +754,15 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 }
 
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
-func tryFallbackToTxnMerge(job *model.Job, err error) {
+func tryFallbackToTxnMerge(job *model.Job, err error) error {
 	if job.State != model.JobStateRollingback {
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
 		job.RowCount = 0
+		return nil
 	}
+	return err
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -796,17 +799,18 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			if !ok && job.SnapshotVer != 0 {
 				// The owner is crashed or changed, we need to restart the backfill.
 				job.SnapshotVer = 0
+				job.RowCount = 0
 				return false, ver, nil
 			}
 			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
-				tryFallbackToTxnMerge(job, err)
+				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				tryFallbackToTxnMerge(job, err)
+				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -819,7 +823,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-					tryFallbackToTxnMerge(job, err)
+					err = tryFallbackToTxnMerge(job, err)
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
@@ -1179,9 +1183,9 @@ type baseIndexWorker struct {
 
 type addIndexWorker struct {
 	baseIndexWorker
-	index     table.Index
-	copCtx    *copContext
-	writerCtx *ingest.WriterContext
+	index            table.Index
+	writerCtx        *ingest.WriterContext
+	copReqSenderPool *copReqSenderPool
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -1201,7 +1205,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	var lwCtx *ingest.WriterContext
-	var copCtx *copContext
 	if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 		if !ok {
@@ -1215,7 +1218,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		if err != nil {
 			return nil, err
 		}
-		copCtx = newCopContext(t.Meta(), indexInfo, sessCtx)
 	}
 
 	return &addIndexWorker{
@@ -1230,7 +1232,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			jobContext:     jc,
 		},
 		index:     index,
-		copCtx:    copCtx,
 		writerCtx: lwCtx,
 	}, nil
 }
@@ -1414,6 +1415,9 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		if err != nil {
 			str = string(val)
 		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
@@ -1498,11 +1502,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 		var (
 			idxRecords []*indexRecord
+			copChunk   *chunk.Chunk // only used by the coprocessor request sender.
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.copCtx != nil {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(txn, handleRange)
+		if w.copReqSenderPool != nil {
+			idxRecords, copChunk, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+			defer w.copReqSenderPool.recycleIdxRecordsAndChunk(idxRecords, copChunk)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}

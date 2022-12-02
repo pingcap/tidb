@@ -356,6 +356,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
+	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
@@ -427,9 +428,11 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
-	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	if !sctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
+		sctx.GetSessionVars().PlanID = 0
+		sctx.GetSessionVars().PlanColumnID = 0
+		sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	}
 
 	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
@@ -547,12 +550,14 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
 		Source:    bindinfo.Evolve,
+		SQLDigest: sqlDigestWithDB.String(),
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
