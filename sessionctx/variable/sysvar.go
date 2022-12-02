@@ -1136,6 +1136,18 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(MemoryUsageAlarmKeepRecordNum.Load(), 10), nil
 	}},
+	{Scope: ScopeGlobal, Name: PasswordReuseHistory, Value: strconv.Itoa(DefPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordHistory.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		PasswordHistory.Store(TidbOptInt64(val, DefPasswordReuseHistory))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: PasswordReuseTime, Value: strconv.Itoa(DefPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
+		return nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -2142,6 +2154,13 @@ var defaultSysVars = []*SysVar{
 		val := TTLDeleteRateLimit.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
+		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
+			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

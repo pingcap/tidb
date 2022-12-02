@@ -781,6 +781,9 @@ const (
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
+	TiDBStoreBatchSize = "tidb_store_batch_size"
 )
 
 // TiDB vars that have only global scope
@@ -873,6 +876,10 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// PasswordReuseHistory limit a few passwords to reuse.
+	PasswordReuseHistory = "password_history"
+	// PasswordReuseTime limit how long passwords can be reused.
+	PasswordReuseTime = "password_reuse_interval"
 )
 
 // TiDB intentional limits
@@ -947,7 +954,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
@@ -1124,6 +1131,9 @@ const (
 	DefTiDBTTLDeleteBatchMaxSize                     = 10240
 	DefTiDBTTLDeleteBatchMinSize                     = 1
 	DefTiDBTTLDeleteRateLimit                        = 0
+	DefPasswordReuseHistory                          = 0
+	DefPasswordReuseTime                             = 0
+	DefTiDBStoreBatchSize                            = 0
 )
 
 // Process global variables.
@@ -1180,9 +1190,8 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-
+	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	PasswordValidationLength           = atomic.NewInt32(8)
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
@@ -1191,6 +1200,8 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 )
 
 var (
