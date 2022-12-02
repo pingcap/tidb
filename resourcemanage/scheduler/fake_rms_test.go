@@ -31,6 +31,7 @@ func (f *FakeResourceManage) Register(sch Scheduler) {
 
 func (f *FakeResourceManage) Next() Command {
 	if f.scheduler != nil {
+		defer f.pool.Next()
 		return f.scheduler.Tune(util.UNKNOWN, &f.pool)
 	}
 	return Hold
