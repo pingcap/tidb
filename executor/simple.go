@@ -1053,15 +1053,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
 		passwordReuseIntervalFlag: false}
 	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
-	lockAccount := "N"
-	plInfo := &passwordOrLockOptionsInfo{LockAccount: lockAccount, FailedLoginAttemptsChange: false, PasswordLockTimeChange: false}
+	plInfo := &passwordOrLockOptionsInfo{LockAccount: "N", FailedLoginAttemptsChange: false, PasswordLockTimeChange: false}
 	plInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
 	PasswordLocking := createUserFailedLoginJSON(plInfo)
-	if plInfo.LockAccount != "" {
-		lockAccount = plInfo.LockAccount
-	}
 	if s.IsCreateRole {
-		lockAccount = "Y"
 		passwdlockinfo.lockAccount = "Y"
 	}
 	var userAttributes any = nil
