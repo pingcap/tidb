@@ -61,7 +61,7 @@ type Manager interface {
 	// VerifyAccountAutoLock automatically unlock when the time comes.
 	VerifyAccountAutoLock(user string, host string) (string, error)
 
-	// IsAccountAutoLockEnabled Account enable Auto Lock
+	// IsAccountAutoLockEnabled Verify whether the account enable Failed-Login Tracking and Temporary Account Locking.
 	IsAccountAutoLockEnabled(user string, host string) bool
 
 	// BuildPasswordLockingJSON Build PasswordLocking Json
