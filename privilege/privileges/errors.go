@@ -32,9 +32,9 @@ var (
 // ErrUserPasswordFailed is used to indicate that ConnectionVerification fails due to wrong password.
 // The field `s` is used to include the wrong message.
 type ErrUserPasswordFailed struct {
-	s string
+	Err error
 }
 
 func (e *ErrUserPasswordFailed) Error() string {
-	return e.s
+	return e.Err.Error()
 }

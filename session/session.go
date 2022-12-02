@@ -2626,12 +2626,13 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		//when user enables the account locking function for consecutive login failures,
 		//the system updates the login failure count and determines whether to lock the account when authentication fails
-		if enableAutoLock {
-			if _, ok := err.(*privileges.ErrUserPasswordFailed); ok {
+		if userPasswordFailedErr, ok := err.(*privileges.ErrUserPasswordFailed); ok {
+			if enableAutoLock {
 				if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 					return trackingErr
 				}
 			}
+			return userPasswordFailedErr.Err
 		}
 		return err
 	}
