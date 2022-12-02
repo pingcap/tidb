@@ -35,5 +35,5 @@ func TestExponential(t *testing.T) {
 	for _, s := range samples {
 		win.Add(s)
 	}
-	require.Equal(t, 3886.6630486098793, win.Get())
+	require.Equal(t, int64(3886), int64(win.Get()))
 }
