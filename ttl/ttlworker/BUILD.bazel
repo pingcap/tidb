@@ -49,5 +49,6 @@ go_test(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
     ],
 )
