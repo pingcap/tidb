@@ -825,6 +825,7 @@ const (
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
@@ -1088,6 +1089,7 @@ const (
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
+	ErrIngestFailed                       = 8247
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

@@ -1763,3 +1763,23 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
 }
+
+func TestHashPartitionAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("delete from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int")
+}

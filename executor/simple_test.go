@@ -205,10 +205,96 @@ func TestValidatePassword(t *testing.T) {
 	subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
 	subtk.MustQuery("SELECT @@global.validate_password.check_user_name").Check(testkit.Rows("1"))
 	subtk.MustQuery("SELECT @@global.validate_password.enable").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL validate_password.number_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.special_char_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 0")
+	tk.MustExec("SET GLOBAL validate_password.length = 0")
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY ''")
 	subtk.MustExec("ALTER USER ''@'localhost' IDENTIFIED BY 'abcd'")
 
 	// CREATE ROLE is not affected by password validation
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustExec("SET GLOBAL validate_password.number_count = default")
+	tk.MustExec("SET GLOBAL validate_password.special_char_count = default")
+	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = default")
+	tk.MustExec("SET GLOBAL validate_password.length = default")
 	tk.MustExec("CREATE ROLE role1")
+}
+
+func expectedPasswordExpiration(t *testing.T, tk *testkit.TestKit, testuser, expired string, lifetime string) {
+	res := tk.MustQuery(fmt.Sprintf("SELECT password_expired, password_last_changed, password_lifetime FROM mysql.user WHERE user = '%s'", testuser))
+	rows := res.Rows()
+	require.NotEmpty(t, rows)
+	row := rows[0]
+	require.Equal(t, 3, len(row))
+	require.Equal(t, expired, row[0].(string), testuser)
+	require.True(t, len(row[1].(string)) > 0, testuser)
+	require.Equal(t, lifetime, row[2].(string), testuser)
+}
+
+func TestPasswordExpiration(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// CREATE USER
+	tk.MustExec(`CREATE USER testuser`)
+	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
+	tk.MustExec(`CREATE USER testuser1 PASSWORD EXPIRE`)
+	expectedPasswordExpiration(t, tk, "testuser1", "Y", "<nil>")
+	tk.MustExec(`CREATE USER testuser2 PASSWORD EXPIRE DEFAULT`)
+	expectedPasswordExpiration(t, tk, "testuser2", "N", "<nil>")
+	tk.MustExec(`CREATE USER testuser3 PASSWORD EXPIRE NEVER`)
+	expectedPasswordExpiration(t, tk, "testuser3", "N", "0")
+	tk.MustExec(`CREATE USER testuser4 PASSWORD EXPIRE INTERVAL 3 DAY`)
+	expectedPasswordExpiration(t, tk, "testuser4", "N", "3")
+	tk.MustExec(`CREATE ROLE role1`)
+	expectedPasswordExpiration(t, tk, "role1", "Y", "<nil>")
+
+	// ALTER USER
+	testcases := []struct {
+		user    string
+		expired string
+	}{
+		{"testuser", "N"},
+		{"testuser1", "Y"},
+		{"testuser2", "N"},
+		{"testuser3", "N"},
+		{"testuser4", "N"},
+		{"role1", "Y"},
+	}
+	for _, testcase := range testcases {
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE NEVER", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "0")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE DEFAULT", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "<nil>")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE INTERVAL 3 DAY", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY '' PASSWORD EXPIRE", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED WITH 'mysql_native_password' AS ''", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
+		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY ''", testcase.user))
+		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
+	}
+
+	// SET PASSWORD
+	tk.MustExec("ALTER USER testuser PASSWORD EXPIRE")
+	expectedPasswordExpiration(t, tk, "testuser", "Y", "3")
+	tk.MustExec("SET PASSWORD FOR testuser = '1234'")
+	expectedPasswordExpiration(t, tk, "testuser", "N", "3")
+
+	tk.MustGetErrCode(`CREATE USER ''@localhost IDENTIFIED BY 'pass' PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
+	tk.MustExec(`CREATE USER ''@localhost IDENTIFIED BY 'pass'`)
+	tk.MustGetErrCode(`ALTER USER ''@localhost PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
+
+	// different cleartext authentication plugin
+	for _, authplugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
+		tk.MustExec("DROP USER IF EXISTS 'u1'@'localhost'")
+		tk.MustExec(fmt.Sprintf("CREATE USER 'u1'@'localhost' IDENTIFIED WITH '%s'", authplugin))
+		tk.MustExec("ALTER USER 'u1'@'localhost' IDENTIFIED BY 'pass'")
+		tk.MustExec("ALTER USER 'u1'@'localhost' PASSWORD EXPIRE")
+		tk.MustQuery("SELECT password_expired FROM mysql.user WHERE user = 'u1'").Check(testkit.Rows("Y"))
+	}
 }
