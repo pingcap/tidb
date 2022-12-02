@@ -60,21 +60,21 @@ type Manager interface {
 	// VerifyAccountAutoLock automatically unlock when the time comes.
 	VerifyAccountAutoLock(user string, host string) (string, error)
 
-	// IsAccountAutoLockEnabled Verify whether the account enable Failed-Login Tracking and Temporary Account Locking.
+	// IsAccountAutoLockEnabled verifies whether the account has enabled Failed-Login Tracking and Temporary Account Locking.
 	IsAccountAutoLockEnabled(user string, host string) bool
 
-	// BuildPasswordLockingJSON Build PasswordLocking Json
+	// BuildPasswordLockingJSON builds PasswordLocking JSON string.
 	BuildPasswordLockingJSON(failedLoginAttempts int64,
 		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string
 
-	// BuildSuccessPasswordLockingJSON Build Success PasswordLocking Json
+	// BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
 	BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
 	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) error
 
-	// AuthSuccess Auth Success state
+	// AuthSuccess records auth success state
 	AuthSuccess(authUser, authHost string)
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
