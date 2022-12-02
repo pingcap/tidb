@@ -2648,6 +2648,14 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 }
 
 func authSuccessClearCount(s *session, user string, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
+		return err
+	}
 	passwordLocking, getErr := getFailedLoginCount(s, user, host)
 	if getErr != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
@@ -2656,6 +2664,9 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		return getErr
 	}
 	if passwordLocking.AutoAccountLocked {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
 		if passwordLocking.PasswordLockTimeDays == -1 {
 			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
@@ -2681,6 +2692,14 @@ func authSuccessClearCount(s *session, user string, host string) error {
 }
 
 func authFailedTracking(s *session, user string, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+			return rollBackErr
+		}
+		return err
+	}
 	passwordLocking, getErr := getFailedLoginCount(s, user, host)
 	if getErr != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
@@ -2736,10 +2755,6 @@ func failedLoginTrackingRollback(s *session) error {
 func getFailedLoginCount(s *session, user string, host string) (privileges.PasswordLocking, error) {
 	passwordLocking := privileges.PasswordLocking{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return passwordLocking, err
-	}
 	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`,
 		user, host)
 	if err != nil {
