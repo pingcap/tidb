@@ -144,7 +144,6 @@ func (c *copReqSender) run() {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
 				terror.Call(rs.Close)
-				_ = rs.Close()
 				return
 			}
 			total += len(idxRec)
