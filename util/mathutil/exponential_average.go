@@ -14,7 +14,7 @@
 
 package mathutil
 
-// ExponentialMovingAverage is an exponential moving average measurement implementation. it is not thread-safe.
+// ExponentialMovingAverage is an exponential moving average measurement implementation. It is not thread-safe.
 type ExponentialMovingAverage struct {
 	value        float64
 	sum          float64
