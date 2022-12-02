@@ -48,7 +48,6 @@ go_library(
         "rule_aggregation_skew_rewrite.go",
         "rule_build_key_info.go",
         "rule_column_pruning.go",
-        "rule_count_star_rewriter.go",
         "rule_decorrelate.go",
         "rule_eliminate_projection.go",
         "rule_generate_column_substitute.go",
