@@ -616,10 +616,17 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	}
 
 	// Use the MySQL compatible AUTO_INCREMENT mode.
-	if allocType == AutoIncrementType && alloc.customStep && alloc.step == 1 && alloc.tbVersion >= model.TableInfoVersion5 {
-		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
-		if alloc1 != nil {
-			return alloc1
+	if alloc.customStep && alloc.step == 1 && alloc.tbVersion >= model.TableInfoVersion5 {
+		if allocType == AutoIncrementType {
+			alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
+			if alloc1 != nil {
+				return alloc1
+			}
+		} else if allocType == RowIDAllocType {
+			// Now that the autoid and rowid allocator are separated, the AUTO_ID_CACHE 1 setting should not make
+			// the rowid allocator do not use cache.
+			alloc.customStep = false
+			alloc.step = step
 		}
 	}
 
@@ -970,6 +977,11 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 					allocatorStats.mergeCommitDetail(*commitDetail)
 				}
 			}()
+		}
+
+		if codeRun := ctx.Value("testIssue39528"); codeRun != nil {
+			*(codeRun.(*bool)) = true
+			return 0, 0, errors.New("mock error for test")
 		}
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
