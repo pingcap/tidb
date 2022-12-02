@@ -111,6 +111,8 @@ const (
 	flagShortValuePrefix   = byte('v')
 	flagOverlappedRollback = byte('R')
 	flagGCFencePrefix      = byte('F')
+	flagLastChangePrefix   = byte('l')
+	flagTxnSourcePrefix    = byte('S')
 )
 
 type RawWriteCFValue struct {
@@ -118,8 +120,18 @@ type RawWriteCFValue struct {
 	startTs               uint64
 	shortValue            []byte
 	hasOverlappedRollback bool
-	hasGCFence            bool
-	gcFence               uint64
+	//
+	hasGCFence bool
+	gcFence    uint64
+
+	//
+	lastChangeTs uint64
+
+	//
+	versionsToLastChange uint64
+
+	//
+	txnSource uint64
 }
 
 // ParseFrom decodes the value to get the struct `RawWriteCFValue`.
@@ -146,6 +158,10 @@ l_for:
 		switch data[0] {
 		case flagShortValuePrefix:
 			vlen := data[1]
+			if len(data[2:]) < int(vlen) {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"the length of short value is invalid, vlen: %v", int(vlen))
+			}
 			v.shortValue = data[2 : vlen+2]
 			data = data[vlen+2:]
 		case flagOverlappedRollback:
@@ -156,6 +172,20 @@ l_for:
 			data, v.gcFence, err = codec.DecodeUint(data[1:])
 			if err != nil {
 				return errors.Annotate(berrors.ErrInvalidArgument, "decode gc fence failed")
+			}
+		case flagLastChangePrefix:
+			data, v.lastChangeTs, err = codec.DecodeUint(data[1:])
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode last change ts failed")
+			}
+			data, v.versionsToLastChange, err = codec.DecodeUvarint(data)
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode versions to last change failed")
+			}
+		case flagTxnSourcePrefix:
+			data, v.txnSource, err = codec.DecodeUvarint(data)
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode txn source failed")
 			}
 		default:
 			break l_for
@@ -213,6 +243,15 @@ func (v *RawWriteCFValue) EncodeTo() []byte {
 	if v.hasGCFence {
 		data = append(data, flagGCFencePrefix)
 		data = codec.EncodeUint(data, v.gcFence)
+	}
+	if v.lastChangeTs > 0 || v.versionsToLastChange > 0 {
+		data = append(data, flagLastChangePrefix)
+		data = codec.EncodeUint(data, v.lastChangeTs)
+		data = codec.EncodeUvarint(data, v.versionsToLastChange)
+	}
+	if v.txnSource > 0 {
+		data = append(data, flagTxnSourcePrefix)
+		data = codec.EncodeUvarint(data, v.txnSource)
 	}
 	return data
 }
