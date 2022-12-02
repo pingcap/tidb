@@ -114,6 +114,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
+	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
@@ -206,6 +207,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RegionCheckpointRequest)
 	prometheus.MustRegister(RegionCheckpointFailure)
 	prometheus.MustRegister(AutoIDReqDuration)
+	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)

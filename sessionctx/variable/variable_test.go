@@ -436,16 +436,20 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 	}
+}
+
+func TestLimitBetweenVariable(t *testing.T) {
+	require.Less(t, DefTiDBGOGCTunerThreshold+0.05, DefTiDBServerMemoryLimitGCTrigger)
 }
 
 // TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.

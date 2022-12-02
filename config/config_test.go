@@ -730,6 +730,8 @@ enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
 enable-global-kill = true
+tidb-max-reuse-chunk = 10
+tidb-max-reuse-column = 20
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -798,6 +800,8 @@ max_connections = 200
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
+	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)

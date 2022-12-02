@@ -250,7 +250,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -434,6 +434,7 @@ func (e *UpdateExec) Close() error {
 		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return e.children[0].Close()
 }
@@ -463,7 +464,6 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}

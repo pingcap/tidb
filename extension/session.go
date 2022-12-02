@@ -15,8 +15,12 @@
 package extension
 
 import (
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 )
 
 // ConnEventInfo is the connection info for the event
@@ -42,9 +46,54 @@ const (
 	ConnDisconnected
 )
 
+// StmtEventTp is the type of the statement event
+type StmtEventTp uint8
+
+const (
+	// StmtError means the stmt is failed
+	StmtError StmtEventTp = iota
+	// StmtSuccess means the stmt is successfully executed
+	StmtSuccess
+)
+
+// StmtEventInfo is the information of stmt event
+type StmtEventInfo interface {
+	// User returns the user of the session
+	User() *auth.UserIdentity
+	// ActiveRoles returns the active roles of the user
+	ActiveRoles() []*auth.RoleIdentity
+	// CurrentDB returns the current database
+	CurrentDB() string
+	// ConnectionInfo returns the connection info of the current session
+	ConnectionInfo() *variable.ConnectionInfo
+	// StmtNode returns the parsed ast of the statement
+	// When parse error, this method will return a nil value
+	StmtNode() ast.StmtNode
+	// ExecuteStmtNode will return the `ast.ExecuteStmt` node when the current statement is EXECUTE,
+	// otherwise a nil value will be returned
+	ExecuteStmtNode() *ast.ExecuteStmt
+	// ExecutePreparedStmt will return the prepared stmt node for the EXECUTE statement.
+	// If the current statement is not EXECUTE or prepared statement is not found, a nil value will be returned
+	ExecutePreparedStmt() ast.StmtNode
+	// PreparedParams will return the params for the EXECUTE statement
+	PreparedParams() []types.Datum
+	// OriginalText will return the text of the statement.
+	// Notice that for the EXECUTE statement, the prepared statement text will be used as the return value
+	OriginalText() string
+	// SQLDigest will return the normalized and redact text of the `OriginalText()`
+	SQLDigest() (normalized string, digest *parser.Digest)
+	// AffectedRows will return the affected rows of the current statement
+	AffectedRows() uint64
+	// RelatedTables will return the related tables of the current statement
+	RelatedTables() []stmtctx.TableEntry
+	// GetError will return the error when the current statement is failed
+	GetError() error
+}
+
 // SessionHandler is used to listen session events
 type SessionHandler struct {
 	OnConnectionEvent func(ConnEventTp, *ConnEventInfo)
+	OnStmtEvent       func(StmtEventTp, StmtEventInfo)
 }
 
 func newSessionExtensions(es *Extensions) *SessionExtensions {
@@ -55,6 +104,9 @@ func newSessionExtensions(es *Extensions) *SessionExtensions {
 				if fn := handler.OnConnectionEvent; fn != nil {
 					connExtensions.connectionEventFuncs = append(connExtensions.connectionEventFuncs, fn)
 				}
+				if fn := handler.OnStmtEvent; fn != nil {
+					connExtensions.stmtEventFuncs = append(connExtensions.stmtEventFuncs, fn)
+				}
 			}
 		}
 	}
@@ -64,6 +116,7 @@ func newSessionExtensions(es *Extensions) *SessionExtensions {
 // SessionExtensions is the extensions
 type SessionExtensions struct {
 	connectionEventFuncs []func(ConnEventTp, *ConnEventInfo)
+	stmtEventFuncs       []func(StmtEventTp, StmtEventInfo)
 }
 
 // OnConnectionEvent will be called when a connection event happens
@@ -73,6 +126,22 @@ func (es *SessionExtensions) OnConnectionEvent(tp ConnEventTp, event *ConnEventI
 	}
 
 	for _, fn := range es.connectionEventFuncs {
+		fn(tp, event)
+	}
+}
+
+// HasStmtEventListeners returns a bool that indicates if any stmt event listener exists
+func (es *SessionExtensions) HasStmtEventListeners() bool {
+	return es != nil && len(es.stmtEventFuncs) > 0
+}
+
+// OnStmtEvent will be called when a stmt event happens
+func (es *SessionExtensions) OnStmtEvent(tp StmtEventTp, event StmtEventInfo) {
+	if es == nil {
+		return
+	}
+
+	for _, fn := range es.stmtEventFuncs {
 		fn(tp, event)
 	}
 }

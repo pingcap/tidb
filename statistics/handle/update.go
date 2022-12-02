@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -197,6 +196,12 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	if !q.Valid.Load() || q.Hist == nil {
 		return nil
 	}
+
+	// if table locked, skip
+	if h.IsTableLocked(q.PhysicalID) {
+		return nil
+	}
+
 	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
 	if err != nil {
 		return errors.Trace(err)
@@ -229,6 +234,9 @@ func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
 
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
@@ -307,6 +315,8 @@ func (s *SessionIndexUsageCollector) Delete() {
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
 func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.idxUsageListHead.Lock()
 	defer h.idxUsageListHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{
@@ -539,10 +549,18 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
 		var err error
-		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		if h.IsTableLocked(id) {
+			if delta.Delta < 0 {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+			} else {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			}
 		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			if delta.Delta < 0 {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+			} else {
+				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			}
 		}
 		statsVer = startTS
 		return errors.Trace(err)
@@ -886,7 +904,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
+	err := h.SaveStatsToStorage(tableID, -1, 0, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -981,9 +999,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-		t := time.UnixMilli(oracle.ExtractPhysical(tbl.Version))
-		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
+		return true, "table unanalyzed"
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
@@ -1088,6 +1104,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
+			//if table locked, skip analyze
+			if h.IsTableLocked(tbl.Meta().ID) {
+				continue
+			}
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue

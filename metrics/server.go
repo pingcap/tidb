@@ -187,6 +187,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 
+	NumOfMultiQueryHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "multi_query_num",
+			Help:      "The number of queries contained in a multi-query statement.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1 ~ 1048576
+		})
+
 	TotalQueryProcHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

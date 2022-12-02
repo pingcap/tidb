@@ -59,7 +59,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		return h.buildErrorResponse(err)
 	}
 
-	chk := newFirstChunk(e)
+	chk := tryNewCacheChunk(e)
 	tps := e.base().retFieldTypes
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
@@ -99,7 +99,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	chk := newFirstChunk(e)
+	chk := tryNewCacheChunk(e)
 	tps := e.base().retFieldTypes
 	for {
 		chk.Reset()

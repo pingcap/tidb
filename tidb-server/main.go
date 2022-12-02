@@ -58,6 +58,7 @@ import (
 	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
@@ -627,7 +628,12 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
+		// practically deprecate the config, let the new session memory tracker take charge of it.
+		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+	} else {
+		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	}
 	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
@@ -670,6 +676,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
+	variable.SetSysVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
@@ -699,11 +706,11 @@ func setGlobalVars() {
 	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
 	if cfg.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
-	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
 	if err != nil || t < 0 {
@@ -715,6 +722,7 @@ func setGlobalVars() {
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
 	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
 	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
+	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 }
 
 func setupLog() {

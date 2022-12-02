@@ -50,22 +50,22 @@ import (
 )
 
 var pdScheduleKey = []string{
-	"hot-region-schedule-limit",
-	"leader-schedule-limit",
 	"merge-schedule-limit",
-	"region-schedule-limit",
-	"replica-schedule-limit",
 }
 
 const (
 	flashbackMaxBackoff = 1800000         // 1800s
 	flashbackTimeout    = 3 * time.Minute // 3min
+)
 
-	pdScheduleArgsOffset     = 1
-	gcEnabledArgsOffset      = 2
-	autoAnalyzeOffset        = 3
-	totalLockedRegionsOffset = 4
-	commitTSOffset           = 5
+const (
+	pdScheduleArgsOffset = 1 + iota
+	gcEnabledOffset
+	autoAnalyzeOffset
+	readOnlyOffset
+	totalLockedRegionsOffset
+	startTSOffset
+	commitTSOffset
 )
 
 func closePDSchedule() error {
@@ -122,12 +122,24 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func setTiDBEnableAutoAnalyze(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAutoAnalyze, value)
+func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
 
 func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAutoAnalyze)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return val, nil
+}
+
+func setTiDBSuperReadOnly(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBSuperReadOnly, value)
+}
+
+func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSuperReadOnly)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -145,7 +157,10 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(sess, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(d.ctx, sess, variable.Off); err != nil {
+		return err
+	}
+	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
 		return err
 	}
 
@@ -262,6 +277,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 func SendPrepareFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
+	flashbackTS, startTS uint64,
 	r tikvstore.KeyRange,
 ) (rangetask.TaskStat, error) {
 	startKey, rangeEndKey := r.StartKey, r.EndKey
@@ -296,6 +312,8 @@ func SendPrepareFlashbackToVersionRPC(
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
+			StartTs:  startTS,
+			Version:  flashbackTS,
 		})
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
@@ -463,11 +481,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue string
+	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -494,13 +512,19 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[gcEnabledArgsOffset] = &gcEnableValue
+		job.Args[gcEnabledOffset] = &gcEnableValue
 		autoAnalyzeValue, err = getTiDBEnableAutoAnalyze(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
+		readOnlyValue, err = getTiDBSuperReadOnly(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[readOnlyOffset] = &readOnlyValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -509,6 +533,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
+		startTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[startTSOffset] = startTS
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
@@ -528,7 +559,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
+					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
@@ -563,8 +594,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					// Use commitTS - 1 as startTS, make sure it less than commitTS.
-					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
+					// Use same startTS as prepare phase to simulate 1PC txn.
+					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
 					logutil.BgLogger().Info("[ddl] flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
@@ -591,12 +622,12 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue string
+	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -614,7 +645,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-		return setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue)
+		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
+			return err
+		}
+		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
 		return err

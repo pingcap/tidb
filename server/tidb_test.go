@@ -2781,11 +2781,11 @@ func (l *connEventLogs) check(fn func()) {
 	fn()
 }
 
-func (l *connEventLogs) waitConnDisconnected() error {
+func (l *connEventLogs) waitEvent(tp extension.ConnEventTp) error {
 	totalSleep := 0
 	for {
 		l.Lock()
-		if l.types[len(l.types)-1] == extension.ConnDisconnected {
+		if l.types[len(l.types)-1] == tp {
 			l.Unlock()
 			return nil
 		}
@@ -2812,6 +2812,8 @@ func TestExtensionConnEvent(t *testing.T) {
 	require.NoError(t, extension.Setup())
 
 	ts := createTidbTestSuite(t)
+	// createTidbTestSuite create an inner connection, so wait the previous connection closed
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 
 	// test for login success
 	logs.reset()
@@ -2828,6 +2830,7 @@ func TestExtensionConnEvent(t *testing.T) {
 	}()
 
 	var expectedConn2 variable.ConnectionInfo
+	require.NoError(t, logs.waitEvent(extension.ConnHandshakeAccepted))
 	logs.check(func() {
 		require.Equal(t, []extension.ConnEventTp{
 			extension.ConnConnected,
@@ -2861,7 +2864,7 @@ func TestExtensionConnEvent(t *testing.T) {
 
 	require.NoError(t, conn.Close())
 	require.NoError(t, db.Close())
-	require.NoError(t, logs.waitConnDisconnected())
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 	logs.check(func() {
 		require.Equal(t, 3, len(logs.infos))
 		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
@@ -2889,6 +2892,7 @@ func TestExtensionConnEvent(t *testing.T) {
 
 	_, err = db.Conn(context.Background())
 	require.Error(t, err)
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 	logs.check(func() {
 		require.Equal(t, []extension.ConnEventTp{
 			extension.ConnConnected,

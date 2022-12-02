@@ -148,6 +148,27 @@ var (
 			Name:      "add_index_ingest_usage",
 			Help:      "Counter of usage of add index acceleration solution",
 		})
+	TelemetryFlashbackClusterCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "flashback_cluster_usage",
+			Help:      "Counter of usage of flashback cluster",
+		})
+	TelemetryIndexMergeUsage = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "index_merge_usage",
+			Help:      "Counter of usage of index merge",
+		})
+	TelemetryCompactPartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "compact_partition_usage",
+			Help:      "Counter of compact table partition",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -247,6 +268,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
+	TablePartitionComactCnt                   int64 `json:"table_TablePartitionComactCnt"`
 }
 
 // ExchangePartitionUsageCounter records the usages of exchange partition.
@@ -284,6 +306,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
+		TablePartitionComactCnt:                   c.TablePartitionComactCnt - rhs.TablePartitionComactCnt,
 	}
 }
 
@@ -319,12 +342,14 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionCreateIntervalPartitionsCnt: readCounter(TelemetryTablePartitionCreateIntervalPartitionsCnt),
 		TablePartitionAddIntervalPartitionsCnt:    readCounter(TelemetryTablePartitionAddIntervalPartitionsCnt),
 		TablePartitionDropIntervalPartitionsCnt:   readCounter(TelemetryTablePartitionDropIntervalPartitionsCnt),
+		TablePartitionComactCnt:                   readCounter(TelemetryCompactPartitionCnt),
 	}
 }
 
 // NonTransactionalStmtCounter records the usages of non-transactional statements.
 type NonTransactionalStmtCounter struct {
 	DeleteCount int64 `json:"delete"`
+	UpdateCount int64 `json:"update"`
 	InsertCount int64 `json:"insert"`
 }
 
@@ -332,6 +357,7 @@ type NonTransactionalStmtCounter struct {
 func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+		UpdateCount: n.UpdateCount - rhs.UpdateCount,
 		InsertCount: n.InsertCount - rhs.InsertCount,
 	}
 }
@@ -340,6 +366,7 @@ func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTra
 func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "delete"})),
+		UpdateCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "update"})),
 		InsertCount: readCounter(NonTransactionalDMLCount.With(prometheus.Labels{LblType: "insert"})),
 	}
 }
@@ -354,22 +381,44 @@ func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
 }
 
-// DDLUsageCounter records the usages of Add Index with acceleration solution.
+// DDLUsageCounter records the usages of DDL related features.
 type DDLUsageCounter struct {
-	AddIndexIngestUsed int64 `json:"add_index_ingest_used"`
-	MetadataLockUsed   bool  `json:"metadata_lock_used"`
+	AddIndexIngestUsed   int64 `json:"add_index_ingest_used"`
+	MetadataLockUsed     bool  `json:"metadata_lock_used"`
+	FlashbackClusterUsed int64 `json:"flashback_cluster_used"`
 }
 
 // Sub returns the difference of two counters.
 func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
 	return DDLUsageCounter{
-		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+		AddIndexIngestUsed:   a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+		FlashbackClusterUsed: a.FlashbackClusterUsed - rhs.FlashbackClusterUsed,
 	}
 }
 
 // GetDDLUsageCounter gets the add index acceleration solution counts.
 func GetDDLUsageCounter() DDLUsageCounter {
 	return DDLUsageCounter{
-		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
+		AddIndexIngestUsed:   readCounter(TelemetryAddIndexIngestCnt),
+		FlashbackClusterUsed: readCounter(TelemetryFlashbackClusterCnt),
+	}
+}
+
+// IndexMergeUsageCounter records the usages of IndexMerge feature.
+type IndexMergeUsageCounter struct {
+	IndexMergeUsed int64 `json:"index_merge_used"`
+}
+
+// Sub returns the difference of two counters.
+func (i IndexMergeUsageCounter) Sub(rhs IndexMergeUsageCounter) IndexMergeUsageCounter {
+	return IndexMergeUsageCounter{
+		IndexMergeUsed: i.IndexMergeUsed - rhs.IndexMergeUsed,
+	}
+}
+
+// GetIndexMergeCounter gets the IndexMerge usage counter.
+func GetIndexMergeCounter() IndexMergeUsageCounter {
+	return IndexMergeUsageCounter{
+		IndexMergeUsed: readCounter(TelemetryIndexMergeUsage),
 	}
 }

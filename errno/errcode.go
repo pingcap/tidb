@@ -892,6 +892,7 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrExistsInHistoryPassword                               = 3638
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrForeignKeyNoColumnInParent                            = 3734
@@ -1034,6 +1035,9 @@ const (
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
 	ErrLazyUniquenessCheckFailure          = 8147
+	ErrUnsupportedColumnInTTLConfig        = 8148
+	ErrTTLColumnCannotDrop                 = 8149
+	ErrSetTTLEnableForNonTTLTable          = 8150
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -321,6 +322,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t_unistore_act_rows")
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
@@ -363,7 +365,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 		{
 			sql:      "select count(*) from t_unistore_act_rows group by b",
-			expected: []string{"2", "2", "2", "4"},
+			expected: []string{"2", "4", "4"},
 		},
 		{
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
@@ -513,4 +515,97 @@ func TestIssue35105(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place=1")
 	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+}
+
+func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res []*plannercore.ExplainInfoForEncode) {
+	if j == nil {
+		return
+	}
+	res = append(res, j)
+	for _, child := range j.SubOperators {
+		res = append(res, flatJSONPlan(child)...)
+	}
+	return
+}
+
+func TestExplainJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+	cases := []string{
+		"select * from t1",
+		"select count(*) from t2",
+		"select * from t1, t2 where t1.id = t2.id",
+		"select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id",
+		"with top10 as ( select * from t1 order by id desc limit 10 ) select * from top10 where id in (1,2)",
+		"insert into t1 values(1)",
+		"delete from t2 where t2.id > 10",
+		"update t2 set id = 1 where id =2",
+		"select * from t1 where t1.id < (select sum(t2.id) from t2 where t2.id = t1.id)",
+	}
+	// test syntax
+	tk.MustExec("explain format = 'tidb_json' select * from t1")
+	tk.MustExec("explain format = tidb_json select * from t1")
+	tk.MustExec("explain format = 'TIDB_JSON' select * from t1")
+	tk.MustExec("explain format = TIDB_JSON select * from t1")
+	tk.MustExec("explain analyze format = 'tidb_json' select * from t1")
+	tk.MustExec("explain analyze format = tidb_json select * from t1")
+	tk.MustExec("explain analyze format = 'TIDB_JSON' select * from t1")
+	tk.MustExec("explain analyze format = TIDB_JSON select * from t1")
+
+	// explain
+	for _, sql := range cases {
+		jsonForamt := "explain format = tidb_json " + sql
+		rowForamt := "explain format = row " + sql
+		resJSON := tk.MustQuery(jsonForamt).Rows()
+		resRow := tk.MustQuery(rowForamt).Rows()
+
+		j := new([]*plannercore.ExplainInfoForEncode)
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+		var flatJSONRows []*plannercore.ExplainInfoForEncode
+		for _, row := range *j {
+			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+		}
+		require.Equal(t, len(flatJSONRows), len(resRow))
+
+		for i, row := range resRow {
+			require.Contains(t, row[0], flatJSONRows[i].ID)
+			require.Equal(t, flatJSONRows[i].EstRows, row[1])
+			require.Equal(t, flatJSONRows[i].TaskType, row[2])
+			require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+			require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
+		}
+	}
+
+	// explain analyze
+	for _, sql := range cases {
+		jsonForamt := "explain analyze format = tidb_json " + sql
+		rowForamt := "explain analyze format = row " + sql
+		resJSON := tk.MustQuery(jsonForamt).Rows()
+		resRow := tk.MustQuery(rowForamt).Rows()
+
+		j := new([]*plannercore.ExplainInfoForEncode)
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+		var flatJSONRows []*plannercore.ExplainInfoForEncode
+		for _, row := range *j {
+			flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+		}
+		require.Equal(t, len(flatJSONRows), len(resRow))
+
+		for i, row := range resRow {
+			require.Contains(t, row[0], flatJSONRows[i].ID)
+			require.Equal(t, flatJSONRows[i].EstRows, row[1])
+			require.Equal(t, flatJSONRows[i].ActRows, row[2])
+			require.Equal(t, flatJSONRows[i].TaskType, row[3])
+			require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+			require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
+			// executeInfo, memory, disk maybe vary in multi execution
+			require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+			require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+			require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
+		}
+	}
 }

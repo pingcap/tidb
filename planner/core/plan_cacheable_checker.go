@@ -15,6 +15,8 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,20 +29,21 @@ import (
 
 // Cacheable checks whether the input ast is cacheable with empty session context, which is mainly for testing.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	return CacheableWithCtx(nil, node, is)
+	c, _ := CacheableWithCtx(nil, node, is)
+	return c
 }
 
 // CacheableWithCtx checks whether the input ast is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
 	_, isDelete := node.(*ast.DeleteStmt)
 	_, isSetOpr := node.(*ast.SetOprStmt)
 	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
-		return false
+		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
 		sctx:      sctx,
@@ -48,7 +51,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 		schema:    is,
 	}
 	node.Accept(&checker)
-	return checker.cacheable
+	return checker.cacheable, checker.reason
 }
 
 // cacheableChecker checks whether a query's plan can be cached, querys that:
@@ -61,6 +64,7 @@ type cacheableChecker struct {
 	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
+	reason    string // reason why cannot use plan-cache
 }
 
 // Enter implements Visitor interface.
@@ -70,6 +74,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		for _, hints := range node.TableHints {
 			if hints.HintName.L == HintIgnorePlanCache {
 				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
 				return in, true
 			}
 		}
@@ -77,6 +82,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		for _, hints := range node.TableHints {
 			if hints.HintName.L == HintIgnorePlanCache {
 				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
 				return in, true
 			}
 		}
@@ -84,21 +90,25 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		for _, hints := range node.TableHints {
 			if hints.HintName.L == HintIgnorePlanCache {
 				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
 				return in, true
 			}
 		}
 	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
+		checker.reason = "query has sub-queries is un-cacheable"
 		return in, true
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
+			checker.reason = fmt.Sprintf("query has '%v' is un-cacheable", node.FnName.L)
 			return in, true
 		}
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
+				checker.reason = "query has 'order by ?' is un-cacheable"
 				return in, true
 			}
 		}
@@ -106,6 +116,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		for _, item := range node.Items {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
+				checker.reason = "query has 'group by ?' is un-cacheable"
 				return in, true
 			}
 		}
@@ -113,18 +124,21 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if node.Count != nil {
 			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
+				checker.reason = "query has 'limit ?' is un-cacheable"
 				return in, true
 			}
 		}
 		if node.Offset != nil {
 			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
+				checker.reason = "query has 'limit ?, 10' is un-cacheable"
 				return in, true
 			}
 		}
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false
+			checker.reason = "query has ? in window function frames is un-cacheable"
 			return in, true
 		}
 	case *ast.TableName:
@@ -138,14 +152,17 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 					}
 				*/
 				checker.cacheable = false
+				checker.reason = "query accesses partitioned tables is un-cacheable"
 				return in, true
 			}
 			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false
+				checker.reason = "query accesses generated columns is un-cacheable"
 				return in, true
 			}
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
+				checker.reason = "query accesses temporary tables is un-cacheable"
 				return in, true
 			}
 		}

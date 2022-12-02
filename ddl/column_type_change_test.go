@@ -1946,7 +1946,7 @@ func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
 		"  KEY `idx3` (`a`,`b`),\n" +
 		"  KEY `idx4` (`a`,`b`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("\x11 2 2.00", "\x13 1 1.00"))
 }
 
 // Close issue #24584

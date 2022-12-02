@@ -9,6 +9,7 @@ go_library(
         "conn_stmt.go",
         "driver.go",
         "driver_tidb.go",
+        "extension.go",
         "http_handler.go",
         "http_status.go",
         "mock_conn.go",

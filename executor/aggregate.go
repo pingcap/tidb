@@ -244,6 +244,9 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.isUnparallelExec {
 		var firstErr error
 		e.childResult = nil
@@ -323,13 +326,14 @@ func (e *HashAggExec) initForUnparallelExec() {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.tmpChkForSpill = newFirstChunk(e.children[0])
+
+	e.tmpChkForSpill = tryNewCacheChunk(e.children[0])
 	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
@@ -379,7 +383,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
-			chk:               newFirstChunk(e.children[0]),
+			chk:               tryNewCacheChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -1130,7 +1134,6 @@ func (e *HashAggExec) initRuntimeStats() {
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
 		e.stats = stats
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -1272,7 +1275,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.baseExecutor)
 
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
