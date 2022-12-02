@@ -38,7 +38,7 @@ type FKInfo struct {
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
-  - `Version`: uses to distinguish between old and new versions.
+  - `Version`: uses to distinguish between old and new versions. The new version value is 1, the old version value is 0.
 
 Why `FKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when build `FKInfo`. Here is an example:
 
@@ -429,13 +429,28 @@ Here is an example plan with foreign key:
 
 ```sql
 > explain delete from t1 where id = 1;
-+--------------------------+---------+------+---------------+---------------+
-| id                       | estRows | task | access object | operator info |
-+--------------------------+---------+------+---------------+---------------+
-| Delete_4                 | N/A     | root |               | N/A           |
-| └─Point_Get_6            | 1.00    | root | table:t1      | handle:1      |
-| └─Foreign_Key_Cascade    | N/A     | root | table:t2      | fk: fk_id     |
-+--------------------------+---------+------+---------------+---------------+
++-------------------------+---------+------+---------------+-----------------------------------+
+| id                      | estRows | task | access object | operator info                     |
++-------------------------+---------+------+---------------+-----------------------------------+
+| Delete_2                | N/A     | root |               | N/A                               |
+| ├─Point_Get_1           | 1.00    | root | table:t1      | handle:1                          |
+| └─Foreign_Key_Cascade_3 | 0.00    | root | table:t2      | foreign_key:fk, on_delete:CASCADE |
++-------------------------+---------+------+---------------+-----------------------------------+
+```
+
+And the `explain analyze` will show the foreign key cascade child plan:
+
+```sql
+> explain analyze delete from t1 where id = 1;
++-------------------------+---------+---------+------+---------------+----------------------------------------------------------+-----------------------------------+-----------+------+
+| id                      | estRows | actRows | task | access object | execution info                                           | operator info                     | memory    | disk |
++-------------------------+---------+---------+------+---------------+----------------------------------------------------------+-----------------------------------+-----------+------+
+| Delete_2                | N/A     | 0       | root |               | time:109.5µs, loops:1                                    | N/A                               | 380 Bytes | N/A  |
+| ├─Point_Get_1           | 1.00    | 1       | root | table:t1      | time:62.7µs, loops:2, Get:{num_rpc:1, total_time:26.4µs} | handle:1                          | N/A       | N/A  |
+| └─Foreign_Key_Cascade_3 | 0.00    | 0       | root | table:t2      | total:322.1µs, foreign_keys:1                            | foreign_key:fk, on_delete:CASCADE | N/A       | N/A  |
+|   └─Delete_7            | N/A     | 0       | root |               | time:23.5µs, loops:1                                     | N/A                               | 129 Bytes | N/A  |
+|     └─Point_Get_9       | 1.00    | 1       | root | table:t2      | time:12.6µs, loops:2, Get:{num_rpc:1, total_time:4.21µs} | handle:1                          | N/A       | N/A  |
++-------------------------+---------+---------+------+---------------+----------------------------------------------------------+-----------------------------------+-----------+------+
 ```
 
 ##### CockroachDB DML Execution Plan
@@ -443,13 +458,11 @@ Here is an example plan with foreign key:
 ```sql
 CREATE TABLE customers_2 (
     id INT PRIMARY KEY
-  );
-
-CREATE TABLE orders_2 (
-                          id INT PRIMARY KEY,
-                          customer_id INT REFERENCES customers_2(id) ON UPDATE CASCADE ON DELETE CASCADE
 );
-
+CREATE TABLE orders_2 (
+    id INT PRIMARY KEY,
+    customer_id INT REFERENCES customers_2(id) ON UPDATE CASCADE ON DELETE CASCADE
+);
 INSERT INTO customers_2 VALUES (1), (2), (3);
 INSERT INTO orders_2 VALUES (100,1), (101,2), (102,3), (103,1);
 ```
@@ -518,41 +531,44 @@ postgres=# explain analyze UPDATE customers_2 SET id = 20 WHERE id = 23;
  Execution Time: 0.129 ms
 ```
 
-## Other Technical Design
+## Compatibility
 
-### How to check foreign key integrity?
+Since the old version TiDB already support foreign key syntax, but doesn't support it, after upgrade TiDB to latest version, the foreign key created before won't take effect. Only foreign keys created in the new version actually take effect.
 
-How MySQL to do this? Look like MySQL doesn't provide any method, but the user can use stored procedure to do this, see: https://stackoverflow.com/questions/2250775/force-innodb-to-recheck-foreign-keys-on-a-table-tables
-
-Maybe We can use following syntax to check foreign key integrity:
+You can use `SHOW CREATE TABLE` to see whethere a foreign key is take effect, the old version foreign key will have a comment `/* FOREIGN KEY INVALID */` to indicate it is invalid, the new version foreign key doesn't have this comment.
 
 ```sql
-ADMIN CHECK FOREIGN KEY [table_name] [foreign_key_name]
+> show create table t2\G
+    ***************************[ 1. row ]***************************
+    Table        | t2
+Create Table | CREATE TABLE `t2` (
+    `id` int(11) NOT NULL,
+    PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+    CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE /* FOREIGN KEY INVALID */
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 ```
-
-which implemention is use following SQL to check:
-
-```sql
-select count(*) from t where t.a not in (select id from t_refer);
-```
-
-Also check the foreign key is valid:
-- the foreign key state should be public.
-- the reference whether exist.
-- whether has index for the foreign key to use.
 
 ## Impact
 
 ### Impact of data replication
 
-Test sync table with foreign key:
-- TiCDC
-- DM
-- BR
+#### TiCDC
+
+When sync table data to downstream TiDB, TiCDC should `set @@foreign_key_checks=0` in downstream TiDB.
+
+#### DM
+
+When do full synchronization, DM should `set @@foreign_key_checks=0` in downstream TiDB.
+
+When do incremental synchronization, DM should set `foreign_key_checks` session variable according to MySQL binlog.
+
+#### BR
+
+When sync table data to downstream TiDB, TiCDC should `set @@foreign_key_checks=0` in downstream TiDB.
 
 ## Test Case
 
-cascade modification test case:
+Cascade modification test case:
 
 ```sql
 drop table if exists t3,t2,t1;
@@ -565,7 +581,7 @@ insert into t3 values (3,2);
 delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
 ```
 
-following is a MySQL test case about `SET DEFAULT`:
+Following is a MySQL test case about `SET DEFAULT`, as you can see, MySQL actualy doesn't support `SET DEFAULT`, the behaviour is just like `RESTRICT`
 
 ```sql
 MySQL>create table t1 (a int,b int, index(a,b)) ;
@@ -682,7 +698,7 @@ test> insert into t values (1,null);
 Query OK, 1 row affected
 ```
 
-### reference
+## reference
 
 - [MySQL FOREIGN KEY Constraints Document](https://dev.mysql.com/doc/refman/8.0/en/create-table-foreign-keys.html#foreign-key-adding)
 - [3 Common Foreign Key Mistakes (And How to Avoid Them)](https://www.cockroachlabs.com/blog/common-foreign-key-mistakes/)
