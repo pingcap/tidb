@@ -16,6 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type constantRegions []streamhelper.RegionWithLeader
@@ -65,6 +67,11 @@ func (c constantRegions) RegionScan(ctx context.Context, key []byte, endKey []by
 	fmt.Printf("all = %s\n", c)
 	fmt.Printf("start = %s, end = %s, result = %s\n", redact.Key(key), redact.Key(endKey), constantRegions(result))
 	return result, nil
+}
+
+// Stores returns the store metadata from the cluster.
+func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, error) {
+	return nil, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
 func makeSubrangeRegions(keys ...string) constantRegions {
