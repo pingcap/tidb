@@ -53,6 +53,7 @@ func InitGlobalLightningEnv() {
 			zap.String("storage limitation", "only support TiKV storage"),
 			zap.String("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
+		return
 	}
 	sPath, err := genLightningDataDir()
 	if err != nil {
