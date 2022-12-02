@@ -1022,7 +1022,7 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return alterUserInfo, nil
 }
 
-// deleteFailedLogin If FailedLoginAttempts = 0 and PasswordLockTime = 0 delete Password_locking info
+// deleteFailedLogin Implement delete password_locking json string when failedLoginAttempts and passwordLockTime both 0.
 func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
 	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
 		return nil
@@ -2326,14 +2326,22 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	// for Support Password Reuse Policy.
-	plOptions :=
-		&passwordOrLockOptionsInfo{lockAccount: "", passwordHistory: notSpecified,
-			passwordReuseInterval: notSpecified, passwordHistoryChange: false,
-			passwordReuseIntervalChange: false}
+	plOptions := &passwordOrLockOptionsInfo{
+		lockAccount:                 "",
+		passwordHistory:             notSpecified,
+		passwordReuseInterval:       notSpecified,
+		passwordHistoryChange:       false,
+		passwordReuseIntervalChange: false,
+	}
 	// The empty password does not count in the password history and is subject to reuse at any time.
 	// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 	if len(pwd) != 0 {
-		userDetail := &userInfo{h, u, plOptions, pwd}
+		userDetail := &userInfo{
+			host: h,
+			user: u,
+			pLI:  plOptions,
+			pwd:  pwd,
+		}
 		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
 		if err != nil {
 			return err
