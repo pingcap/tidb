@@ -263,6 +263,9 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	if referTblInfo.TempTableType != model.TempTableNone || tblInfo.TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
 	}
+	if referTblInfo.TTLInfo != nil {
+		return dbterror.ErrUnsupportedTTLReferencedByFK
+	}
 
 	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
