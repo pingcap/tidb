@@ -1441,3 +1441,180 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
+<<<<<<< HEAD
+=======
+
+// for issue #34931
+func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
+
+	tt := []struct {
+		ColType           string
+		SpecifiedColLen   bool
+		SpecifiedIndexLen bool
+	}{
+		{
+			"text",
+			false,
+			true,
+		},
+		{
+			"blob",
+			false,
+			true,
+		},
+		{
+			"varchar",
+			true,
+			false,
+		},
+		{
+			"varbinary",
+			true,
+			false,
+		},
+	}
+
+	sqlTemplate := "create table %s (id int, name %s, age int, %s index(name%s%s)) charset=%s;"
+	// test character strings for varchar and text
+	for _, tc := range tt {
+		for _, cs := range charset.CharacterSetInfos {
+			tableName := fmt.Sprintf("t_%s", cs.Name)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+			tk.MustExec("set @@sql_mode=default")
+
+			// test in strict sql mode
+			maxLen := cs.Maxlen
+			if tc.ColType == "varbinary" || tc.ColType == "blob" {
+				maxLen = 1
+			}
+			expectKeyLength := maxIndexLength / maxLen
+			length := 2 * expectKeyLength
+
+			indexLen := ""
+			// specify index length for text type
+			if tc.SpecifiedIndexLen {
+				indexLen = fmt.Sprintf("(%d)", length)
+			}
+
+			col := tc.ColType
+			// specify column length for varchar type
+			if tc.SpecifiedColLen {
+				col += fmt.Sprintf("(%d)", length)
+			}
+			sql := fmt.Sprintf(sqlTemplate,
+				tableName, col, "", indexLen, "", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+			tk.MustExec("set @@sql_mode=''")
+
+			err := tk.ExecToErr(sql)
+			require.NoErrorf(t, err, "exec sql '%s' failed", sql)
+
+			require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+
+			warnErr := tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err
+			tErr := errors.Cause(warnErr).(*terror.Error)
+			sqlErr := terror.ToSQLError(tErr)
+			require.Equal(t, errno.ErrTooLongKey, int(sqlErr.Code))
+
+			if cs.Name == charset.CharsetBin {
+				if tc.ColType == "varchar" || tc.ColType == "varbinary" {
+					col = fmt.Sprintf("varbinary(%d)", length)
+				} else {
+					col = "blob"
+				}
+			}
+			rows := fmt.Sprintf("%s CREATE TABLE `%s` (\n  `id` int(11) DEFAULT NULL,\n  `name` %s DEFAULT NULL,\n  `age` int(11) DEFAULT NULL,\n  KEY `name` (`name`(%d))\n) ENGINE=InnoDB DEFAULT CHARSET=%s",
+				tableName, tableName, col, expectKeyLength, cs.Name)
+			// add collation for binary charset
+			if cs.Name != charset.CharsetBin {
+				rows += fmt.Sprintf(" COLLATE=%s", cs.DefaultCollation)
+			}
+
+			tk.MustQuery(fmt.Sprintf("show create table %s", tableName)).Check(testkit.Rows(rows))
+
+			ukTable := fmt.Sprintf("t_%s_uk", cs.Name)
+			mkTable := fmt.Sprintf("t_%s_mk", cs.Name)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", ukTable))
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", mkTable))
+
+			// For a unique index, an error occurs regardless of SQL mode because reducing
+			//the index length might enable insertion of non-unique entries that do not meet
+			//the specified uniqueness requirement.
+			sql = fmt.Sprintf(sqlTemplate, ukTable, col, "unique", indexLen, "", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+			// The multiple column index in which the length sum exceeds the maximum size
+			// will return an error instead produce a warning in strict sql mode.
+			indexLen = fmt.Sprintf("(%d)", expectKeyLength)
+			sql = fmt.Sprintf(sqlTemplate, mkTable, col, "", indexLen, ", age", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+		}
+	}
+}
+
+func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion", `return(true)`))
+	tk.MustExec("alter table t add column b int")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
+}
+
+func TestDDLBlockedCreateView(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	first := true
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		if !first {
+			return
+		}
+		first = false
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("create view v as select * from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestHashPartitionAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("delete from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int")
+}
+>>>>>>> 34c2a78297 (planner, ddl: fix hash partition with adding new column (#39574))
