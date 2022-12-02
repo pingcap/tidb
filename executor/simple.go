@@ -1497,14 +1497,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
 			passwordReuseIntervalFlag: false}
 	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
-
-	lockAccount := ""
-	plOptions := passwordOrLockOptionsInfo{LockAccount: lockAccount}
+	plOptions := passwordOrLockOptionsInfo{LockAccount: ""}
 	plOptions.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
-	if plOptions.LockAccount != "" {
-		lockAccount = plOptions.LockAccount
-	}
-
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1680,7 +1674,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if err != nil {
 			return err
 		}
-		AlterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, lockAccount)
+		AlterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, plOptions.LockAccount)
 
 		if s.CommentOrAttributeOption != nil {
 			alterUserPassword.commentIsNull = false
