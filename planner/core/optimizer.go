@@ -16,11 +16,13 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
@@ -72,7 +74,6 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
-	flagCountStarRewriter
 )
 
 var optRuleList = []logicalOptRule{
@@ -95,7 +96,6 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&countStarRewriter{},
 }
 
 type logicalOptimizeOp struct {
@@ -392,6 +392,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, err
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
+	countStarRewrite(plan)
 	return plan, nil
 }
 
@@ -531,6 +532,120 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 		}
 	}
 	return nil
+}
+
+/*
+*
+The countStarRewriter is used to rewrite
+
+	count(*) -> count(not null column)
+
+**Only for TiFlash**
+Attention:
+Since count(*) is directly translated into count(1) during grammar parsing,
+the rewritten pattern actually matches count(constant)
+
+Pattern:
+PhysicalAggregation: count(constant)
+
+	    |
+	TableFullScan: TiFlash
+
+Optimize:
+Table
+
+	<k1 bool not null, k2 int null, k3 bigint not null>
+
+Query: select count(*) from table
+ColumnPruningRule: datasource pick row_id
+countStarRewrite: datasource pick k1 instead of row_id
+
+	rewrite count(*) -> count(k1)
+
+Rewritten Query: select count(k1) from table
+*/
+func countStarRewrite(plan PhysicalPlan) {
+	countStarRewriteInternal(plan)
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		countStarRewrite(tableReader.tablePlan)
+	} else {
+		for _, child := range plan.Children() {
+			countStarRewrite(child)
+		}
+	}
+}
+
+func countStarRewriteInternal(plan PhysicalPlan) {
+	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
+	var physicalAgg *basePhysicalAgg
+	switch x := plan.(type) {
+	case *PhysicalHashAgg:
+		physicalAgg = x.getPointer()
+	case *PhysicalStreamAgg:
+		physicalAgg = x.getPointer()
+	default:
+		return
+	}
+	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
+		return
+	}
+	for _, aggFunc := range physicalAgg.AggFuncs {
+		if aggFunc.Name != "count" || len(aggFunc.Args) != 1 || aggFunc.HasDistinct {
+			return
+		}
+		if _, ok := aggFunc.Args[0].(*expression.Constant); !ok {
+			return
+		}
+	}
+	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
+	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.schema.Columns) != 1 {
+		return
+	}
+	// rewrite datasource and agg args
+	rewriteTableScanAndAggArgs(physicalTableScan, physicalAgg.AggFuncs)
+}
+
+// rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
+// If there is no not null column in Data Source, the row_id or pk column will be retained
+func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+
+	resultColumnInfo = physicalTableScan.Columns[0]
+	resultColumn = physicalTableScan.schema.Columns[0]
+	// prefer not null column from table
+	for _, columnInfo := range physicalTableScan.Table.Columns {
+		if columnInfo.FieldType.IsVarLengthType() {
+			continue
+		}
+		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
+			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
+				resultColumnInfo = columnInfo
+				resultColumn = &expression.Column{
+					UniqueID: physicalTableScan.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       resultColumnInfo.ID,
+					RetType:  resultColumnInfo.FieldType.Clone(),
+					OrigName: fmt.Sprintf("%s.%s.%s", physicalTableScan.DBName.L, physicalTableScan.Table.Name.L, resultColumnInfo.Name),
+				}
+			}
+		}
+	}
+	// table scan (row_id) -> (not null column)
+	physicalTableScan.Columns[0] = resultColumnInfo
+	physicalTableScan.schema.Columns[0] = resultColumn
+	// agg arg count(1) -> count(not null column)
+	arg := resultColumn.Clone()
+	for _, aggFunc := range aggFuncs {
+		constExpr, ok := aggFunc.Args[0].(*expression.Constant)
+		if !ok {
+			return
+		}
+		// count(null) shouldn't be rewritten
+		if constExpr.Value.IsNull() {
+			continue
+		}
+		aggFunc.Args[0] = arg
+	}
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
