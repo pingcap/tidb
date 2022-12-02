@@ -58,7 +58,7 @@ type Manager interface {
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
-	// VerifyAccountAutoLock Verification Account Auto Lock
+	// VerifyAccountAutoLock automatically unlock when the time comes.
 	VerifyAccountAutoLock(user string, host string) (string, error)
 
 	// IsAccountAutoLockEnabled Account enable Auto Lock
