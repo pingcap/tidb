@@ -6,6 +6,8 @@ go_test(
         "foreign_key_test.go",
         "main_test.go",
     ],
+    flaky = True,
+    shard_count = 4,
     deps = [
         "//config",
         "//ddl",
