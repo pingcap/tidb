@@ -932,7 +932,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sql := new(strings.Builder)
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
-	// Get changed user password reuse info
+	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
@@ -1007,13 +1007,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer)
-		// add Password_reuse_time value
+		// add Password_reuse_time value.
 		if passwdlockinfo.passwordReuseInterval != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
-		// add Password_reuse_history value
+		// add Password_reuse_history value.
 		if passwdlockinfo.passwordHistory != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordHistory)
 		} else {
@@ -1091,7 +1091,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
 		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	// Query the specified user password reuse rules
+	// Query the specified user password reuse rules.
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return nil, err
@@ -1121,7 +1121,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return res, nil
 }
 
-// getValidTime get the boundary of password valid time
+// getValidTime get the boundary of password valid time.
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
@@ -1132,17 +1132,17 @@ func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) str
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
-// deleteHistoricalData delete useless password history
-// The deleted password must meet the following conditions at the same time
-// 1. Exceeded the maximum number of saves
-// 2. The password has exceeded the prohibition time
+// deleteHistoricalData delete useless password history.
+// The deleted password must meet the following conditions at the same time.
+// 1. Exceeded the maximum number of saves.
+// 2. The password has exceeded the prohibition time.
 func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, maxDelRows int64, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) error {
-	//never times out or no row need delete
+	//never times out or no row need delete.
 	if (passwordReuse.passwordReuseInterval > math.MaxInt32) || maxDelRows == 0 {
 		return nil
 	}
 	sql := new(strings.Builder)
-	// no prohibition time
+	// no prohibition time.
 	if passwordReuse.passwordReuseInterval == 0 {
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
@@ -1220,7 +1220,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 
 func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo) (bool, error) {
 	sql := new(strings.Builder)
-	// Exceeded the maximum number of saved items, only check the ones within the limit
+	// Exceeded the maximum number of saved items, only check the ones within the limit.
 	checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
 	checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
 	checkRows = checkRows + ` ) as t where t.Password = %? `
@@ -1265,7 +1265,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		return false, 0, err
 	}
 
-	// the maximum number of records that can be deleted
+	// the maximum number of records that can be deleted.
 	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
 	if canDeleteNum < 0 {
 		canDeleteNum = 0
@@ -1275,8 +1275,8 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		return true, canDeleteNum, nil
 	}
 
-	// The maximum number of saves has not been exceeded
-	// There are too many retention days, and it is impossible to time out in one's lifetime
+	// The maximum number of saves has not been exceeded.
+	// There are too many retention days, and it is impossible to time out in one's lifetime.
 	if (passwordNum <= passwordReuse.passwordHistory) || (passwordReuse.passwordReuseInterval > math.MaxInt32) {
 		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail)
 		return passChecking, canDeleteNum, err
@@ -1315,7 +1315,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	if err != nil {
 		return err
 	}
-	// insert password history
+	// insert password history.
 	err = addHistoricalData(ctx, sqlExecutor, userDetail, passwdReuseInfo)
 	if err != nil {
 		return err
@@ -1376,7 +1376,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	// session isolation level changed to READ-COMMITTED
+	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
 	// In order to avoid this risk, change the isolation level to RC.
@@ -1481,7 +1481,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			// for Support Password Reuse Policy
+			// for Support Password Reuse Policy.
 			// The empty password does not count in the password history and is subject to reuse at any time.
 			// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 			if len(pwd) != 0 {
@@ -1501,7 +1501,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"account_locked=%?", passwdlockinfo.lockAccount})
 		}
 
-		// support alter Password_reuse_history and Password_reuse_time
+		// support alter Password_reuse_history and Password_reuse_time.
 		if passwdlockinfo.passwordHistoryFlag {
 			if passwdlockinfo.passwordHistory == notSpecified {
 				fields = append(fields, alterField{"Password_reuse_history = NULL ", ""})
