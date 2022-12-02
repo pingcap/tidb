@@ -816,6 +816,7 @@ var tokenMap = map[string]int{
 	"WAIT":                     wait,
 	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
 	"PASSWORD_LOCK_TIME":       passwordLockTime,
+	"REUSE":                    reuse,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
