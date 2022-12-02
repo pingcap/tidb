@@ -553,19 +553,22 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		return nil, errors.Trace(err)
 	}
 	tasks := make([]dupTask, 0, keyRanges.TotalRangeNum()*(1+len(m.tbl.Meta().Indices)))
-	putToTaskFunc := func(ranges []tidbkv.KeyRange) {
+	putToTaskFunc := func(ranges []tidbkv.KeyRange, indexInfo *model.IndexInfo) {
 		if len(ranges) == 0 {
 			return
 		}
 		tid := tablecodec.DecodeTableID(ranges[0].StartKey)
 		for _, r := range ranges {
 			tasks = append(tasks, dupTask{
-				KeyRange: r,
-				tableID:  tid,
+				KeyRange:  r,
+				tableID:   tid,
+				indexInfo: indexInfo,
 			})
 		}
 	}
-	keyRanges.ForEachPartition(putToTaskFunc)
+	keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+		putToTaskFunc(ranges, nil)
+	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
@@ -574,7 +577,9 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		keyRanges.ForEachPartition(putToTaskFunc)
+		keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+			putToTaskFunc(ranges, indexInfo)
+		})
 	}
 	return tasks, nil
 }
