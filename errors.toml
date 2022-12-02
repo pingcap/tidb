@@ -1216,6 +1216,16 @@ error = '''
 Cannot set TTL_ENABLE on a table without TTL config
 '''
 
+["ddl:8151"]
+error = '''
+Set TTL for temporary table is not allowed
+'''
+
+["ddl:8152"]
+error = '''
+Set TTL for a table referenced by foreign key is not allowed
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id
@@ -1494,6 +1504,11 @@ The password hash doesn't have the expected format. Check if the correct passwor
 ["executor:3008"]
 error = '''
 Foreign key cascade delete/update exceeds max depth of %v.
+'''
+
+["executor:3016"]
+error = '''
+The password for anonymous user cannot be expired.
 '''
 
 ["executor:3523"]
@@ -2271,6 +2286,11 @@ error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
 '''
 
+["privilege:1862"]
+error = '''
+Your password has expired. To log in you must change it using a client that supports expired passwords.
+'''
+
 ["privilege:3530"]
 error = '''
 %s is not granted to %s
@@ -2764,6 +2784,11 @@ Display width out of range for column '%-.192s' (max = %d)
 ["types:1441"]
 error = '''
 Datetime function: %-.32s field overflow
+'''
+
+["types:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
 '''
 
 ["types:1690"]

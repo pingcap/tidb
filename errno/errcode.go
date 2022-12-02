@@ -825,6 +825,7 @@ const (
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
@@ -1038,6 +1039,8 @@ const (
 	ErrUnsupportedColumnInTTLConfig        = 8148
 	ErrTTLColumnCannotDrop                 = 8149
 	ErrSetTTLEnableForNonTTLTable          = 8150
+	ErrTempTableNotAllowedWithTTL          = 8151
+	ErrUnsupportedTTLReferencedByFK        = 8152
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

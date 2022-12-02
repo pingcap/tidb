@@ -425,4 +425,8 @@ var (
 	ErrTTLColumnCannotDrop = ClassDDL.NewStd(mysql.ErrTTLColumnCannotDrop)
 	// ErrSetTTLEnableForNonTTLTable returns when the `TTL_ENABLE` option is set on a non-TTL table
 	ErrSetTTLEnableForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLEnableForNonTTLTable)
+	// ErrTempTableNotAllowedWithTTL returns when setting TTL config for a temp table
+	ErrTempTableNotAllowedWithTTL = ClassDDL.NewStd(mysql.ErrTempTableNotAllowedWithTTL)
+	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
+	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 )
