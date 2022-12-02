@@ -570,6 +570,9 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
+	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
+	}},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -1135,6 +1138,18 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(MemoryUsageAlarmKeepRecordNum.Load(), 10), nil
+	}},
+	{Scope: ScopeGlobal, Name: PasswordReuseHistory, Value: strconv.Itoa(DefPasswordReuseHistory), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordHistory.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		PasswordHistory.Store(TidbOptInt64(val, DefPasswordReuseHistory))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: PasswordReuseTime, Value: strconv.Itoa(DefPasswordReuseTime), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(PasswordReuseInterval.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
+		return nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
@@ -2103,6 +2118,13 @@ var defaultSysVars = []*SysVar{
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
 		}},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
+		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
+			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2203,6 +2225,10 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// DefaultPasswordLifetime is the name for 'default_password_lifetime' system variable.
+	DefaultPasswordLifetime = "default_password_lifetime"
+	// DisconnectOnExpiredPassword is the name for 'disconnect_on_expired_password' system variable.
+	DisconnectOnExpiredPassword = "disconnect_on_expired_password"
 	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
 	SQLSelectLimit = "sql_select_limit"
 	// MaxConnectErrors is the name for 'max_connect_errors' system variable.

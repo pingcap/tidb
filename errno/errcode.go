@@ -825,6 +825,7 @@ const (
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
@@ -892,6 +893,7 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrExistsInHistoryPassword                               = 3638
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrForeignKeyNoColumnInParent                            = 3734
@@ -1085,6 +1087,7 @@ const (
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
+	ErrIngestFailed                       = 8247
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

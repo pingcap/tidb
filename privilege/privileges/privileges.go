@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
@@ -250,8 +252,8 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
+func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
@@ -274,6 +276,22 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 		return record.AuthPlugin, nil
 	}
 	return "", errors.New("Failed to get plugin for user")
+}
+
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	if !p.isValidHash(record) {
+		return "", errors.New("Failed to get plugin for user")
+	}
+	return record.AuthPlugin, nil
 }
 
 // MatchIdentity implements the Manager interface.
@@ -355,8 +373,39 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
+// CheckPasswordExpired checks whether the password has been expired.
+func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
+	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
+	if record.PasswordExpired {
+		if isSandBoxModeEnabled {
+			return true, nil
+		}
+		return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+	}
+	if record.PasswordLifeTime != 0 {
+		lifeTime := record.PasswordLifeTime
+		if lifeTime == -1 {
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
+			if err != nil {
+				return false, err
+			}
+			lifeTime, err = strconv.ParseInt(pwdLifeTimeStr, 10, 64)
+			if err != nil {
+				return false, err
+			}
+		}
+		if lifeTime > 0 && record.PasswordLastChanged.AddDate(0, 0, int(lifeTime)).Before(time.Now()) {
+			if isSandBoxModeEnabled {
+				return true, nil
+			}
+			return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+		}
+	}
+	return false, nil
+}
+
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) error {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -377,7 +426,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
-		if !p.checkSSL(globalPriv, tlsState) {
+		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
@@ -452,8 +501,16 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
+	sandBoxMode, err := p.CheckPasswordExpired(sessionVars, record)
+	if err != nil {
+		return err
+	}
+
 	p.user = authUser
 	p.host = record.Host
+	if sandBoxMode {
+		return &ErrInSandBoxMode{}
+	}
 	return nil
 }
 
