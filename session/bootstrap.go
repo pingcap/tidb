@@ -102,13 +102,13 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-    	Password_reuse_history  smallint unsigned DEFAULT NULL,
+		Password_reuse_history  smallint unsigned DEFAULT NULL,
 		Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
-    	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-    	Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
