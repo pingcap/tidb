@@ -1164,7 +1164,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		}
 	} else {
 		beforeDate := getValidTime(sctx, passwordReuse)
-		//Deletion must satisfy 1. Exceed the prohibition time 2. Exceed the maximum number of saved records
+		// Deletion must satisfy 1. Exceed the prohibition time 2. Exceed the maximum number of saved records.
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? AND Password_timestamp < %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
 		sql.Reset()
@@ -1586,7 +1586,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 	if len(failedUsers) > 0 {
-		// Compatible with mysql8.0, `ALTER USER` realizes atomic operation
+		// Compatible with MySQL 8.0, `ALTER USER` realizes atomic operation.
 		if !s.IfExists || needRollback {
 			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
