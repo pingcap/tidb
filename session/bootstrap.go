@@ -104,7 +104,9 @@ const (
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
-    	Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+    	Password_reuse_history  smallint unsigned DEFAULT NULL,
+		Password_reuse_time     smallint unsigned DEFAULT NULL,
+		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
     	Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
     	Password_lifetime		SMALLINT UNSIGNED,
 		PRIMARY KEY (Host, User));`
@@ -465,6 +467,15 @@ const (
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
+
+	// CreatePasswordHistory is a table save history passwd.
+	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
+         Host char(255)  NOT NULL DEFAULT '',
+         User char(32)  NOT NULL DEFAULT '',
+         Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+         Password text,
+         PRIMARY KEY (Host,User,Password_timestamp )
+        ) COMMENT='Password history for user accounts' `
 )
 
 // bootstrap initiates system DB for a store.
@@ -695,13 +706,15 @@ const (
 	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
 	// This will only happens when we upgrade a cluster before 6.0.
 	version105 = 105
-	// version106 add columns related to password expiration
+	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
 	version106 = 106
+	// version107 add columns related to password expiration
+	version107 = 107
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version106
+var currentBootstrapVersion int64 = version107
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -812,6 +825,7 @@ var (
 		upgradeToVer104,
 		upgradeToVer105,
 		upgradeToVer106,
+		upgradeToVer107,
 	}
 )
 
@@ -1585,7 +1599,8 @@ func initBindInfoTable(s Session) {
 }
 
 func insertBuiltinBindInfoRow(s Session) {
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?, "", "")`,
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
+						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
 		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
 	)
 }
@@ -2102,6 +2117,7 @@ func upgradeToVer104(s Session, ver int64) {
 	if ver >= version104 {
 		return
 	}
+
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
@@ -2128,6 +2144,15 @@ func upgradeToVer105(s Session, ver int64) {
 
 func upgradeToVer106(s Session, ver int64) {
 	if ver >= version106 {
+		return
+	}
+	doReentrantDDL(s, CreatePasswordHistory)
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL AFTER `Create_Tablespace_Priv` ")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
+}
+
+func upgradeToVer107(s Session, ver int64) {
+	if ver >= version107 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
@@ -2170,6 +2195,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	// Create user table.
 	mustExecute(s, CreateUserTable)
+	// Create password history.
+	mustExecute(s, CreatePasswordHistory)
 	// Create privilege tables.
 	mustExecute(s, CreateGlobalPrivTable)
 	mustExecute(s, CreateDBPrivTable)
@@ -2257,11 +2284,15 @@ func doDMLWorks(s Session) {
 		if err != nil {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
-		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
 		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
-		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "", "N", current_timestamp(), null)`)
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value
