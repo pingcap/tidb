@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -531,10 +532,13 @@ func collectAllowFuncName4ExpressionIndex() string {
 	return strings.Join(str, ", ")
 }
 
-// isSetSysVarStmtForValidatePwdLength returns true if `sql` is a setting statement like `set ... validate_password.length`
-func isSetSysVarStmtForValidatePwdLength(sql string) bool {
-	sql = strings.ToLower(sql)
-	return strings.Contains(sql, "set") && strings.Contains(sql, ValidatePasswordLength)
+func updatePasswordValidationLength(s *SessionVars, length int32) error {
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10))
+	if err != nil {
+		return err
+	}
+	PasswordValidationLength.Store(length)
+	return nil
 }
 
 // GAFunction4ExpressionIndex stores functions GA for expression index.
