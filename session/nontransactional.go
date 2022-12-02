@@ -558,20 +558,20 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 	if !ok {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
-	tableNameAndAlias := make([]tableNameAndAlias, 0)
-	tableNameAndAlias, err := collectTableSourcesInJoin(join, tableNameAndAlias, model.NewCIStr(""))
+	tableNameAndAliases := make([]tableNameAndAlias, 0)
+	tableNameAndAliases, err := collectTableSourcesInJoin(join, tableNameAndAliases, model.NewCIStr(""))
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
-	if len(tableNameAndAlias) == 0 {
+	if len(tableNameAndAliases) == 0 {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
 	}
-	leftMostTableAndAlias := tableNameAndAlias[0]
+	leftMostTableAndAlias := tableNameAndAliases[0]
 	if !ok {
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
-	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableNameAndAlias, leftMostTableAndAlias)
+	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableNameAndAliases, leftMostTableAndAlias)
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
@@ -593,7 +593,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumnInfo, tableNameAndAlias, nil
+	return tableName, selectSQL, shardColumnInfo, tableNameAndAliases, nil
 }
 
 func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableAndAliases []tableNameAndAlias, leftMostTableAndAlias tableNameAndAlias) (
