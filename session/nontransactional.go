@@ -641,7 +641,6 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableAndAl
 			tableInJoin := false
 			var chosenTableName model.CIStr
 			for _, tableSource := range tableAndAliases {
-				// tableSourceName := tableSource.Source.(*ast.TableName)
 				tableSourceName := tableSource.tableName
 				tableSourceFinalTableName := tableSource.asName // precedence: alias name, then table name
 				if tableSourceFinalTableName.O == "" {
@@ -700,7 +699,9 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableNameAndAliases []tab
 	case *ast.TableSource:
 		tableNameAndAliases, err = collectTableSourcesInJoin(x.Source, tableNameAndAliases, x.AsName)
 	case *ast.SelectStmt:
-		tableNameAndAliases, err = collectTableSourcesInJoin(x.From.TableRefs, tableNameAndAliases, model.NewCIStr(""))
+		if x.From != nil && x.From.TableRefs != nil {
+			tableNameAndAliases, err = collectTableSourcesInJoin(x.From.TableRefs, tableNameAndAliases, model.NewCIStr(""))
+		}
 	case *ast.TableName:
 		tableNameAndAliases = append(tableNameAndAliases, tableNameAndAlias{
 			x,
