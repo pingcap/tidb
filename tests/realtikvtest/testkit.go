@@ -51,7 +51,6 @@ func RunTestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Store = "tikv"
 	})
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
