@@ -376,6 +376,8 @@ type Request struct {
 	TxnScope string
 	// ReadReplicaScope is the scope of the read replica.
 	ReadReplicaScope string
+	// ReadReplicaLabels are the labels of the stores that to be read from.
+	ReadReplicaLabels map[string]string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// ClosestReplicaReadAdjuster used to adjust a copr request.

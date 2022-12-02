@@ -1030,6 +1030,7 @@ type SessionVars struct {
 	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
 	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
 	ReplicaClosestReadThreshold int64
+	replicaReadLabels           map[string]string
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -1651,6 +1652,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
+		replicaReadLabels:             make(map[string]string),
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
@@ -1786,6 +1788,16 @@ func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 // IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
 func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
 	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
+}
+
+// SetReplicaReadLabels set SessionVars.replicaReadLabels.
+func (s *SessionVars) SetReplicaReadLabels(val map[string]string) {
+	s.replicaReadLabels = val
+}
+
+// GetReplicaReadLabels get SessionVars.replicaReadLabels.
+func (s *SessionVars) GetReplicaReadLabels() map[string]string {
+	return s.replicaReadLabels
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.

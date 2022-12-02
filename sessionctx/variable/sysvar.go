@@ -1638,6 +1638,32 @@ var defaultSysVars = []*SysVar{
 		s.ReplicaClosestReadThreshold = TidbOptInt64(val, DefAdaptiveClosestReadThreshold)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaReadLabels, Value: "", Type: TypeStr, SetSession: func(s *SessionVars, val string) error {
+		if len(val) == 0 {
+			return nil
+		}
+		labels := make(map[string]string)
+		labelList := strings.Split(val, ",")
+		for _, label := range labelList {
+			if len(label) == 0 {
+				continue
+			}
+			if !strings.Contains(label, "=") {
+				return ErrWrongValueForVar.GenWithStackByArgs(TiDBReplicaReadLabels, val)
+			}
+			mappings := strings.Split(label, "=")
+			if len(mappings) != 2 {
+				return ErrWrongValueForVar.GenWithStackByArgs(TiDBReplicaReadLabels, val)
+			}
+			if len(mappings[0]) == 0 || len(mappings[1]) == 0 {
+				return ErrWrongValueForVar.GenWithStackByArgs(TiDBReplicaReadLabels, val)
+			}
+			labels[mappings[0]] = mappings[1]
+		}
+
+		s.replicaReadLabels = labels
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: BoolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.UsePlanBaselines = TiDBOptOn(val)
 		return nil

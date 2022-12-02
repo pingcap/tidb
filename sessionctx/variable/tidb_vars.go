@@ -186,6 +186,7 @@ const (
 	// size exceeds this threshold; otherwise, this request should be sent to leader.
 	// This variable only take effect when `tidb_replica_read` is 'closest-adaptive'.
 	TiDBAdaptiveClosestReadThreshold = "tidb_adaptive_closest_read_threshold"
+	TiDBReplicaReadLabels            = "tidb_replica_read_labels"
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"

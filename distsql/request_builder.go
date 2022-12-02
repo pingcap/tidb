@@ -60,6 +60,13 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 				Value: builder.ReadReplicaScope,
 			},
 		}
+	} else if builder.ReplicaRead.IsFollowerRead() && len(builder.ReadReplicaLabels) != 0 {
+		for label, val := range builder.ReadReplicaLabels {
+			builder.MatchStoreLabels = append(builder.MatchStoreLabels, &metapb.StoreLabel{
+				Key:   label,
+				Value: val,
+			})
+		}
 	}
 	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
@@ -258,10 +265,12 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	} else {
 		builder.Request.IsolationLevel = builder.getIsolationLevel()
 	}
+
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
+	builder.Request.ReadReplicaLabels = sv.GetReplicaReadLabels()
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
 	{
 		builder.SetPaging(sv.EnablePaging)
@@ -360,6 +369,12 @@ func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
 // SetReadReplicaScope sets request readReplicaScope
 func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder {
 	builder.ReadReplicaScope = scope
+	return builder
+}
+
+// SetReadReplicaLabels sets request readReplicaLabels
+func (builder *RequestBuilder) SetReadReplicaLabels(labels map[string]string) *RequestBuilder {
+	builder.ReadReplicaLabels = labels
 	return builder
 }
 
