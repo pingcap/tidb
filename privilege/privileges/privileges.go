@@ -925,7 +925,7 @@ func init() {
 	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
 }
 
-// PasswordLocking user PasswordLocking info
+// PasswordLocking records information about failed-login tracking and temporary account locking.
 type PasswordLocking struct {
 	FailedLoginCount      int64
 	PasswordLockTimeDays  int64
