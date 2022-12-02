@@ -1361,6 +1361,11 @@ error = '''
 Error happened when enable/disable DDL: %s
 '''
 
+["ddl:8247"]
+error = '''
+Ingest failed: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
