@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "scheduler",
@@ -12,4 +12,14 @@ go_library(
         "//resourcemanage/util",
         "//util/mathutil",
     ],
+)
+
+go_test(
+    name = "scheduler_test",
+    srcs = [
+        "fake_rms_test.go",
+        "gradient2_scheduler_test.go",
+    ],
+    embed = [":scheduler"],
+    deps = ["//resourcemanage/util"],
 )

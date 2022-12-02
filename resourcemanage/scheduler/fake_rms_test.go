@@ -12,11 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package scheduler
+
+import "github.com/pingcap/tidb/resourcemanage/util"
 
 type FakeResourceManage struct {
+	scheduler Scheduler
+	pool      util.FakeGPool
 }
 
 func NewFakeResourceManage() *FakeResourceManage {
 	return &FakeResourceManage{}
+}
+
+func (f *FakeResourceManage) Register(sch Scheduler) {
+	f.scheduler = sch
+}
+
+func (f *FakeResourceManage) Next() Command {
+	if f.scheduler != nil {
+		return f.scheduler.Tune(util.UNKNOWN, &f.pool)
+	}
+	return Hold
 }
