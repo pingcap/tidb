@@ -954,7 +954,13 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 }
 
 func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
-	alterUserInfo := &alterUserPasswordLocking{0, 0, false, false, false}
+	alterUserInfo := &alterUserPasswordLocking{
+		failedLoginAttempts:            0,
+		passwordLockTime:               0,
+		failedLoginAttemptsNotFound:    false,
+		passwordLockTimeChangeNotFound: false,
+		commentIsNull:                  false,
+	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT  JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))          FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
