@@ -60,6 +60,10 @@ import (
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
+	// WARNING: There are some limitations on altering the schema of mysql.user table.
+	// Adding columns that are nullable or have default values is permitted.
+	// But operations like dropping or renaming columns may break the compatibility with BR.
+	// REFERENCE ISSUE: https://github.com/pingcap/tidb/issues/38785
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
 		Host					CHAR(255),
 		User					CHAR(32),
@@ -265,6 +269,8 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		sql_digest varchar(64),
+		plan_digest varchar(64),
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -681,11 +687,16 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
+	// version104 add `sql_digest` and `plan_digest` to `bind_info`
+	version104 = 104
+	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
+	// This will only happens when we upgrade a cluster before 6.0.
+	version105 = 105
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version103
+var currentBootstrapVersion int64 = version104
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -793,6 +804,8 @@ var (
 		upgradeToVer101,
 		upgradeToVer102,
 		upgradeToVer103,
+		upgradeToVer104,
+		upgradeToVer105,
 	}
 )
 
@@ -1566,7 +1579,8 @@ func initBindInfoTable(s Session) {
 }
 
 func insertBuiltinBindInfoRow(s Session) {
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
+						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
 		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
 	)
 }
@@ -2077,6 +2091,34 @@ func upgradeToVer103(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsTableLocked)
+}
+
+func upgradeToVer104(s Session, ver int64) {
+	if ver >= version104 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
+}
+
+// For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost model2 by default to keep plans unchanged.
+func upgradeToVer105(s Session, ver int64) {
+	if ver >= version105 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion, "1")
 }
 
 func writeOOMAction(s Session) {

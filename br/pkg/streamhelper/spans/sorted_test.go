@@ -1,3 +1,5 @@
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+
 package spans_test
 
 import (
@@ -162,6 +164,43 @@ func TestSubRange(t *testing.T) {
 			Result: []spans.Valued{
 				kv(s("0001", "0004"), 42),
 				kv(s("0008", ""), 42),
+			},
+		},
+		{
+			Range: []spans.Span{
+				s("0001", "0004"),
+				s("0005", "0008"),
+			},
+			InputSequence: []spans.Valued{
+				kv(s("0001", "0002"), 42),
+				kv(s("0002", "0008"), 43),
+				kv(s("0004", "0007"), 45),
+				kv(s("0000", "00015"), 48),
+			},
+			Result: []spans.Valued{
+				kv(s("0001", "00015"), 48),
+				kv(s("00015", "0002"), 42),
+				kv(s("0002", "0004"), 43),
+				kv(s("0005", "0007"), 45),
+				kv(s("0007", "0008"), 43),
+			},
+		},
+		{
+			Range: []spans.Span{
+				s("0001", "0004"),
+				s("0005", "0008"),
+			},
+			InputSequence: []spans.Valued{
+				kv(s("0004", "0008"), 32),
+				kv(s("00041", "0007"), 33),
+				kv(s("0004", "00041"), 99999),
+				kv(s("0005", "0006"), 34),
+			},
+			Result: []spans.Valued{
+				kv(s("0001", "0004"), 0),
+				kv(s("0005", "0006"), 34),
+				kv(s("0006", "0007"), 33),
+				kv(s("0007", "0008"), 32),
 			},
 		},
 	}
