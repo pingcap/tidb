@@ -24,6 +24,7 @@ go_library(
         "//table/tables",
         "//tablecodec",
         "//types",
+        "//util",
         "//util/logutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
