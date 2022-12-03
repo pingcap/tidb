@@ -429,6 +429,7 @@ func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string
 	}
 
 	if record.AutoAccountLocked {
+		// If it is locked, need to check whether it can be automatically unlocked.
 		lockTime := record.PasswordLockTime
 		if lockTime == -1 {
 			return "", GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")
@@ -436,6 +437,7 @@ func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
 		if d > lockTime*24*60*60 {
+			// Generate unlock json string.
 			return buildPasswordLockingJSON(record.FailedLoginAttempts,
 				record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
 		}
@@ -939,7 +941,7 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	var found bool
 	var parserErr error
 	passwordLocking.FailedLoginAttempts, found, parserErr =
-		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
+		passwordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
 	if parserErr != nil {
 		if found {
 			return parserErr
@@ -954,7 +956,7 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	passwordLocking.PasswordLockTimeDays, found, parserErr =
-		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+		passwordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if parserErr != nil {
 		if found {
 			return parserErr
@@ -969,27 +971,27 @@ func (passwordLocking *PasswordLocking) PasswordLockingParser(passwordLockingJSO
 	}
 
 	passwordLocking.FailedLoginCount, found, parserErr =
-		PasswordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
+		passwordLockingInt64Parser(passwordLockingJSON, "$.Password_locking.failed_login_count")
 	if parserErr != nil && found {
 		return parserErr
 	}
 
 	passwordLocking.AutoLockedLastChanged, found, parserErr =
-		PasswordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
+		passwordLockingTimeUnixParser(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if parserErr != nil && found {
 		return parserErr
 	}
 
 	passwordLocking.AutoAccountLocked, found, parserErr =
-		PasswordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
+		passwordLockingBoolParser(passwordLockingJSON, "$.Password_locking.auto_account_locked")
 	if parserErr != nil && found {
 		return parserErr
 	}
 	return nil
 }
 
-// PasswordLockingInt64Parser parses information about PasswordLocking Int64.
-func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
+// passwordLockingInt64Parser parses information about PasswordLocking Int64.
+func passwordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return 0, true, err
@@ -1000,8 +1002,8 @@ func PasswordLockingInt64Parser(passwordLockingJSON types.BinaryJSON, pathExpr s
 	return 0, false, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
-// PasswordLockingTimeUnixParser parses information about PasswordLocking TimeUnix.
-func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
+// passwordLockingTimeUnixParser parses information about PasswordLocking TimeUnix.
+func passwordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (int64, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return -1, true, err
@@ -1020,8 +1022,8 @@ func PasswordLockingTimeUnixParser(passwordLockingJSON types.BinaryJSON, pathExp
 	return 0, false, fmt.Errorf("user_attributes not found by `%s`", jsonPath)
 }
 
-// PasswordLockingBoolParser parses information about PasswordLocking bool.
-func PasswordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (bool, bool, error) {
+// passwordLockingBoolParser parses information about PasswordLocking bool.
+func passwordLockingBoolParser(passwordLockingJSON types.BinaryJSON, pathExpr string) (bool, bool, error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
 		return false, true, err

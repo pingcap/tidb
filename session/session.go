@@ -2659,6 +2659,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 	}
 	if enableAutoLock {
+		// The password is correct. If the account is not locked, the number of login failure statistics will be cleared.
 		return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
 	}
 	pm.AuthSuccess(authUser.Username, authUser.Hostname)
@@ -2678,6 +2679,7 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		}
 		return err
 	}
+	// Obtain accurate lock status and failure count information.
 	passwordLocking, getErr := getFailedLoginCount(s, user, host)
 	if getErr != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
@@ -2685,6 +2687,8 @@ func authSuccessClearCount(s *session, user string, host string) error {
 		}
 		return getErr
 	}
+	// If the account is locked, it may be caused by the untimely update of the cache,
+	// directly report the account lock.
 	if passwordLocking.AutoAccountLocked {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
 			return rollBackErr
@@ -2699,6 +2703,7 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	}
 	pm := privilege.GetPrivilegeManager(s)
 	if passwordLocking.FailedLoginCount != 0 {
+		// If the number of account login failures is not zero, it will be updated to 0.
 		passwordLockingJSON := pm.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
 			passwordLocking.PasswordLockTimeDays)
 		if passwordLockingJSON != "" {
@@ -2722,6 +2727,7 @@ func authFailedTracking(s *session, user string, host string) error {
 		}
 		return err
 	}
+	// Obtain the number of consecutive password login failures.
 	passwordLocking, getErr := getFailedLoginCount(s, user, host)
 	if getErr != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
@@ -2729,8 +2735,11 @@ func authFailedTracking(s *session, user string, host string) error {
 		}
 		return getErr
 	}
-	if err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1,
-		passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays, passwordLocking.AutoAccountLocked); err != nil {
+	// Consecutive wrong password login failure times +1,
+	// If the lock condition is satisfied, the lock status is updated and the update cache is notified.
+	changeToLock, err := userAutoAccountLocked(s, user, host, passwordLocking.FailedLoginCount+1,
+		passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays, passwordLocking.AutoAccountLocked)
+	if err != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
 			return rollBackErr
 		}
@@ -2739,7 +2748,11 @@ func authFailedTracking(s *session, user string, host string) error {
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
 		return commitErr
 	}
-	return domain.GetDomain(s).NotifyUpdatePrivilege()
+	if changeToLock {
+		// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
+		return domain.GetDomain(s).NotifyUpdatePrivilege()
+	}
+	return nil
 }
 
 func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
@@ -2774,6 +2787,7 @@ func failedLoginTrackingRollback(s *session) error {
 	return err
 }
 
+// getFailedLoginCount Query the exact number of consecutive password login failures (concurrency is not allowed).
 func getFailedLoginCount(s *session, user string, host string) (privileges.PasswordLocking, error) {
 	passwordLocking := privileges.PasswordLocking{}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
@@ -2802,31 +2816,34 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 	}
 }
 
-func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64, lockstatus bool) error {
+func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64, lockstatus bool) (bool, error) {
+	changeToLock := false
+	// If the cache is not updated, but it is already locked, it will report that the account is locked
 	if lockstatus {
 		if passwordLockTimeDays == -1 {
-			return privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host,
+			return changeToLock, privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
 		}
 		lds := strconv.FormatInt(passwordLockTimeDays, 10)
-		return privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host, lds, lds)
+		return changeToLock, privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host, lds, lds)
 	}
 	autoAccountLocked := "N"
 	autoLockedLastChanged := ""
 	if userFailedLoginAttempts == 0 || passwordLockTimeDays == 0 {
-		return nil
+		return changeToLock, nil
 	}
 	if failedLoginCount >= userFailedLoginAttempts {
 		autoLockedLastChanged = time.Now().Format(time.UnixDate)
 		autoAccountLocked = "Y"
+		changeToLock = true
 	}
 	pm := privilege.GetPrivilegeManager(s)
 	newAttributesStr := pm.BuildPasswordLockingJSON(userFailedLoginAttempts,
 		passwordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 	if newAttributesStr != "" {
-		return s.passwordLocking(user, host, newAttributesStr)
+		return changeToLock, s.passwordLocking(user, host, newAttributesStr)
 	}
-	return nil
+	return changeToLock, nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
