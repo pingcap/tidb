@@ -364,14 +364,14 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 	}()
 
 	for {
-		input := readProjection[*projectionInput](f.inputCh, f.globalFinishCh)
-		if input == nil {
+		input, isNil := readProjection[*projectionInput](f.inputCh, f.globalFinishCh)
+		if isNil {
 			return
 		}
 		targetWorker := input.targetWorker
 
-		output = readProjection[*projectionOutput](f.outputCh, f.globalFinishCh)
-		if output == nil {
+		output, isNil = readProjection[*projectionOutput](f.outputCh, f.globalFinishCh)
+		if isNil {
 			f.proj.memTracker.Consume(-input.chk.MemoryUsage())
 			return
 		}
@@ -431,13 +431,13 @@ func (w *projectionWorker) run(ctx context.Context) {
 		w.proj.wg.Done()
 	}()
 	for {
-		input := readProjection[*projectionInput](w.inputCh, w.globalFinishCh)
-		if input == nil {
+		input, isNil := readProjection[*projectionInput](w.inputCh, w.globalFinishCh)
+		if isNil {
 			return
 		}
 
-		output = readProjection[*projectionOutput](w.outputCh, w.globalFinishCh)
-		if output == nil {
+		output, isNil = readProjection[*projectionOutput](w.outputCh, w.globalFinishCh)
+		if isNil {
 			return
 		}
 
@@ -462,14 +462,14 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
-func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) T {
+func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) (t T, isNil bool) {
 	select {
 	case <-finishCh:
-		return nil
+		return t, true
 	case t, ok := <-ch:
 		if !ok {
-			return nil
+			return t, true
 		}
-		return t
+		return t, false
 	}
 }
