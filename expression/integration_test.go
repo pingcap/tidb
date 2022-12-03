@@ -7895,17 +7895,3 @@ func TestIssue39146(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
 	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
 }
-
-func TestIssue35289(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t1 (a BINARY(16) PRIMARY KEY);")
-	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
-	err := tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
-	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '{ W]\xA1\x06u\x9D\xBD\xB1\xA3.\xE2\xD9\xA7t' for key 't1.PRIMARY'`)
-
-	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
-	err = tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
-	require.Error(t, err, "ERROR 1062 (23000): Duplicate entry '\x0C\x1E\x8DG`\xEB\x93 F&BC\xF0\xB5\xF4\xB7' for key 't1.PRIMARY'")
-}
