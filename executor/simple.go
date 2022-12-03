@@ -866,17 +866,6 @@ type alterUserPasswordLocking struct {
 
 func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) error {
 	if length := len(plOption); length > 0 {
-		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-		// only the last declaration takes effect.
-		for i := length - 1; i >= 0; i-- {
-			if plOption[i].Type == ast.Lock {
-				info.lockAccount = "Y"
-				break
-			} else if plOption[i].Type == ast.Unlock {
-				info.lockAccount = "N"
-				break
-			}
-		}
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
 	Loop:
@@ -900,8 +889,13 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 			}
 		}
 	}
+	// only the last declaration takes effect.
 	for _, option := range plOption {
 		switch option.Type {
+		case ast.Lock:
+			info.lockAccount = "Y"
+		case ast.Unlock:
+			info.lockAccount = "N"
 		case ast.FailedLoginAttempts:
 			info.failedLoginAttempts = mathutil.Min(option.Count, math.MaxInt16)
 			info.failedLoginAttemptsChange = true
@@ -929,7 +923,8 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 }
 
 func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
-	if (info.failedLoginAttemptsChange || info.passwordLockTimeChange) && (info.failedLoginAttempts != 0 || info.passwordLockTime != 0) {
+	// Record only when at least failedLoginAttempts and passwordLockTime is not 0.
+	if (info.failedLoginAttemptsChange && info.failedLoginAttempts != 0) || (info.passwordLockTimeChange && info.passwordLockTime != 0) {
 		return fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
 			info.failedLoginAttempts, info.passwordLockTime)
 	}
@@ -937,6 +932,7 @@ func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 }
 
 func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string) string {
+	// alterUserPasswordLocking is the user's actual configuration.
 	passwordLockingArray := []string{}
 	if lockAccount == "N" && (info.failedLoginAttempts != 0 || info.passwordLockTime != 0) {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount))
@@ -975,6 +971,7 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		return nil, err
 	}
 
+	// Configuration priority is User Changes > User History
 	if pLO.failedLoginAttemptsChange {
 		alterUserInfo.failedLoginAttempts = pLO.failedLoginAttempts
 	} else {
@@ -1024,9 +1021,11 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 
 // deleteFailedLogin Implement delete password_locking json string when failedLoginAttempts and passwordLockTime both 0.
 func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
+	// No password_locking information.
 	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
 		return nil
 	}
+	// password_locking information is still useful.
 	if alterUser.failedLoginAttempts != 0 || alterUser.passwordLockTime != 0 {
 		return nil
 	}
@@ -1804,9 +1803,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				continue
 			}
 		}
+		// Remove useless password_locking.
 		err = deleteFailedLogin(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, alterUserPassword)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
+			needRollback = true
 			continue
 		}
 		if len(privData) > 0 {
