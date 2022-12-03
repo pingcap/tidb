@@ -28,38 +28,22 @@ type FakeGPool struct {
 	shortRTT    []uint64
 	queueSize   []int64
 	running     []int
-}
-
-// Release is only for test
-func (*FakeGPool) Release() {
-	//TODO implement me
-	panic("implement me")
-}
-
-// Tune is only for test
-func (*FakeGPool) Tune(_ int, _ bool) {
-	//TODO implement me
-	panic("implement me")
-}
-
-// LastTunerTs is only for test
-func (*FakeGPool) LastTunerTs() time.Time {
-	//TODO implement me
-	panic("implement me")
+	lastTunerTs []time.Time
 }
 
 // NewFakeGPool is only for test
 func NewFakeGPool() *FakeGPool {
 	return &FakeGPool{
-		maxInFlight: make([]int64, 0),
-		inFlight:    make([]int64, 0),
-		minRT:       make([]uint64, 0),
-		maxPASS:     make([]uint64, 0),
-		cap:         make([]int, 0),
-		longRTT:     make([]float64, 0),
-		shortRTT:    make([]uint64, 0),
-		queueSize:   make([]int64, 0),
-		running:     make([]int, 0),
+		maxInFlight: make([]int64, 0, 100),
+		inFlight:    make([]int64, 0, 100),
+		minRT:       make([]uint64, 0, 100),
+		maxPASS:     make([]uint64, 0, 100),
+		cap:         make([]int, 0, 100),
+		longRTT:     make([]float64, 0, 100),
+		shortRTT:    make([]uint64, 0, 100),
+		queueSize:   make([]int64, 0, 100),
+		running:     make([]int, 0, 100),
+		lastTunerTs: make([]time.Time, 0, 100),
 	}
 }
 
@@ -74,6 +58,23 @@ func (f *FakeGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64,
 	f.shortRTT = append(f.shortRTT, shortRTT)
 	f.queueSize = append(f.queueSize, queueSize)
 	f.running = append(f.running, running)
+}
+
+// ImportLastTunerTs is only for test
+func (f *FakeGPool) ImportLastTunerTs(ts ...time.Time) {
+	f.lastTunerTs = append(f.lastTunerTs, ts...)
+}
+
+// Release is only for test
+func (*FakeGPool) Release() {}
+
+// Tune is only for test
+func (*FakeGPool) Tune(_ int, _ bool) {}
+
+// LastTunerTs is only for test
+func (f *FakeGPool) LastTunerTs() time.Time {
+	val := f.lastTunerTs[f.index]
+	return val
 }
 
 // Next is only for test

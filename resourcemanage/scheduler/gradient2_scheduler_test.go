@@ -14,10 +14,22 @@
 
 package scheduler
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/stretchr/testify/require"
+)
 
 func TestGradient2Scheduler(t *testing.T) {
 	scheduler := NewGradient2Scheduler()
+	pool := util.NewFakeGPool()
 	rms := NewFakeResourceManage()
+	rms.RegisterPool(pool)
 	rms.Register(scheduler)
+	// Test the initial state.
+	pool.ImportLastTunerTs(
+		time.Now())
+	require.Equal(t, Hold, rms.Next())
 }

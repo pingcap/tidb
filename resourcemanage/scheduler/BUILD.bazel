@@ -21,5 +21,8 @@ go_test(
         "gradient2_scheduler_test.go",
     ],
     embed = [":scheduler"],
-    deps = ["//resourcemanage/util"],
+    deps = [
+        "//resourcemanage/util",
+        "@com_github_stretchr_testify//require",
+    ],
 )

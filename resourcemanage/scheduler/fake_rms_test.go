@@ -18,7 +18,7 @@ import "github.com/pingcap/tidb/resourcemanage/util"
 
 type FakeResourceManage struct {
 	scheduler Scheduler
-	pool      util.FakeGPool
+	pool      *util.FakeGPool
 }
 
 // NewFakeResourceManage creates a fake resource manage.
@@ -31,11 +31,20 @@ func (f *FakeResourceManage) Register(sch Scheduler) {
 	f.scheduler = sch
 }
 
+// Register registers a scheduler.
+func (f *FakeResourceManage) RegisterPool(pool *util.FakeGPool) {
+	f.pool = pool
+}
+
 // Next get scheduler command.
 func (f *FakeResourceManage) Next() Command {
 	if f.scheduler != nil {
 		defer f.pool.Next()
-		return f.scheduler.Tune(util.UNKNOWN, &f.pool)
+		return f.scheduler.Tune(util.UNKNOWN, f.pool)
 	}
 	return Hold
+}
+
+func (f *FakeResourceManage) GetPool() *util.FakeGPool {
+	return f.pool
 }
