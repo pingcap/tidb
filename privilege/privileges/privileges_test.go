@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -3174,10 +3175,11 @@ func changeAutoLockedLastChanged(tk *testkit.TestKit) {
 	SQL := "UPDATE `mysql`.`User` SET user_attributes=json_merge_patch(user_attributes, '{\"Password_locking\": {\"failed_login_attempts\": 3," +
 		"\"password_lock_time_days\": 3,\"auto_account_locked\": \"Y\",\"failed_login_count\": 3,\"auto_locked_last_changed\": \"%s\"}}') " +
 		"WHERE Host='localhost' and User='u6';"
-	d, _ := time.ParseDuration("-96h")
+	d, _ := time.ParseDuration("-96h1s")
 	changeTime := time.Now().Add(d).Format(time.UnixDate)
 	SQL = fmt.Sprintf(SQL, changeTime)
 	tk.MustExec(SQL)
+	domain.GetDomain(tk.Session()).NotifyUpdatePrivilege()
 }
 
 func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64) {
