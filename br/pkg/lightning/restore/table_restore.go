@@ -95,7 +95,7 @@ func (tr *TableRestore) Close() {
 }
 
 func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
-	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
+	task := tr.logger.Begin(zap.InfoLevel, "virtually reorganize source table data into engines")
 	chunks, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
 		timestamp := time.Now().Unix()
@@ -274,7 +274,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 			}
 		}
 
-		logTask := tr.logger.Begin(zap.InfoLevel, "import whole table")
+		logTask := tr.logger.Begin(zap.InfoLevel, "restore all source data by engines")
 		var wg sync.WaitGroup
 		var engineErr common.OnceError
 		setError := func(err error) {
@@ -323,7 +323,6 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 					defer wg.Done()
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 					dataClosedEngine, err := tr.restoreEngine(ctx, rc, indexEngine, eid, ecp)
-					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err == nil {
 						dataWorker := rc.closedEngineLimit.Apply()
@@ -338,6 +337,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 					if err != nil {
 						setError(err)
 					}
+					engineLogTask.End(zap.ErrorLevel, err)
 				}(restoreWorker, engineID, engine)
 			} else {
 				for _, chunk := range engine.Chunks {
@@ -384,6 +384,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
+			indexEnginelogTask := tr.logger.Begin(zap.InfoLevel, "import source data index engine")
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
@@ -394,6 +395,8 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 					zap.Bool("equal", finished == total))
 				panic("forcing failure due to FailBeforeIndexEngineImported")
 			})
+			indexEnginelogTask.End(zap.ErrorLevel, restoreErr)
+
 		}
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
@@ -445,7 +448,7 @@ func (tr *TableRestore) restoreEngine(
 		IsKVSorted: hasAutoIncrementAutoID,
 	}
 
-	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
+	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "transform engine source data into temp KVs")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 		Local:     &backend.LocalEngineConfig{},
