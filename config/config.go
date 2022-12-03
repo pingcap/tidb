@@ -557,6 +557,8 @@ type Security struct {
 	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
 	// The refresh time interval of JWKS
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
+	// Disconnect directly when the password is expired
+	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -975,6 +977,7 @@ var defaultConf = Config{
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword: true,
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
