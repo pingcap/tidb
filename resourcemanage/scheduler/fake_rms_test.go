@@ -21,14 +21,17 @@ type FakeResourceManage struct {
 	pool      util.FakeGPool
 }
 
+// NewFakeResourceManage creates a fake resource manage.
 func NewFakeResourceManage() *FakeResourceManage {
 	return &FakeResourceManage{}
 }
 
+// Register registers a scheduler.
 func (f *FakeResourceManage) Register(sch Scheduler) {
 	f.scheduler = sch
 }
 
+// Next get scheduler command.
 func (f *FakeResourceManage) Next() Command {
 	if f.scheduler != nil {
 		defer f.pool.Next()

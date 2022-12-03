@@ -13,3 +13,11 @@
 // limitations under the License.
 
 package scheduler
+
+import "testing"
+
+func TestGradient2Scheduler(t *testing.T) {
+	scheduler := NewGradient2Scheduler()
+	rms := NewFakeResourceManage()
+	rms.Register(scheduler)
+}
