@@ -101,7 +101,7 @@ func (c *Observer) observe() float64 {
 // getCPUTime returns the cumulative user/system time (in ms) since the process start.
 func getCPUTime() (userTimeMillis, sysTimeMillis int64, err error) {
 	pid := os.Getpid()
-	cpuTime := gosigar.ProcTime{}
+	cpuTime := sigar.ProcTime{}
 	if err := cpuTime.Get(pid); err != nil {
 		return 0, 0, err
 	}

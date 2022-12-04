@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//util/cgroup",
         "//util/mathutil",
-        "@com_github_cloudfoundry_gosigar//:go_default_library",
+        "@com_github_cloudfoundry_gosigar//:gosigar",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
