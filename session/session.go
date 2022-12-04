@@ -2622,7 +2622,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 	// Check whether continuous login failure is enabled to lock the account.
-	// If enabled, determine whether to unlock the account and notify TiDB to update the cache
+	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
 		passwordLockingJSON, err := pm.VerifyAccountAutoLock(authUser.Username, authUser.Hostname)
@@ -2647,7 +2647,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			s.EnableSandBoxMode()
 		case *privileges.ErrUserPasswordFailed:
 			// when user enables the account locking function for consecutive login failures,
-			// the system updates the login failure count and determines whether to lock the account when authentication fails
+			// the system updates the login failure count and determines whether to lock the account when authentication fails.
 			if enableAutoLock {
 				if trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname); trackingErr != nil {
 					return trackingErr
@@ -2816,9 +2816,10 @@ func getFailedLoginCount(s *session, user string, host string) (privileges.Passw
 	}
 }
 
-func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64, userFailedLoginAttempts int64, passwordLockTimeDays int64, lockstatus bool) (bool, error) {
+func userAutoAccountLocked(s *session, user string, host string, failedLoginCount int64,
+	userFailedLoginAttempts int64, passwordLockTimeDays int64, lockstatus bool) (bool, error) {
 	changeToLock := false
-	// If the cache is not updated, but it is already locked, it will report that the account is locked
+	// If the cache is not updated, but it is already locked, it will report that the account is locked.
 	if lockstatus {
 		if passwordLockTimeDays == -1 {
 			return changeToLock, privileges.GenerateAccountAutoLockErr(userFailedLoginAttempts, user, host,
