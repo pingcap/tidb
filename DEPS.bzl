@@ -1163,8 +1163,8 @@ def go_deps():
         name = "com_github_go_sql_driver_mysql",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-sql-driver/mysql",
-        sum = "h1:dwGE+BDjXIzXn3Ye0auI/16EXdjJkUccsJwyJEifxY0=",
-        version = "v1.6.1-0.20221128062620-41dd159e6ec9",
+        sum = "h1:ueSltNNllEqE3qcWBTD0iQd3IpL/6U+mJxLkazJ7YPc=",
+        version = "v1.7.0",
     )
     go_repository(
         name = "com_github_go_stack_stack",
