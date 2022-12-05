@@ -989,7 +989,6 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
-	ClearPasswordExpireOptions             "Clear password expire options"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -1138,7 +1137,6 @@ import (
 	PartDefValuesOpt                       "VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
 	PartDefOptionList                      "PartDefOption list"
 	PartDefOption                          "COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
-	PasswordExpire                         "Single password option for create user statement"
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
@@ -13000,49 +12998,30 @@ PasswordOrLockOption:
 			Count: $4.(int64),
 		}
 	}
-|	PasswordExpire
+|	"PASSWORD" "EXPIRE"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpire,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "INTERVAL" Int64Num "DAY"
+|	"PASSWORD" "EXPIRE" "INTERVAL" Int64Num "DAY"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type:  ast.PasswordExpireInterval,
-			Count: $3.(int64),
+			Count: $4.(int64),
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "NEVER"
+|	"PASSWORD" "EXPIRE" "NEVER"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireNever,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "DEFAULT"
+|	"PASSWORD" "EXPIRE" "DEFAULT"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
-
-PasswordExpire:
-	"PASSWORD" "EXPIRE" ClearPasswordExpireOptions
-	{
-		$$ = nil
-	}
-
-ClearPasswordExpireOptions:
-	{
-		$$ = nil
 	}
 
 AuthOption:
@@ -13073,15 +13052,17 @@ AuthOption:
 |	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
 	{
 		$$ = &ast.AuthOption{
-			AuthPlugin: $3,
-			HashString: $5,
+			AuthPlugin:   $3,
+			HashString:   $5,
+			ByHashString: true,
 		}
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
-			AuthPlugin: mysql.AuthNativePassword,
-			HashString: $4,
+			AuthPlugin:   mysql.AuthNativePassword,
+			HashString:   $4,
+			ByHashString: true,
 		}
 	}
 

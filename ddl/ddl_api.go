@@ -2116,7 +2116,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 	}
 	if tbInfo.TTLInfo != nil {
-		if err := checkTTLInfoValid(ctx, tbInfo); err != nil {
+		if err := checkTTLInfoValid(ctx, s.Table.Schema, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -5368,7 +5368,7 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 	var job *model.Job
 	if ttlInfo != nil {
 		tblInfo.TTLInfo = ttlInfo
-		err = checkTTLInfoValid(ctx, tblInfo)
+		err = checkTTLInfoValid(ctx, ident.Schema, tblInfo)
 		if err != nil {
 			return err
 		}

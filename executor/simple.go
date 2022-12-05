@@ -63,12 +63,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const notSpecified = -1
+
 var (
 	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
 	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
 )
-
-const notSpecified = -1
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
@@ -91,8 +91,9 @@ type SimpleExec struct {
 }
 
 type passwordLockInfo struct {
-	lockAccount string
-	// -1 notSpecified
+	lockAccount               string
+	passwordExpired           string
+	passwordLifetime          any
 	passwordHistory           int64
 	passwordHistoryFlag       bool
 	passwordReuseInterval     int64
@@ -830,43 +831,66 @@ func whetherSavePasswordHistory(passwdlockinfo *passwordLockInfo) bool {
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
 
-func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []*ast.PasswordOrLockOption) {
-	// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-	// the last declaration takes effect.
+func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []*ast.PasswordOrLockOption) error {
+	if length := len(PasswordOrLockOptions); length > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// only the last declaration takes effect.
+		for i := length - 1; i >= 0; i-- {
+			if PasswordOrLockOptions[i].Type == ast.Lock {
+				pLinfo.lockAccount = "Y"
+				break
+			} else if PasswordOrLockOptions[i].Type == ast.Unlock {
+				pLinfo.lockAccount = "N"
+				break
+			}
+		}
+		// If "PASSWORD EXPIRE ..." appears many times,
+		// only the last declaration takes effect.
+	Loop:
+		for i := length - 1; i >= 0; i-- {
+			switch PasswordOrLockOptions[i].Type {
+			case ast.PasswordExpire:
+				pLinfo.passwordExpired = "Y"
+				break Loop
+			case ast.PasswordExpireDefault:
+				pLinfo.passwordLifetime = nil
+				break Loop
+			case ast.PasswordExpireNever:
+				pLinfo.passwordLifetime = 0
+				break Loop
+			case ast.PasswordExpireInterval:
+				if PasswordOrLockOptions[i].Count == 0 || PasswordOrLockOptions[i].Count > math.MaxUint16 {
+					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", PasswordOrLockOptions[i].Count))
+				}
+				pLinfo.passwordLifetime = PasswordOrLockOptions[i].Count
+				break Loop
+			}
+		}
+	}
 	for _, option := range PasswordOrLockOptions {
 		switch option.Type {
-		case ast.Lock:
-			pLinfo.lockAccount = "Y"
-
-		case ast.Unlock:
-			pLinfo.lockAccount = "N"
-
 		case ast.PasswordHistory:
 			pLinfo.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
 			pLinfo.passwordHistoryFlag = true
-
 		case ast.PasswordHistoryDefault:
 			pLinfo.passwordHistory = notSpecified
 			pLinfo.passwordHistoryFlag = true
-
 		case ast.PasswordReuseInterval:
 			pLinfo.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
 			pLinfo.passwordReuseIntervalFlag = true
-
 		case ast.PasswordReuseDefault:
 			pLinfo.passwordReuseInterval = notSpecified
 			pLinfo.passwordReuseIntervalFlag = true
 		}
 	}
+	return nil
 }
 
 func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	return authPlugin == mysql.AuthNativePassword ||
-		authPlugin == mysql.AuthTiDBSM3Password ||
-		authPlugin == mysql.AuthCachingSha2Password
+	return mysql.IsAuthPluginClearText(authPlugin)
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
@@ -904,12 +928,22 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-	passwdlockinfo := &passwordLockInfo{lockAccount: "N", passwordHistory: notSpecified,
-		passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
-		passwordReuseIntervalFlag: false}
-	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	passwdlockinfo := &passwordLockInfo{
+		lockAccount:               "N",
+		passwordExpired:           "N",
+		passwordLifetime:          nil,
+		passwordHistory:           notSpecified,
+		passwordReuseInterval:     notSpecified,
+		passwordHistoryFlag:       false,
+		passwordReuseIntervalFlag: false,
+	}
+	err = passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	if err != nil {
+		return err
+	}
 	if s.IsCreateRole {
 		passwdlockinfo.lockAccount = "Y"
+		passwdlockinfo.passwordExpired = "Y"
 	}
 
 	var userAttributes any = nil
@@ -934,8 +968,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -946,6 +980,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	for _, spec := range s.Specs {
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(spec.User.Username) == 0 && passwdlockinfo.passwordExpired == "Y" {
+			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
@@ -1006,7 +1043,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer)
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer, passwdlockinfo.passwordExpired, passwdlockinfo.passwordLifetime)
 		// add Password_reuse_time value.
 		if passwdlockinfo.passwordReuseInterval != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
@@ -1324,6 +1361,14 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
+	disableSandBoxMode := false
+	var err error
+	if e.ctx.InSandBoxMode() {
+		if err = e.checkSandboxMode(s.Specs); err != nil {
+			return err
+		}
+		disableSandBoxMode = true
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
@@ -1340,11 +1385,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
-	passwdlockinfo :=
-		&passwordLockInfo{lockAccount: "", passwordHistory: notSpecified,
-			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
-			passwordReuseIntervalFlag: false}
-	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	passwdlockinfo := &passwordLockInfo{
+		lockAccount:               "",
+		passwordExpired:           "",
+		passwordLifetime:          notSpecified,
+		passwordHistory:           notSpecified,
+		passwordReuseInterval:     notSpecified,
+		passwordHistoryFlag:       false,
+		passwordReuseIntervalFlag: false,
+	}
+	err = passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	if err != nil {
+		return err
+	}
 
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
@@ -1425,7 +1478,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if err != nil {
 			return err
 		}
-
 		if !exists {
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
@@ -1443,24 +1495,23 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
-		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
+		if err != nil {
 			return err
-		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+		}
+		if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
 
 		type alterField struct {
 			expr  string
-			value string
+			value any
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
+			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
-				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
-				if err != nil {
-					return err
-				}
-				spec.AuthOpt.AuthPlugin = curAuthplugin
+				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1491,10 +1542,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			fields = append(fields,
-				alterField{"authentication_string=%?", pwd},
-				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
-			)
+			fields = append(fields, alterField{"authentication_string=%?", pwd})
+			if spec.AuthOpt.AuthPlugin != "" {
+				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
+			}
+			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
+				if passwdlockinfo.passwordExpired == "" {
+					passwdlockinfo.passwordExpired = "N"
+				}
+			}
 		}
 
 		if len(passwdlockinfo.lockAccount) != 0 {
@@ -1515,6 +1571,16 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			} else {
 				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(passwdlockinfo.passwordReuseInterval, 10)})
 			}
+		}
+
+		if len(passwdlockinfo.passwordExpired) != 0 {
+			if len(spec.User.Username) == 0 && passwdlockinfo.passwordExpired == "Y" {
+				return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
+			}
+			fields = append(fields, alterField{"password_expired=%?", passwdlockinfo.passwordExpired})
+		}
+		if passwdlockinfo.passwordLifetime != notSpecified {
+			fields = append(fields, alterField{"password_lifetime=%?", passwdlockinfo.passwordLifetime})
 		}
 
 		if s.CommentOrAttributeOption != nil {
@@ -1591,7 +1657,27 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege(); err != nil {
+		return err
+	}
+	if disableSandBoxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
+}
+
+func (e *SimpleExec) checkSandboxMode(specs []*ast.UserSpec) error {
+	for _, spec := range specs {
+		if spec.AuthOpt == nil {
+			continue
+		}
+		if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
+			if spec.User.CurrentUser || e.ctx.GetSessionVars().User.Username == spec.User.Username {
+				return nil
+			}
+		}
+	}
+	return errMustChangePassword.GenWithStackByArgs()
 }
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
@@ -1992,15 +2078,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return rows > 0, err
 }
 
-func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
-	pm := privilege.GetPrivilegeManager(e.ctx)
-	authplugin, err := pm.GetAuthPlugin(name, host)
-	if err != nil {
-		return "", err
-	}
-	return authplugin, nil
-}
-
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
@@ -2023,6 +2100,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	var u, h string
+	disableSandboxMode := false
 	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
@@ -2045,8 +2123,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if !exists {
 		return errors.Trace(ErrPasswordNoMatch)
 	}
+	if e.ctx.InSandBoxMode() {
+		if s.User == nil || s.User.CurrentUser ||
+			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
+			disableSandboxMode = true
+		}
+	}
 
-	authplugin, err := e.userAuthPlugin(u, h)
+	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}
@@ -2082,7 +2166,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	// update mysql.user
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -2090,7 +2174,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	if disableSandboxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {

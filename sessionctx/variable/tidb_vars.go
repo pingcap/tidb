@@ -1182,6 +1182,7 @@ var (
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled               = atomic.NewBool(false)
 )
 
 var (
