@@ -242,10 +242,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	uuid := d.GetID()
 	instanceLease := ddl.InstanceLease
 	// test no backfill job
-	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, true, []int64{jobID}, instanceLease)
+	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID - 1, jobID + 1}, instanceLease)
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
-	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, true, []int64{jobID}, uuid, instanceLease)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID, uuid, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout").Error())
 	require.Nil(t, bJobs)
 	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
@@ -268,13 +268,13 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID     eleID2    ""
 	require.NoError(t, err)
 	// test get some backfill jobs
-	bJobs, err = ddl.GetBackfillJobsForOneEle(se, 1, true, []int64{jobID}, instanceLease)
+	bJobs, err = ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID - 1, jobID + 1}, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
 	require.Equal(t, bjTestCases[0], bJobs[0])
 	previousTime, err := ddl.GetOracleTime(se.GetStore())
 	require.NoError(t, err)
-	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, true, []int64{jobID}, uuid, instanceLease)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID, uuid, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
 	bjRet := bjTestCases[0]

@@ -626,7 +626,7 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return bytes.Equal(v, []byte(DDLTableVersion2)), nil
+	return bytes.Compare(v, []byte(DDLTableVersion2)) >= 0, nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

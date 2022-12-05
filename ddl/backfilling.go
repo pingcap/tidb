@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -64,25 +63,6 @@ const (
 	// InstanceLease is the instance lease.
 	InstanceLease = 1 * time.Minute
 )
-
-// enableDistReorg means whether to enable dist reorg. The default is enable.
-// TODO: control the behavior
-var enableDistReorg = atomicutil.NewBool(false)
-
-// DistReorgEnable enables dist reorg. It exports for testing.
-func DistReorgEnable() {
-	enableDistReorg.Store(true)
-}
-
-// DistReorgDisable disables dist reorg. It exports for testing.
-func DistReorgDisable() {
-	enableDistReorg.Store(false)
-}
-
-// IsDistReorgEnable indicates whether dist reorg enabled. It exports for testing.
-func IsDistReorgEnable() bool {
-	return enableDistReorg.Load()
-}
 
 // BackfillJob is for a tidb_ddl_backfill table's record.
 type BackfillJob struct {

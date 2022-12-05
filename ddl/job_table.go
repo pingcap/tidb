@@ -530,58 +530,46 @@ func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
 }
 
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
-func GetBackfillJobsForOneEle(sess *session, batch int, isInclude bool, jobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
+func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
 	currTime, err := GetOracleTime(sess.GetStore())
 	if err != nil {
 		return nil, err
 	}
-	jobInfo := ""
-	symbol := "="
-	if !isInclude {
-		symbol = "!="
-	}
-	for _, id := range jobIDs {
-		jobInfo += fmt.Sprintf(" and job_id %s %d", symbol, id)
+	excludeJobs := ""
+	for _, id := range excludedJobIDs {
+		excludeJobs += fmt.Sprintf(" and job_id != %d", id)
 	}
 
-	jobs, err := GetBackfillJobs(sess, BackfillTable,
-		fmt.Sprintf("exec_ID = '' or exec_lease < '%v' %s order by job_id limit %d", currTime.Add(-lease), jobInfo, batch), "get_backfill_job")
-	if err != nil || len(jobs) == 0 {
+	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by job_id limit %d",
+		currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
+	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
 	validLen := 1
-	firstJobID, firstEleID := jobs[0].JobID, jobs[0].EleID
-	for i := 1; i < len(jobs); i++ {
-		if jobs[i].JobID != firstJobID || jobs[i].EleID != firstEleID {
+	firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
+	for i := 1; i < len(bJobs); i++ {
+		if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
 			break
 		}
 		validLen++
 	}
 
-	return jobs[:validLen], nil
+	return bJobs[:validLen], nil
 }
 
 // GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,
 // and update these jobs with instance ID and lease.
-func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, isInclude bool, jobIDs []int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
+func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
 	currTime, err := GetOracleTime(sess.GetStore())
 	if err != nil {
 		return nil, err
-	}
-	jobInfo := ""
-	symbol := "="
-	if !isInclude {
-		symbol = "!="
-	}
-	for _, id := range jobIDs {
-		jobInfo += fmt.Sprintf("and job_id %s %d", symbol, id)
 	}
 
 	var validLen int
 	var bJobs []*BackfillJob
 	err = runInTxn(NewSession(sess), func(se *session) error {
-		bJobs, err = GetBackfillJobs(sess, BackfillTable,
-			fmt.Sprintf("exec_ID = '' or exec_lease < '%v' %s order by job_id limit %d", currTime.Add(-lease), jobInfo, batch), "get_mark_backfill_job")
+		bJobs, err = GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and job_id = %d order by job_id limit %d",
+			currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
 		if err != nil {
 			return err
 		}
@@ -590,9 +578,9 @@ func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, isInclude bool, j
 		}
 
 		validLen = 0
-		firstJobID, firstEleID := bJobs[0].JobID, bJobs[0].EleID
+		firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
 		for i := 0; i < len(bJobs); i++ {
-			if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID {
+			if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
 				break
 			}
 			validLen++
