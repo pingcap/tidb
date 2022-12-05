@@ -822,7 +822,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if hasPointGetPath {
 			newPaths := make([]*util.AccessPath, 0)
 			for _, path := range ds.possibleAccessPaths {
-				// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
+				// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path (#39543)
 				if path.StoreType != kv.TiFlash {
 					newPaths = append(newPaths, path)
 				}
