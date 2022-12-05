@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package session_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +29,7 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	se := NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
@@ -49,4 +50,16 @@ func TestSessionRunInTxn(t *testing.T) {
 		return nil
 	}))
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10", "3 30"))
+}
+
+func TestSessionResetTimeZone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.time_zone='UTC'")
+	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Shanghai"))
+	require.NoError(t, se.ResetWithGlobalTimeZone(context.TODO()))
+	tk.MustQuery("select @@time_zone").Check(testkit.Rows("UTC"))
 }
