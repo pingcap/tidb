@@ -2626,15 +2626,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
 	if enableAutoLock {
-		lockStatusChanged, err := verifyAccountAutoLock(s, authUser.Username, authUser.Hostname)
+		err := verifyAccountAutoLock(s, authUser.Username, authUser.Hostname)
 		if err != nil {
 			return err
-		}
-		if lockStatusChanged {
-			err = domain.GetDomain(s).NotifyUpdatePrivilege()
-			if err != nil {
-				return err
-			}
 		}
 	}
 	err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
@@ -2712,23 +2706,24 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	return failedLoginTrackingCommit(s)
 }
 
-func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
+func verifyAccountAutoLock(s *session, user, host string) error {
 	pm := privilege.GetPrivilegeManager(s)
+
 	lockStatusChanged := false
 	var plJson string
 	// Enable the transaction to read the account lock status in the database
 	// to prevent repeated unlocking errors caused by delayed cache updates.
 	err := failedLoginTrackingBegin(s)
 	if err != nil {
-		return lockStatusChanged, err
+		return err
 	}
 	pl, err := getFailedLoginUserAttributes(s, user, host)
 	if err != nil {
 		errRB := failedLoginTrackingRollback(s)
 		if errRB != nil {
-			return lockStatusChanged, errRB
+			return errRB
 		}
-		return lockStatusChanged, err
+		return err
 	}
 	if pl.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
@@ -2736,10 +2731,9 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 		if lockTime == -1 {
 			errRB := failedLoginTrackingRollback(s)
 			if errRB != nil {
-				return lockStatusChanged, errRB
+				return errRB
 			}
-			return lockStatusChanged,
-				privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
+			return privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
@@ -2752,27 +2746,30 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
 			errRB := failedLoginTrackingRollback(s)
 			if errRB != nil {
-				return lockStatusChanged, errRB
+				return errRB
 			}
-			return lockStatusChanged, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
+			return privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
 		}
 	}
 	if plJson != "" {
 		if err = s.passwordLocking(user, host, plJson); err != nil {
 			errRB := failedLoginTrackingRollback(s)
 			if errRB != nil {
-				return lockStatusChanged, errRB
+				return errRB
 			}
-			return lockStatusChanged, err
+			return err
 		} else {
 			err = failedLoginTrackingCommit(s)
 			if err != nil {
-				return lockStatusChanged, err
+				return err
 			}
 			lockStatusChanged = true
 		}
 	}
-	return lockStatusChanged, nil
+	if lockStatusChanged {
+		return domain.GetDomain(s).NotifyUpdatePrivilege()
+	}
+	return nil
 }
 
 func authFailedTracking(s *session, user string, host string) error {
