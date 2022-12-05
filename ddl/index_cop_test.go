@@ -45,7 +45,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		require.NoError(t, err)
 		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, startKey, endKey, txn.StartTS(), 10)
 		require.NoError(t, err)
-		require.True(t, done)
+		require.False(t, done)
 		require.NoError(t, txn.Rollback())
 
 		handles := make([]kv.Handle, 0, len(idxRec))

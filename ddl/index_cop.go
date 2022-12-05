@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -42,11 +43,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// copReadBatchFactor is the factor of batch size of coprocessor read.
-// It multiplies the tidb_ddl_reorg_batch_size to avoid sending too many cop requests for the same handle range.
-const copReadBatchFactor = 10
+// copReadBatchSize is the batch size of coprocessor read.
+// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
+// sending too many cop requests for the same handle range.
+func copReadBatchSize() int {
+	return 10 * int(variable.GetDDLReorgBatchSize())
+}
 
-func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+// copReadChunkPoolSize is the size of chunk pool, which
+// represents the max concurrent ongoing coprocessor requests.
+// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
+func copReadChunkPoolSize() int {
+	return 10 * int(variable.GetDDLReorgWorkerCounter())
+}
+
+func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, *chunk.Chunk, kv.Key, bool, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -55,10 +66,10 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 			if !ok {
 				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed",
 					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
-				return nil, handleRange.endKey, true, nil
+				return nil, nil, handleRange.endKey, true, nil
 			}
 			if rs.err != nil {
-				return nil, handleRange.startKey, false, rs.err
+				return nil, nil, handleRange.startKey, false, rs.err
 			}
 			if rs.done {
 				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
@@ -69,15 +80,15 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 				logutil.BgLogger().Info("[ddl-ingest] task is found in results",
 					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
 				c.results.Delete(handleRange.id)
-				return rs.records, handleRange.endKey, true, nil
+				return rs.records, rs.chunk, handleRange.endKey, true, nil
 			}
-			return rs.records, handleRange.startKey, false, nil
+			return rs.records, rs.chunk, handleRange.startKey, false, nil
 		case <-ticker.C:
 			logutil.BgLogger().Info("[ddl-ingest] cop-request result channel is empty",
 				zap.Int("id", handleRange.id))
 			if _, found := c.results.Load(handleRange.id); found {
 				c.results.Delete(handleRange.id)
-				return nil, handleRange.endKey, true, nil
+				return nil, nil, handleRange.endKey, true, nil
 			}
 		}
 	}
@@ -95,7 +106,8 @@ type copReqSenderPool struct {
 	senders []*copReqSender
 	wg      sync.WaitGroup
 
-	idxBufPool sync.Pool
+	idxBufPool chan []*indexRecord
+	srcChkPool chan *chunk.Chunk
 }
 
 type copReqSender struct {
@@ -108,7 +120,6 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
-	srcChk := renewChunk(nil, p.copCtx.fieldTps)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -127,46 +138,40 @@ func (c *copReqSender) run() {
 		var done bool
 		var total int
 		for !done {
-			idxRec := p.idxBufPool.Get().([]*indexRecord)
-			idxRec = idxRec[:0]
-			srcChk = renewChunk(srcChk, p.copCtx.fieldTps)
+			idxRec, srcChk := p.getIndexRecordsAndChunks()
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
+				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
+				terror.Call(rs.Close)
 				return
 			}
 			total += len(idxRec)
-			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, done: done, total: total}
+			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
 		}
+		terror.Call(rs.Close)
 	}
-}
-
-// renewChunk creates a new chunk when the reorg batch size is changed.
-func renewChunk(oldChk *chunk.Chunk, fts []*types.FieldType) *chunk.Chunk {
-	newSize := variable.GetDDLReorgBatchSize()
-	newCap := int(newSize) * copReadBatchFactor
-	if oldChk == nil || oldChk.Capacity() != newCap {
-		return chunk.NewChunkWithCapacity(fts, newCap)
-	}
-	oldChk.Reset()
-	return oldChk
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
+	poolSize := copReadChunkPoolSize()
+	idxBufPool := make(chan []*indexRecord, poolSize)
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		idxBufPool <- make([]*indexRecord, 0, copReadBatchSize())
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
+	}
 	return &copReqSenderPool{
-		tasksCh:   make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultsCh: make(chan idxRecResult, backfillTaskChanSize),
-		results:   generic.NewSyncMap[int, struct{}](10),
-		ctx:       ctx,
-		copCtx:    copCtx,
-		startTS:   startTS,
-		senders:   make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
-		wg:        sync.WaitGroup{},
-		idxBufPool: sync.Pool{
-			New: func() any {
-				return make([]*indexRecord, 0, int(variable.GetDDLReorgBatchSize())*copReadBatchFactor)
-			},
-		},
+		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
+		results:    generic.NewSyncMap[int, struct{}](10),
+		ctx:        ctx,
+		copCtx:     copCtx,
+		startTS:    startTS,
+		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:         sync.WaitGroup{},
+		idxBufPool: idxBufPool,
+		srcChkPool: srcChkPool,
 	}
 }
 
@@ -201,16 +206,41 @@ func (c *copReqSenderPool) close() {
 	for _, w := range c.senders {
 		w.cancel()
 	}
+	cleanupWg := util.WaitGroupWrapper{}
+	cleanupWg.Run(c.drainResults)
+	// Wait for all cop-req senders to exit.
 	c.wg.Wait()
 	close(c.resultsCh)
+	cleanupWg.Wait()
+	close(c.idxBufPool)
+	close(c.srcChkPool)
 }
 
-// recycleIdxRecords puts the index record slice back to the pool for reuse.
-func (c *copReqSenderPool) recycleIdxRecords(idxRecs []*indexRecord) {
-	if len(idxRecs) == 0 {
+func (c *copReqSenderPool) drainResults() {
+	// Consume the rest results because the writers are inactive anymore.
+	for rs := range c.resultsCh {
+		c.recycleIdxRecordsAndChunk(rs.records, rs.chunk)
+	}
+}
+
+func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
+	ir := <-c.idxBufPool
+	chk := <-c.srcChkPool
+	newCap := copReadBatchSize()
+	if chk.Capacity() != newCap {
+		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
+	}
+	chk.Reset()
+	return ir[:0], chk
+}
+
+// recycleIdxRecordsAndChunk puts the index record slice and the chunk back to the pool for reuse.
+func (c *copReqSenderPool) recycleIdxRecordsAndChunk(idxRecs []*indexRecord, chk *chunk.Chunk) {
+	if idxRecs == nil || chk == nil {
 		return
 	}
-	c.idxBufPool.Put(idxRecs[:0])
+	c.idxBufPool <- idxRecs
+	c.srcChkPool <- chk
 }
 
 // copContext contains the information that is needed when building a coprocessor request.
@@ -410,8 +440,7 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
 		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
-	done := chk.NumRows() < chk.Capacity()
-	return buf, done, nil
+	return buf, false, nil
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
@@ -442,7 +471,8 @@ func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.C
 	datumBuf := make([]types.Datum, 0, len(offsets))
 	for _, offset := range offsets {
 		c := expCols[offset]
-		datumBuf = append(datumBuf, row.GetDatum(offset, c.GetType()))
+		rowDt := row.GetDatum(offset, c.GetType())
+		datumBuf = append(datumBuf, rowDt)
 	}
 	return datumBuf
 }
@@ -463,6 +493,7 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 type idxRecResult struct {
 	id      int
 	records []*indexRecord
+	chunk   *chunk.Chunk
 	err     error
 	done    bool
 	total   int

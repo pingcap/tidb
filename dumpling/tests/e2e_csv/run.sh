@@ -24,6 +24,7 @@ run_sql_file "$DUMPLING_TEST_DIR/data/e2e_csv.t.sql"
 
 run() {
     echo "*** running subtest case ***"
+    echo "compress is $compress"
     echo "escape_backslash is $escape_backslash"
     echo "csv_delimiter is $csv_delimiter"
     echo "csv_separator is $csv_separator"
@@ -36,7 +37,11 @@ run() {
     # dumping
     export DUMPLING_TEST_PORT=3306
     export DUMPLING_TEST_DATABASE=$DB_NAME
-    run_dumpling --filetype="csv" --escape-backslash=$escape_backslash --csv-delimiter="$csv_delimiter" --csv-separator="$csv_separator"
+    rm -rf "$DUMPLING_OUTPUT_DIR"
+    if [ $compress = "space" ]; then
+      compress=""
+    fi
+    run_dumpling --filetype="csv" --escape-backslash=$escape_backslash --csv-delimiter="$csv_delimiter" --csv-separator="$csv_separator" --compress="$compress"
 
     # construct lightning configuration
     mkdir -p $DUMPLING_TEST_DIR/conf
@@ -67,18 +72,22 @@ run() {
 escape_backslash_arr="true false"
 csv_delimiter_arr="\" '"
 csv_separator_arr=', a aa |*|'
+compress_arr='space gzip snappy zstd'
 
-for escape_backslash in $escape_backslash_arr
+for compress in $compress_arr
 do
-  for csv_separator in $csv_separator_arr
+  for escape_backslash in $escape_backslash_arr
   do
-    for csv_delimiter in $csv_delimiter_arr
+    for csv_separator in $csv_separator_arr
     do
-      run
+      for csv_delimiter in $csv_delimiter_arr
+      do
+        run
+      done
+      if [ "$escape_backslash" = "true" ]; then
+        csv_delimiter=""
+        run
+      fi
     done
-    if [ "$escape_backslash" = "true" ]; then
-      csv_delimiter=""
-      run
-    fi
   done
 done
