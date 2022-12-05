@@ -92,25 +92,27 @@ type baseRecord struct {
 	hostIPNet *net.IPNet
 }
 
-// UserAttributesInfo is user UserAttributes.PasswordLocking in privilege cache.
+// MetadataInfo is the User_attributes->>"$.metadata".
+type MetadataInfo struct {
+	Email string
+}
+
+// UserAttributesInfo is the 'User_attributes' in privilege cache.
 type UserAttributesInfo struct {
-	FailedLoginAttempts   int64
-	PasswordLockTime      int64
-	AutoAccountLocked     bool
-	FailedLoginCount      int64
-	AutoLockedLastChanged int64
+	MetadataInfo
+	PasswordLocking
 }
 
 // UserRecord is used to represent a user record in privilege cache.
 type UserRecord struct {
 	baseRecord
 	UserAttributesInfo
+
 	AuthenticationString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
 	AuthTokenIssuer      string
-	Email                string
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
@@ -687,11 +689,11 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				value.Email = email
 			}
 			passwordLocking := PasswordLocking{}
-			if err := passwordLocking.PasswordLockingParser(bj); err != nil {
+			if err := passwordLocking.ParseJSON(bj); err != nil {
 				return err
 			}
 			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
-			value.PasswordLockTime = passwordLocking.PasswordLockTimeDays
+			value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
 			value.FailedLoginCount = passwordLocking.FailedLoginCount
 			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
 			value.AutoAccountLocked = passwordLocking.AutoAccountLocked

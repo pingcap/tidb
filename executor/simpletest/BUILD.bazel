@@ -12,6 +12,7 @@ go_test(
     shard_count = 30,
     deps = [
         "//config",
+        "//domain",
         "//executor",
         "//parser/auth",
         "//parser/model",

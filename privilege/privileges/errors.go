@@ -38,8 +38,8 @@ var (
 )
 
 // ErrUserPasswordFailed is used to indicate that ConnectionVerification fails due to wrong password.
-// The field `s` is used to include the wrong message.
 type ErrUserPasswordFailed struct {
+	// Err is used to include the wrong message.
 	Err error
 }
 

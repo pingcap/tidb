@@ -90,6 +90,20 @@ type SimpleExec struct {
 	staleTxnStartTS uint64
 }
 
+type passwordOrLockOptionsInfo struct {
+	lockAccount                 string
+	passwordExpired             string
+	passwordLifetime            any
+	passwordHistory             int64
+	passwordHistoryChange       bool
+	passwordReuseInterval       int64
+	passwordReuseIntervalChange bool
+	failedLoginAttempts         int64
+	passwordLockTime            int64
+	failedLoginAttemptsChange   bool
+	passwordLockTimeChange      bool
+}
+
 type passwordReuseInfo struct {
 	passwordHistory       int64
 	passwordReuseInterval int64
@@ -825,37 +839,6 @@ func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
 
-func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
-	if authOpt == nil || !authOpt.ByAuthString {
-		return false
-	}
-	return mysql.IsAuthPluginClearText(authPlugin)
-}
-
-func (e *SimpleExec) isValidatePasswordEnabled() bool {
-	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
-	if err != nil {
-		return false
-	}
-	return variable.TiDBOptOn(validatePwdEnable)
-}
-
-type passwordOrLockOptionsInfo struct {
-	lockAccount                 string
-	passwordHistory             int64
-	passwordHistoryChange       bool
-	passwordReuseInterval       int64
-	passwordReuseIntervalChange bool
-	failedLoginAttempts         int64
-	passwordLockTime            int64
-	failedLoginAttemptsChange   bool
-	passwordLockTimeChange      bool
-	passwordExpired             string
-	passwordLifetime            any
-	passwordHistoryFlag         bool
-	passwordReuseIntervalFlag   bool
-}
-
 type alterUserPasswordLocking struct {
 	failedLoginAttempts            int64
 	passwordLockTime               int64
@@ -1015,13 +998,13 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	return alterUserInfo, nil
 }
 
-// deleteFailedLogin implements delete password_locking json string when failedLoginAttempts and passwordLockTime both 0.
+// deleteFailedLogin deletes "$.Password_locking" in "User_attributes" when failedLoginAttempts and passwordLockTime both 0.
 func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
 	// No password_locking information.
 	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
 		return nil
 	}
-	// password_locking information is still useful.
+	// Password_locking information is still in used.
 	if alterUser.failedLoginAttempts != 0 || alterUser.passwordLockTime != 0 {
 		return nil
 	}
@@ -1033,10 +1016,22 @@ func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, nam
 	}
 	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, name)
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return err
+	return err
+}
+
+func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
+	if authOpt == nil || !authOpt.ByAuthString {
+		return false
 	}
-	return nil
+	return mysql.IsAuthPluginClearText(authPlugin)
+}
+
+func (e *SimpleExec) isValidatePasswordEnabled() bool {
+	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return false
+	}
+	return variable.TiDBOptOn(validatePwdEnable)
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
@@ -1072,8 +1067,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwordLifetime:            nil,
 		passwordHistory:             notSpecified,
 		passwordReuseInterval:       notSpecified,
-		passwordHistoryFlag:         false,
-		passwordReuseIntervalFlag:   false,
 		failedLoginAttemptsChange:   false,
 		passwordLockTimeChange:      false,
 		passwordHistoryChange:       false,
@@ -1542,8 +1535,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		passwordLifetime:            notSpecified,
 		passwordHistory:             notSpecified,
 		passwordReuseInterval:       notSpecified,
-		passwordHistoryFlag:         false,
-		passwordReuseIntervalFlag:   false,
 		failedLoginAttemptsChange:   false,
 		passwordLockTimeChange:      false,
 		passwordHistoryChange:       false,
@@ -1731,7 +1722,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if err != nil {
 			return err
 		}
-		AlterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, plOptions.lockAccount)
+		alterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, plOptions.lockAccount)
 
 		if len(plOptions.passwordExpired) != 0 {
 			if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
@@ -1752,8 +1743,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
 		}
-		if AlterPasswordLocking != "" {
-			newAttributes = append(newAttributes, AlterPasswordLocking)
+		if alterPasswordLocking != "" {
+			newAttributes = append(newAttributes, alterPasswordLocking)
 		}
 		if len(newAttributes) > 0 {
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
