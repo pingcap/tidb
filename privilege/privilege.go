@@ -63,13 +63,6 @@ type Manager interface {
 	// IsAccountAutoLockEnabled verifies whether the account has enabled Failed-Login Tracking and Temporary Account Locking.
 	IsAccountAutoLockEnabled(user string, host string) bool
 
-	// BuildPasswordLockingJSON builds PasswordLocking JSON string.
-	BuildPasswordLockingJSON(failedLoginAttempts int64,
-		passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string
-
-	// BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
-	BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string
-
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
 	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) error
