@@ -783,7 +783,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInnodbIndexCorrupt:                                    mysql.Message("Index corrupt: %s", nil),
 	ErrInvalidYearColumnLength:                               mysql.Message("Supports only YEAR or YEAR(4) column", nil),
 	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements", nil),
-	ErrMustChangePassword:                                    mysql.Message("You must SET PASSWORD before executing this statement", nil),
+	ErrMustChangePassword:                                    mysql.Message("You must reset your password using ALTER USER statement before executing this statement", nil),
 	ErrFkNoIndexChild:                                        mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the foreign table '%s'", nil),
 	ErrForeignKeyNoIndexInParent:                             mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'", nil),
 	ErrFkFailAddSystem:                                       mysql.Message("Failed to add the foreign key constraint '%s' to system tables", nil),
@@ -840,6 +840,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrForeignKeyCascadeDepthExceeded:                        mysql.Message("Foreign key cascade delete/update exceeds max depth of %v.", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
+	ErrPasswordExpireAnonymousUser:                           mysql.Message("The password for anonymous user cannot be expired.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
 	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
@@ -1033,6 +1034,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnsupportedColumnInTTLConfig:  mysql.Message("Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP", nil),
 	ErrTTLColumnCannotDrop:           mysql.Message("Cannot drop column '%-.192s': needed in TTL config", nil),
 	ErrSetTTLEnableForNonTTLTable:    mysql.Message("Cannot set TTL_ENABLE on a table without TTL config", nil),
+	ErrTempTableNotAllowedWithTTL:    mysql.Message("Set TTL for temporary table is not allowed", nil),
+	ErrUnsupportedTTLReferencedByFK:  mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1079,6 +1082,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionStatsMissing:       mysql.Message("Build global-level stats failed due to missing partition-level stats: %s", nil),
 	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
+	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
