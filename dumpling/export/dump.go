@@ -95,7 +95,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	}()
 
 	err = adjustConfig(conf,
-		registerTLSConfig,
+		buildTLSConfig,
 		validateSpecifiedSQL,
 		adjustFileFormat)
 	if err != nil {
@@ -1263,9 +1263,6 @@ func (d *Dumper) Close() error {
 	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
-	}
-	if d.conf.Security.DriveTLSName != "" {
-		mysql.DeregisterTLSConfig(d.conf.Security.DriveTLSName)
 	}
 	return nil
 }
