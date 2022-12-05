@@ -608,16 +608,7 @@ func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleK
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
-	validLen := 1
-	firstJobID, firstEleID := bJobs[0].JobID, bJobs[0].EleID
-	for i := 1; i < len(bJobs); i++ {
-		if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID {
-			break
-		}
-		validLen++
-	}
-
-	return bJobs[:validLen], nil
+	return bJobs, nil
 }
 
 // GetBackfillJobCount gets the number of rows in the tblName table according to condition.

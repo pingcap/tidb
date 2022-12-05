@@ -2834,13 +2834,6 @@ func InitDDLJobTables(store kv.Storage, targetVer string) error {
 			logutil.BgLogger().Info("init DDL job tables",
 				zap.Int64("tbl id", tbl.id), zap.String("tbl version", tableVer), zap.String("target tbl version", targetVer))
 			tableIDs = append(tableIDs, tbl.id)
-			id, err := t.GetGlobalID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
-			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
