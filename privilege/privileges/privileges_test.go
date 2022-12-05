@@ -3096,79 +3096,82 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 func TestFailedLoginTracking(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	rootk := testkit.NewTestKit(t, store)
 	createAndCheck(tk, "CREATE USER 'u6'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u6")
 	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 60 PASSWORD_LOCK_TIME 3;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 60, \"password_lock_time_days\": 3}}", "u5")
-	failedLoginTrackingCase1(t, tk)
-	failedLoginTrackingCase2(t, tk)
-	failedLoginTrackingCase3(t, tk)
-	failedLoginTrackingCase4(t, tk)
-	failedLoginTrackingCase5(t, tk)
-	failedLoginTrackingCase6(t, tk)
-	failedLoginTrackingCase7(t, tk)
+	failedLoginTrackingCase1(t, tk, rootk)
+	failedLoginTrackingCase2(t, tk, rootk)
+	failedLoginTrackingCase3(t, tk, rootk)
+	failedLoginTrackingCase4(t, tk, rootk)
+	failedLoginTrackingCase5(t, tk, rootk)
+	failedLoginTrackingCase6(t, tk, rootk)
+	failedLoginTrackingCase7(t, tk, rootk)
 }
 
-func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit) {
+func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 1, "N")
+	checkAuthUser(t, rootk, "u6", 1, "N")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
-	checkAuthUser(t, tk, "u6", 0, "N")
+	checkAuthUser(t, rootk, "u6", 0, "N")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 }
 
-func failedLoginTrackingCase2(t *testing.T, tk *testkit.TestKit) {
+func failedLoginTrackingCase2(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 1, "N")
+	checkAuthUser(t, rootk, "u6", 1, "N")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 2, "N")
+	checkAuthUser(t, rootk, "u6", 2, "N")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 3, "Y")
+	checkAuthUser(t, rootk, "u6", 3, "Y")
 }
 
-func failedLoginTrackingCase3(t *testing.T, tk *testkit.TestKit) {
-	changeAutoLockedLastChanged(tk)
-	loadUser(t, tk, 1)
-	checkAuthUser(t, tk, "u6", 3, "Y")
+func failedLoginTrackingCase3(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
+	changeAutoLockedLastChanged(rootk)
+	loadUser(t, tk, 1, rootk)
+	checkAuthUser(t, rootk, "u6", 3, "Y")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
-	checkAuthUser(t, tk, "u6", 0, "N")
+	checkAuthUser(t, rootk, "u6", 0, "N")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 }
 
-func failedLoginTrackingCase4(t *testing.T, tk *testkit.TestKit) {
-	failedLoginTrackingCase2(t, tk)
-	alterAndCheck(t, tk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
-	loadUser(t, tk, 2)
-	checkAuthUser(t, tk, "u6", 0, "N")
+func failedLoginTrackingCase4(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
+	failedLoginTrackingCase2(t, tk, rootk)
+	alterAndCheck(t, rootk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
+	loadUser(t, tk, 2, rootk)
+	checkAuthUser(t, rootk, "u6", 0, "N")
 }
 
-func failedLoginTrackingCase5(t *testing.T, tk *testkit.TestKit) {
+func failedLoginTrackingCase5(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 1, "N")
-	alterAndCheck(t, tk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
-	checkAuthUser(t, tk, "u6", 0, "N")
+	checkAuthUser(t, rootk, "u6", 1, "N")
+	alterAndCheck(t, rootk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
+	checkAuthUser(t, rootk, "u6", 0, "N")
 }
 
-func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit) {
-	failedLoginTrackingCase2(t, tk)
-	changeAutoLockedLastChanged(tk)
-	loadUser(t, tk, 3)
-	checkAuthUser(t, tk, "u6", 3, "Y")
+func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
+	failedLoginTrackingCase2(t, tk, rootk)
+	changeAutoLockedLastChanged(rootk)
+	loadUser(t, tk, 3, rootk)
+	checkAuthUser(t, rootk, "u6", 3, "Y")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u6", 1, "N")
+	checkAuthUser(t, rootk, "u6", 1, "N")
 }
 
-func failedLoginTrackingCase7(t *testing.T, tk *testkit.TestKit) {
-	createAndCheck(tk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3;",
+func failedLoginTrackingCase7(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
+	createAndCheck(rootk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u1")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u1", 0, "")
-	alterAndCheck(t, tk, "ALTER USER 'u1'@'localhost' PASSWORD_LOCK_TIME 6;", "u1", 3, 6, 0)
+	checkAuthUser(t, rootk, "u1", 0, "")
+	alterAndCheck(t, rootk, "ALTER USER 'u1'@'localhost' PASSWORD_LOCK_TIME 6;", "u1", 3, 6, 0)
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u1", 1, "N")
+	checkAuthUser(t, rootk, "u1", 1, "N")
 }
 
-func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64) {
+func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64, rootk *testkit.TestKit) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u5", Hostname: "localhost"}, encodePassword("password"), nil))
-	checkAuthUser(t, tk, "u5", useCount, "N")
+	checkAuthUser(t, rootk, "u5", useCount, "N")
 }
 
 func changeAutoLockedLastChanged(tk *testkit.TestKit) {
@@ -3235,6 +3238,7 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 	} else {
 		require.NoError(t, err)
 	}
+	tk.MustExec("rollback")
 }
 
 func selectSQL(user string) string {
