@@ -925,7 +925,7 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 	// Record only when at least failedLoginAttempts and passwordLockTime is not 0.
 	if (info.failedLoginAttemptsChange && info.failedLoginAttempts != 0) || (info.passwordLockTimeChange && info.passwordLockTime != 0) {
-		return fmt.Sprintf("{\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}}",
+		return fmt.Sprintf("\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}",
 			info.failedLoginAttempts, info.passwordLockTime)
 	}
 	return ""
@@ -933,7 +933,7 @@ func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 
 func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string) string {
 	// alterUserPasswordLocking is the user's actual configuration.
-	passwordLockingArray := []string{}
+	var passwordLockingArray []string
 	if lockAccount == "N" && (info.failedLoginAttempts != 0 || info.passwordLockTime != 0) {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount))
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
@@ -949,7 +949,7 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 	return ""
 }
 
-func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
+func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
 	alterUserInfo := &alterUserPasswordLocking{
 		failedLoginAttempts:            0,
 		passwordLockTime:               0,
@@ -1011,15 +1011,11 @@ func readUserAttributes(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 			alterUserInfo.passwordLockTimeChangeNotFound = true
 		}
 	}
-	if len(rows[0].GetString(2)) > 0 {
-		alterUserInfo.commentIsNull = false
-	} else {
-		alterUserInfo.commentIsNull = true
-	}
+	alterUserInfo.commentIsNull = len(rows[0].GetString(2)) == 0
 	return alterUserInfo, nil
 }
 
-// deleteFailedLogin Implement delete password_locking json string when failedLoginAttempts and passwordLockTime both 0.
+// deleteFailedLogin implements delete password_locking json string when failedLoginAttempts and passwordLockTime both 0.
 func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
 	// No password_locking information.
 	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
@@ -1093,24 +1089,24 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		plInfo.passwordExpired = "Y"
 	}
 
-	var userAttributes any = nil
+	var (
+		userAttributesStr any = nil
+		userAttributes    []string
+	)
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
-		// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
-		// When inserting the attempts into json, an error occurs. This requires special handling.
-		if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
-			userAttributes = fmt.Sprintf("{%s,%s}", userAttributes, PasswordLocking)
-		}
-	} else {
-		// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
-		// When inserting the attempts into json, an error occurs. This requires special handling.
-		if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
-			userAttributes = PasswordLocking
-		}
+	}
+	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
+	// When inserting the attempts into json, an error occurs. This requires special handling.
+	if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
+		userAttributes = append(userAttributes, PasswordLocking)
+	}
+	if len(userAttributes) > 0 {
+		userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 	}
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
@@ -1197,7 +1193,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, plInfo.lockAccount, recordTokenIssuer, plInfo.passwordExpired, plInfo.passwordLifetime)
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plInfo.lockAccount, recordTokenIssuer, plInfo.passwordExpired, plInfo.passwordLifetime)
 		// add Password_reuse_time value.
 		if plInfo.passwordReuseIntervalChange && (plInfo.passwordReuseInterval != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plInfo.passwordReuseInterval)
@@ -1238,6 +1234,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 	if err != nil {
+		logutil.BgLogger().Warn("Fail to create user", zap.String("sql", sql.String()))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -1730,7 +1727,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-		alterUserPassword, err := readUserAttributes(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
+		alterUserPassword, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
 		if err != nil {
 			return err
 		}
@@ -1746,25 +1743,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
 		}
 
+		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
 			alterUserPassword.commentIsNull = false
-			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				newAttributesStr = fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value))
 			} else {
-				newAttributesStr = fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
-			if AlterPasswordLocking != "" {
-				newAttributesStr = fmt.Sprintf("{%s,%s}", newAttributesStr, AlterPasswordLocking)
-			} else {
-				newAttributesStr = fmt.Sprintf("{%s}", newAttributesStr)
-			}
+		}
+		if AlterPasswordLocking != "" {
+			newAttributes = append(newAttributes, AlterPasswordLocking)
+		}
+		if len(newAttributes) > 0 {
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		} else {
-			if AlterPasswordLocking != "" {
-				newAttributesStr := fmt.Sprintf("{%s}", AlterPasswordLocking)
-				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-			}
 		}
 
 		switch authTokenOptionHandler {

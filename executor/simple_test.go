@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
@@ -297,4 +298,51 @@ func TestPasswordExpiration(t *testing.T) {
 		tk.MustExec("ALTER USER 'u1'@'localhost' PASSWORD EXPIRE")
 		tk.MustQuery("SELECT password_expired FROM mysql.user WHERE user = 'u1'").Check(testkit.Rows("Y"))
 	}
+}
+
+// Test cases that related to PASSWORD VALIDATION, PASSWORD EXPIRATION, PASSWORD REUSE POLICY, and PASSWORD FAILED-LOGIN TRACK.
+func TestPasswordManagement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	defer tk.MustExec("SET GLOBAL validate_password.enable = 0")
+
+	// PASSWORD VALIDATION can work with user-specified PASSWORD REUSE POLICY.
+	tk.MustExec("CREATE USER u1 IDENTIFIED BY '!Abc1234' password history 1")
+	tk.MustGetErrCode("ALTER USER u1 IDENTIFIED BY '!Abc1234'", errno.ErrExistsInHistoryPassword)
+	tk.MustGetErrCode("ALTER USER u1 IDENTIFIED BY '!abc1234'", errno.ErrNotValidPassword)
+
+	// PASSWORD VALIDATION can work with global PASSWORD REUSE POLICY.
+	tk.MustExec("SET GLOBAL password_history = 1")
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("CREATE USER u1 IDENTIFIED BY '!Abc1234'")
+	tk.MustGetErrCode("ALTER USER u1 IDENTIFIED BY '!Abc1234'", errno.ErrExistsInHistoryPassword)
+	tk.MustGetErrCode("ALTER USER u1 IDENTIFIED BY '!abc1234'", errno.ErrNotValidPassword)
+
+	// PASSWORD EXPIRATION can work with ACCOUNT LOCK.
+	// PASSWORD EXPIRE NEVER and ACCOUNT UNLOCK take effect.
+	tk.MustExec(`ALTER USER u1 ACCOUNT LOCK PASSWORD EXPIRE NEVER PASSWORD EXPIRE NEVER ACCOUNT UNLOCK ACCOUNT LOCK ACCOUNT LOCK ACCOUNT UNLOCK;`)
+	tk.MustQuery(`SELECT password_expired, password_lifetime, account_locked FROM mysql.user WHERE USER='u1';`).Check(
+		testkit.Rows("N 0 N"))
+
+	// PASSWORD EXPIRATION can work with PASSWORD REUSE POLICY
+	tk.MustExec(`create user u2 identified by '!Abc1234' password expire password reuse interval default password expire never password
+		reuse interval 3 day password history 5 password history default password expire default`)
+	tk.MustQuery(`select password_expired, password_lifetime, password_reuse_history, password_reuse_time from mysql.user where user = 'u2'`).Check(
+		testkit.Rows("N <nil> <nil> 3"))
+	tk.MustExec(`alter user u2 password expire default password reuse interval 3 day password history default
+		password expire never password expire interval 5 day password reuse interval default password expire password history 5`)
+	tk.MustQuery(`select password_expired, password_lifetime, password_reuse_history, password_reuse_time from mysql.user where user = 'u2'`).Check(
+		testkit.Rows("Y <nil> 5 <nil>"))
+	tk.MustExec(`alter user u2 identified by '!Abc12345'`)
+	tk.MustQuery(`select password_expired, password_lifetime, password_reuse_history, password_reuse_time from mysql.user where user = 'u2'`).Check(
+		testkit.Rows("N <nil> 5 <nil>"))
+
+	// PASSWORD FAILED-LOGIN TRACK can work with USER COMMENT and USER ATTRIBUTE
+	tk.MustExec(`CREATE USER u3 IDENTIFIED BY '!Abc12345' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`)
+	tk.MustQuery(`select user_attributes->>"$.metadata" from mysql.user where user = 'u3'`).Check(testkit.Rows(`{"comment": "Some statements to test create user"}`))
+	tk.MustQuery(`select user_attributes->>"$.Password_locking" from mysql.user where user = 'u3'`).Check(testkit.Rows(`{"failed_login_attempts": 4, "password_lock_time_days": 3}`))
+	tk.MustExec(`ALTER USER u3 FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME unbounded FAILED_LOGIN_ATTEMPTS 5 PASSWORD_LOCK_TIME 5 ATTRIBUTE '{"name": "John", "age": 19}'`)
+	tk.MustQuery(`select user_attributes->>"$.metadata" from mysql.user where user = 'u3'`).Check(testkit.Rows(`{"age": 19, "comment": "Some statements to test create user", "name": "John"}`))
+	tk.MustQuery(`select user_attributes->>"$.Password_locking" from mysql.user where user = 'u3'`).Check(testkit.Rows(`{"failed_login_attempts": 5, "password_lock_time_days": 5}`))
 }
