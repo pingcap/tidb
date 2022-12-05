@@ -113,8 +113,8 @@ func (w *baseWorker) loop() {
 	var err error
 	defer func() {
 		w.Lock()
-		defer w.Unlock()
 		w.toStopped(err)
+		w.Unlock()
 	}()
 	err = w.loopFunc()
 }
