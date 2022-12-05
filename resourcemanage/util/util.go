@@ -27,6 +27,7 @@ type GorotinuePool interface {
 	MaxPASS() uint64
 	Cap() int
 	LongRTT() float64
+	UpdateLongRTT(f func(float64) float64)
 	ShortRTT() uint64
 	GetQueueSize() int64
 	Running() int

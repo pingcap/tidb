@@ -51,6 +51,13 @@ func (b *Gradient2Scheduler) Tune(_ util.Component, p util.GorotinuePool) Comman
 	if p.InFlight() < int64(p.Cap())/2 {
 		return Hold
 	}
+
+	if (p.LongRTT() / float64(p.ShortRTT())) > 2 {
+		p.UpdateLongRTT(func(old float64) float64 {
+			return old * 0.9
+		})
+	}
+
 	gradient := mathutil.Max(0.5, mathutil.Min(1.0, p.LongRTT()/float64(p.ShortRTT())))
 	newLimit := float64(p.Running())*gradient + float64(p.GetQueueSize())
 	newLimit = float64(p.Running())*(1-b.smoothing) + newLimit*b.smoothing

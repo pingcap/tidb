@@ -42,7 +42,7 @@ type Statistic struct {
 	rtStat       window.RollingCounter[uint64]
 	maxPASSCache atomic.Pointer[counterCache]
 	minRtCache   atomic.Pointer[counterCache]
-	longRTT      *mathutil.ExponentialAverageMeasurement
+	longRTT      *mathutil.ExponentialMovingAverage
 	queueSize    atomic.Int64
 	shortRTT     atomic.Uint64
 	// inFlight is from the task create to the task complete.
@@ -61,7 +61,7 @@ func NewStatistic() *Statistic {
 		taskCntStat:     window.NewRollingCounter[uint64](opts),
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),
-		longRTT:         mathutil.NewExponentialAverageMeasurement(100, 10),
+		longRTT:         mathutil.NewExponentialMovingAverage(100, 10),
 	}
 }
 
@@ -162,6 +162,11 @@ func (s *Statistic) InFlight() int64 {
 // LongRTT returns the longRTT.
 func (s *Statistic) LongRTT() float64 {
 	return s.longRTT.Get()
+}
+
+// UpdateLongRTT updates the longRTT.
+func (s *Statistic) UpdateLongRTT(f func(float64) float64) {
+	s.longRTT.Update(f)
 }
 
 // ShortRTT returns the shortRTT.

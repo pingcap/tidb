@@ -118,6 +118,11 @@ func (f *FakeGPool) LongRTT() float64 {
 	return val
 }
 
+// UpdateLongRTT is only for test
+func (f *FakeGPool) UpdateLongRTT(fn func(float64) float64) {
+	f.longRTT[f.index] = fn(f.longRTT[f.index])
+}
+
 // ShortRTT is only for test
 func (f *FakeGPool) ShortRTT() uint64 {
 	val := f.shortRTT[f.index]
