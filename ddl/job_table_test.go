@@ -177,3 +177,68 @@ func check(t *testing.T, record []int64, ids ...int64) {
 		}
 	}
 }
+
+func TestAlwaysChoiceProcessingJob(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	d := dom.DDL()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+
+	ddlJobs := []string{
+		"alter table t add index idx(a)",
+		"alter table t add index idx(b)",
+	}
+
+	hook := &ddl.TestDDLCallback{}
+	var wg util.WaitGroupWrapper
+	wg.Add(1)
+	var once sync.Once
+	var idxa, idxb int64
+	hook.OnGetJobBeforeExported = func(jobType string) {
+		once.Do(func() {
+			var jobs []*model.Job
+			for i, job := range ddlJobs {
+				wg.Run(func() {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					recordSet, _ := tk.Exec(job)
+					if recordSet != nil {
+						require.NoError(t, recordSet.Close())
+					}
+				})
+				for {
+					time.Sleep(time.Millisecond * 100)
+					var err error
+					jobs, err = ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
+					require.NoError(t, err)
+					if len(jobs) == i+1 {
+						break
+					}
+				}
+			}
+			idxa = jobs[0].ID
+			idxb = jobs[1].ID
+			require.Greater(t, idxb, idxa)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("update mysql.tidb_ddl_job set processing = 1 where job_id = ?", idxb)
+			wg.Done()
+		})
+	}
+
+	record := make([]int64, 0, 16)
+	hook.OnGetJobAfterExported = func(jobType string, job *model.Job) {
+		// record the job schedule order
+		record = append(record, job.ID)
+	}
+
+	d.SetHook(hook)
+	wg.Wait()
+
+	check(t, record, idxb, idxa)
+}

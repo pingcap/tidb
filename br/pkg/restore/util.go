@@ -750,3 +750,43 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 	}
 	return validPeers, nil
 }
+
+// in cloud, since iops and bandwidth limitation, write operator in raft is slow, so raft state (logterm, lastlog, commitlog...) are the same among the peers
+// LeaderCandidates select all peers can be select as a leader during the restore
+func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
+	if peers == nil {
+		return nil, errors.Annotatef(berrors.ErrRestoreRegionWithoutPeer,
+			"invalid region range")
+	}
+	candidates := make([]*RecoverRegion, 0, len(peers))
+	// by default, the peers[0] to be assign as a leader, since peers already sorted by leader selection rule
+	leader := peers[0]
+	candidates = append(candidates, leader)
+	for _, peer := range peers[1:] {
+		// qualificated candidate is leader.logterm = candidate.logterm && leader.lastindex = candidate.lastindex && && leader.commitindex = candidate.commitindex
+		if peer.LastLogTerm == leader.LastLogTerm && peer.LastIndex == leader.LastIndex && peer.CommitIndex == leader.CommitIndex {
+			log.Debug("leader candidate", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
+			candidates = append(candidates, peer)
+		}
+	}
+	return candidates, nil
+}
+
+// for region A, has candidate leader x, y, z
+// peer x on store 1 with storeBalanceScore 3
+// peer y on store 3 with storeBalanceScore 2
+// peer z on store 4 with storeBalanceScore 1
+// result: peer z will be select as leader on store 4
+func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion) *RecoverRegion {
+	// by default, the peers[0] to be assign as a leader
+	leader := peers[0]
+	minLeaderStore := storeBalanceScore[leader.StoreId]
+	for _, peer := range peers[1:] {
+		log.Debug("leader candidate", zap.Int("score", storeBalanceScore[peer.StoreId]), zap.Int("min-score", minLeaderStore), zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
+		if storeBalanceScore[peer.StoreId] < minLeaderStore {
+			minLeaderStore = storeBalanceScore[peer.StoreId]
+			leader = peer
+		}
+	}
+	return leader
+}

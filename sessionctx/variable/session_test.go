@@ -164,9 +164,11 @@ func TestSlowLogFormat(t *testing.T) {
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: util.TimeDetail{
-			ProcessTime: time.Second * time.Duration(2),
-			WaitTime:    time.Minute,
+		DetailsNeedP90: execdetails.DetailsNeedP90{
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(2),
+				WaitTime:    time.Minute,
+			},
 		},
 	}
 	statsInfos := make(map[string]uint64)

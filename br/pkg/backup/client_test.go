@@ -57,8 +57,7 @@ func createBackupSuite(t *testing.T) *testBackup {
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
 	mockMgr.SetPDClient(s.mockPDClient)
 	mockMgr.SetHTTP([]string{"test"}, nil)
-	s.backupClient, err = backup.NewBackupClient(s.ctx, mockMgr)
-	require.NoError(t, err)
+	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)
 
 	s.cluster, err = mock.NewCluster()
 	require.NoError(t, err)

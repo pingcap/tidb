@@ -906,37 +906,44 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		joinSchema.Append(cols1...)
 	}
 
-	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
-	for _, keyIdx := range testCase.keyIdx {
-		joinKeys = append(joinKeys, cols0[keyIdx])
-	}
-	probeKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
-	for _, keyIdx := range testCase.keyIdx {
-		probeKeys = append(probeKeys, cols1[keyIdx])
-	}
+	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
+	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		probeSideTupleFetcher: probeSideTupleFetcher{
+		hashJoinCtx: &hashJoinCtx{
+			sessCtx:         testCase.ctx,
+			joinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
+			isOuterJoin:     false,
+			useOuterToBuild: testCase.useOuterToBuild,
+			concurrency:     uint(testCase.concurrency),
+			probeTypes:      retTypes(outerExec),
+			buildTypes:      retTypes(innerExec),
+		},
+		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
 		},
-		probeWorkers:      make([]probeWorker, testCase.concurrency),
-		concurrency:       uint(testCase.concurrency),
-		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
-		isOuterJoin:       false,
-		buildKeys:         joinKeys,
-		probeKeys:         probeKeys,
-		buildSideExec:     innerExec,
-		buildSideEstCount: float64(testCase.rows),
-		useOuterToBuild:   testCase.useOuterToBuild,
+		probeWorkers: make([]*probeWorker, testCase.concurrency),
+		buildWorker: &buildWorker{
+			buildKeyColIdx: joinKeysColIdx,
+			buildSideExec:  innerExec,
+		},
 	}
 
 	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
-	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
+	defaultValues := make([]types.Datum, e.buildWorker.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.probeWorkers[i].joiner = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
+		e.probeWorkers[i] = &probeWorker{
+			workerID:    i,
+			hashJoinCtx: e.hashJoinCtx,
+			joiner: newJoiner(testCase.ctx, e.joinType, true, defaultValues,
+				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
+			probeKeyColIdx: probeKeysColIdx,
+		}
 	}
+	e.buildWorker.hashJoinCtx = e.hashJoinCtx
 	memLimit := int64(-1)
 	if testCase.disk {
 		memLimit = 1
@@ -1194,7 +1201,7 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 	close(innerResultCh)
 
 	b.StartTimer()
-	if err := exec.buildHashTableForList(innerResultCh); err != nil {
+	if err := exec.buildWorker.buildHashTableForList(innerResultCh); err != nil {
 		b.Fatal(err)
 	}
 

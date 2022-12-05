@@ -288,7 +288,8 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 // please see https://github.com/pingcap/tidb/issues/22635 for more details.
 func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
-	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
+	// Use DeletableCols to get all the columns.
+	colsInfo := ds.table.DeletableCols()
 	colsInfoMap := make(map[int64]*table.Column, len(colsInfo))
 	for _, c := range colsInfo {
 		colsInfoMap[c.ID] = c

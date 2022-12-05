@@ -1036,9 +1036,12 @@ func (p *partitionedTable) GetPartitionColumnIDs() []int64 {
 	pi := p.Meta().Partition
 	if len(pi.Columns) > 0 {
 		colIDs := make([]int64, 0, len(pi.Columns))
-		// TODO: find the column ids
 		for _, name := range pi.Columns {
-			col := table.FindCol(p.Cols(), name.O)
+			col := table.FindColLowerCase(p.Cols(), name.L)
+			if col == nil {
+				// For safety, should not happen
+				continue
+			}
 			colIDs = append(colIDs, col.ID)
 		}
 		return colIDs
@@ -1297,11 +1300,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
 	tblInfo := t.Meta().Clone()
-	partInfo := *tblInfo.Partition
-	partInfo.Definitions = partInfo.AddingDefinitions
-	partInfo.DroppingDefinitions = nil
-	partInfo.AddingDefinitions = nil
-	tblInfo.Partition = &partInfo
+	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
+	tblInfo.Partition.AddingDefinitions = nil
+	tblInfo.Partition.DroppingDefinitions = nil
 	var tc TableCommon
 	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 

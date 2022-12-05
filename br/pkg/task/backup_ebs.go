@@ -111,10 +111,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client := backup.NewBackupClient(ctx, mgr)
 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,

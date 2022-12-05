@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1240,4 +1242,232 @@ func TestGCBindRecord(t *testing.T) {
 	require.NoError(t, h.GCBindRecord())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
+}
+
+func TestBindSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+
+	cases := []struct {
+		origin string
+		hint   string
+	}{
+		// agg hints
+		{"select count(1) from t", "select /*+ hash_agg() */ count(1) from t"},
+		{"select count(1) from t", "select /*+ stream_agg() */ count(1) from t"},
+		// join hints
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		// index hints
+		{"select * from t", "select * from t use index(primary)"},
+		{"select * from t", "select /*+ use_index(primary) */ * from t"},
+		{"select * from t", "select * from t use index(a)"},
+		{"select * from t", "select /*+ use_index(a) */ * from t use index(a)"},
+		{"select * from t", "select * from t use index(b)"},
+		{"select * from t", "select /*+ use_index(b) */ * from t use index(b)"},
+		{"select a, b from t where a=1 or b=1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1"},
+		{"select * from t where a=1", "select /*+ ignore_index(t, a) */ * from t where a=1"},
+		// push-down hints
+		{"select * from t limit 10", "select /*+ limit_to_cop() */ * from t limit 10"},
+		{"select a, count(*) from t group by a", "select /*+ agg_to_cop() */ a, count(*) from t group by a"},
+		// index-merge hints
+		{"select a, b from t where a>1 or b>1", "select /*+ no_index_merge() */ a, b from t where a>1 or b>1"},
+		{"select a, b from t where a>1 or b>1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1"},
+		// runtime hints
+		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
+		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		// storage hints
+		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
+		// others
+		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
+	}
+	for _, c := range cases {
+		stmtsummary.StmtSummaryByDigestMap.Clear()
+		utilCleanBindingEnv(tk, dom)
+		sql := "create global binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		res := tk.MustQuery(`show global bindings`).Rows()
+		require.Equal(t, len(res[0]), 11)
+
+		parser4binding := parser.New()
+		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
+		require.NoError(t, err)
+		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		require.Equal(t, res[0][9], sqlDigestWithDB.String())
+	}
+}
+
+func TestDropBindBySQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+
+	cases := []struct {
+		origin string
+		hint   string
+	}{
+		// agg hints
+		{"select count(1) from t", "select /*+ hash_agg() */ count(1) from t"},
+		{"select count(1) from t", "select /*+ stream_agg() */ count(1) from t"},
+		// join hints
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		// index hints
+		{"select * from t", "select * from t use index(primary)"},
+		{"select * from t", "select /*+ use_index(primary) */ * from t"},
+		{"select * from t", "select * from t use index(a)"},
+		{"select * from t", "select /*+ use_index(a) */ * from t use index(a)"},
+		{"select * from t", "select * from t use index(b)"},
+		{"select * from t", "select /*+ use_index(b) */ * from t use index(b)"},
+		{"select a, b from t where a=1 or b=1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1"},
+		{"select * from t where a=1", "select /*+ ignore_index(t, a) */ * from t where a=1"},
+		// push-down hints
+		{"select * from t limit 10", "select /*+ limit_to_cop() */ * from t limit 10"},
+		{"select a, count(*) from t group by a", "select /*+ agg_to_cop() */ a, count(*) from t group by a"},
+		// index-merge hints
+		{"select a, b from t where a>1 or b>1", "select /*+ no_index_merge() */ a, b from t where a>1 or b>1"},
+		{"select a, b from t where a>1 or b>1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1"},
+		// runtime hints
+		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
+		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		// storage hints
+		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
+		// others
+		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
+	}
+
+	h := dom.BindHandle()
+	// global scope
+	for _, c := range cases {
+		utilCleanBindingEnv(tk, dom)
+		sql := "create global binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		h.ReloadBindings()
+		res := tk.MustQuery(`show global bindings`).Rows()
+
+		require.Equal(t, len(res), 1)
+		require.Equal(t, len(res[0]), 11)
+		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
+		tk.MustExec(drop)
+		require.NoError(t, h.GCBindRecord())
+		h.ReloadBindings()
+		tk.MustQuery("show global bindings").Check(testkit.Rows())
+	}
+
+	// session scope
+	for _, c := range cases {
+		utilCleanBindingEnv(tk, dom)
+		sql := "create binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		res := tk.MustQuery(`show bindings`).Rows()
+
+		require.Equal(t, len(res), 1)
+		require.Equal(t, len(res[0]), 11)
+		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
+		tk.MustExec(drop)
+		require.NoError(t, h.GCBindRecord())
+		tk.MustQuery("show bindings").Check(testkit.Rows())
+	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
+}
+
+func TestCreateBindingFromHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(id int primary key, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int primary key, a int, b int, key(a))")
+
+	var testCases = []struct {
+		sqls []string
+		hint string
+	}{
+		{
+			sqls: []string{
+				"select %s * from t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, test.t2 where t1.id = t2.id",
+				"select %s * from t1, test.t2 where t1.id = t2.id",
+			},
+			hint: "/*+ merge_join(t1, t2) */",
+		},
+		{
+			sqls: []string{
+				"select %s * from t1 where a = 1",
+				"select %s * from test.t1 where a = 1",
+			},
+			hint: "/*+ ignore_index(t, a) */",
+		},
+	}
+
+	for _, testCase := range testCases {
+		for _, bind := range testCase.sqls {
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			bindSQL := fmt.Sprintf(bind, testCase.hint)
+			tk.MustExec(bindSQL)
+			planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", bindSQL)).Rows()
+			tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+			showRes := tk.MustQuery("show bindings").Rows()
+			require.Equal(t, len(showRes), 1)
+			require.Equal(t, planDigest[0][0], showRes[0][10])
+			for _, sql := range testCase.sqls {
+				tk.MustExec(fmt.Sprintf(sql, ""))
+				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			}
+		}
+		showRes := tk.MustQuery("show bindings").Rows()
+		require.Equal(t, len(showRes), 1)
+		tk.MustExec(fmt.Sprintf("drop binding for sql digest '%s'", showRes[0][9]))
+	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", "1"), "can't find any plans for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", ""), "plan digest is empty")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.id = t2.id")
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, showRes[0][10], "") // plan digest should be nil by create for
+}
+
+func TestCreateBindingForPrepareFromHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	tk.MustExec("prepare stmt from 'select /*+ ignore_index(t,a) */ * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	tk.MustExec("execute stmt using @a")
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", "select /*+ ignore_index(t,a) */ * from t where a = ? [arguments: 1]")).Rows()
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 0)
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	showRes = tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 1)
+	require.Equal(t, planDigest[0][0], showRes[0][10])
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
