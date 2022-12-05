@@ -216,6 +216,9 @@ func TestBootstrapWithError(t *testing.T) {
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, []byte("True"), row.GetBytes(0))
 	require.NoError(t, r.Close())
+
+	// Check tidb_ttl_table_status table
+	mustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status").Close()
 }
 
 // TestUpgrade tests upgrading
