@@ -3648,7 +3648,7 @@ func TestDDL(t *testing.T) {
 		{"drop resource group if exists x,y", false, ""},
 
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},
-		{"CREATE ROLE RESOURCE", true, "CREATE ROLE `RESOURCE`@`%`"},
+		{"CREATE ROLE RESOURCE", false, ""},
 
 		// for table stats options
 		// 1. create table with options
