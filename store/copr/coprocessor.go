@@ -140,6 +140,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// disable batch copr for follower read
 		req.StoreBatchSize = 0
 	}
+	// disable paging for batch copr
+	if req.Paging.Enable {
+		req.StoreBatchSize = 0
+	}
 
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	var (
