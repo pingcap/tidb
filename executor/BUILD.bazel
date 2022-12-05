@@ -278,6 +278,7 @@ go_test(
         "explainfor_test.go",
         "grant_test.go",
         "hash_table_test.go",
+        "historical_stats_test.go",
         "hot_regions_history_table_test.go",
         "index_advise_test.go",
         "index_lookup_join_test.go",
