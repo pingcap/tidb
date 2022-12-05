@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1463,4 +1464,29 @@ func TestUserAlterUser(t *testing.T) {
 	rootTK.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
 	result = rootTK.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="%"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
+}
+
+func encodePassword(password string) []byte {
+	pwd := auth.EncodePassword(password)
+	hpwd, _ := auth.DecodePassword(pwd)
+	return hpwd
+}
+
+func TestPasswordInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	rootTK := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	rootTK.MustExec(`set global validate_password.enable  = ON`)
+	rootTK.MustExecToErr(`create user u2 identified by 'u2' PASSWORD EXPIRE INTERVAL 2 DAY password history 2 password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
+	rootTK.MustExecToErr(`create user u2 `, 1819)
+	rootTK.MustExecToErr(`create user u2 identified by 'u2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2 password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1 `, 1819)
+	rootTK.MustExecToErr(`create user u2 identified by 'Uu2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2 password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
+	rootTK.MustExecToErr(`create user u2 identified by 'Uu3222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2 password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
+	rootTK.MustExec(`create user u2 identified by 'Uu3@22222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2 password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`)
+	result := rootTK.MustQuery(`Select count(*) from mysql.password_history where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows("1"))
+	result = rootTK.MustQuery(`Select * from mysql.password_history where user = 'u2' and host = '%'`)
+	fmt.Println(result)
+	domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, encodePassword("*A523ECCCA9AC3D0224E82DB099EEDD8FCEAAA9A7"), nil))
 }

@@ -3142,7 +3142,6 @@ func TestFailedLoginTrackingCheckError(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.True(t, resBuff.String() == "[<nil>]")
-
 }
 
 func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
