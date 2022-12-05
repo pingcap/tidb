@@ -28,38 +28,76 @@ func TestGradient2Scheduler(t *testing.T) {
 	rms := NewFakeResourceManage()
 	rms.RegisterPool(pool)
 	rms.Register(scheduler)
-	// Test the initial state.
-	pool.OnSample(0, 0, 0, 0, 0, 0, 0, 0, 0)
-	pool.ImportLastTunerTs(
-		time.Now())
-	require.Equal(t, Hold, rms.Next())
-	// p.InFlight() < int64(p.Cap())/2 is hold
-	pool.OnSample(0, 0, 0, 0, 100, 20, 30, 0, 0)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Hold, rms.Next())
-	// Overclock
-	pool.OnSample(0, 60, 0, 0, 100, 20, 30, 0, 0)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Overclock, rms.Next())
-	//
-	pool.OnSample(0, 60, 0, 0, 100, 70, 30, 0, 0)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Overclock, rms.Next())
-
-	pool.OnSample(0, 60, 0, 0, 100, 70, 30, 40, 20)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Overclock, rms.Next())
-
-	pool.OnSample(0, 132, 0, 0, 100, 30, 70, 30, 102)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Downclock, rms.Next())
-	pool.OnSample(0, 60, 0, 0, 100, 30, 70, 50, 2)
-	pool.ImportLastTunerTs(
-		time.Now().Add(-10 * time.Second))
-	require.Equal(t, Overclock, rms.Next())
+	testcases := []struct {
+		Name      string
+		InFlight  int64
+		Capa      int
+		LongRTT   float64
+		ShortRTT  uint64
+		Queuesize int64
+		Running   int
+		Delta     time.Duration
+		Expected  Command
+	}{
+		{
+			Name:     "init",
+			Expected: Hold,
+		},
+		{
+			Name:     "p.InFlight() < int64(p.Cap())/2 is hold",
+			Capa:     100,
+			LongRTT:  20,
+			ShortRTT: 30,
+			Delta:    -10 * time.Second,
+			Expected: Hold,
+		},
+		{
+			Name:     "p.InFlight() > int64(p.Cap())/2 is hold",
+			InFlight: 2,
+			Capa:     100,
+			LongRTT:  20,
+			ShortRTT: 30,
+			Running:  2,
+			Delta:    -10 * time.Second,
+			Expected: Hold,
+		},
+		{
+			Name:      "p.InFlight() > int64(p.Cap())/2 is overclock",
+			InFlight:  60,
+			Capa:      100,
+			LongRTT:   70,
+			ShortRTT:  30,
+			Queuesize: 40,
+			Running:   20,
+			Delta:     -10 * time.Second,
+			Expected:  Overclock,
+		},
+		{
+			Name:      "p.InFlight() > int64(p.Cap())/2 is downclock",
+			InFlight:  132,
+			Capa:      100,
+			LongRTT:   30,
+			ShortRTT:  70,
+			Queuesize: 20,
+			Running:   102,
+			Delta:     -10 * time.Second,
+			Expected:  Downclock,
+		},
+		{
+			Name:      "p.InFlight() > int64(p.Cap())/2 is downclock",
+			InFlight:  60,
+			Capa:      100,
+			LongRTT:   30,
+			ShortRTT:  70,
+			Queuesize: 50,
+			Running:   2,
+			Delta:     -10 * time.Second,
+			Expected:  Overclock,
+		},
+	}
+	for _, tc := range testcases {
+		pool.OnSample(0, tc.InFlight, 0, 0, tc.Capa, tc.LongRTT, tc.ShortRTT, tc.Queuesize, tc.Running)
+		pool.ImportLastTunerTs(time.Now().Add(tc.Delta))
+		require.Equal(t, tc.Expected, rms.Next(), tc.Name)
+	}
 }
