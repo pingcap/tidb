@@ -418,38 +418,10 @@ func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 		lockTime, remainTime, failedLoginAttempts)
 }
 
-// VerifyAccountAutoLock implements the Manager interface.
-func (p *UserPrivileges) VerifyAccountAutoLock(user string, host string) (string, error) {
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchUser(user, host)
-	if record == nil {
-		logutil.BgLogger().Error("get authUser privilege record fail",
-			zap.String("authUser", user), zap.String("authHost", host))
-		return "", ErrAccessDenied.FastGenByArgs(user, host)
-	}
-
-	if record.AutoAccountLocked {
-		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTime := record.PasswordLockTime
-		if lockTime == -1 {
-			return "", GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")
-		}
-		lastChanged := record.AutoLockedLastChanged
-		d := time.Now().Unix() - lastChanged
-		if d > lockTime*24*60*60 {
-			// Generate unlock json string.
-			return buildPasswordLockingJSON(record.FailedLoginAttempts,
-				record.PasswordLockTime, "N", 0, time.Now().Format(time.UnixDate)), nil
-		}
-		lds := strconv.FormatInt(lockTime, 10)
-		rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
-		return "", GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, lds, rds)
-	}
-	return "", nil
-}
-
 // IsAccountAutoLockEnabled implements the Manager interface.
 func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool {
+	// If the service is started using skip-grant-tables, the system ignores whether
+	// to enable the automatic account locking feature after continuous login failure.
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -460,6 +432,9 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	if record == nil {
 		return false
 	}
+	// For failed-login tracking and temporary locking to occur, an account's FAILED_LOGIN_ATTEMPTS
+	// and PASSWORD_LOCK_TIME options both must be nonzero.
+	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 	if record.FailedLoginAttempts == 0 || record.PasswordLockTime == 0 {
 		return false
 	}
