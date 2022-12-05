@@ -65,8 +65,8 @@ It will use all these schema change stages:
       // StateNone means this schema element is absent and can't be used.
       StateNone SchemaState = iota
       - Check if the table structure after the ALTER is valid
-      - Generate physical table ids to each new partition
-      - Update the meta data with the new partitions and which partitions to be dropped (so that new transaction can double write)
+      - Use the generate physical table ids to each new partition (that was generated already by the client sending the ALTER command).
+      - Update the meta data with the new partitions (AddingDefinitions) and which partitions to be dropped (DroppingDefinitions), so that new transactions can double write.
       - Set placement rules
       - Set TiFlash Replicas
       - Set legacy Bundles (non-sql placement)
@@ -86,7 +86,15 @@ It will use all these schema change stages:
       - Copy the data from the partitions to be dropped (one at a time) and insert it into the new partitions. This needs a new backfillWorker implementation.
       - Recreate the indexes one by one for the new partitions (one partition at a time) (create an element for each index and reuse the addIndexWorker). (Note: this can be optimized in the futute, either with the new fast add index implementation, based on lightning. Or by either writing the index entries at the same time as the records, in the previous step, or if the partitioning columns are included in the index or handle)
       - Replace the old partitions with the new partitions in the metadata when the data copying is done
+      - Set the state to StateDeleteReorganization
+
+      // StateDeleteReorganization means we are re-organizing whole data after delete only state.
+      StateDeleteReorganization - we are using this state in a slightly different way than the comment above says.
+      This state is needed since we cannot directly move from StateWriteReorganization to StatePublic.
+      Imagine that the StateWriteReorganization is complete and we are updating the schema version, then if a transaction seeing the new schema version is writing to the new partitions, then those changes needs to be written to the old partitions as well, so new transactions in other nodes using the older schema version can still see the changes.
+      - Remove the notion of new partitions (AddingDefinitions) and which partitions to be dropped (DroppingDefinitions) and double writing will stop when it goes to StatePublic.
       - Register the range delete of the old partition data (in finishJob / deleteRange).
+      - Set the state to StatePublic
       
       // StatePublic means this schema element is ok for all write and read operations.
       StatePublic
