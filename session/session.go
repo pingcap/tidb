@@ -2764,13 +2764,12 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 				return errRB
 			}
 			return err
-		} else {
-			err = failedLoginTrackingCommit(s)
-			if err != nil {
-				return err
-			}
-			lockStatusChanged = true
 		}
+		err = failedLoginTrackingCommit(s)
+		if err != nil {
+			return err
+		}
+		lockStatusChanged = true
 	} else {
 		err = failedLoginTrackingCommit(s)
 		if err != nil {
