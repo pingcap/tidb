@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -320,7 +321,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 
 	regionsPerRange := len(regions) / maxSplit
 	oversizeCnt := len(regions) % maxSplit
-	ranges := make([]kv.KeyRange, 0, maxSplit)
+	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regions), maxSplit))
 	for len(regions) > 0 {
 		rangeStartKey := kv.Key(regions[0].StartKey())
 		if rangeStartKey.Cmp(startKey) < 0 {
