@@ -250,7 +250,7 @@ func (w *ttlScanWorker) PollTaskResult() (*ttlScanTaskExecResult, bool) {
 
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
-	for w.status == workerStatusRunning {
+	for w.Status() == workerStatusRunning {
 		select {
 		case <-ctx.Done():
 			return nil
