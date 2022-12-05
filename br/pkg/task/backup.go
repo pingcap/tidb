@@ -159,6 +159,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
@@ -197,10 +201,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.IgnoreStats, err = flags.GetBool(flagIgnoreStats)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -348,8 +348,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// after version check, check the cluster whether support checkpoint mode
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
-		log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
-		cfg.UseCheckpoint = false
+		if err != nil {
+			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
+			cfg.UseCheckpoint = false
+		}
 	}
 	var statsHandle *handle.Handle
 	if !skipStats {
