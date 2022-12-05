@@ -159,11 +159,18 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	noCheckpoint, err := flags.GetBool(flagUseCheckpoint)
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.UseCheckpoint = !noCheckpoint
+	if cfg.LastBackupTS > 0 {
+		// TODO: compatible with incremental backup
+		cfg.UseCheckpoint = false
+	}
+	if cfg.UseBackupMetaV2 {
+		// TODO: compatible with backup meta v2, maybe just clean the meta files
+		cfg.UseCheckpoint = false
+	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
