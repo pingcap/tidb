@@ -126,7 +126,7 @@ Sort_11	5098.44	root		test.t1.c1
   ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
   │ └─StreamAgg_43	1.00	root		funcs:count(Column#25)->Column#9
   │   └─IndexReader_44	1.00	root		index:StreamAgg_27
-  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(test.t2._tidb_rowid)->Column#25
+  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#25
   │       └─IndexFullScan_41	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_21(Probe)	2825.66	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -148,7 +148,7 @@ Sort_11	5098.44	root		test.t1.c1
   ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
   │ └─StreamAgg_43	1.00	root		funcs:count(Column#25)->Column#9
   │   └─IndexReader_44	1.00	root		index:StreamAgg_27
-  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(test.t2._tidb_rowid)->Column#25
+  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#25
   │       └─IndexFullScan_41	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_21(Probe)	2825.66	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -170,7 +170,7 @@ Sort_11	5542.21	root		test.t1.c1
   ├─StreamAgg_22(Build)	1.00	root		funcs:max(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
   │ └─StreamAgg_42	1.00	root		funcs:count(Column#25)->Column#9
   │   └─IndexReader_43	1.00	root		index:StreamAgg_26
-  │     └─StreamAgg_26	1.00	cop[tikv]		funcs:count(test.t2._tidb_rowid)->Column#25
+  │     └─StreamAgg_26	1.00	cop[tikv]		funcs:count(1)->Column#25
   │       └─IndexFullScan_40	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_20(Probe)	5542.21	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -192,7 +192,7 @@ Sort_39	5542.21	root		test.t1.c1
     ├─StreamAgg_50(Build)	1.00	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
     │ └─StreamAgg_70	1.00	root		funcs:count(Column#38)->Column#13
     │   └─IndexReader_71	1.00	root		index:StreamAgg_54
-    │     └─StreamAgg_54	1.00	cop[tikv]		funcs:count(test.t2._tidb_rowid)->Column#38
+    │     └─StreamAgg_54	1.00	cop[tikv]		funcs:count(1)->Column#38
     │       └─IndexFullScan_68	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
     └─IndexMerge_48(Probe)	5542.21	root		type: union
       ├─IndexRangeScan_45(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo

@@ -98,6 +98,7 @@ type AuthOption struct {
 	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
 	ByAuthString bool
 	AuthString   string
+	ByHashString bool
 	HashString   string
 	AuthPlugin   string
 }
@@ -112,7 +113,7 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	if n.ByAuthString {
 		ctx.WriteKeyWord(" BY ")
 		ctx.WriteString(n.AuthString)
-	} else if n.HashString != "" {
+	} else if n.ByHashString {
 		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
 	}
@@ -1506,6 +1507,11 @@ const (
 	PasswordExpireDefault
 	PasswordExpireNever
 	PasswordExpireInterval
+	PasswordHistory
+	PasswordHistoryDefault
+	PasswordReuseInterval
+	PasswordReuseDefault
+
 	Lock
 	Unlock
 
@@ -1534,6 +1540,17 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ACCOUNT LOCK")
 	case Unlock:
 		ctx.WriteKeyWord("ACCOUNT UNLOCK")
+	case PasswordHistory:
+		ctx.WriteKeyWord("PASSWORD HISTORY")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordHistoryDefault:
+		ctx.WriteKeyWord("PASSWORD HISTORY DEFAULT")
+	case PasswordReuseInterval:
+		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL")
+		ctx.WritePlainf(" %d", p.Count)
+		ctx.WriteKeyWord(" DAY")
+	case PasswordReuseDefault:
+		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}
