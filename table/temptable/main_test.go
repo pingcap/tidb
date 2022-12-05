@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -86,7 +87,7 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 		State:         model.StatePublic,
 	}
 
-	tbl, err := table.TableFromMeta(nil, tblInfo)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
 	require.NoError(is.t, err)
 
 	return tbl, true

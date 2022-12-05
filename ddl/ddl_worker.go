@@ -512,7 +512,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sessionPool, jobID int64) {
+func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -524,6 +524,13 @@ func cleanMDLInfo(pool *sessionPool, jobID int64) {
 	_, err := sess.execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+	}
+	if ec != nil {
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
+		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Any("job id", jobID), zap.Error(err))
+		}
 	}
 }
 
@@ -1232,7 +1239,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseRowIDType(d, t, job)
+		ver, err = onRebaseAutoIncrementIDType(d, t, job)
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d, t, job)
 	case model.ActionRenameTable:
@@ -1287,6 +1294,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionAlterTTLInfo:
+		ver, err = onTTLInfoChange(d, t, job)
+	case model.ActionAlterTTLRemove:
+		ver, err = onTTLInfoRemove(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

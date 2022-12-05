@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1000,9 +999,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-		t := time.UnixMilli(oracle.ExtractPhysical(tbl.Version))
-		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
+		return true, "table unanalyzed"
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {

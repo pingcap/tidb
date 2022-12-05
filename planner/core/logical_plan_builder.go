@@ -4437,8 +4437,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
-				delete(b.hintProcessor.QbNameMap4View, qbName)
-				delete(b.hintProcessor.QbHints4View, qbName)
+				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -5019,7 +5018,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	for qbName, viewQbNameHint := range qbNameMap4View {
 		// Check whether the view hint belong the current view or its nested views.
 		selectOffset := -1
-		qbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
@@ -5042,6 +5040,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	hintProcessor.QbNameMap4View = qbNameMap4View
 	hintProcessor.QbHints4View = viewHints
+	hintProcessor.QbNameUsed4View = make(map[string]struct{})
 	hintProcessor.QbHints = currentQbHints
 	hintProcessor.QbNameMap = currentQbNameMap
 
@@ -5050,6 +5049,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.hintProcessor = hintProcessor
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	defer func() {
+		b.hintProcessor.HandleUnusedViewHints()
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
 	}()

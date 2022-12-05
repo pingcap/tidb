@@ -48,12 +48,8 @@ type FunctionDef struct {
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
 	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
 	EvalIntFunc func(ctx FunctionContext, row chunk.Row) (int64, bool, error)
-	// RequireDynamicPrivileges is the dynamic privileges needed to invoke the function
-	// If `RequireDynamicPrivileges` is empty, it means every one can invoke this function
-	RequireDynamicPrivileges []string
-	// SemRequireDynamicPrivileges is the dynamic privileges needed to invoke the function in sem mode
-	// If `SemRequireDynamicPrivileges` is empty, `DynamicPrivileges` will be used in sem mode
-	SemRequireDynamicPrivileges []string
+	// RequireDynamicPrivileges is a function to return a list of dynamic privileges to check.
+	RequireDynamicPrivileges func(sem bool) []string
 }
 
 // Validate validates the function definition

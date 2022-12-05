@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	parserformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -368,6 +369,8 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
+				hint.SQLDigest,
+				hint.PlanDigest,
 			})
 		}
 	}
@@ -1222,6 +1225,28 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	if tableInfo.TTLInfo != nil {
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes
+		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
+		columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+		timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+
+		restoreCtx.WriteKeyWord(" TTL ")
+		restoreCtx.WritePlain("= ")
+		restoreCtx.WriteName(columnName.String())
+		restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+		err = timeUnit.Restore(restoreCtx)
+		if err != nil {
+			return err
+		}
+		if tableInfo.TTLInfo.Enable {
+			fmt.Fprintf(buf, " TTL_ENABLE = 'ON'")
+		} else {
+			fmt.Fprintf(buf, " TTL_ENABLE = 'OFF'")
+		}
+	}
 	return nil
 }
 
@@ -1487,7 +1512,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer, Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1521,6 +1547,34 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
+	var passwordHistory string
+	if rows[0].IsNull(4) {
+		passwordHistory = "DEFALUT"
+	} else {
+		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
+	}
+
+	var passwordReuseInterval string
+	if rows[0].IsNull(5) {
+		passwordReuseInterval = "DEFALUT"
+	} else {
+		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
+	}
+
+	passwordExpired := rows[0].GetEnum(6).String()
+	passwordLifetime := int64(-1)
+	if !rows[0].IsNull(7) {
+		passwordLifetime = rows[0].GetInt64(7)
+	}
+	passwordExpiredStr := "PASSWORD EXPIRE DEFAULT"
+	if passwordExpired == "Y" {
+		passwordExpiredStr = "PASSWORD EXPIRE"
+	} else if passwordLifetime == 0 {
+		passwordExpiredStr = "PASSWORD EXPIRE NEVER"
+	} else if passwordLifetime > 0 {
+		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1544,8 +1598,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s%s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, userAttributes, passwordHistory, passwordReuseInterval)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
