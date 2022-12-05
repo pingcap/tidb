@@ -2787,7 +2787,7 @@ func authFailedTracking(s *session, user string, host string) error {
 	}
 	// Consecutive wrong password login failure times +1,
 	// If the lock condition is satisfied, the lock status is updated and the update cache is notified.
-	changeToLock, err := userAutoAccountLocked(s, user, host, passwordLocking)
+	lockStatusChanged, err := userAutoAccountLocked(s, user, host, passwordLocking)
 	if err != nil {
 		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
 			return rollBackErr
@@ -2797,7 +2797,7 @@ func authFailedTracking(s *session, user string, host string) error {
 	if commitErr := failedLoginTrackingCommit(s); commitErr != nil {
 		return commitErr
 	}
-	if changeToLock {
+	if lockStatusChanged {
 		// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
 		return domain.GetDomain(s).NotifyUpdatePrivilege()
 	}
