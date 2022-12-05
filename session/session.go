@@ -2708,12 +2708,18 @@ func authSuccessClearCount(s *session, user string, host string) error {
 
 func verifyAccountAutoLock(s *session, user, host string) error {
 	pm := privilege.GetPrivilegeManager(s)
-
+	// Use the cache to determine whether to unlock the account.
+	// If the account needs to be unlocked, read the database information to determine whether
+	//the account needs to be unlocked. Otherwise, an error message is displayed.
+	err := pm.VerifyAccountAutoLockInMemory(user, host)
+	if err != nil {
+		return err
+	}
 	lockStatusChanged := false
 	var plJson string
 	// Enable the transaction to read the account lock status in the database
 	// to prevent repeated unlocking errors caused by delayed cache updates.
-	err := failedLoginTrackingBegin(s)
+	err = failedLoginTrackingBegin(s)
 	if err != nil {
 		return err
 	}
