@@ -441,37 +441,6 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	return true
 }
 
-// BuildPasswordLockingJSON implements the Manager interface.
-func (p *UserPrivileges) BuildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
-	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
-}
-
-// BuildSuccessPasswordLockingJSON implements the Manager interface.
-func (p *UserPrivileges) BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
-	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
-}
-
-func buildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
-	passwordLockingArray := []string{}
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
-	if autoAccountLocked != "" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
-	}
-	if autoLockedLastChanged != "" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", autoLockedLastChanged))
-	}
-
-	if len(passwordLockingArray) > 0 {
-		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
-		return newAttributesStr
-	}
-	return ""
-}
-
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) error {
 	hasPassword := "YES"
