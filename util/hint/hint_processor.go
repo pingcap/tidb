@@ -16,10 +16,10 @@ package hint
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
