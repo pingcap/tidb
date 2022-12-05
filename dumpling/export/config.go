@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -15,7 +16,6 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -103,7 +103,7 @@ type Config struct {
 	User     string
 	Password string `json:"-"`
 	Security struct {
-		DriveTLSName string `json:"-"`
+		TLS          *tls.Config `json:"-"`
 		CAPath       string
 		CertPath     string
 		KeyPath      string
@@ -219,8 +219,16 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg.WriteTimeout = 30 * time.Second
 	driverCfg.InterpolateParams = true
 	driverCfg.MaxAllowedPacket = 0
-	if conf.Security.DriveTLSName != "" {
-		driverCfg.TLSConfig = conf.Security.DriveTLSName
+	if conf.Security.TLS != nil {
+		driverCfg.TLS = conf.Security.TLS
+	} else {
+		// Use TLS first.
+		driverCfg.AllowFallbackToPlaintext = true
+		/* #nosec G402 */
+		driverCfg.TLS = &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS10,
+		}
 	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
@@ -653,7 +661,7 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 	return nil
 }
 
-func registerTLSConfig(conf *Config) error {
+func buildTLSConfig(conf *Config) error {
 	tlsConfig, err := util.NewTLSConfig(
 		util.WithCAPath(conf.Security.CAPath),
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
@@ -663,14 +671,8 @@ func registerTLSConfig(conf *Config) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if tlsConfig == nil {
-		return nil
-	}
-
-	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
-	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
-	return errors.Trace(err)
+	conf.Security.TLS = tlsConfig
+	return nil
 }
 
 func validateSpecifiedSQL(conf *Config) error {

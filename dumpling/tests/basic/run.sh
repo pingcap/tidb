@@ -114,8 +114,8 @@ echo "expected panic 0, actual ${actual}"
 [ "$actual" = 0 ]
 
 # check stdout, should contain mysql error log
-actual=$(grep -w "Error 1064: You have an error in your SQL syntax" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
-echo "expect contain Error 1064, actual ${actual}"
+actual=$(grep -w "You have an error in your SQL syntax" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expect contain error in SQL syntax, actual ${actual}"
 [ "$actual" -ge 1 ]
 
 # Test for consistency lock with empty database.
