@@ -452,6 +452,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	if err == nil {
 		err = dc.isReorgRunnable(reorgInfo.Job)
 	}
+	dc.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 
 	if err != nil {
 		// Update the reorg handle that has been processed.
@@ -467,11 +468,16 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 			zap.String("task failed error", err.Error()),
 			zap.String("take time", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
+		failpoint.Inject("MockGetIndexRecordErr", func() {
+			// Make sure this job didn't failed because by the "Write conflict" error.
+			if dbterror.ErrNotOwner.Equal(err) {
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
 		return errors.Trace(err)
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	dc.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
 		zap.ByteString("element type", reorgInfo.currElement.TypeKey),
