@@ -2694,7 +2694,7 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	}
 	if passwordLocking.FailedLoginCount != 0 {
 		// If the number of account login failures is not zero, it will be updated to 0.
-		passwordLockingJSON := buildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
+		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
 			passwordLocking.PasswordLockTimeDays)
 		if passwordLockingJSON != "" {
 			if lockingErr := s.passwordLocking(user, host, passwordLockingJSON); lockingErr != nil {
@@ -2736,8 +2736,8 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 	}
 	if pl.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTime := pl.AutoLockedLastChanged
-		if lockTime == -1 {
+		lockTimeDay := pl.PasswordLockTimeDays
+		if lockTimeDay == -1 {
 			errRB := failedLoginTrackingRollback(s)
 			if errRB != nil {
 				return errRB
@@ -2746,13 +2746,13 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d > lockTime*24*60*60 {
+		if d > lockTimeDay*24*60*60 {
 			// Generate unlock json string.
-			plJSON = buildPasswordLockingJSON(pl.FailedLoginAttempts,
+			plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
 				pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
 		} else {
-			lds := strconv.FormatInt(lockTime, 10)
-			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
+			lds := strconv.FormatInt(lockTimeDay, 10)
+			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
 			errRB := failedLoginTrackingRollback(s)
 			if errRB != nil {
 				return errRB
@@ -2833,12 +2833,6 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 func failedLoginTrackingBegin(s *session) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
-	if err != nil {
-		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
-			return rollBackErr
-		}
-		return err
-	}
 	return err
 }
 
@@ -2859,32 +2853,6 @@ func failedLoginTrackingRollback(s *session) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "ROLLBACK")
 	return err
-}
-
-// buildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
-func buildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
-	return buildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
-}
-
-// buildPasswordLockingJSON builds PasswordLocking JSON string.
-func buildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
-	passwordLockingArray := []string{}
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
-	if autoAccountLocked != "" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
-	}
-	if autoLockedLastChanged != "" {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", autoLockedLastChanged))
-	}
-
-	if len(passwordLockingArray) > 0 {
-		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
-		return newAttributesStr
-	}
-	return ""
 }
 
 // getFailedLoginUserAttributes Query the exact number of consecutive password login failures (concurrency is not allowed).
@@ -2945,7 +2913,7 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 		lockStatusChanged = true
 	}
 
-	newAttributesStr := buildPasswordLockingJSON(pl.FailedLoginAttempts,
+	newAttributesStr := privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
 		pl.PasswordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 	if newAttributesStr != "" {
 		return lockStatusChanged, s.passwordLocking(user, host, newAttributesStr)

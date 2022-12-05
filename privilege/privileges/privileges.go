@@ -418,7 +418,7 @@ func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 		lockTime, remainTime, failedLoginAttempts)
 }
 
-// VerifyAccountAutoLock implements the Manager interface.
+// VerifyAccountAutoLockInMemory implements the Manager interface.
 func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string) error {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
@@ -468,6 +468,32 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 		return false
 	}
 	return true
+}
+
+// BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
+func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
+	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+}
+
+// BuildPasswordLockingJSON builds PasswordLocking JSON string.
+func BuildPasswordLockingJSON(failedLoginAttempts int64,
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+	passwordLockingArray := []string{}
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
+	if autoAccountLocked != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
+	}
+	if autoLockedLastChanged != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", autoLockedLastChanged))
+	}
+
+	if len(passwordLockingArray) > 0 {
+		newAttributesStr := fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
+		return newAttributesStr
+	}
+	return ""
 }
 
 // ConnectionVerification implements the Manager interface.
