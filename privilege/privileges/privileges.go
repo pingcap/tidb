@@ -551,6 +551,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
+		// NOTE: If the checking of the password fails, please return the error wrap by ErrUserPasswordFailed.
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
@@ -604,8 +605,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	return nil
 }
 
-// AuthSuccess implements the Manager interface.
-// Auth Success state
+// AuthSuccess implements login is successful to make the permission take effect.
 func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.user = authUser
 	p.host = authHost
