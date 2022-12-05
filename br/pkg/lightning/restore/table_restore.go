@@ -331,7 +331,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
 						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
-								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+								rc.status.FinishedFileSize.Add(chunk.TotalSize())
 							}
 						}
 					}
@@ -341,7 +341,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 				}(restoreWorker, engineID, engine)
 			} else {
 				for _, chunk := range engine.Chunks {
-					rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+					rc.status.FinishedFileSize.Add(chunk.TotalSize())
 				}
 			}
 		}
@@ -541,7 +541,7 @@ func (tr *TableRestore) restoreEngine(
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
-			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
+			remainChunkCnt = float64(chunk.UnfinishedSize()) / float64(chunk.TotalSize())
 			if metrics != nil {
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 			}
@@ -616,7 +616,7 @@ func (tr *TableRestore) restoreEngine(
 	totalSQLSize := int64(0)
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
-		totalSQLSize += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+		totalSQLSize += chunk.UnfinishedSize()
 	}
 
 	err = chunkErr.Get()

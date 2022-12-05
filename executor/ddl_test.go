@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1524,6 +1525,8 @@ func TestRenameMultiTables(t *testing.T) {
 }
 
 func TestCreateTableWithTTL(t *testing.T) {
+	parser.TTLFeatureGate = true
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1543,6 +1546,8 @@ func TestCreateTableWithTTL(t *testing.T) {
 }
 
 func TestAlterTTLInfo(t *testing.T) {
+	parser.TTLFeatureGate = true
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1576,4 +1581,40 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+}
+
+func TestDisableTTLForTempTable(t *testing.T) {
+	parser.TTLFeatureGate = true
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustGetDBError("CREATE TEMPORARY TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY", dbterror.ErrTempTableNotAllowedWithTTL)
+}
+
+func TestDisableTTLForFKParentTable(t *testing.T) {
+	parser.TTLFeatureGate = true
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// alter ttl for a FK parent table is not allowed
+	tk.MustExec("set global tidb_enable_foreign_key='ON'")
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime)")
+	tk.MustExec("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))")
+	tk.MustGetDBError("ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
+
+	// refuse to reference TTL key when create table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustGetDBError("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t")
+
+	// refuse to add foreign key reference TTL table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustExec("CREATE TABLE t_1 (t_id int)")
+	tk.MustGetDBError("ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id)", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
 }
