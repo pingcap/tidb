@@ -88,7 +88,7 @@ func TestGradient2Scheduler(t *testing.T) {
 			InFlight:  60,
 			Capa:      100,
 			LongRTT:   30,
-			ShortRTT:  70,
+			ShortRTT:  80,
 			Queuesize: 50,
 			Running:   10,
 			Delta:     -10 * time.Second,
