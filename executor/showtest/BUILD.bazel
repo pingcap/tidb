@@ -15,6 +15,7 @@ go_test(
         "//executor",
         "//infoschema",
         "//meta/autoid",
+        "//parser",
         "//parser/auth",
         "//parser/model",
         "//parser/mysql",

@@ -38,7 +38,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
 	tk.MustExec("SET session tidb_enable_index_merge = ON;")
-	tk.MustExec("set tidb_cost_model_version=2")
 	testcases := []struct {
 		sql          string
 		physicalList []string
@@ -62,7 +61,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Limit_20",
 				"IndexReader_21",
 				"Limit_14",
-				"HashAgg_9",
+				"StreamAgg_10",
 				"Projection_8",
 			},
 		},

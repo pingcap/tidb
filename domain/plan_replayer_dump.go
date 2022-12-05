@@ -166,6 +166,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	zw := zip.NewWriter(zf)
 	records := generateRecords(task)
 	defer func() {
+		if err != nil {
+			logutil.BgLogger().Error("dump plan replayer failed", zap.Error(err))
+		}
 		err = zw.Close()
 		if err != nil {
 			logutil.BgLogger().Error("Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))

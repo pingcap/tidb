@@ -101,14 +101,17 @@ func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		shiftTS.Lock()
-		defer shiftTS.Unlock()
+		log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+			zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
 		ts, ok := UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+		shiftTS.Lock()
 		if ok && (!shiftTS.exists || shiftTS.value > ts) {
 			shiftTS.value = ts
 			shiftTS.exists = true
 		}
+		shiftTS.Unlock()
+
 		return nil
 	})
 	if err != nil {

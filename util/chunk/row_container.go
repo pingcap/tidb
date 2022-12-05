@@ -472,14 +472,16 @@ func (c *SortedRowContainer) Close() error {
 func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	for i, colIdx := range c.keyColumns {
 		cmpFunc := c.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if c.ByItemsDesc[i] {
-			cmp = -cmp
-		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if c.ByItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
 		}
 	}
 	return false
