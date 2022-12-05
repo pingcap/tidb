@@ -140,28 +140,27 @@ func TestNonTransactionalDMLDryRun(t *testing.T) {
 	rows := tk.MustQuery("batch on a limit 3 dry run insert into t1 select * from t").Rows()
 	for _, row := range rows {
 		col := row[0].(string)
-		require.True(t, strings.HasPrefix(col,
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN"), col)
+		require.Contains(t, col, "INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN")
 	}
 	rows = tk.MustQuery("batch on a limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b").Rows()
 	for _, row := range rows {
 		col := row[0].(string)
 		require.True(t, strings.HasPrefix(col,
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN"), col)
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN"), col)
 		require.True(t, strings.HasSuffix(col,
 			"ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`"), col)
 	}
 	rows = tk.MustQuery("batch on a limit 3 dry run delete from t").Rows()
 	for _, row := range rows {
 		col := row[0].(string)
-		require.True(t, strings.HasPrefix(col, "DELETE FROM `test`.`t` WHERE `a` BETWEEN"), col)
+		require.True(t, strings.HasPrefix(col, "DELETE FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN"), col)
 	}
 	rows = tk.MustQuery("batch on a limit 3 dry run update t set b = b + 42").Rows()
 	for _, row := range rows {
 		col := row[0].(string)
-		require.True(t, strings.HasPrefix(col, "UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN"), col)
+		require.True(t, strings.HasPrefix(col, "UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `test`.`t`.`a` BETWEEN"), col)
 	}
-	querySQL := "SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"
+	querySQL := "SELECT `a` FROM (`test`.`t`) WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"
 	tk.MustQuery("batch on a limit 3 dry run query insert into t1 select * from t").Check(testkit.Rows(querySQL))
 	tk.MustQuery("batch on a limit 3 dry run query insert into t1 select * from t on duplicate key update t1.b=t.b").
 		Check(testkit.Rows(querySQL))
@@ -218,7 +217,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t")
 	require.ErrorContains(
 		t, err,
-		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
 	)
 	require.NoError(
 		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
@@ -226,7 +225,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b")
 	require.ErrorContains(
 		t, err,
-		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`, injected batch(non-transactional) DML error;\n",
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`, injected batch(non-transactional) DML error;\n",
 	)
 
 	require.NoError(
@@ -235,7 +234,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 update t set b = 42")
 	require.ErrorContains(
 		t, err,
-		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=42 WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
 	)
 
 	require.NoError(
@@ -244,7 +243,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
 	require.ErrorContains(
 		t, err,
-		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
 	)
 
 	tk.MustExec("truncate t")
@@ -260,7 +259,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t")
 	require.EqualError(
 		t, err,
-		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
 	)
 
 	require.NoError(
@@ -269,7 +268,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b")
 	require.EqualError(
 		t, err,
-		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`, err: injected batch(non-transactional) DML error",
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`, err: injected batch(non-transactional) DML error",
 	)
 
 	require.NoError(
@@ -278,7 +277,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 update t set b = b + 42")
 	require.EqualError(
 		t, err,
-		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `test`.`t`.`a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
 	)
 
 	require.NoError(
@@ -287,7 +286,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
 	require.EqualError(
 		t, err,
-		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `test`.`t`.`a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
 	)
 }
 
@@ -301,26 +300,45 @@ func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
-	// auto select results in full col name
-	tk.MustQuery("batch limit 3 dry run delete from t").Check(
+
+	// otherwise the name is the same as what is given
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(
 		testkit.Rows(
 			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
 			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
 		),
 	)
-	tk.MustQuery("batch limit 3 dry run update t set b = 42").Check(
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run delete from t").Check(
+		testkit.Rows(
+			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run update t set b = 42").Check(
 		testkit.Rows(
 			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
 			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
 		),
 	)
-	tk.MustQuery("batch limit 3 dry run insert into t1 select * from t").Check(
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run update t set b = 42").Check(
+		testkit.Rows(
+			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
 		testkit.Rows(
 			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
 			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
 		),
 	)
-	tk.MustQuery("batch limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b").Check(
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
+		testkit.Rows(
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b").Check(
 		testkit.Rows(
 			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3"+
 				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
@@ -328,57 +346,11 @@ func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
 		),
 	)
-
-	// otherwise the name is the same as what is given
-	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(
-		testkit.Rows(
-			"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
-			"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run delete from t").Check(
-		testkit.Rows(
-			"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
-			"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on _tidb_rowid limit 3 dry run update t set b = 42").Check(
-		testkit.Rows(
-			"UPDATE `test`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 1 AND 3",
-			"UPDATE `test`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run update t set b = 42").Check(
-		testkit.Rows(
-			"UPDATE `test`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
-			"UPDATE `test`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on _tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
-		testkit.Rows(
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
-		testkit.Rows(
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
-		),
-	)
-	tk.MustQuery("batch on _tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b").Check(
-		testkit.Rows(
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3"+
-				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100"+
-				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
-		),
-	)
 	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b").Check(
 		testkit.Rows(
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3"+
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3"+
 				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
-			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100"+
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100"+
 				" ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`",
 		),
 	)
@@ -479,47 +451,47 @@ func TestNonTransactionalWithShardOnGeneratedColumn(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalWithAutoDetectShardColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_max_chunk_size=35")
-	tk.MustExec("use test")
-
-	goodTables := []string{
-		"create table t(a int, b int)",
-		"create table t(a int, b int, primary key(a) clustered)",
-		"create table t(a int, b int, primary key(a) nonclustered)",
-		"create table t(a int, b int, primary key(a, b) nonclustered)",
-		"create table t(a varchar(30), b int, primary key(a) clustered)",
-		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
-	}
-	badTables := []string{
-		"create table t(a int, b int, primary key(a, b) clustered)",
-		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
-	}
-
-	testFunc := func(table string, expectSuccess bool) {
-		tk.MustExec("drop table if exists t, t1")
-		tk.MustExec(table)
-		tk.MustExec(strings.Replace(table, "create table t", "create table t1", 1))
-		for i := 0; i < 100; i++ {
-			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
-		}
-		_, err := tk.Exec("batch limit 3 insert into t1 select * from t")
-		require.Equal(t, expectSuccess, err == nil)
-		_, err = tk.Exec("batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b")
-		require.Equal(t, expectSuccess, err == nil)
-		_, err = tk.Exec("batch limit 3 delete from t")
-		require.Equal(t, expectSuccess, err == nil)
-	}
-
-	for _, table := range goodTables {
-		testFunc(table, true)
-	}
-	for _, table := range badTables {
-		testFunc(table, false)
-	}
-}
+// func TestNonTransactionalWithAutoDetectShardColumn(t *testing.T) {
+// 	store := testkit.CreateMockStore(t)
+// 	tk := testkit.NewTestKit(t, store)
+// 	tk.MustExec("set @@tidb_max_chunk_size=35")
+// 	tk.MustExec("use test")
+//
+// 	goodTables := []string{
+// 		"create table t(a int, b int)",
+// 		"create table t(a int, b int, primary key(a) clustered)",
+// 		"create table t(a int, b int, primary key(a) nonclustered)",
+// 		"create table t(a int, b int, primary key(a, b) nonclustered)",
+// 		"create table t(a varchar(30), b int, primary key(a) clustered)",
+// 		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
+// 	}
+// 	badTables := []string{
+// 		"create table t(a int, b int, primary key(a, b) clustered)",
+// 		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
+// 	}
+//
+// 	testFunc := func(table string, expectSuccess bool) {
+// 		tk.MustExec("drop table if exists t, t1")
+// 		tk.MustExec(table)
+// 		tk.MustExec(strings.Replace(table, "create table t", "create table t1", 1))
+// 		for i := 0; i < 100; i++ {
+// 			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+// 		}
+// 		_, err := tk.Exec("batch on t1.a limit 3 insert into t1 select * from t")
+// 		require.Equal(t, expectSuccess, err == nil)
+// 		_, err = tk.Exec("batch on t1.a limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b")
+// 		require.Equal(t, expectSuccess, err == nil)
+// 		_, err = tk.Exec("batch on t1.a limit 3 delete from t")
+// 		require.Equal(t, expectSuccess, err == nil)
+// 	}
+//
+// 	for _, table := range goodTables {
+// 		testFunc(table, true)
+// 	}
+// 	for _, table := range badTables {
+// 		testFunc(table, false)
+// 	}
+// }
 
 func TestNonTransactionalWithInvisibleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -931,7 +903,7 @@ func TestNonTransactionalWithJoin(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 11 800", "2 22 1000"))
 }
 
-func TestAnomalousNontransactionalDML(t *testing.T) {
+func TestNonTransactionalAnomalousNontransactionalDML(t *testing.T) {
 	// some weird and error-prone behavior
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -953,7 +925,7 @@ func TestAnomalousNontransactionalDML(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 1", "4 2", "4 4"))
 }
 
-func TestAlias(t *testing.T) {
+func TestNonTransactionalAlias(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -970,7 +942,7 @@ func TestAlias(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 2 1", "2 20 21", "3 4 3", "4 40 41"))
 }
 
-func TestUpdatingShardColumn(t *testing.T) {
+func TestNonTransactionalUpdatingShardColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -993,7 +965,7 @@ func TestUpdatingShardColumn(t *testing.T) {
 	tk.MustContainErrMsg("batch on test.tt.id limit 1 update t as tt join t2 as tt2 on tt.id=tt2.id set tt.id=tt.id+10", "Non-transactional DML, shard column cannot be updated")
 }
 
-func TestNameAmbiguity(t *testing.T) {
+func TestNonTransactionalNameAmbiguity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1013,15 +985,15 @@ func TestNameAmbiguity(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2"))
 }
 
-func TestJoinSelect(t *testing.T) {
+func TestNonTransactionalNestedSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int, v int, key (id))")
-	tk.MustExec("create table t2(id int, v int, v2 int, v3 int, key (id))")
+	tk.MustExec("create table t2(id int, v int, key (id))")
 	tk.MustExec("create table t3(id int, v int, key (id))")
 	tk.MustExec("insert into t3 values (1, 1), (2, 2)")
 	tk.MustExec("insert into t1 values (1, 4)")
-	tk.MustExec("batch on test.t3.id limit 1 insert into t2 select * from (select t3.id, t1.v from t1 join t3 on t1.id = t3.id) tt3 join t3 on tt3.id = t3.id")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 4 1 1"))
+	tk.MustExec("batch on test.tt3.id limit 1 insert into t2 select * from (select t3.id, t1.v from t1 join t3 on t1.id = t3.id) tt3")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 4"))
 }
