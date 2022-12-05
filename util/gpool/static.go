@@ -182,7 +182,8 @@ func (s *Statistic) Static() (DoneFunc, error) {
 	return func() {
 		rt := uint64(math.Ceil(float64(time.Now().UnixNano()-start)) / ms)
 		s.shortRTT.Store(rt)
-		long, _ := s.longRTT.Add(float64(rt))
+		s.longRTT.Add(float64(rt))
+		long := s.LongRTT()
 		// If the long RTT is substantially larger than the short RTT then reduce the long RTT measurement.
 		// This can happen when latency returns to normal after a prolonged prior of excessive load.  Reducing the
 		// long RTT without waiting for the exponential smoothing helps bring the system back to steady state.

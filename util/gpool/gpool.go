@@ -113,3 +113,8 @@ func (p *BasePool) LongRTT() float64 {
 func (p *BasePool) ShortRTT() uint64 {
 	return p.statistic.ShortRTT()
 }
+
+// UpdateLongRTT is to update long rtt.
+func (p *BasePool) UpdateLongRTT(fn func(float64) float64) {
+	p.statistic.UpdateLongRTT(fn)
+}
