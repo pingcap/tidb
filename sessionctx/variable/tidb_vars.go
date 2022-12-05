@@ -868,6 +868,14 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
+	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
+	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
+	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
+	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
+	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
+	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
 	// PasswordReuseHistory limit a few passwords to reuse.
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
@@ -1115,6 +1123,14 @@ const (
 	DefTiDBUseAlloc                                  = false
 	DefTiDBEnablePlanReplayerCapture                 = false
 	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
+	DefTiDBTTLJobEnable                              = true
+	DefTiDBTTLScanBatchSize                          = 500
+	DefTiDBTTLScanBatchMaxSize                       = 10240
+	DefTiDBTTLScanBatchMinSize                       = 1
+	DefTiDBTTLDeleteBatchSize                        = 500
+	DefTiDBTTLDeleteBatchMaxSize                     = 10240
+	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
@@ -1180,6 +1196,10 @@ var (
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
+	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
+	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
