@@ -3097,15 +3097,39 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 func TestFailedLoginTrackingCheckError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Set the number of failure times to 1. If the login fails once in a row, check the error information.
+	// Set FAILED_LOGIN_ATTEMPTS to 1, and check error messages after  login failure once.
 	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
-	tk.MustExec("grant all privileges on *.* to 'testu1'@'localhost' ")
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
 	lds := strconv.FormatInt(1, 10)
 	errTarget := privileges.GenerateAccountAutoLockErr(1, "testu1", "localhost", lds, lds)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
+	// Check the login error message after the account is locked.
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
+	require.Equal(t, err.Error(), errTarget.Error())
+	checkAuthUser(t, tk, "testu1", 1, "Y")
+	// Set FAILED_LOGIN_ATTEMPTS to 1 and PASSWORD_LOCK_TIME to -1. Check error messages after failed login once.
+	createAndCheck(tk, "CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": -1}}", "testu2")
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
+	errTarget = privileges.GenerateAccountAutoLockErr(1, "testu2", "localhost", "unlimited", "unlimited")
+	require.Equal(t, err.Error(), errTarget.Error())
+	checkAuthUser(t, tk, "testu2", 1, "Y")
+	// Check the login error message after the account is locked.
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
+	require.Equal(t, err.Error(), errTarget.Error())
+	checkAuthUser(t, tk, "testu2", 1, "Y")
+}
+
+func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, nil, nil))
+	tk.MustQuery(`show grants`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'testu1'@'localhost'"))
+	tk.MustQuery(`select user()`).Check(testkit.Rows("testu1@localhost"))
 }
 
 func TestFailedLoginTracking(t *testing.T) {
