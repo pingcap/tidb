@@ -1141,3 +1141,48 @@ func TestSendCreds(t *testing.T) {
 	sentSecretAccessKey = backend.GetS3().SecretAccessKey
 	require.Equal(t, "", sentSecretAccessKey)
 }
+
+func TestObjectLock(t *testing.T) {
+	s := createS3Suite(t)
+	// resp is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(nil, nil)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp is not nil, but resp.ObjectLockConfiguration is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: nil,
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: nil,
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("EnaBled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("Enabled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, true, s.storage.IsObjectLockEnabled())
+}
