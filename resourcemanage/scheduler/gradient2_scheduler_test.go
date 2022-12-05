@@ -43,4 +43,23 @@ func TestGradient2Scheduler(t *testing.T) {
 	pool.ImportLastTunerTs(
 		time.Now().Add(-10 * time.Second))
 	require.Equal(t, Overclock, rms.Next())
+	//
+	pool.OnSample(0, 60, 0, 0, 100, 70, 30, 0, 0)
+	pool.ImportLastTunerTs(
+		time.Now().Add(-10 * time.Second))
+	require.Equal(t, Overclock, rms.Next())
+
+	pool.OnSample(0, 60, 0, 0, 100, 70, 30, 40, 20)
+	pool.ImportLastTunerTs(
+		time.Now().Add(-10 * time.Second))
+	require.Equal(t, Overclock, rms.Next())
+
+	pool.OnSample(0, 132, 0, 0, 100, 30, 70, 30, 102)
+	pool.ImportLastTunerTs(
+		time.Now().Add(-10 * time.Second))
+	require.Equal(t, Downclock, rms.Next())
+	pool.OnSample(0, 60, 0, 0, 100, 30, 70, 50, 2)
+	pool.ImportLastTunerTs(
+		time.Now().Add(-10 * time.Second))
+	require.Equal(t, Overclock, rms.Next())
 }
