@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -470,7 +471,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			break
 		}
 		if e.stats != nil {
-			e.stats.readFile += time.Since(startTime)
+			e.stats.readFile.Add(time.Since(startTime))
 		}
 		failpoint.Inject("mockReadSlowLogSlow", func(val failpoint.Value) {
 			if val.(bool) {
@@ -1003,7 +1004,7 @@ func (e *slowQueryRetriever) getRuntimeStats() execdetails.RuntimeStats {
 type slowQueryRuntimeStats struct {
 	totalFileNum int
 	readFileNum  int
-	readFile     time.Duration
+	readFile     atomicutil.Duration
 	initialize   time.Duration
 	readFileSize int64
 	parseLog     int64
@@ -1013,7 +1014,7 @@ type slowQueryRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (s *slowQueryRuntimeStats) String() string {
 	return fmt.Sprintf("initialize: %s, read_file: %s, parse_log: {time:%s, concurrency:%v}, total_file: %v, read_file: %v, read_size: %s",
-		execdetails.FormatDuration(s.initialize), execdetails.FormatDuration(s.readFile),
+		execdetails.FormatDuration(s.initialize), execdetails.FormatDuration(s.readFile.Load()),
 		execdetails.FormatDuration(time.Duration(s.parseLog)), s.concurrent,
 		s.totalFileNum, s.readFileNum, memory.FormatBytes(s.readFileSize))
 }
@@ -1026,7 +1027,7 @@ func (s *slowQueryRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalFileNum += tmp.totalFileNum
 	s.readFileNum += tmp.readFileNum
-	s.readFile += tmp.readFile
+	s.readFile.Add(tmp.readFile.Load())
 	s.initialize += tmp.initialize
 	s.readFileSize += tmp.readFileSize
 	s.parseLog += tmp.parseLog
@@ -1034,7 +1035,14 @@ func (s *slowQueryRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 
 // Clone implements the RuntimeStats interface.
 func (s *slowQueryRuntimeStats) Clone() execdetails.RuntimeStats {
-	newRs := *s
+	var newRs slowQueryRuntimeStats
+	newRs.totalFileNum = s.totalFileNum
+	newRs.readFileNum = s.readFileNum
+	newRs.readFile.Store(s.readFile.Load())
+	newRs.initialize = s.initialize
+	newRs.readFileSize = s.readFileSize
+	newRs.parseLog = s.parseLog
+	newRs.concurrent = s.concurrent
 	return &newRs
 }
 

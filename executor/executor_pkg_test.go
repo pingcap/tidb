@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
@@ -151,7 +152,7 @@ func TestSlowQueryRuntimeStats(t *testing.T) {
 	stats := &slowQueryRuntimeStats{
 		totalFileNum: 2,
 		readFileNum:  2,
-		readFile:     time.Second,
+		readFile:     *atomic.NewDuration(time.Second),
 		initialize:   time.Millisecond,
 		readFileSize: 1024 * 1024 * 1024,
 		parseLog:     int64(time.Millisecond * 100),
