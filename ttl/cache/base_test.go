@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache_test
+package cache
 
 import (
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+func TestBaseCache(t *testing.T) {
+	baseCache := newBaseCache(time.Nanosecond)
+	time.Sleep(time.Microsecond)
+
+	assert.True(t, baseCache.ShouldUpdate())
+
+	baseCache.updateTime = time.Now()
+	baseCache.SetInterval(time.Hour)
+	assert.False(t, baseCache.ShouldUpdate())
 }
