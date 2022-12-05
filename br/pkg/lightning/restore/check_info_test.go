@@ -459,12 +459,21 @@ func TestCheckTableEmpty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
+<<<<<<< HEAD
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+=======
+	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+>>>>>>> 35819ee43f (import: check table empty skips using index (#39604))
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	// not error, need not to init check template
 	err = rc.checkTableEmpty(ctx)
@@ -477,6 +486,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
+<<<<<<< HEAD
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
@@ -484,6 +494,15 @@ func TestCheckTableEmpty(t *testing.T) {
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+=======
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+>>>>>>> 35819ee43f (import: check table empty skips using index (#39604))
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -499,11 +518,19 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
+<<<<<<< HEAD
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+=======
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
+>>>>>>> 35819ee43f (import: check table empty skips using index (#39604))
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -542,7 +569,11 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	// only need to check the one that is not in checkpoint
+<<<<<<< HEAD
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+=======
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
+>>>>>>> 35819ee43f (import: check table empty skips using index (#39604))
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
