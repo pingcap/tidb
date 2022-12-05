@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -3091,6 +3092,20 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	err = tk.Session().Auth(user, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
+}
+
+func TestFailedLoginTrackingCheckError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Set the number of failure times to 1. If the login fails once in a row, check the error information.
+	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;",
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
+	tk.MustExec("grant all privileges on *.* to 'testu1'@'localhost' ")
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
+	lds := strconv.FormatInt(1, 10)
+	errTarget := privileges.GenerateAccountAutoLockErr(1, "testu1", "localhost", lds, lds)
+	require.Equal(t, err.Error(), errTarget.Error())
+	checkAuthUser(t, tk, "testu1", 1, "Y")
 }
 
 func TestFailedLoginTracking(t *testing.T) {

@@ -2712,7 +2712,7 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 	pm := privilege.GetPrivilegeManager(s)
 	// Use the cache to determine whether to unlock the account.
 	// If the account needs to be unlocked, read the database information to determine whether
-	//the account needs to be unlocked. Otherwise, an error message is displayed.
+	// the account needs to be unlocked. Otherwise, an error message is displayed.
 	err := pm.VerifyAccountAutoLockInMemory(user, host)
 	if err != nil {
 		return err
@@ -2812,7 +2812,18 @@ func authFailedTracking(s *session, user string, host string) error {
 	}
 	if lockStatusChanged {
 		// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
-		return domain.GetDomain(s).NotifyUpdatePrivilege()
+		err = domain.GetDomain(s).NotifyUpdatePrivilege()
+		if err != nil {
+			return err
+		}
+		// The number of failed login attempts reaches FAILED_LOGIN_ATTEMPTS.
+		// An error message is displayed indicating permission denial and account lock.
+		if passwordLocking.PasswordLockTimeDays == -1 {
+			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 	}
 	return nil
 }
