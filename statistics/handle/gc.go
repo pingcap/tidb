@@ -50,6 +50,9 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
+		if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return h.removeDeletedExtendedStats(gcVer)
 }
@@ -136,6 +139,28 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	return nil
+}
+
+func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	sql := "delete from mysql.stats_history where table_id = %?"
+	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sql = "delete from mysql.stats_meta_history where table_id = %?"
+	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
+	return err
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
