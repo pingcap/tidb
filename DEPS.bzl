@@ -4132,10 +4132,6 @@ def go_deps():
         name = "io_etcd_go_etcd_raft_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/raft/v3",
-        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:io_etcd_go_etcd_raft_v3.patch",
-        ],
         sum = "h1:uCC37qOXqBvKqTGHGyhASsaCsnTuJugl1GvneJNwHWo=",
         version = "v3.5.2",
     )
