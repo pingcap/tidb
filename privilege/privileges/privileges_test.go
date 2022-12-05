@@ -3299,7 +3299,6 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 	} else {
 		require.NoError(t, err)
 	}
-	tk.MustExec("rollback")
 }
 
 func selectSQL(user string) string {
