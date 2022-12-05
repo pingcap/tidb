@@ -10379,7 +10379,6 @@ AuthString:
 RoleNameString:
 	stringLit
 |	identifier
-|	"RESOURCE"
 
 RolenameComposed:
 	StringName '@' StringName
@@ -14122,13 +14121,12 @@ DropPolicyStmt:
 	}
 
 CreateResourceGroupStmt:
-	"CREATE" OrReplace "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
 	{
 		$$ = &ast.CreateResourceGroupStmt{
-			OrReplace:               $2.(bool),
-			IfNotExists:             $5.(bool),
-			ResourceGroupName:       model.NewCIStr($6),
-			ResourceGroupOptionList: $7.([]*ast.ResourceGroupOption),
+			IfNotExists:             $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
 		}
 	}
 

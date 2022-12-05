@@ -1573,7 +1573,6 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 type CreateResourceGroupStmt struct {
 	ddlNode
 
-	OrReplace               bool
 	IfNotExists             bool
 	ResourceGroupName       model.CIStr
 	ResourceGroupOptionList []*ResourceGroupOption
@@ -1582,9 +1581,7 @@ type CreateResourceGroupStmt struct {
 // Restore implements Node interface.
 func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
-	if n.OrReplace {
-		ctx.WriteKeyWord("OR REPLACE ")
-	}
+
 	ctx.WriteKeyWord("RESOURCE GROUP ")
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
