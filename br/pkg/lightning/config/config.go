@@ -32,7 +32,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
-	mysql2 "github.com/go-sql-driver/mysql"
+	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -1138,7 +1138,7 @@ func (cfg *Config) AdjustCheckPoint() {
 		}
 	} else {
 		// try to remove allowAllFiles
-		mysqlCfg, err := mysql2.ParseDSN(cfg.Checkpoint.DSN)
+		mysqlCfg, err := gomysql.ParseDSN(cfg.Checkpoint.DSN)
 		if err != nil {
 			return
 		}

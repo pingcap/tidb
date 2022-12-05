@@ -800,6 +800,17 @@ func TestAdjustDiskQuota(t *testing.T) {
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
 }
 
+func TestRemoveAllowAllFiles(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.Checkpoint.Driver = config.CheckpointDriverMySQL
+	cfg.Checkpoint.DSN = "guest:12345@tcp(172.16.30.11:4001)/?tls=false&allowAllFiles=true&charset=utf8mb4"
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?tls=false&charset=utf8mb4", cfg.Checkpoint.DSN)
+}
+
 func TestDataCharacterSet(t *testing.T) {
 	testCases := []struct {
 		input string
