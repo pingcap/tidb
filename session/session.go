@@ -2652,7 +2652,10 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	}
 	if enableAutoLock {
 		// The password is correct. If the account is not locked, the number of login failure statistics will be cleared.
-		return authSuccessClearCount(s, authUser.Username, authUser.Hostname)
+		err := authSuccessClearCount(s, authUser.Username, authUser.Hostname)
+		if err != nil {
+			return err
+		}
 	}
 	pm.AuthSuccess(authUser.Username, authUser.Hostname)
 	user.AuthUsername = authUser.Username
