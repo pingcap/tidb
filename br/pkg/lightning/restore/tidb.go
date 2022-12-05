@@ -66,13 +66,14 @@ type TiDBManager struct {
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
-		Host:             dsn.Host,
-		Port:             dsn.Port,
-		User:             dsn.User,
-		Password:         dsn.Psw,
-		SQLMode:          dsn.StrSQLMode,
-		MaxAllowedPacket: dsn.MaxAllowedPacket,
-		TLS:              dsn.TLS,
+		Host:                     dsn.Host,
+		Port:                     dsn.Port,
+		User:                     dsn.User,
+		Password:                 dsn.Psw,
+		SQLMode:                  dsn.StrSQLMode,
+		MaxAllowedPacket:         dsn.MaxAllowedPacket,
+		TLSConfig:                dsn.Security.TLSConfig,
+		AllowFallbackToPlaintext: dsn.Security.AllowFallbackToPlaintext,
 	}
 
 	db, err := param.Connect()
