@@ -540,8 +540,9 @@ func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, 
 		excludeJobs += fmt.Sprintf(" and job_id != %d", id)
 	}
 
-	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by job_id limit %d",
-		currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
+	bJobs, err := GetBackfillJobs(sess, BackfillTable,
+		fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by job_id, ele_key, ele_id limit %d",
+			currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
@@ -568,8 +569,9 @@ func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid
 	var validLen int
 	var bJobs []*BackfillJob
 	err = runInTxn(NewSession(sess), func(se *session) error {
-		bJobs, err = GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and job_id = %d order by job_id limit %d",
-			currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
+		bJobs, err = GetBackfillJobs(sess, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and job_id = %d order by job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
 		if err != nil {
 			return err
 		}
@@ -626,6 +628,7 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 
 // GetBackfillJobs gets the backfill jobs in the tblName table according to condition.
 func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]*BackfillJob, error) {
+	logutil.BgLogger().Warn("----------" + condition)
 	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
 		return nil, errors.Trace(err)
