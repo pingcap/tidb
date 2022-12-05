@@ -50,6 +50,5 @@ check_contains 'id: 3'
 check_contains 'a: NULL'
 check_contains 'b: 11'
 check_contains 'b: 13'
-check_contains 'b: 14'
 
 run_sql "drop schema $DB"
