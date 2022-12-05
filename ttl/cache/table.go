@@ -56,6 +56,8 @@ func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.Fie
 
 // PhysicalTable is used to provide some information for a physical table in TTL job
 type PhysicalTable struct {
+	// ID is the physical ID of the table
+	ID int64
 	// Schema is the database name of the table
 	Schema model.CIStr
 	*model.TableInfo
@@ -92,11 +94,13 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 		return nil, err
 	}
 
+	var physicalID int64
 	var partitionDef *model.PartitionDefinition
 	if tbl.Partition == nil {
 		if partition.L != "" {
 			return nil, errors.Errorf("table '%s.%s' is not a partitioned table", schema, tbl.Name)
 		}
+		physicalID = tbl.ID
 	} else {
 		if partition.L == "" {
 			return nil, errors.Errorf("partition name is required, table '%s.%s' is a partitioned table", schema, tbl.Name)
@@ -112,9 +116,12 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 		if partitionDef == nil {
 			return nil, errors.Errorf("partition '%s' is not found in ttl table '%s.%s'", partition.O, schema, tbl.Name)
 		}
+
+		physicalID = partitionDef.ID
 	}
 
 	return &PhysicalTable{
+		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
 		Partition:      partition,

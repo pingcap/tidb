@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ttlworker",
+    srcs = [
+        "del.go",
+        "scan.go",
+        "session.go",
+        "worker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ttl/ttlworker",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/terror",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//ttl/cache",
+        "//ttl/session",
+        "//ttl/sqlbuilder",
+        "//types",
+        "//util",
+        "//util/chunk",
+        "//util/logutil",
+        "//util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_time//rate",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "ttlworker_test",
+    srcs = [
+        "del_test.go",
+        "scan_test.go",
+        "session_test.go",
+    ],
+    embed = [":ttlworker"],
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//ttl/cache",
+        "//types",
+        "//util/chunk",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
+    ],
+)
