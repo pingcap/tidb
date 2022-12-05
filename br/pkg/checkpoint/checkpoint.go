@@ -353,6 +353,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 		var wg sync.WaitGroup
 		errCh := r.startCheckpointRunner(cctx, &wg)
 		ticker := time.NewTicker(tickDuration)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
