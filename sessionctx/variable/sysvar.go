@@ -520,7 +520,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := numberCount + specialCharCount + 2*int32(mixedCaseCount); length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
@@ -539,7 +542,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := int32(numberCount) + specialCharCount + 2*mixedCaseCount; length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
@@ -558,7 +564,10 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if minLength := numberCount + int32(specialCharCount) + 2*mixedCaseCount; length < minLength {
-				PasswordValidationLength.Store(minLength)
+				err = updatePasswordValidationLength(vars, minLength)
+				if err != nil {
+					return "", err
+				}
 			}
 			return normalizedValue, nil
 		},
