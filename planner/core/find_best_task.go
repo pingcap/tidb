@@ -1927,7 +1927,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	return is
 }
 
-// isPointGetConditions indicates whether the conditions are point-get-able.
+// isPointGetPath indicates whether the conditions are point-get-able.
 // eg: create table t(a int, b int,c int unique, primary (a,b))
 // select * from t where a = 1 and b = 1 and c =1;
 // the datasource can access by primary key(a,b) or unique key c which are both point-get-able
