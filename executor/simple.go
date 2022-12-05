@@ -1195,13 +1195,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, plInfo.lockAccount, recordTokenIssuer, plInfo.passwordExpired, plInfo.passwordLifetime)
 		// add Password_reuse_time value.
-		if plInfo.passwordReuseIntervalChange {
+		if plInfo.passwordReuseIntervalChange && (plInfo.passwordReuseInterval != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plInfo.passwordReuseInterval)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		// add Password_reuse_history value.
-		if plInfo.passwordHistoryChange {
+		if plInfo.passwordHistoryChange && (plInfo.passwordHistory != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plInfo.passwordHistory)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
