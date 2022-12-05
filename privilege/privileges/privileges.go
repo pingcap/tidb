@@ -418,7 +418,7 @@ func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 		lockTime, remainTime, failedLoginAttempts)
 }
 
-// VerifyAccountAutoLock implements the Manager interface.
+// VerifyAccountAutoLockInMemory implements the Manager interface.
 func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string) error {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
