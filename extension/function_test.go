@@ -283,26 +283,37 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 				},
 			},
 			{
-				Name:                     "custom_only_dyn_priv_func",
-				EvalTp:                   types.ETString,
-				RequireDynamicPrivileges: []string{"CUSTOM_DYN_PRIV_1"},
+				Name:   "custom_only_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					return []string{"CUSTOM_DYN_PRIV_1"}
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "abc", false, nil
 				},
 			},
 			{
-				Name:                        "custom_only_sem_dyn_priv_func",
-				EvalTp:                      types.ETString,
-				SemRequireDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				Name:   "custom_only_sem_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					if sem {
+						return []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"}
+					}
+					return nil
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "def", false, nil
 				},
 			},
 			{
-				Name:                        "custom_both_dyn_priv_func",
-				EvalTp:                      types.ETString,
-				RequireDynamicPrivileges:    []string{"CUSTOM_DYN_PRIV_1"},
-				SemRequireDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				Name:   "custom_both_dyn_priv_func",
+				EvalTp: types.ETString,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					if sem {
+						return []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"}
+					}
+					return []string{"CUSTOM_DYN_PRIV_1"}
+				},
 				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
 					return "ghi", false, nil
 				},

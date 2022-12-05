@@ -189,7 +189,12 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	}
 	var dump int
 	err = exec.QueryRow(ctx, "check table empty",
-		fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", common.UniqueTable(schemaName, tableName)),
+		// Here we use the `USE INDEX()` hint to skip fetch the record from index.
+		// In Lightning, if previous importing is halted half-way, it is possible that
+		// the data is partially imported, but the index data has not been imported.
+		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
+		// which is empty.  This will result in missing check.
+		fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(schemaName, tableName)),
 		&dump,
 	)
 
@@ -444,15 +449,7 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreRestoreInfoGetter interface.
 func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	var (
-		reader storage.ReadSeekCloser
-		err    error
-	)
-	if dataFileMeta.Type == mydump.SourceTypeParquet {
-		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, dataFileMeta.Path, dataFileMeta.FileSize)
-	} else {
-		reader, err = p.srcStorage.Open(ctx, dataFileMeta.Path)
-	}
+	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -590,13 +587,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	var reader storage.ReadSeekCloser
-	var err error
-	if sampleFile.Type == mydump.SourceTypeParquet {
-		reader, err = mydump.OpenParquetReader(ctx, p.srcStorage, sampleFile.Path, sampleFile.FileSize)
-	} else {
-		reader, err = p.srcStorage.Open(ctx, sampleFile.Path)
-	}
+	reader, err := openReader(ctx, sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}

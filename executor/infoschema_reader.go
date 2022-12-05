@@ -386,7 +386,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
+	return tbl.Allocators(ctx).Get(autoid.AutoIncrementType).Base() + 1, nil
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -2607,7 +2607,17 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 						row = append(row, types.NewDatum(nil))
 					}
 				} else {
-					row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
+					switch c.Name.O {
+					case txninfo.MemBufferBytesStr:
+						memDBFootprint := sctx.GetSessionVars().MemDBFootprint
+						var bytesConsumed int64
+						if memDBFootprint != nil {
+							bytesConsumed = memDBFootprint.BytesConsumed()
+						}
+						row = append(row, types.NewDatum(bytesConsumed))
+					default:
+						row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
+					}
 				}
 			}
 			res = append(res, row)

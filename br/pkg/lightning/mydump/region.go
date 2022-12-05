@@ -31,9 +31,16 @@ import (
 )
 
 const (
-	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+	tableRegionSizeWarningThreshold           int64 = 1024 * 1024 * 1024
+	compressedTableRegionSizeWarningThreshold int64 = 410 * 1024 * 1024 // 0.4 * tableRegionSizeWarningThreshold
 	// the increment ratio of large CSV file size threshold by `region-split-size`
 	largeCSVLowerThresholdRation = 10
+	// TableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
+	// It's used to make sure compressed files can be read until EOF. Because we can't get the exact decompressed size of the compressed files.
+	TableFileSizeINF = 10 * 1024 * tableRegionSizeWarningThreshold
+	// compressDataRatio is a relatively maximum compress ratio for normal compressed data
+	// It's used to estimate rowIDMax, we use a large value to try to avoid overlapping
+	compressDataRatio = 500
 )
 
 // TableRegion contains information for a table region during import.
@@ -292,19 +299,36 @@ func MakeSourceFileRegion(
 		return regions, subFileSizes, err
 	}
 
+	fileSize := fi.FileMeta.FileSize
+	rowIDMax := fileSize / divisor
+	// for compressed files, suggest the compress ratio is 1% to calculate the rowIDMax.
+	// set fileSize to INF to make sure compressed files can be read until EOF. Because we can't get the exact size of the compressed files.
+	// TODO: update progress bar calculation for compressed files.
+	if fi.FileMeta.Compression != CompressionNone {
+		// FIXME: this is not accurate. Need sample ratio in the future and use sampled ratio to compute rowIDMax
+		//  currently we use 500 here. It's a relatively large value for most data.
+		rowIDMax = fileSize * compressDataRatio / divisor
+		fileSize = TableFileSizeINF
+	}
 	tableRegion := &TableRegion{
 		DB:       meta.DB,
 		Table:    meta.Name,
 		FileMeta: fi.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    fi.FileMeta.FileSize,
+			EndOffset:    fileSize,
 			PrevRowIDMax: 0,
-			RowIDMax:     fi.FileMeta.FileSize / divisor,
+			RowIDMax:     rowIDMax,
 		},
 	}
 
-	if tableRegion.Size() > tableRegionSizeWarningThreshold {
+	regionTooBig := false
+	if fi.FileMeta.Compression == CompressionNone {
+		regionTooBig = tableRegion.Size() > tableRegionSizeWarningThreshold
+	} else {
+		regionTooBig = fi.FileMeta.FileSize > compressedTableRegionSizeWarningThreshold
+	}
+	if regionTooBig {
 		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),

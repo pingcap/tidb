@@ -289,6 +289,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+// OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
+// The node must be prepared first.
+// Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
+// doesn't consider plan cache and plan binding, also doesn't do privilege check.
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	builder.Init(sctx, is, hintProcessor)
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
@@ -356,6 +375,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
+	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
@@ -547,12 +567,14 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
 		Source:    bindinfo.Evolve,
+		SQLDigest: sqlDigestWithDB.String(),
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

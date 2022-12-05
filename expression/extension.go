@@ -114,11 +114,13 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
-	privs := c.funcDef.RequireDynamicPrivileges
-	if semPrivs := c.funcDef.SemRequireDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
-		privs = semPrivs
+	fn := c.funcDef.RequireDynamicPrivileges
+	if fn == nil {
+		return nil
 	}
 
+	semEnabled := sem.IsEnabled()
+	privs := fn(semEnabled)
 	if len(privs) == 0 {
 		return nil
 	}
@@ -129,7 +131,7 @@ func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 	for _, priv := range privs {
 		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
 			msg := priv
-			if !sem.IsEnabled() {
+			if !semEnabled {
 				msg = "SUPER or " + msg
 			}
 			return errSpecificAccessDenied.GenWithStackByArgs(msg)

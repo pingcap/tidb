@@ -151,7 +151,7 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (bit bit(10) DEFAULT b'100')")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
-		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
+		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10)   select,insert,update,references  "))
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("set time_zone='+08:00'")
@@ -165,6 +165,11 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bit DEFAULT (rand()))")
 	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
+	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
+		Check(testkit.Rows("bit(1)", "year(4)"))
 }
 
 func TestEngines(t *testing.T) {

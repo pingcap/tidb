@@ -674,7 +674,7 @@
       {
         "SQL": "select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
           "└─MergeJoin 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
           "  ├─TableDual(Build) 0.00 root  rows:0",
           "  └─TableDual(Probe) 0.00 root  rows:0"
@@ -704,7 +704,7 @@
       {
         "SQL": "select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
           "└─MergeJoin 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
           "  ├─TableDual(Build) 0.00 root  rows:0",
           "  └─TableDual(Probe) 0.00 root  rows:0"

@@ -35,7 +35,6 @@ func TestPlanReplayerCaptureRecordJsonStats(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
-	tk.MustExec("SET global tidb_enable_plan_replayer_capture = ON;")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	testcases := []struct {
@@ -68,6 +67,7 @@ func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain
 	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
+	sctx.GetSessionVars().EnablePlanReplayerCapture = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), stmt)

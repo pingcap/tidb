@@ -275,7 +275,13 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
 	depthOffset := len(flat.Main) - len(selectPlan)
+loop1:
 	for _, op := range selectPlan {
+		switch op.Origin.(type) {
+		case *FKCheck, *FKCascade:
+			// Generate plan digest doesn't need to contain the foreign key check/cascade plan, so just break the loop.
+			break loop1
+		}
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
@@ -287,6 +293,9 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		)
 	}
 	normalized = d.buf.String()
+	if len(normalized) == 0 {
+		return "", parser.NewDigest(nil)
+	}
 	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)
