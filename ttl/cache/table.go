@@ -203,6 +203,7 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, 
 	return tm.CoreTime().GoTime(tz)
 }
 
+// SplitScanRanges split ranges for TTL scan
 func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, fullRange ScanRange, maxSplit int) ([]ScanRange, error) {
 	if len(t.KeyColumns) != 1 || maxSplit <= 1 {
 		return []ScanRange{fullRange}, nil
