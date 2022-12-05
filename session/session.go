@@ -2830,12 +2830,6 @@ func (s *session) passwordLocking(user string, host string, newAttributesStr str
 func failedLoginTrackingBegin(s *session) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
-	if err != nil {
-		if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
-			return rollBackErr
-		}
-		return err
-	}
 	return err
 }
 
