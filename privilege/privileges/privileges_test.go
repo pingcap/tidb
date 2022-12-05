@@ -3098,7 +3098,7 @@ func TestFailedLoginTrackingCheckError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Set FAILED_LOGIN_ATTEMPTS to 1, and check error messages after  login failure once.
-	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;",
+	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
 	lds := strconv.FormatInt(1, 10)
@@ -3109,8 +3109,8 @@ func TestFailedLoginTrackingCheckError(t *testing.T) {
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
-	// Set FAILED_LOGIN_ATTEMPTS to 1 and PASSWORD_LOCK_TIME to -1. Check error messages after failed login once.
-	createAndCheck(tk, "CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED;",
+	// Set FAILED_LOGIN_ATTEMPTS to 1 and PASSWORD_LOCK_TIME to UNBOUNDED. Check error messages after failed login once.
+	createAndCheck(tk, "CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": -1}}", "testu2")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
 	errTarget = privileges.GenerateAccountAutoLockErr(1, "testu2", "localhost", "unlimited", "unlimited")
@@ -3120,6 +3120,29 @@ func TestFailedLoginTrackingCheckError(t *testing.T) {
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu2", 1, "Y")
+	// Set FAILED_LOGIN_ATTEMPTS to 0 or PASSWORD_LOCK_TIME to 0. Check error messages after failed login once.
+	createAndCheck(tk, "CREATE USER 'testu3'@'localhost' IDENTIFIED BY 'testu3' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME UNBOUNDED",
+		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "testu3")
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu3", Hostname: "localhost"}, encodePassword("password"), nil)
+	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu3'@'localhost' (using password: YES)"))
+	checkAuthUser(t, tk, "testu3", 0, "")
+	createAndCheck(tk, "CREATE USER 'testu4'@'localhost' IDENTIFIED BY 'testu4' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 0",
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 0}}", "testu4")
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu4", Hostname: "localhost"}, encodePassword("password"), nil)
+	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu4'@'localhost' (using password: YES)"))
+	checkAuthUser(t, tk, "testu4", 0, "")
+	tk.MustExec("CREATE USER 'testu5'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu5", Hostname: "localhost"}, encodePassword("password"), nil)
+	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu5'@'localhost' (using password: YES)"))
+	userAttributesSQL := selectSQL("testu5")
+	resBuff := bytes.NewBufferString("")
+	rs := tk.MustQuery(userAttributesSQL)
+	for _, row := range rs.Rows() {
+		_, err := fmt.Fprintf(resBuff, "%s", row)
+		require.NoError(t, err)
+	}
+	require.True(t, resBuff.String() == "[<nil>]")
+
 }
 
 func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
@@ -3268,12 +3291,11 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 		_, err := fmt.Fprintf(resBuff, "%s\n", row)
 		require.NoError(t, err)
 	}
+	fmt.Println(1111, resBuff.Len(), resBuff)
 	var ua []userAttributes
 	if err := json.Unmarshal(resBuff.Bytes(), &ua); err == nil {
 		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
-		if autoAccountLocked != "" {
-			require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
-		}
+		require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
 	} else {
 		require.NoError(t, err)
 	}

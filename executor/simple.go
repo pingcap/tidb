@@ -1100,11 +1100,15 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
 			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
 		}
-		if plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange {
+		// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
+		// When inserting the attempts into json, an error occurs. This requires special handling.
+		if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
 			userAttributes = fmt.Sprintf("{%s,%s}", userAttributes, PasswordLocking)
 		}
 	} else {
-		if plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange {
+		// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
+		// When inserting the attempts into json, an error occurs. This requires special handling.
+		if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
 			userAttributes = PasswordLocking
 		}
 	}
