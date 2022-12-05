@@ -311,6 +311,7 @@ type ScanQueryGenerator struct {
 	keyRangeEnd   []types.Datum
 	stack         [][]types.Datum
 	limit         int
+	firstBuild    bool
 	exhausted     bool
 }
 
@@ -333,6 +334,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStar
 		expire:        expire,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
+		firstBuild:    true,
 	}, nil
 }
 
@@ -345,6 +347,10 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 	if nextLimit <= 0 {
 		return "", errors.Errorf("invalid limit '%d'", nextLimit)
 	}
+
+	defer func() {
+		g.firstBuild = false
+	}()
 
 	if g.stack == nil {
 		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
@@ -416,7 +422,13 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 			var err error
 			if i < len(g.stack)-1 {
 				err = b.WriteCommonCondition(col, "=", val)
+			} else if g.firstBuild {
+				// When `g.firstBuild == true`, that means we are querying rows after range start, because range is defined
+				// as [start, end), we should use ">=" to find the rows including start key.
+				err = b.WriteCommonCondition(col, ">=", val)
 			} else {
+				// Otherwise when `g.firstBuild != true`, that means we are continuing with the previous result, we should use
+				// ">" to exclude the previous row.
 				err = b.WriteCommonCondition(col, ">", val)
 			}
 			if err != nil {
@@ -426,7 +438,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if len(g.keyRangeEnd) > 0 {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<=", g.keyRangeEnd); err != nil {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<", g.keyRangeEnd); err != nil {
 			return "", err
 		}
 	}
