@@ -25,7 +25,7 @@ const (
 	defaultSmoothing      float64 = 0.2
 	defaultMinConcurrency int     = 2
 
-	MaxOverloadConcurrencyDelta int = 2 // max concurrency = user setting concurrency + delta
+	maxOverloadConcurrencyDelta int = 2 // max concurrency = user setting concurrency + delta
 )
 
 // Gradient2Scheduler is a scheduler that uses the gradient of the queue length
@@ -71,6 +71,6 @@ func (b *Gradient2Scheduler) tune(_ util.Component, p util.GorotinuePool) float6
 	gradient := mathutil.Max(0.5, mathutil.Min(1.0, p.LongRTT()/float64(p.ShortRTT())))
 	newLimit := float64(p.Running())*gradient + float64(p.GetQueueSize())
 	newLimit = float64(p.Running())*(1-b.smoothing) + newLimit*b.smoothing
-	newLimit = mathutil.Max(float64(defaultMinConcurrency), mathutil.Min(float64(MaxOverloadConcurrencyDelta+p.Cap()), newLimit))
+	newLimit = mathutil.Max(float64(defaultMinConcurrency), mathutil.Min(float64(maxOverloadConcurrencyDelta+p.Cap()), newLimit))
 	return newLimit
 }
