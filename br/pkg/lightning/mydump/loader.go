@@ -714,7 +714,11 @@ func calculateFileBytes(ctx context.Context,
 	return tot, offset, nil
 }
 
+// SampleFileCompressRatio samples the compress ratio of the compressed file.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+	if fileMeta.Compression == CompressionNone {
+		return 1, nil
+	}
 	compressType, err := ToStorageCompressType(fileMeta.Compression)
 	if err != nil {
 		return 0, err
