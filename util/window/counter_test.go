@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRollingCounterAdd(t *testing.T) {
@@ -31,8 +31,8 @@ func TestRollingCounterAdd(t *testing.T) {
 	r := NewRollingCounter[float64](opts)
 	listBuckets := func() [][]float64 {
 		buckets := make([][]float64, 0)
-		r.Reduce(func(i Iterator[float64]) float64 {
-			for i.Next() {
+		r.Reduce(func(i BucketIterator[float64]) float64 {
+			for i.HasNext() {
 				bucket := i.Bucket()
 				buckets = append(buckets, bucket.Points)
 			}
@@ -40,21 +40,21 @@ func TestRollingCounterAdd(t *testing.T) {
 		})
 		return buckets
 	}
-	assert.Equal(t, [][]float64{{}, {}, {}}, listBuckets())
+	require.Equal(t, [][]float64{{}, {}, {}}, listBuckets())
 	r.Add(1)
-	assert.Equal(t, [][]float64{{}, {}, {1}}, listBuckets())
+	require.Equal(t, [][]float64{{}, {}, {1}}, listBuckets())
 	time.Sleep(time.Second)
 	r.Add(2)
 	r.Add(3)
-	assert.Equal(t, [][]float64{{}, {1}, {5}}, listBuckets())
+	require.Equal(t, [][]float64{{}, {1}, {5}}, listBuckets())
 	time.Sleep(time.Second)
 	r.Add(4)
 	r.Add(5)
 	r.Add(6)
-	assert.Equal(t, [][]float64{{1}, {5}, {15}}, listBuckets())
+	require.Equal(t, [][]float64{{1}, {5}, {15}}, listBuckets())
 	time.Sleep(time.Second)
 	r.Add(7)
-	assert.Equal(t, [][]float64{{5}, {15}, {7}}, listBuckets())
+	require.Equal(t, [][]float64{{5}, {15}, {7}}, listBuckets())
 }
 
 func TestRollingCounterReduce(t *testing.T) {
@@ -73,9 +73,9 @@ func TestRollingCounterReduce(t *testing.T) {
 			time.Sleep(bucketDuration)
 		}
 	}
-	var result = r.Reduce(func(iterator Iterator[float64]) float64 {
+	var result = r.Reduce(func(iterator BucketIterator[float64]) float64 {
 		var result float64
-		for iterator.Next() {
+		for iterator.HasNext() {
 			bucket := iterator.Bucket()
 			result += bucket.Points[0]
 		}
@@ -112,8 +112,8 @@ func TestRollingCounterDataRace(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_ = r.Reduce(func(i Iterator[float64]) float64 {
-					for i.Next() {
+				_ = r.Reduce(func(i BucketIterator[float64]) float64 {
+					for i.HasNext() {
 						bucket := i.Bucket()
 						for range bucket.Points {
 							continue
@@ -156,9 +156,9 @@ func BenchmarkRollingCounterReduce(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i <= b.N; i++ {
-		var _ = r.Reduce(func(i Iterator[float64]) float64 {
+		var _ = r.Reduce(func(i BucketIterator[float64]) float64 {
 			var result float64
-			for i.Next() {
+			for i.HasNext() {
 				bucket := i.Bucket()
 				if len(bucket.Points) != 0 {
 					result += bucket.Points[0]

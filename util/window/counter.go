@@ -29,32 +29,32 @@ type Metric[T constraints.Integer | constraints.Float] interface {
 	Add(T)
 	// Value gets the current value.
 	// If the metric's type is PointGauge, RollingCounter, RollingGauge,
-	// it returns the sum value within the window.
+	// it returns the sum value within the windows.
 	Value() T
 }
 
 // Aggregation contains some common aggregation function.
-// Each aggregation can compute summary statistics of window.
+// Each aggregation can compute summary statistics of windows.
 type Aggregation[T constraints.Integer | constraints.Float] interface {
-	// Min finds the min value within the window.
+	// Min finds the min value within the windows.
 	Min() T
-	// Max finds the max value within the window.
+	// Max finds the max value within the windows.
 	Max() T
-	// Avg computes average value within the window.
+	// Avg computes average value within the windows.
 	Avg() T
-	// Sum computes sum value within the window.
+	// Sum computes sum value within the windows.
 	Sum() T
 }
 
-// RollingCounter represents a ring window based on time duration.
+// RollingCounter represents a ring windows based on time duration.
 // e.g. [[1], [3], [5]]
 type RollingCounter[T constraints.Integer | constraints.Float] interface {
 	Metric[T]
 	Aggregation[T]
 
 	Timespan() int
-	// Reduce applies the reduction function to all buckets within the window.
-	Reduce(func(Iterator[T]) T) T
+	// Reduce applies the reduction function to all buckets within the windows.
+	Reduce(func(BucketIterator[T]) T) T
 }
 
 // RollingCounterOpts contains the arguments for creating RollingCounter.
@@ -78,12 +78,12 @@ func NewRollingCounter[T constraints.Integer | constraints.Float](opts RollingCo
 
 func (r *rollingCounter[T]) Add(val T) {
 	if val < 0 {
-		panic(fmt.Errorf("stat/metric: cannot decrease in value. val: %v", val))
+		panic(fmt.Sprintf("stat/metric: cannot decrease in value. val: %v", val))
 	}
 	r.policy.Add(val)
 }
 
-func (r *rollingCounter[T]) Reduce(f func(Iterator[T]) T) T {
+func (r *rollingCounter[T]) Reduce(f func(BucketIterator[T]) T) T {
 	return r.policy.Reduce(f)
 }
 
@@ -108,7 +108,5 @@ func (r *rollingCounter[T]) Value() T {
 }
 
 func (r *rollingCounter[T]) Timespan() int {
-	r.policy.mu.RLock()
-	defer r.policy.mu.RUnlock()
-	return r.policy.timespan()
+	return r.policy.Timespan()
 }

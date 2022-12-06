@@ -21,7 +21,7 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-// RollingPolicy is a policy for ring window based on time duration.
+// RollingPolicy is a policy for ring windows based on time duration.
 // RollingPolicy moves bucket offset with time duration.
 // e.g. If the last point is appended one bucket duration ago,
 // RollingPolicy will increment current offset.
@@ -40,7 +40,7 @@ type RollingPolicyOpts struct {
 	BucketDuration time.Duration
 }
 
-// NewRollingPolicy creates a new RollingPolicy based on the given window and RollingPolicyOpts.
+// NewRollingPolicy creates a new RollingPolicy based on the given windows and RollingPolicyOpts.
 func NewRollingPolicy[T constraints.Integer | constraints.Float](window *Window[T], opts RollingPolicyOpts) *RollingPolicy[T] {
 	return &RollingPolicy[T]{
 		window: window,
@@ -60,6 +60,13 @@ func (r *RollingPolicy[T]) timespan() int {
 	if v > -1 { // maybe time backwards
 		return v
 	}
+	return r.size
+}
+
+// Timespan is a public version of timespan
+func (r *RollingPolicy[T]) Timespan() int {
+	r.mu.RLock()
+	defer r.mu.Unlock()
 	return r.size
 }
 
@@ -86,7 +93,7 @@ func (r *RollingPolicy[T]) apply(f func(offset int, val T), val T) {
 	f(r.offset, val)
 }
 
-// Append appends the given points to the window.
+// Append appends the given points to the windows.
 func (r *RollingPolicy[T]) Append(val T) {
 	r.apply(r.window.Append, val)
 }
@@ -96,8 +103,8 @@ func (r *RollingPolicy[T]) Add(val T) {
 	r.apply(r.window.Add, val)
 }
 
-// Reduce applies the reduction function to all buckets within the window.
-func (r *RollingPolicy[T]) Reduce(f func(Iterator[T]) T) (val T) {
+// Reduce applies the reduction function to all buckets within the windows.
+func (r *RollingPolicy[T]) Reduce(f func(BucketIterator[T]) T) (val T) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

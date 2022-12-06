@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func GetRollingPolicy() *RollingPolicy[float64] {
@@ -62,7 +62,7 @@ func TestRollingPolicy_Add(t *testing.T) {
 				policy.Add(float64(test.points[i]))
 				offset, points := test.offset[i], test.points[i]
 
-				assert.Equal(t, points, int(policy.window.buckets[offset].Points[0]),
+				require.Equal(t, points, int(policy.window.buckets[offset].Points[0]),
 					fmt.Sprintf("error, time since last append: %vms, last offset: %v", totalTs, lastOffset))
 				lastOffset = offset
 			}
@@ -89,9 +89,9 @@ func TestRollingPolicy_AddWithTimespan(t *testing.T) {
 			t.Logf("%+v", bkt)
 		}
 
-		assert.Equal(t, 0, len(policy.window.buckets[0].Points))
-		assert.Equal(t, 4, int(policy.window.buckets[1].Points[0]))
-		assert.Equal(t, 2, int(policy.window.buckets[2].Points[0]))
+		require.Equal(t, 0, len(policy.window.buckets[0].Points))
+		require.Equal(t, 4, int(policy.window.buckets[1].Points[0]))
+		require.Equal(t, 2, int(policy.window.buckets[2].Points[0]))
 	})
 
 	t.Run("timespan > bucket number", func(t *testing.T) {
@@ -113,8 +113,8 @@ func TestRollingPolicy_AddWithTimespan(t *testing.T) {
 			t.Logf("%+v", bkt)
 		}
 
-		assert.Equal(t, 0, len(policy.window.buckets[0].Points))
-		assert.Equal(t, 4, int(policy.window.buckets[1].Points[0]))
-		assert.Equal(t, 0, len(policy.window.buckets[2].Points))
+		require.Equal(t, 0, len(policy.window.buckets[0].Points))
+		require.Equal(t, 4, int(policy.window.buckets[1].Points[0]))
+		require.Equal(t, 0, len(policy.window.buckets[2].Points))
 	})
 }

@@ -22,5 +22,5 @@ go_test(
         "window_test.go",
     ],
     embed = [":window"],
-    deps = ["@com_github_stretchr_testify//assert"],
+    deps = ["@com_github_stretchr_testify//require"],
 )

@@ -16,7 +16,7 @@ package window
 
 import "golang.org/x/exp/constraints"
 
-// Bucket contains multiple float64 points.
+// Bucket contains multiple integer or float points.
 type Bucket[T constraints.Integer | constraints.Float] struct {
 	Points []T
 	Count  int64
@@ -31,6 +31,9 @@ func (b *Bucket[T]) Append(val T) {
 
 // Add adds the given value to the point.
 func (b *Bucket[T]) Add(offset int, val T) {
+	if offset >= len(b.Points) {
+		panic("offset out of range")
+	}
 	b.Points[offset] += val
 	b.Count++
 }
@@ -51,7 +54,7 @@ type Options struct {
 	Size int
 }
 
-// Window contains multiple buckets.
+// Window contains multiple buckets which are connected as a cycle.
 type Window[T constraints.Integer | constraints.Float] struct {
 	buckets []Bucket[T]
 	size    int
@@ -71,7 +74,7 @@ func NewWindow[T constraints.Integer | constraints.Float](opts Options) *Window[
 	return &Window[T]{buckets: buckets, size: opts.Size}
 }
 
-// ResetWindow empties all buckets within the window.
+// ResetWindow empties all buckets within the windows.
 func (w *Window[T]) ResetWindow() {
 	for offset := range w.buckets {
 		w.ResetBucket(offset)
@@ -110,15 +113,12 @@ func (w *Window[T]) Bucket(offset int) Bucket[T] {
 	return w.buckets[offset%w.size]
 }
 
-// Size returns the size of the window.
+// Size returns the size of the windows.
 func (w *Window[T]) Size() int {
 	return w.size
 }
 
 // Iterator returns the count number buckets iterator from offset.
-func (w *Window[T]) Iterator(offset int, count int) Iterator[T] {
-	return Iterator[T]{
-		count: count,
-		cur:   &w.buckets[offset%w.size],
-	}
+func (w *Window[T]) Iterator(offset int, count int) BucketIterator[T] {
+	return NewBucketIterator[T](count, &w.buckets[offset%w.size])
 }

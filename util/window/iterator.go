@@ -20,22 +20,30 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-// Iterator iterates the buckets within the window.
-type Iterator[T constraints.Integer | constraints.Float] struct {
+// BucketIterator iterates the buckets within the windows.
+type BucketIterator[T constraints.Integer | constraints.Float] struct {
 	count         int
 	iteratedCount int
 	cur           *Bucket[T]
 }
 
-// Next returns true util all of the buckets has been iterated.
-func (i *Iterator[T]) Next() bool {
+// NewBucketIterator is to create an BucketIterator.
+func NewBucketIterator[T constraints.Integer | constraints.Float](count int, bucket *Bucket[T]) BucketIterator[T] {
+	return BucketIterator[T]{
+		count: count,
+		cur:   bucket,
+	}
+}
+
+// HasNext returns true util all of the buckets has been iterated.
+func (i *BucketIterator[T]) HasNext() bool {
 	return i.count != i.iteratedCount
 }
 
 // Bucket gets current bucket.
-func (i *Iterator[T]) Bucket() Bucket[T] {
-	if !(i.Next()) {
-		panic(fmt.Errorf("stat/metric: iteration out of range iteratedCount: %d count: %d", i.iteratedCount, i.count))
+func (i *BucketIterator[T]) Bucket() Bucket[T] {
+	if !(i.HasNext()) {
+		panic(fmt.Sprintf("stat/metric: iteration out of range iteratedCount: %d count: %d", i.iteratedCount, i.count))
 	}
 	bucket := *i.cur
 	i.iteratedCount++
