@@ -946,10 +946,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwdlockinfo.passwordExpired = "Y"
 	}
 
-	var (
-		userAttributesStr any = nil
-		userAttributes    []string
-	)
+	var userAttributes []string
+
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
@@ -964,7 +962,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
-	userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
+	var userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
