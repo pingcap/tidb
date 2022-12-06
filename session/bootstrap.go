@@ -106,6 +106,9 @@ const (
 		Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
+		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -473,6 +476,26 @@ const (
          Password text,
          PRIMARY KEY (Host,User,Password_timestamp )
         ) COMMENT='Password history for user accounts' `
+
+	// CreateTTLTableStatus is a table about TTL task schedule
+	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
+		table_id bigint(64) PRIMARY KEY,
+        parent_table_id bigint(64),
+        table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+        last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+  		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -705,11 +728,15 @@ const (
 	version105 = 105
 	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
 	version106 = 106
+	// version107 add columns related to password expiration into mysql.user
+	version107 = 107
+	// version107 adds the table tidb_ttl_table_status
+	version108 = 108
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version106
+var currentBootstrapVersion int64 = version107
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -820,6 +847,8 @@ var (
 		upgradeToVer104,
 		upgradeToVer105,
 		upgradeToVer106,
+		upgradeToVer107,
+		upgradeToVer108,
 	}
 )
 
@@ -2145,6 +2174,22 @@ func upgradeToVer106(s Session, ver int64) {
 	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
 }
 
+func upgradeToVer107(s Session, ver int64) {
+	if ver >= version107 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
+		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),"+
+		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
+}
+
+func upgradeToVer108(s Session, ver int64) {
+	if ver >= version108 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTableStatus)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2249,6 +2294,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreatePlanReplayerTaskTable)
 	// Create stats_meta_table_locked table
 	mustExecute(s, CreateStatsTableLocked)
+	// Create tidb_ttl_table_status table
+	mustExecute(s, CreateTTLTableStatus)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
@@ -2271,7 +2318,7 @@ func doDMLWorks(s Session) {
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
 			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
-		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES 
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
 		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
