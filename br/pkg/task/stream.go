@@ -1526,7 +1526,7 @@ func initFullBackupTables(
 
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
-	databases, err := utils.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1534,7 +1534,7 @@ func initFullBackupTables(
 	tables := make(map[int64]*metautil.Table)
 	for _, db := range databases {
 		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+		if name, ok := metautil.GetSysDBName(db.Info.Name); metautil.IsSysDB(name) && ok {
 			dbName = name
 		}
 
@@ -1562,7 +1562,7 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
 	rules := make(map[int64]*restore.RewriteRules)
 	for _, t := range tables {
-		if name, ok := utils.GetSysDBName(t.DB.Name); utils.IsSysDB(name) && ok {
+		if name, ok := metautil.GetSysDBName(t.DB.Name); metautil.IsSysDB(name) && ok {
 			// skip system table for now
 			continue
 		}
@@ -1604,7 +1604,7 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 
 	for _, dbReplace := range schemasReplace.DbMap {
 		if dbReplace.OldDBInfo == nil ||
-			utils.IsSysDB(dbReplace.OldDBInfo.Name.O) ||
+			metautil.IsSysDB(dbReplace.OldDBInfo.Name.O) ||
 			!filter.MatchSchema(dbReplace.OldDBInfo.Name.O) {
 			continue
 		}
