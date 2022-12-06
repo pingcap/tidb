@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -63,6 +65,10 @@ func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.Fie
 type ScanRange struct {
 	Start []types.Datum
 	End   []types.Datum
+}
+
+func newFullRange() ScanRange {
+	return ScanRange{}
 }
 
 func newDatumRange(start types.Datum, end types.Datum) (r ScanRange) {
@@ -204,40 +210,30 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, 
 }
 
 // SplitScanRanges split ranges for TTL scan
-func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, fullRange ScanRange, maxSplit int) ([]ScanRange, error) {
+func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, maxSplit int) ([]ScanRange, error) {
 	if len(t.KeyColumns) != 1 || maxSplit <= 1 {
-		return []ScanRange{fullRange}, nil
+		return []ScanRange{newFullRange()}, nil
 	}
 
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return []ScanRange{fullRange}, nil
+		return []ScanRange{newFullRange()}, nil
 	}
 
 	ft := t.KeyColumns[0].FieldType
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
-		return t.splitIntRanges(ctx, tikvStore, fullRange, maxSplit)
+		return t.splitIntRanges(ctx, tikvStore, maxSplit)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitBinaryRanges(ctx, tikvStore, fullRange, maxSplit)
+			return t.splitBinaryRanges(ctx, tikvStore, maxSplit)
 		}
 	}
-	return []ScanRange{fullRange}, nil
+	return []ScanRange{newFullRange()}, nil
 }
 
-func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, fullRange ScanRange, maxSplit int) ([]ScanRange, error) {
-	startHandle := kv.IntHandle(math.MinInt64)
-	endHandle := kv.IntHandle(math.MaxInt64)
-	if len(fullRange.Start) > 0 {
-		startHandle = kv.IntHandle(fullRange.Start[0].GetInt64())
-	}
-	if len(fullRange.End) > 0 {
-		endHandle = kv.IntHandle(fullRange.End[0].GetInt64())
-	}
-
-	startKey := tablecodec.EncodeRowKeyWithHandle(t.ID, startHandle)
-	endKey := tablecodec.EncodeRowKeyWithHandle(t.ID, endHandle)
+func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, maxSplit int) ([]ScanRange, error) {
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(t.ID)
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, maxSplit)
 	if err != nil {
 		return nil, err
@@ -257,7 +253,7 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 		}
 
 		startVal, endVal := rStart.IntValue(), rEnd.IntValue()
-		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+		if !mysql.HasUnsignedFlag(ft.GetFlag()) {
 			scanRanges = append(scanRanges, newInt64Range(startVal, endVal))
 		} else if startVal < 0 && endVal > 0 {
 			scanRanges = append(scanRanges,
@@ -271,44 +267,21 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, fullRange ScanRange, maxSplit int) ([]ScanRange, error) {
+func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, maxSplit int) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
-	startKey := recordPrefix
-	if len(fullRange.Start) > 0 {
-		startKey = tablecodec.EncodeRowKey(t.ID, fullRange.Start[0].GetBytes())
-	}
-
-	endKey := startKey.PrefixNext()
-	if len(fullRange.End) > 0 {
-		endKey = tablecodec.EncodeRowKey(t.ID, fullRange.End[0].GetBytes())
-	}
-
+	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, maxSplit)
 	if err != nil {
 		return nil, err
 	}
 
-	ft := t.KeyColumnTypes[0]
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
-	chk := chunk.New(t.KeyColumnTypes, 2, 2)
+	var curScanStart types.Datum
+	curScanStart.SetNull()
 	for _, keyRange := range keyRanges {
-		chk.Reset()
-		if keyRange.StartKey.Cmp(recordPrefix) > 0 {
-			chk.AppendBytes(0, keyRange.StartKey[len(recordPrefix):])
-		} else {
-			chk.AppendNull(0)
-		}
-
-		if keyRange.EndKey.HasPrefix(recordPrefix) {
-			chk.AppendBytes(0, keyRange.EndKey[len(recordPrefix):])
-		} else {
-			chk.AppendNull(0)
-		}
-
-		scanRanges = append(scanRanges, newDatumRange(
-			chk.GetRow(0).GetDatum(0, ft),
-			chk.GetRow(1).GetDatum(0, ft),
-		))
+		end := GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+		scanRanges = append(scanRanges, newDatumRange(curScanStart, end))
+		curScanStart = end
 	}
 	return scanRanges, nil
 }
@@ -329,7 +302,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 			rangeStartKey = startKey
 		}
 
-		endRegionIdx := regionsPerRange
+		endRegionIdx := regionsPerRange - 1
 		if oversizeCnt > 0 {
 			endRegionIdx++
 		}
@@ -344,4 +317,81 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		regions = regions[endRegionIdx+1:]
 	}
 	return ranges, nil
+}
+
+var bytesFlag byte
+
+func init() {
+	key, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(nil))
+	terror.MustNil(err)
+	bytesFlag = key[0]
+}
+
+// GetNextBytesHandleDatum is used for a table with one binary or string column common handle.
+// It returns the minValue whose encoded key is after argument `key`
+// If it cannot find a valid value, a null datum will be returned.
+func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
+	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {
+		d.SetNull()
+		return d
+	}
+
+	if key.Cmp(recordPrefix) <= 0 {
+		d.SetBytes([]byte{})
+		return d
+	}
+
+	flag := key[len(recordPrefix)]
+	if flag > bytesFlag {
+		d.SetNull()
+		return d
+	}
+
+	if flag < bytesFlag {
+		d.SetBytes([]byte{})
+		return d
+	}
+
+	encodedVal := key[len(recordPrefix):]
+	if len(encodedVal) <= 1 {
+		d.SetBytes([]byte{})
+		return d
+	}
+
+	if _, v, err := codec.DecodeOne(encodedVal); err == nil {
+		return v
+	}
+
+	encodedVal = encodedVal[1:]
+	brokenGroupEndIdx := len(encodedVal) - 1
+	brokenGroupEmptyBytes := len(encodedVal) % 9
+	for i := 7; i+1 < len(encodedVal); i += 9 {
+		if emptyBytes := 255 - int(encodedVal[i+1]); emptyBytes != 0 || i+1 == len(encodedVal)-1 {
+			brokenGroupEndIdx = i
+			brokenGroupEmptyBytes = emptyBytes
+			break
+		}
+	}
+
+	for i := 0; i < brokenGroupEmptyBytes; i++ {
+		if encodedVal[brokenGroupEndIdx] > 0 {
+			break
+		}
+		brokenGroupEndIdx--
+	}
+
+	if brokenGroupEndIdx < 0 {
+		d.SetBytes(nil)
+		return d
+	}
+
+	val := make([]byte, 0, len(encodedVal))
+	for i := 0; i <= brokenGroupEndIdx; i++ {
+		if i%9 == 8 {
+			continue
+		}
+		val = append(val, encodedVal[i])
+	}
+	d.SetBytes(val)
+	return d
 }
