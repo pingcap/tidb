@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,7 +108,17 @@ func TestForeignKey(t *testing.T) {
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-
+	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("idx_fk"),
+		Table: model.NewCIStr("t"),
+		Columns: []*model.IndexColumn{&model.IndexColumn{
+			Name:   model.NewCIStr("c1"),
+			Offset: 0,
+			Length: types.UnspecifiedLength,
+		}},
+		State: model.StatePublic,
+	})
 	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 
 	// fix data race
@@ -200,11 +211,9 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
 
@@ -257,11 +266,9 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int)")
@@ -296,11 +303,9 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int, index(b));")
@@ -340,7 +345,6 @@ func TestAddForeignKey2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -376,7 +380,6 @@ func TestAddForeignKey3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
