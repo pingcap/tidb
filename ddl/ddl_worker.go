@@ -206,8 +206,7 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	var err error
-	err = d.addBatchDDLJobs2Table(tasks)
+	err := d.addBatchDDLJobs2Table(tasks)
 	var jobs string
 	for _, task := range tasks {
 		task.err <- err
