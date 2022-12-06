@@ -149,11 +149,10 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			actionTypes = change.ActionTypes
 		}
 		for idx, ac := range actionTypes {
-			// `1<<model.ActionUnlockTable` and `1<<model.ActionFlashbackCluster` are for compatibility with old implementations.
-			if ac == uint64(model.ActionUnlockTable) || ac == uint64(1<<model.ActionUnlockTable) {
+			if ac == uint64(model.ActionUnlockTable) {
 				s.do.Store().GetMemCache().Delete(tblIDs[idx])
 			}
-			if ac == uint64(model.ActionFlashbackCluster) || ac == uint64(1<<model.ActionFlashbackCluster) {
+			if ac == uint64(model.ActionFlashbackCluster) {
 				s.do.InfoSyncer().GetSessionManager().KillNonFlashbackClusterConn()
 			}
 		}
