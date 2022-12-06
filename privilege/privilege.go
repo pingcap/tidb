@@ -28,6 +28,14 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
+// VerificationInfo records some information returned by Manager.ConnectionVerification
+type VerificationInfo struct {
+	// InSandBoxMode indicates that the session will enter sandbox mode, and only execute statement for resetting password.
+	InSandBoxMode bool
+	// FailedDueToWrongPassword indicates that the verification failed due to wrong password.
+	FailedDueToWrongPassword bool
+}
+
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
@@ -65,7 +73,7 @@ type Manager interface {
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) error
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) (VerificationInfo, error)
 
 	// AuthSuccess records auth success state
 	AuthSuccess(authUser, authHost string)

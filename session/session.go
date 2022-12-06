@@ -2631,13 +2631,9 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			return err
 		}
 	}
-	err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
+	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
 	if err != nil {
-		switch typeErr := err.(type) {
-		case *privileges.ErrInSandBoxMode:
-			// Enter sandbox mode, only execute statement for resetting password.
-			s.EnableSandBoxMode()
-		case *privileges.ErrUserPasswordFailed:
+		if info.FailedDueToWrongPassword {
 			// when user enables the account locking function for consecutive login failures,
 			// the system updates the login failure count and determines whether to lock the account when authentication fails.
 			if enableAutoLock {
@@ -2645,10 +2641,12 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 					return trackingErr
 				}
 			}
-			return typeErr.Err
-		default:
-			return err
 		}
+		return err
+	}
+	if info.InSandBoxMode {
+		// Enter sandbox mode, only execute statement for resetting password.
+		s.EnableSandBoxMode()
 	}
 	if enableAutoLock {
 		// The password is correct. If the account is not locked, the number of login failure statistics will be cleared.
