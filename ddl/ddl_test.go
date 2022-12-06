@@ -195,6 +195,7 @@ func TestIgnorableSpec(t *testing.T) {
 }
 
 func TestNotifyDDLJob(t *testing.T) {
+	t.Skip("skip")
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
