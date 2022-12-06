@@ -310,7 +310,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 			// Only the add index amend operations is collected in the results.
 			collector := newAmendCollector()
 			tblID := int64(1)
-			err = collector.collectTblAmendOps(se, tblID, oldTbInfo, newTblInfo, uint64(model.ActionAddIndex))
+			err = collector.collectTblAmendOps(se, tblID, oldTbInfo, newTblInfo, 1<<model.ActionAddIndex)
 			require.NoError(t, err)
 			logutil.BgLogger().Info("[TEST]amend ops", zap.Int("len", len(collector.tblAmendOpMap[tblID])))
 			var expectedAmendOps []amendOp
