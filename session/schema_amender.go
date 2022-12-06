@@ -131,11 +131,11 @@ func (a *amendCollector) keyHasAmendOp(key []byte) bool {
 }
 
 func needCollectIndexOps(actionType uint64) bool {
-	return actionType&(1<<model.ActionAddIndex) != 0
+	return actionType == uint64(model.ActionAddIndex)
 }
 
 func needCollectModifyColOps(actionType uint64) bool {
-	return actionType&(1<<model.ActionModifyColumn) != 0
+	return actionType == uint64(model.ActionModifyColumn)
 }
 
 func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
