@@ -135,6 +135,9 @@ type DBStore struct {
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
 	Vars                       map[string]string `toml:"-" json:"vars"`
+
+	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
+	UUID         string         `toml:"-" json:"-"`
 }
 
 type Config struct {
@@ -1185,7 +1188,7 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
 			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
+				cfg.TiDB.Security.TLSConfigName = uuid.New().String() // adjust this the default value
 			}
 			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
