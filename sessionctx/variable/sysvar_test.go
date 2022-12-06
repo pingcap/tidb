@@ -680,11 +680,6 @@ func TestSetTIDBDistributeReorg(t *testing.T) {
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 
-	distributeReorg := GetSysVar(TiDBDDLEnableDistributeReorg)
-
-	// Default off
-	require.Equal(t, distributeReorg.Value, Off)
-
 	// Set to on
 	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, On)
 	require.NoError(t, err)
