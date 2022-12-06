@@ -319,12 +319,12 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 	return ranges, nil
 }
 
-var bytesFlag byte
+var emptyBytesHandleKey kv.Key
 
 func init() {
 	key, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(nil))
 	terror.MustNil(err)
-	bytesFlag = key[0]
+	emptyBytesHandleKey = key
 }
 
 // GetNextBytesHandleDatum is used for a table with one binary or string column common handle.
@@ -341,20 +341,14 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 		return d
 	}
 
-	flag := key[len(recordPrefix)]
-	if flag > bytesFlag {
-		d.SetNull()
-		return d
-	}
-
-	if flag < bytesFlag {
-		d.SetBytes([]byte{})
-		return d
-	}
-
 	encodedVal := key[len(recordPrefix):]
-	if len(encodedVal) <= 1 {
+	if encodedVal[0] < emptyBytesHandleKey[0] {
 		d.SetBytes([]byte{})
+		return d
+	}
+
+	if encodedVal[0] > emptyBytesHandleKey[0] {
+		d.SetNull()
 		return d
 	}
 
