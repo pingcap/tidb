@@ -1313,12 +1313,12 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	doAssert := true
 	p := t.Meta().Partition
 	if p != nil {
-		// If there where an easy way to get from a TableCommon back to the partitioned table...
-		for i := range p.AddingDefinitions {
-			if t.physicalTableID == p.AddingDefinitions[i].ID {
-				doAssert = false
-				break
-			}
+		// This disables asserting during Reorganize Partition.
+		// It would be enough to just disable it for the AddingDefinitions,
+		// but currently there are no good way of checking that other than
+		// loop over all AddingDefinitions, so better to disable it for all partitions.
+		if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
+			doAssert = false
 		}
 	}
 	if doAssert {

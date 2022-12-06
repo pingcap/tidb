@@ -144,6 +144,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// also in DroppingDefinitions (since session running on schema version -1)
 	// should also see the changes
 	if pi.DDLState == model.StateDeleteReorganization {
+		origIdx := setIndexesState(ret, pi.DDLState)
+		defer unsetIndexesState(ret, origIdx)
 		ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DroppingDefinitions)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -165,6 +167,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 	} else {
 		if len(pi.AddingDefinitions) > 0 {
+			origIdx := setIndexesState(ret, pi.DDLState)
+			defer unsetIndexesState(ret, origIdx)
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.AddingDefinitions)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -187,6 +191,20 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 	}
 	return ret, nil
+}
+
+func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
+	orig := t.meta.Indices
+	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
+	for i, _ := range t.meta.Indices {
+		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
+		t.meta.Indices[i].State = state
+	}
+	return orig
+}
+
+func unsetIndexesState(t *partitionedTable, orig []*model.IndexInfo) {
+	t.meta.Indices = orig
 }
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {

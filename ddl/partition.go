@@ -2278,6 +2278,16 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			return ver, err
 		}
+		// TODO: Remove these!
+		if w == nil {
+			panic("w is nil!")
+		}
+		if w.sess == nil {
+			panic("w.sess is nil!")
+		}
+		if w.sess.Context == nil {
+			panic("w.sess.Context is nil!")
+		}
 		if err = checkReorgPartitionDefs(w.sess.Context, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 			return ver, err
 		}
