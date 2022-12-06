@@ -204,7 +204,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagPredicatePushDown
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
-	b.optFlag |= flagCountStarRewriter
 
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
@@ -4495,11 +4494,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	// Skip storage engine check for CreateView.
-	if b.capFlag&canExpandAST == 0 {
-		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
-		if err != nil {
-			return nil, err
+	// remain tikv access path to generate point get acceess path if existed
+	// see detail in issue: https://github.com/pingcap/tidb/issues/39543
+	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+		// Skip storage engine check for CreateView.
+		if b.capFlag&canExpandAST == 0 {
+			possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

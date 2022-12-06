@@ -138,7 +138,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
 	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
 	}
 	return e.retriever.close()
 }

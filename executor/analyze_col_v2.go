@@ -595,6 +595,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
+	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
+		times := val.(int)
+		for i := 0; i < times; i++ {
+			e.memTracker.Consume(5 << 20)
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))

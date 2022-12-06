@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 )
@@ -83,8 +84,12 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	return ver, nil
 }
 
-func checkTTLInfoValid(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
 	if err := checkTTLIntervalExpr(ctx, tblInfo.TTLInfo); err != nil {
+		return err
+	}
+
+	if err := checkTTLTableSuitable(ctx, schema, tblInfo); err != nil {
 		return err
 	}
 
@@ -114,6 +119,22 @@ func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
 	}
 	if !types.IsTypeTime(colInfo.FieldType.GetType()) {
 		return dbterror.ErrUnsupportedColumnInTTLConfig.GenWithStackByArgs(tblInfo.TTLInfo.ColumnName.O)
+	}
+
+	return nil
+}
+
+// checkTTLTableSuitable returns whether this table is suitable to be a TTL table
+// A temporary table or a parent table referenced by a foreign key cannot be TTL table
+func checkTTLTableSuitable(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrTempTableNotAllowedWithTTL
+	}
+
+	// checks even when the foreign key check is not enabled, to keep safe
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
+		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}
 
 	return nil

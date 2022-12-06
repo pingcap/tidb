@@ -331,7 +331,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
 						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
-								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+								rc.status.FinishedFileSize.Add(chunk.TotalSize())
 							}
 						}
 					}
@@ -341,7 +341,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 				}(restoreWorker, engineID, engine)
 			} else {
 				for _, chunk := range engine.Chunks {
-					rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+					rc.status.FinishedFileSize.Add(chunk.TotalSize())
 				}
 			}
 		}
@@ -384,6 +384,11 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
+			failpoint.Inject("FailBeforeStartImportingIndexEngine", func() {
+				errMsg := "fail before importing index KV data"
+				tr.logger.Warn(errMsg)
+				failpoint.Return(errors.New(errMsg))
+			})
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
@@ -541,7 +546,7 @@ func (tr *TableRestore) restoreEngine(
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
-			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
+			remainChunkCnt = float64(chunk.UnfinishedSize()) / float64(chunk.TotalSize())
 			if metrics != nil {
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 			}
@@ -616,7 +621,7 @@ func (tr *TableRestore) restoreEngine(
 	totalSQLSize := int64(0)
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
-		totalSQLSize += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+		totalSQLSize += chunk.UnfinishedSize()
 	}
 
 	err = chunkErr.Get()
@@ -811,6 +816,11 @@ func (tr *TableRestore) postProcess(
 				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 				return false, err
 			}
+		}
+
+		if rc.dupIndicator != nil {
+			tr.logger.Debug("set dupIndicator", zap.Bool("has-duplicate", hasDupe))
+			rc.dupIndicator.CompareAndSwap(false, hasDupe)
 		}
 
 		nextStage := checkpoints.CheckpointStatusChecksummed
