@@ -1513,10 +1513,10 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
-		`SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer,
+		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
-        JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
-        JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days'))
+        user_attributes->>'$.Password_locking.failed_login_attempts',
+        user_attributes->>'$.Password_locking.password_lock_time_days'
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1552,14 +1552,14 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	var passwordHistory string
 	if rows[0].IsNull(4) {
-		passwordHistory = "DEFALUT"
+		passwordHistory = "DEFAULT"
 	} else {
 		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
 	}
 
 	var passwordReuseInterval string
 	if rows[0].IsNull(5) {
-		passwordReuseInterval = "DEFALUT"
+		passwordReuseInterval = "DEFAULT"
 	} else {
 		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
 	}

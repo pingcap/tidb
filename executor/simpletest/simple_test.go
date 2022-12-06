@@ -938,19 +938,19 @@ func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
 func showTestCase1(tk *testkit.TestKit) {
 	tk.MustExec("CREATE USER 'u6'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3;")
 	tk.MustQuery(" SHOW CREATE USER 'u6'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u6'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"))
+		testkit.Rows("CREATE USER 'u6'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"))
 }
 
 func showTestCase2(tk *testkit.TestKit) {
 	tk.MustExec("CREATE USER 'u7'@'localhost' IDENTIFIED BY 'password';")
 	tk.MustQuery(" SHOW CREATE USER 'u7'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u7'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT"))
+		testkit.Rows("CREATE USER 'u7'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 }
 
 func showTestCase3(tk *testkit.TestKit) {
 	tk.MustExec("CREATE USER 'u8'@'localhost' IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED;")
 	tk.MustQuery(" SHOW CREATE USER 'u8'@'localhost';").Check(
-		testkit.Rows("CREATE USER 'u8'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
+		testkit.Rows("CREATE USER 'u8'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
 }
 
 func alterAndCheck(t *testing.T, tk *testkit.TestKit, sql string, user string, failedLoginAttempts, passwordLockTimeDays, failedLoginCount int64, comment string) {
@@ -971,11 +971,11 @@ func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDay
 	if err := json.Unmarshal([]byte(rs), &ua); err != nil {
 		return err
 	}
-	require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
-	require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
-	require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+	require.Equal(t, failedLoginAttempts, ua[0].PasswordLocking.FailedLoginAttempts)
+	require.Equal(t, passwordLockTimeDays, ua[0].PasswordLocking.PasswordLockTimeDays)
+	require.Equal(t, failedLoginCount, ua[0].PasswordLocking.FailedLoginCount)
 	if comment != "" {
-		require.True(t, ua[0].Metadata.Comment == comment)
+		require.Equal(t, comment, ua[0].Metadata.Comment)
 	}
 	return nil
 }
