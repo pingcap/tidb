@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "scheduler",
+    srcs = [
+        "gradient2_scheduler.go",
+        "scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanage/scheduler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanage/util",
+        "//util/mathutil",
+    ],
+)
+
+go_test(
+    name = "scheduler_test",
+    srcs = [
+        "fake_rms_test.go",
+        "gradient2_scheduler_test.go",
+    ],
+    embed = [":scheduler"],
+    flaky = True,
+    deps = [
+        "//resourcemanage/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)
