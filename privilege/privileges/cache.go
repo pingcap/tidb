@@ -678,7 +678,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				}
 				value.Email = email
 			}
-			pathExpr, err = types.ParseJSONPathExpr("$.metadata.resource_group")
+			pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
 			if err != nil {
 				return err
 			}
