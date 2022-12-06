@@ -946,20 +946,25 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwdlockinfo.passwordExpired = "Y"
 	}
 
-	var userAttributes any = nil
+	var (
+		userAttributesStr any = nil
+		userAttributes    []string
+	)
 	if s.CommentOrAttributeOption != nil {
-		if s.CommentOrAttributeOption.Type != ast.UserResourceGroupName {
-			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				userAttributes = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
-			} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-				userAttributes = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
-			}
-		} else {
-			userAttributes = fmt.Sprintf(`{"resource_group": "%s"}`, s.CommentOrAttributeOption.Value)
+		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
+		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
-	} else {
-		userAttributes = `{"resource_group": "default"}`
 	}
+	resourceGroupName := "default"
+	if s.ResourceGroupNameOption != nil {
+		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			resourceGroupName = s.ResourceGroupNameOption.Value
+		}
+	}
+	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
+	userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
@@ -1049,7 +1054,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer, passwdlockinfo.passwordExpired, passwdlockinfo.passwordLifetime)
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, passwdlockinfo.lockAccount, recordTokenIssuer, passwdlockinfo.passwordExpired, passwdlockinfo.passwordLifetime)
 		// add Password_reuse_time value.
 		if passwdlockinfo.passwordReuseInterval != notSpecified {
 			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
@@ -1589,15 +1594,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"password_lifetime=%?", passwdlockinfo.passwordLifetime})
 		}
 
+		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
-			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
-			} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value))
 			} else {
-				newAttributesStr = fmt.Sprintf(`{"resource_group": "%s"}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
+		}
+		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
+		}
+		if len(newAttributes) > 0 {
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 
