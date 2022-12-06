@@ -22,11 +22,11 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 )
 
-// GlobalResourceManage is a global resource manage
-var GlobalResourceManage = NewResourceMange()
+// GlobalResourceManager is a global resource manage
+var GlobalResourceManager = NewResourceMange()
 
-// ResourceManage is a resource manage
-type ResourceManage struct {
+// ResourceManager is a resource manage
+type ResourceManager struct {
 	poolMap   *util.ShardPoolMap
 	scheduler []scheduler.Scheduler
 	exitCh    chan struct{}
@@ -34,10 +34,10 @@ type ResourceManage struct {
 }
 
 // NewResourceMange is to create a new resource manage
-func NewResourceMange() *ResourceManage {
+func NewResourceMange() *ResourceManager {
 	sc := make([]scheduler.Scheduler, 0, 1)
 	sc = append(sc, scheduler.NewGradient2Scheduler())
-	return &ResourceManage{
+	return &ResourceManager{
 		poolMap:   util.NewShardPoolMap(),
 		exitCh:    make(chan struct{}),
 		scheduler: sc,
@@ -45,7 +45,7 @@ func NewResourceMange() *ResourceManage {
 }
 
 // Start is to start resource manage
-func (r *ResourceManage) Start() {
+func (r *ResourceManager) Start() {
 	r.wg.Run(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
@@ -61,17 +61,17 @@ func (r *ResourceManage) Start() {
 }
 
 // Stop is to stop resource manage
-func (r *ResourceManage) Stop() {
+func (r *ResourceManager) Stop() {
 	close(r.exitCh)
 	r.wg.Done()
 }
 
 // Register is to register pool into resource manage
-func (r *ResourceManage) Register(pool util.GorotinuePool, name string, component util.Component) error {
+func (r *ResourceManager) Register(pool util.GorotinuePool, name string, component util.Component) error {
 	p := util.PoolContainer{Pool: pool, Component: component}
 	return r.registerPool(name, &p)
 }
 
-func (r *ResourceManage) registerPool(name string, pool *util.PoolContainer) error {
+func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) error {
 	return r.poolMap.Add(name, pool)
 }
