@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/spf13/cobra"
@@ -505,13 +506,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		if len(db) == 0 {
 			return errors.Annotate(berrors.ErrInvalidArgument, "empty database name is not allowed")
 		}
-		cfg.Schemas[metautil.EncloseName(db)] = struct{}{}
+		cfg.Schemas[utils.EncloseName(db)] = struct{}{}
 		if tblFlag := flags.Lookup(flagTable); tblFlag != nil {
 			tbl := tblFlag.Value.String()
 			if len(tbl) == 0 {
 				return errors.Annotate(berrors.ErrInvalidArgument, "empty table name is not allowed")
 			}
-			cfg.Tables[metautil.EncloseDBAndTable(db, tbl)] = struct{}{}
+			cfg.Tables[utils.EncloseDBAndTable(db, tbl)] = struct{}{}
 			cfg.TableFilter = filter.NewTablesFilter(filter.Table{
 				Schema: db,
 				Name:   tbl,

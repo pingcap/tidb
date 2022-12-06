@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -189,7 +190,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr(mysql.SystemDB))
 	require.True(t, isExist)
 	tmpSysDB := dbSchema.Clone()
-	tmpSysDB.Name = metautil.TemporaryDBName(mysql.SystemDB)
+	tmpSysDB.Name = utils.TemporaryDBName(mysql.SystemDB)
 	sysDB := model.NewCIStr(mysql.SystemDB)
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)

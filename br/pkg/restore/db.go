@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -115,7 +116,7 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	}
 
 	if tableInfo != nil {
-		switchDBSQL := fmt.Sprintf("use %s;", metautil.EncloseName(ddlJob.SchemaName))
+		switchDBSQL := fmt.Sprintf("use %s;", utils.EncloseName(ddlJob.SchemaName))
 		err = db.se.Execute(ctx, switchDBSQL)
 		if err != nil {
 			log.Error("switch db failed",
@@ -182,8 +183,8 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	var err error
 	if table.Info.IsSequence() {
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
-			metautil.EncloseName(table.DB.Name.O),
-			metautil.EncloseName(table.Info.Name.O))
+			utils.EncloseName(table.DB.Name.O),
+			utils.EncloseName(table.Info.Name.O))
 		if table.Info.Sequence.Cycle {
 			increment := table.Info.Sequence.Increment
 			// TiDB sequence's behaviour is designed to keep the same pace
@@ -192,8 +193,8 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 			// https://github.com/pingcap/br/pull/242#issuecomment-631307978
 			// TODO use sql to set cycle round
 			nextSeqSQL := fmt.Sprintf("do nextval(%s.%s);",
-				metautil.EncloseName(table.DB.Name.O),
-				metautil.EncloseName(table.Info.Name.O))
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O))
 			var setValSQL string
 			if increment < 0 {
 				setValSQL = fmt.Sprintf(setValFormat, table.Info.Sequence.MinValue)
@@ -247,17 +248,17 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 		}
 	// only table exists in restored cluster during incremental restoration should do alter after creation.
 	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
-		if metautil.NeedAutoID(table.Info) {
+		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
-				metautil.EncloseName(table.DB.Name.O),
-				metautil.EncloseName(table.Info.Name.O),
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
 				table.Info.AutoIncID)
 		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_random_base = %d",
-				metautil.EncloseName(table.DB.Name.O),
-				metautil.EncloseName(table.Info.Name.O),
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
 				table.Info.AutoRandID)
 		} else {
 			log.Info("table exists in incremental ddl jobs, but don't need to be altered",

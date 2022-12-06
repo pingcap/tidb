@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package metautil
+package utils
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 )
@@ -26,11 +27,11 @@ func NeedAutoID(tblInfo *model.TableInfo) bool {
 // Database wraps the schema and tables of a database.
 type Database struct {
 	Info   *model.DBInfo
-	Tables []*Table
+	Tables []*metautil.Table
 }
 
 // GetTable returns a table of the database by name.
-func (db *Database) GetTable(name string) *Table {
+func (db *Database) GetTable(name string) *metautil.Table {
 	for _, table := range db.Tables {
 		if table.Info.Name.String() == name {
 			return table
@@ -40,8 +41,8 @@ func (db *Database) GetTable(name string) *Table {
 }
 
 // LoadBackupTables loads schemas from BackupMeta.
-func LoadBackupTables(ctx context.Context, reader *MetaReader) (map[string]*Database, error) {
-	ch := make(chan *Table)
+func LoadBackupTables(ctx context.Context, reader *metautil.MetaReader) (map[string]*Database, error) {
+	ch := make(chan *metautil.Table)
 	errCh := make(chan error)
 	go func() {
 		if err := reader.ReadSchemasFiles(ctx, ch); err != nil {
@@ -67,7 +68,7 @@ func LoadBackupTables(ctx context.Context, reader *MetaReader) (map[string]*Data
 			if !ok {
 				db = &Database{
 					Info:   table.DB,
-					Tables: make([]*Table, 0),
+					Tables: make([]*metautil.Table, 0),
 				}
 				databases[dbName] = db
 			}

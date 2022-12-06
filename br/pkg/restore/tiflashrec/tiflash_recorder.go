@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -99,7 +99,7 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 		}
 		items = append(items, fmt.Sprintf(
 			"ALTER TABLE %s %s",
-			metautil.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
 			altTableSpec),
 		)
 	})
