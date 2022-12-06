@@ -39,6 +39,7 @@ func NewResourceMange() *ResourceManage {
 	sc = append(sc, scheduler.NewGradient2Scheduler())
 	return &ResourceManage{
 		poolMap:   util.NewShardPoolMap(),
+		exitCh:    make(chan struct{}),
 		scheduler: sc,
 	}
 }
