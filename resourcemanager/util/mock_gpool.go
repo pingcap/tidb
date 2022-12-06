@@ -16,8 +16,8 @@ package util
 
 import "time"
 
-// FakeGPool is only for test
-type FakeGPool struct {
+// MockGPool is only for test
+type MockGPool struct {
 	index       int32
 	maxInFlight []int64
 	inFlight    []int64
@@ -32,8 +32,8 @@ type FakeGPool struct {
 }
 
 // NewFakeGPool is only for test
-func NewFakeGPool(size int) *FakeGPool {
-	return &FakeGPool{
+func NewFakeGPool(size int) *MockGPool {
+	return &MockGPool{
 		maxInFlight: make([]int64, 0, size),
 		inFlight:    make([]int64, 0, size),
 		minRT:       make([]uint64, 0, size),
@@ -48,7 +48,7 @@ func NewFakeGPool(size int) *FakeGPool {
 }
 
 // OnSample is only for test
-func (f *FakeGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64, capa int, longRTT float64, shortRTT uint64, queueSize int64, running int) {
+func (f *MockGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64, capa int, longRTT float64, shortRTT uint64, queueSize int64, running int) {
 	f.maxInFlight = append(f.maxInFlight, maxInFlight)
 	f.inFlight = append(f.inFlight, inFlight)
 	f.minRT = append(f.minRT, minRT)
@@ -61,87 +61,87 @@ func (f *FakeGPool) OnSample(maxInFlight, inFlight int64, minRT, maxPASS uint64,
 }
 
 // ImportLastTunerTs is only for test
-func (f *FakeGPool) ImportLastTunerTs(ts ...time.Time) {
+func (f *MockGPool) ImportLastTunerTs(ts ...time.Time) {
 	f.lastTunerTs = append(f.lastTunerTs, ts...)
 }
 
 // Release is only for test
-func (*FakeGPool) Release() {}
+func (*MockGPool) Release() {}
 
 // Tune is only for test
-func (*FakeGPool) Tune(_ int) {}
+func (*MockGPool) Tune(_ int) {}
 
 // LastTunerTs is only for test
-func (f *FakeGPool) LastTunerTs() time.Time {
+func (f *MockGPool) LastTunerTs() time.Time {
 	val := f.lastTunerTs[f.index]
 	return val
 }
 
 // Next is only for test
-func (f *FakeGPool) Next() {
+func (f *MockGPool) Next() {
 	f.index++
 }
 
 // MaxInFlight is only for test
-func (f *FakeGPool) MaxInFlight() int64 {
+func (f *MockGPool) MaxInFlight() int64 {
 	val := f.maxInFlight[f.index]
 	return val
 }
 
 // InFlight is only for test
-func (f *FakeGPool) InFlight() int64 {
+func (f *MockGPool) InFlight() int64 {
 	val := f.inFlight[f.index]
 	return val
 }
 
 // MinRT is only for test
-func (f *FakeGPool) MinRT() uint64 {
+func (f *MockGPool) MinRT() uint64 {
 	val := f.minRT[f.index]
 	return val
 }
 
 // MaxPASS is only for test
-func (f *FakeGPool) MaxPASS() uint64 {
+func (f *MockGPool) MaxPASS() uint64 {
 	val := f.maxPASS[f.index]
 	return val
 }
 
 // Cap is only for test
-func (f *FakeGPool) Cap() int {
+func (f *MockGPool) Cap() int {
 	val := f.cap[f.index]
 	return val
 }
 
 // LongRTT is only for test
-func (f *FakeGPool) LongRTT() float64 {
+func (f *MockGPool) LongRTT() float64 {
 	val := f.longRTT[f.index]
 	return val
 }
 
 // UpdateLongRTT is only for test
-func (f *FakeGPool) UpdateLongRTT(fn func(float64) float64) {
+func (f *MockGPool) UpdateLongRTT(fn func(float64) float64) {
 	f.longRTT[f.index] = fn(f.longRTT[f.index])
 }
 
 // ShortRTT is only for test
-func (f *FakeGPool) ShortRTT() uint64 {
+func (f *MockGPool) ShortRTT() uint64 {
 	val := f.shortRTT[f.index]
 	return val
 }
 
 // GetQueueSize is only for test
-func (f *FakeGPool) GetQueueSize() int64 {
+func (f *MockGPool) GetQueueSize() int64 {
 	val := f.queueSize[f.index]
 	return val
 }
 
 // Running is only for test
-func (f *FakeGPool) Running() int {
+func (f *MockGPool) Running() int {
 	val := f.running[f.index]
 	return val
 }
 
 // Name is only for test
-func (*FakeGPool) Name() string {
+func (*MockGPool) Name() string {
 	return "fake"
 }
