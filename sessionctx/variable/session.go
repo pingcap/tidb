@@ -245,13 +245,13 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (sv *SessionVars) GetCurrentShard(count int) int64 {
-	tc := sv.TxnCtx
-	if sv.shardRand == nil {
-		sv.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard(sv.shardRand)
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
