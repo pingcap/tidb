@@ -844,10 +844,11 @@ type alterUserPasswordLocking struct {
 	passwordLockTime               int64
 	failedLoginAttemptsNotFound    bool
 	passwordLockTimeChangeNotFound bool
-	commentIsNull                  bool
+	// containsNoOthers indicates whether User_attributes only contains one "Password_locking" element.
+	containsNoOthers bool
 }
 
-func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption []*ast.PasswordOrLockOption) error {
+func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLockOption) error {
 	if length := len(plOption); length > 0 {
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
@@ -906,7 +907,7 @@ func (info *passwordOrLockOptionsInfo) passwordOrLockOptionsInfoParser(plOption 
 }
 
 func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
-	// Record only when at least failedLoginAttempts and passwordLockTime is not 0.
+	// Record only when either failedLoginAttempts and passwordLockTime is not 0
 	if (info.failedLoginAttemptsChange && info.failedLoginAttempts != 0) || (info.passwordLockTimeChange && info.passwordLockTime != 0) {
 		return fmt.Sprintf("\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}",
 			info.failedLoginAttempts, info.passwordLockTime)
@@ -917,14 +918,17 @@ func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string) string {
 	// alterUserPasswordLocking is the user's actual configuration.
 	var passwordLockingArray []string
-	if lockAccount == "N" && (info.failedLoginAttempts != 0 || info.passwordLockTime != 0) {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount))
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)))
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", 0))
-	}
 	if info.failedLoginAttempts != 0 || info.passwordLockTime != 0 {
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts))
-		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
+		if lockAccount == "N" {
+			passwordLockingArray = append(passwordLockingArray,
+				fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount),
+				fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)),
+				fmt.Sprintf("\"failed_login_count\": %d", 0))
+		} else {
+			passwordLockingArray = append(passwordLockingArray,
+				fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts),
+				fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
+		}
 	}
 	if len(passwordLockingArray) > 0 {
 		return fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
@@ -938,12 +942,12 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		passwordLockTime:               0,
 		failedLoginAttemptsNotFound:    false,
 		passwordLockTimeChangeNotFound: false,
-		commentIsNull:                  false,
+		containsNoOthers:               false,
 	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
         JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
-	    JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))  FROM %n.%n WHERE User=%? AND Host=%?;`,
+	    JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking')) FROM %n.%n WHERE User=%? AND Host=%?;`,
 		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
@@ -957,49 +961,30 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	// Configuration priority is User Changes > User History
 	if pLO.failedLoginAttemptsChange {
 		alterUserInfo.failedLoginAttempts = pLO.failedLoginAttempts
+	} else if !rows[0].IsNull(0) {
+		alterUserInfo.failedLoginAttempts = rows[0].GetInt64(0)
+		alterUserInfo.failedLoginAttempts = mathutil.Max(alterUserInfo.failedLoginAttempts, 0)
+		alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
 	} else {
-		failedLoginAttempts := rows[0].GetString(0)
-		if len(failedLoginAttempts) > 0 {
-			alterUserInfo.failedLoginAttempts, err = strconv.ParseInt(failedLoginAttempts, 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			if alterUserInfo.failedLoginAttempts < 0 {
-				alterUserInfo.failedLoginAttempts = 0
-			} else {
-				alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
-			}
-		} else {
-			alterUserInfo.failedLoginAttempts = 0
-			alterUserInfo.failedLoginAttemptsNotFound = true
-		}
+		alterUserInfo.failedLoginAttemptsNotFound = true
 	}
 
 	if pLO.passwordLockTimeChange {
 		alterUserInfo.passwordLockTime = pLO.passwordLockTime
+	} else if !rows[0].IsNull(1) {
+		alterUserInfo.passwordLockTime = rows[0].GetInt64(1)
+		alterUserInfo.passwordLockTime = mathutil.Max(alterUserInfo.passwordLockTime, -1)
+		alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
 	} else {
-		passwordLockTime := rows[0].GetString(1)
-		if len(passwordLockTime) > 0 {
-			alterUserInfo.passwordLockTime, err = strconv.ParseInt(passwordLockTime, 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			if alterUserInfo.passwordLockTime < -1 {
-				alterUserInfo.passwordLockTime = -1
-			} else {
-				alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
-			}
-		} else {
-			alterUserInfo.passwordLockTime = 0
-			alterUserInfo.passwordLockTimeChangeNotFound = true
-		}
+		alterUserInfo.passwordLockTimeChangeNotFound = true
 	}
-	alterUserInfo.commentIsNull = len(rows[0].GetString(2)) == 0
+
+	alterUserInfo.containsNoOthers = rows[0].IsNull(2) || rows[0].GetInt64(2) == 0
 	return alterUserInfo, nil
 }
 
-// deleteFailedLogin deletes "$.Password_locking" in "User_attributes" when failedLoginAttempts and passwordLockTime both 0.
-func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
+// deletePasswordLockingAttribute deletes "$.Password_locking" in "User_attributes" when failedLoginAttempts and passwordLockTime both 0.
+func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
 	// No password_locking information.
 	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
 		return nil
@@ -1009,8 +994,9 @@ func deleteFailedLogin(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, nam
 		return nil
 	}
 	sql := new(strings.Builder)
-	if alterUser.commentIsNull {
-		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL `, mysql.SystemDB, mysql.UserTable)
+	if alterUser.containsNoOthers {
+		// If we use JSON_REMOVE(user_attributes, '$.Password_locking') directly here, the result is not compatible with MySQL.
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL`, mysql.SystemDB, mysql.UserTable)
 	} else {
 		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
 	}
@@ -1061,7 +1047,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-	plInfo := &passwordOrLockOptionsInfo{
+	plOptions := &passwordOrLockOptionsInfo{
 		lockAccount:                 "N",
 		passwordExpired:             "N",
 		passwordLifetime:            nil,
@@ -1072,14 +1058,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwordHistoryChange:       false,
 		passwordReuseIntervalChange: false,
 	}
-	err = plInfo.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
+	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
 		return err
 	}
-	PasswordLocking := createUserFailedLoginJSON(plInfo)
+	PasswordLocking := createUserFailedLoginJSON(plOptions)
 	if s.IsCreateRole {
-		plInfo.lockAccount = "Y"
-		plInfo.passwordExpired = "Y"
+		plOptions.lockAccount = "Y"
+		plOptions.passwordExpired = "Y"
 	}
 
 	var (
@@ -1095,7 +1081,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
-	if (plInfo.failedLoginAttemptsChange || plInfo.passwordLockTimeChange) && PasswordLocking != "" {
+	if PasswordLocking != "" {
 		userAttributes = append(userAttributes, PasswordLocking)
 	}
 	if len(userAttributes) > 0 {
@@ -1112,7 +1098,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
 	// Get changed user password reuse info.
-	savePasswdHistory := whetherSavePasswordHistory(plInfo)
+	savePasswdHistory := whetherSavePasswordHistory(plOptions)
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
@@ -1126,7 +1112,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
-		if len(spec.User.Username) == 0 && plInfo.passwordExpired == "Y" {
+		if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
 			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
@@ -1186,16 +1172,16 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plInfo.lockAccount, recordTokenIssuer, plInfo.passwordExpired, plInfo.passwordLifetime)
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
 		// add Password_reuse_time value.
-		if plInfo.passwordReuseIntervalChange && (plInfo.passwordReuseInterval != notSpecified) {
-			sqlexec.MustFormatSQL(sql, `, %?`, plInfo.passwordReuseInterval)
+		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
+			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		// add Password_reuse_history value.
-		if plInfo.passwordHistoryChange && (plInfo.passwordHistory != notSpecified) {
-			sqlexec.MustFormatSQL(sql, `, %?`, plInfo.passwordHistory)
+		if plOptions.passwordHistoryChange && (plOptions.passwordHistory != notSpecified) {
+			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
@@ -1538,8 +1524,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		failedLoginAttemptsChange:   false,
 		passwordLockTimeChange:      false,
 		passwordHistoryChange:       false,
-		passwordReuseIntervalChange: false}
-	err = plOptions.passwordOrLockOptionsInfoParser(s.PasswordOrLockOptions)
+		passwordReuseIntervalChange: false,
+	}
+	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
 		return err
 	}
@@ -1718,11 +1705,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-		alterUserPassword, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
+		passwordLockingInfo, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
 		if err != nil {
 			return err
 		}
-		alterPasswordLocking := alterUserFailedLoginJSON(alterUserPassword, plOptions.lockAccount)
+		passwordLockingStr := alterUserFailedLoginJSON(passwordLockingInfo, plOptions.lockAccount)
 
 		if len(plOptions.passwordExpired) != 0 {
 			if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
@@ -1736,17 +1723,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
-			alterUserPassword.commentIsNull = false
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value))
 			} else {
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
 		}
-		if alterPasswordLocking != "" {
-			newAttributes = append(newAttributes, alterPasswordLocking)
+		if passwordLockingStr != "" {
+			newAttributes = append(newAttributes, passwordLockingStr)
 		}
-		if len(newAttributes) > 0 {
+		if length := len(newAttributes); length > 0 {
+			if length > 1 || passwordLockingStr == "" {
+				passwordLockingInfo.containsNoOthers = false
+			}
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
@@ -1791,8 +1780,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				continue
 			}
 		}
-		// Remove useless password_locking.
-		err = deleteFailedLogin(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, alterUserPassword)
+		// Remove useless Password_locking from User_attributes.
+		err = deletePasswordLockingAttribute(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, passwordLockingInfo)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
 			needRollback = true
