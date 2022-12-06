@@ -7,7 +7,7 @@ go_library(
         "shard_pool_map.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/resourcemanage/util",
+    importpath = "github.com/pingcap/tidb/resourcemanager/util",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_errors//:errors"],
 )

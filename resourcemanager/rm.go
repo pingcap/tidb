@@ -15,33 +15,63 @@
 package resourcemanager
 
 import (
+	"time"
+
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/cpu"
 )
 
-// GlobalResourceManager is a global resource manager
-var GlobalResourceManager = NewResourceManger()
+// GlobalResourceManage is a global resource manage
+var GlobalResourceManage = NewResourceMange()
 
-// ResourceManager is a resource manager
-type ResourceManager struct {
-	cpuObserver *cpu.Observer
-	wg          tidbutil.WaitGroupWrapper
+// ResourceManage is a resource manage
+type ResourceManage struct {
+	poolMap   *util.ShardPoolMap
+	scheduler []scheduler.Scheduler
+	exitCh    chan struct{}
+	wg        tidbutil.WaitGroupWrapper
 }
 
-// NewResourceManger is to create a new resource manager
-func NewResourceManger() *ResourceManager {
-	return &ResourceManager{
-		cpuObserver: cpu.NewCPUObserver(),
+// NewResourceMange is to create a new resource manage
+func NewResourceMange() *ResourceManage {
+	sc := make([]scheduler.Scheduler, 0, 1)
+	sc = append(sc, scheduler.NewGradient2Scheduler())
+	return &ResourceManage{
+		poolMap:   util.NewShardPoolMap(),
+		exitCh:    make(chan struct{}),
+		scheduler: sc,
 	}
 }
 
-// Start is to start resource manager
-func (r *ResourceManager) Start() {
-	r.wg.Run(r.cpuObserver.Start)
+// Start is to start resource manage
+func (r *ResourceManage) Start() {
+	r.wg.Run(func() {
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				r.schedule()
+			case <-r.exitCh:
+				return
+			}
+		}
+	})
 }
 
 // Stop is to stop resource manager
-func (r *ResourceManager) Stop() {
-	r.cpuObserver.Stop()
+func (r *ResourceManage) Stop() {
+	close(r.exitCh)
 	r.wg.Wait()
+}
+
+// Register is to register pool into resource manage
+func (r *ResourceManage) Register(pool util.GorotinuePool, name string, component util.Component) error {
+	p := util.PoolContainer{Pool: pool, Component: component}
+	return r.registerPool(name, &p)
+}
+
+func (r *ResourceManage) registerPool(name string, pool *util.PoolContainer) error {
+	return r.poolMap.Add(name, pool)
 }
