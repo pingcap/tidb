@@ -196,7 +196,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
 	orig := t.meta.Indices
 	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
-	for i, _ := range t.meta.Indices {
+	for i := range t.meta.Indices {
 		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
 		t.meta.Indices[i].State = state
 	}
