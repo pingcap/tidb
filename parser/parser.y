@@ -532,6 +532,7 @@ import (
 	replicas              "REPLICAS"
 	replication           "REPLICATION"
 	required              "REQUIRED"
+	resource              "RESOURCE"
 	respect               "RESPECT"
 	restart               "RESTART"
 	restore               "RESTORE"
@@ -723,6 +724,10 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	rruRate               "RRU_PER_SEC"
+	wruRate               "WRU_PER_SEC"
+	ioReadBandwidth       "IO_READ_BANDWIDTH"
+	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -869,6 +874,7 @@ import (
 	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
+	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
@@ -884,6 +890,7 @@ import (
 	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
@@ -989,7 +996,6 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
-	ClearPasswordExpireOptions             "Clear password expire options"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -1138,7 +1144,6 @@ import (
 	PartDefValuesOpt                       "VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
 	PartDefOptionList                      "PartDefOption list"
 	PartDefOption                          "COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
-	PasswordExpire                         "Single password option for create user statement"
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
@@ -1352,6 +1357,8 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
+	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1417,6 +1424,7 @@ import (
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
 	PolicyName                      "Placement Policy Name"
+	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
@@ -1569,6 +1577,42 @@ AlterTableStmt:
 			PartitionNames: $7.([]model.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
+	}
+
+ResourceGroupOptionList:
+	DirectResourceGroupOption
+	{
+		$$ = []*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}
+	}
+|	ResourceGroupOptionList DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+	}
+|	ResourceGroupOptionList ',' DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+	}
+
+DirectResourceGroupOption:
+	"RRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+	}
+|	"WRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+	}
+|	"CPU" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
+	}
+|	"IO_READ_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+	}
+|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -3871,6 +3915,9 @@ DBName:
 PolicyName:
 	Identifier
 
+ResourceGroupName:
+	Identifier
+
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
@@ -6152,6 +6199,7 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
@@ -6546,6 +6594,10 @@ NotKeywordToken:
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
 |	"TIDB_JSON"
+|	"IO_READ_BANDWIDTH"
+|	"IO_WRITE_BANDWIDTH"
+|	"RRU_PER_SEC"
+|	"WRU_PER_SEC"
 
 /************************************************************************************
  *
@@ -11369,6 +11421,7 @@ Statement:
 |	AlterInstanceStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
+|	AlterResourceGroupStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -11388,6 +11441,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateResourceGroupStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
@@ -13000,49 +13054,30 @@ PasswordOrLockOption:
 			Count: $4.(int64),
 		}
 	}
-|	PasswordExpire
+|	"PASSWORD" "EXPIRE"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpire,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "INTERVAL" Int64Num "DAY"
+|	"PASSWORD" "EXPIRE" "INTERVAL" Int64Num "DAY"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type:  ast.PasswordExpireInterval,
-			Count: $3.(int64),
+			Count: $4.(int64),
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "NEVER"
+|	"PASSWORD" "EXPIRE" "NEVER"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireNever,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
-|	PasswordExpire "DEFAULT"
+|	"PASSWORD" "EXPIRE" "DEFAULT"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
 		}
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
-
-PasswordExpire:
-	"PASSWORD" "EXPIRE" ClearPasswordExpireOptions
-	{
-		$$ = nil
-	}
-
-ClearPasswordExpireOptions:
-	{
-		$$ = nil
 	}
 
 AuthOption:
@@ -13073,15 +13108,17 @@ AuthOption:
 |	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
 	{
 		$$ = &ast.AuthOption{
-			AuthPlugin: $3,
-			HashString: $5,
+			AuthPlugin:   $3,
+			HashString:   $5,
+			ByHashString: true,
 		}
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
-			AuthPlugin: mysql.AuthNativePassword,
-			HashString: $4,
+			AuthPlugin:   mysql.AuthNativePassword,
+			HashString:   $4,
+			ByHashString: true,
 		}
 	}
 
@@ -14061,6 +14098,35 @@ DropPolicyStmt:
 		$$ = &ast.DropPlacementPolicyStmt{
 			IfExists:   $4.(bool),
 			PolicyName: model.NewCIStr($5),
+		}
+	}
+
+CreateResourceGroupStmt:
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.CreateResourceGroupStmt{
+			IfNotExists:             $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+AlterResourceGroupStmt:
+	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.AlterResourceGroupStmt{
+			IfExists:                $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+DropPolicyStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+	{
+		$$ = &ast.DropResourceGroupStmt{
+			IfExists:          $4.(bool),
+			ResourceGroupName: model.NewCIStr($5),
 		}
 	}
 
