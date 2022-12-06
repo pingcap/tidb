@@ -164,14 +164,7 @@ func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *mod
 }
 
 func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
-	job, err := t.GetDDLJobByIdx(0)
-	require.NoError(test, err)
-	if job == nil {
-		return true
-	}
-
-	time.Sleep(testLease)
-	return false
+	return true
 }
 
 func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInfo, state model.SchemaState) {

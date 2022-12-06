@@ -1263,7 +1263,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, c.store, []int64{job.ID})
+	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
 	if errs[0] != nil {
 		c.cancelErr = errs[0]
 		return
