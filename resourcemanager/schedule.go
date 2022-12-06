@@ -23,14 +23,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func (r *ResourceManage) schedule() {
+func (r *ResourceManager) schedule() {
 	r.poolMap.Iter(func(pool *util.PoolContainer) {
 		cmd := r.schedulePool(pool)
 		r.exec(pool, cmd)
 	})
 }
 
-func (r *ResourceManage) schedulePool(pool *util.PoolContainer) scheduler.Command {
+func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Command {
 	for _, sch := range r.scheduler {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
@@ -43,7 +43,7 @@ func (r *ResourceManage) schedulePool(pool *util.PoolContainer) scheduler.Comman
 	return scheduler.Hold
 }
 
-func (*ResourceManage) exec(pool *util.PoolContainer, cmd scheduler.Command) {
+func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
 	}
