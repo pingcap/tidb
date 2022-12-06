@@ -405,7 +405,7 @@
       "parser/": "parser code",
       "meta/": "parser code",
       "extension/": "extension code",
-      "resourcemanage/": "resourcemanage code"
+      "resourcemanager/": "resourcemanager code"
     }
   },
   "shift": {
@@ -767,7 +767,7 @@
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
       "extension/": "extension code",
-      "resourcemanage/": "resourcemanage code"
+      "resourcemanager/": "resourcemanager code"
     }
   },
   "SA2000": {
