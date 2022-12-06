@@ -112,7 +112,7 @@ func TestForeignKey(t *testing.T) {
 		ID:    1,
 		Name:  model.NewCIStr("idx_fk"),
 		Table: model.NewCIStr("t"),
-		Columns: []*model.IndexColumn{&model.IndexColumn{
+		Columns: []*model.IndexColumn{{
 			Name:   model.NewCIStr("c1"),
 			Offset: 0,
 			Length: types.UnspecifiedLength,
