@@ -297,7 +297,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int, index(b))")
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
@@ -382,7 +382,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
 	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
-	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table1 (a int, b int, index(b))")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
