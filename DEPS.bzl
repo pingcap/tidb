@@ -3519,8 +3519,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:vlgZedcfExiTzB3BB4nt5CpaghDfm9La/0Ofn7weIUA=",
-        version = "v2.0.3-0.20221129032117-857772dd0907",
+        sum = "h1:Nr2EhvqkOE9xFyU7LV9c9EbsgN3OzVALdbfobK7Fmn4=",
+        version = "v2.0.3-0.20221205084317-ad59ca833a78",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
@@ -4132,10 +4132,6 @@ def go_deps():
         name = "io_etcd_go_etcd_raft_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/raft/v3",
-        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:io_etcd_go_etcd_raft_v3.patch",
-        ],
         sum = "h1:uCC37qOXqBvKqTGHGyhASsaCsnTuJugl1GvneJNwHWo=",
         version = "v3.5.2",
     )
