@@ -170,10 +170,12 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.LastBackupTS > 0 {
 		// TODO: compatible with incremental backup
 		cfg.UseCheckpoint = false
+		log.Info("since incremental backup is used, turn off checkpoint mode")
 	}
 	if cfg.UseBackupMetaV2 {
 		// TODO: compatible with backup meta v2, maybe just clean the meta files
 		cfg.UseCheckpoint = false
+		log.Info("since backup meta v2 is used, turn off checkpoint mode")
 	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
