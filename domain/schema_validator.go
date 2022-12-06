@@ -186,6 +186,7 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		for i, tblID := range item.relatedIDs {
 			for _, relatedTblID := range tableIDs {
 				if tblID == relatedTblID {
+					// if actionType >= 64, the value of left shift equals 0, and it will not impact amend txn
 					changedTblMap[tblID] |= 1 << item.relatedActions[i]
 					affected = true
 				}
