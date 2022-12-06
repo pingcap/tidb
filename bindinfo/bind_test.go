@@ -1478,7 +1478,7 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 	tk.MustExec("create table t3(id int)")

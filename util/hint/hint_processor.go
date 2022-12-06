@@ -662,8 +662,6 @@ func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren b
 			checker.reason = errors.New("can't create binding for query with more than two table join")
 			return in, true
 		}
-	case *ast.Join:
-		return in, false
 	}
 	return in, false
 }
