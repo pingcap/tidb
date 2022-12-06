@@ -2621,8 +2621,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-<<<<<<< HEAD
-	if err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
+	if s.sessionVars.ResourceGroupName, err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
 		switch err.(type) {
 		case *privileges.ErrInSandBoxMode:
 			// Enter sandbox mode, only execute statement for resetting password.
@@ -2630,10 +2629,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		default:
 			return err
 		}
-=======
-	if s.sessionVars.ResourceGroupName, err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		return err
->>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 	}
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname

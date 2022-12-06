@@ -405,11 +405,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 }
 
 // ConnectionVerification implements the Manager interface.
-<<<<<<< HEAD
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) error {
-=======
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) (string, error) {
->>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (string, error) {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -514,24 +510,21 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	sandBoxMode, err := p.CheckPasswordExpired(sessionVars, record)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	p.user = authUser
 	p.host = record.Host
-<<<<<<< HEAD
 	if sandBoxMode {
-		return &ErrInSandBoxMode{}
+		return "", &ErrInSandBoxMode{}
 	}
-	return nil
-=======
 
 	// special handling to existing users or root user initialized with insecure
 	if record.ResourceGroup == "" {
-		record.ResourceGroup = "default"
+		return "default", nil
 	}
+
 	return record.ResourceGroup, nil
->>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 }
 
 type checkResult int

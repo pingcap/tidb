@@ -1317,16 +1317,14 @@ type SessionVars struct {
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
 
-<<<<<<< HEAD
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
-=======
+
 	// Resource group name
 	ResourceGroupName string
->>>>>>> f661b2939 (*: pass user's resource group name to sessionVars.ResourceGroupName (#27))
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
