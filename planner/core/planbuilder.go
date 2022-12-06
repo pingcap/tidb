@@ -499,6 +499,7 @@ type PlanBuilder struct {
 	isForUpdateRead             bool
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
+	buildingCTE                 bool
 }
 
 type handleColHelper struct {

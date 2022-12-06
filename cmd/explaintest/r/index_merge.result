@@ -653,11 +653,11 @@ c1	c2	c3	c4	c5
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	4433.77	root		test.t1.c1
-└─IndexMerge_12	4433.77	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	4433.77	cop[tikv]		eq(greatest(test.t1.c1, test.t1.c2, test.t1.c4), 1)
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	4433.77	root		eq(greatest(test.t1.c1, test.t1.c2, test.t1.c4), 1)
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1

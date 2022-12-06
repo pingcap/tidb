@@ -3809,6 +3809,7 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 			readFromTableCache = true
 			break
 		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, readFromTableCache)
 	// already read cache after reading first time

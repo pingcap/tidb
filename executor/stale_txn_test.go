@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -1051,6 +1052,16 @@ func TestStaleReadPrepare(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	_, err = tk.Exec("execute p1")
 	require.Error(t, err)
+	tk.MustExec("execute p2")
+
+	tk.MustExec("create table t1 (id int, v int)")
+	tk.MustExec("insert into t1 values (1,10)")
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(5 * time.Millisecond)
+	tk.MustExec("update t1 set v=100 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 100"))
+	tk.MustExec("prepare s1 from 'select * from t1 as of timestamp @a where id=1'")
+	tk.MustQuery("execute s1").Check(testkit.Rows("1 10"))
 }
 
 func TestStmtCtxStaleFlag(t *testing.T) {
@@ -1281,4 +1292,33 @@ func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`))
 	tk.MustQuery("select * from t")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
+}
+
+func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	se := tk.Session()
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Millisecond * 5)
+	tk.MustExec("update t1 set v=100 where id=1")
+
+	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
+	require.NoError(t, err)
+
+	rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 }

@@ -1130,7 +1130,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 		}
 	}
-	return c.TotalRowCount() == 0 || !c.IsLoaded()
+	return c.TotalRowCount() == 0 || (!c.IsLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
