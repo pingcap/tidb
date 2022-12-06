@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"reflect"
 
 	"github.com/pingcap/errors"
@@ -41,10 +42,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
-
-const amendableType = nonMemAmendType | memBufAmendType
-const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropIndex)
-const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn)
 
 // Amend operation types.
 const (
@@ -657,13 +654,21 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 	infoSchemaAtStart := startInfoSchema.(infoschema.InfoSchema)
 	infoSchemaAtCheck := change.LatestInfoSchema.(infoschema.InfoSchema)
 
+	var amendableType = []uint64{
+		uint64(model.ActionAddColumn),
+		uint64(model.ActionDropColumn),
+		uint64(model.ActionDropIndex),
+		uint64(model.ActionAddIndex),
+		uint64(model.ActionModifyColumn),
+	}
+
 	// Collect amend operations for each table by physical table ID.
 	var needAmendMem bool
 	amendCollector := newAmendCollector()
 	for i, tblID := range change.PhyTblIDS {
 		actionType := change.ActionTypes[i]
 		// Check amendable flags, return if not supported flags exist.
-		if actionType&(^amendableType) != 0 {
+		if !slices.Contains(amendableType, actionType) {
 			logutil.Logger(ctx).Info("amend action type not supported for txn", zap.Int64("tblID", tblID), zap.Uint64("actionType", actionType))
 			return nil, errors.Trace(table.ErrUnsupportedOp)
 		}
@@ -681,7 +686,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		if !ok {
 			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
-		if actionType&(memBufAmendType) != 0 {
+		if actionType == uint64(model.ActionAddIndex) || actionType == uint64(model.ActionModifyColumn) {
 			needAmendMem = true
 			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit, actionType)
 			if err != nil {
