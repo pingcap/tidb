@@ -1302,6 +1302,9 @@ func TestUserReuseInfo(t *testing.T) {
 	rootTK.MustExec(`drop USER testReuse`)
 	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
 	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> <nil>`))
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY`)
+	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`0 0`))
 }
 
 func TestUserReuseFunction(t *testing.T) {
@@ -1613,6 +1616,7 @@ func TestMixPasswordPolicy(t *testing.T) {
 	rootTK.MustQuery(`Select count(*) from mysql.password_history where user = 'u2' and host = '%'`).Check(testkit.Rows("2"))
 	result = rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
 	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22223")))
+	tk = testkit.NewTestKit(t, store)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22223"), nil)
 	require.NoError(t, err)
 }
