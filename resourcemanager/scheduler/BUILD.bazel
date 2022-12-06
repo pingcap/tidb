@@ -17,8 +17,8 @@ go_library(
 go_test(
     name = "scheduler_test",
     srcs = [
-        "fake_rms_test.go",
         "gradient2_scheduler_test.go",
+        "mock_rms_test.go",
     ],
     embed = [":scheduler"],
     flaky = True,
