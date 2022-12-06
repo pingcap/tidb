@@ -54,7 +54,6 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-		// TODO: Report a bug for Truncate partition, that it does not update global stats
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Dynamic && t.PartInfo != nil {
@@ -69,6 +68,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+		// Update global stats, even though it should not have changed,
+		// the updated statistics from the newly reorganized partitions may be better
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Dynamic && t.PartInfo != nil {
 			if err := h.updateGlobalStats(t.TableInfo); err != nil {
