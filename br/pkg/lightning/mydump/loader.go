@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,6 +30,9 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
+
+// sampleCompressedFileSize represents how many bytes need to be sampled for compressed files
+const sampleCompressedFileSize = 4 * 1024
 
 // MDDatabaseMeta contains some parsed metadata for a database in the source by MyDumper Loader.
 type MDDatabaseMeta struct {
@@ -82,7 +86,9 @@ type SourceFileMeta struct {
 	Compression Compression
 	SortKey     string
 	FileSize    int64
-	ExtendData  ExtendColumnData
+	// WARNING: variables below are not persistent
+	ExtendData ExtendColumnData
+	RealSize   int64
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -386,7 +392,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		// set a dummy `FileInfo` here without file meta because we needn't restore the table schema
 		tableMeta, _, _ := s.insertTable(FileInfo{TableName: fileInfo.TableName})
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
-		tableMeta.TotalSize += fileInfo.FileMeta.FileSize
+		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
 	}
 
 	for _, dbMeta := range s.loader.dbs {
@@ -453,7 +459,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 
 	info := FileInfo{
 		TableName: filter.Table{Schema: res.Schema, Name: res.Name},
-		FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size},
+		FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size, RealSize: size},
 	}
 
 	if s.loader.shouldSkip(&info.TableName) {
@@ -470,6 +476,15 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 	case SourceTypeViewSchema:
 		s.viewSchemas = append(s.viewSchemas, info)
 	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+		if info.FileMeta.Compression != CompressionNone {
+			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
+			if err2 != nil {
+				logger.Error("[loader] fail to calculate data file compress compress ratio",
+					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
+			} else {
+				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
+			}
+		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
 
@@ -647,4 +662,72 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 // GetStore gets the external storage used by the loader.
 func (l *MDLoader) GetStore() storage.ExternalStorage {
 	return l.store
+}
+
+func calculateFileBytes(ctx context.Context,
+	dataFile string,
+	compressType storage.CompressType,
+	store storage.ExternalStorage,
+	offset int64) (tot int, pos int64, err error) {
+	bytes := make([]byte, sampleCompressedFileSize)
+	reader, err := store.Open(ctx, dataFile)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer reader.Close()
+
+	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, offset)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	readBytes := func() error {
+		n, err2 := compressReader.Read(bytes)
+		if err2 != nil && !strings.Contains(err2.Error(), "EOF") {
+			return err2
+		}
+		tot += n
+		return err2
+	}
+
+	if offset == 0 {
+		err = readBytes()
+		if err != nil && !strings.Contains(err.Error(), "EOF") {
+			return 0, 0, err
+		}
+		pos, err = compressReader.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		return tot, pos, nil
+	}
+
+	for {
+		err = readBytes()
+		if err != nil {
+			break
+		}
+	}
+	if err != nil && !strings.Contains(err.Error(), "EOF") {
+		return 0, 0, errors.Trace(err)
+	}
+	return tot, offset, nil
+}
+
+func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+	compressType, err := ToStorageCompressType(fileMeta.Compression)
+	if err != nil {
+		return 0, err
+	}
+	// read first time, aims to find a valid end pos in compressed file
+	_, pos, err := calculateFileBytes(ctx, fileMeta.Path, compressType, store, 0)
+	if err != nil {
+		return 0, err
+	}
+	// read second time, original reader ends at first time's valid pos, compute sample data compress ratio
+	tot, pos, err := calculateFileBytes(ctx, fileMeta.Path, compressType, store, pos)
+	if err != nil {
+		return 0, err
+	}
+	return float64(tot) / float64(pos), nil
 }
