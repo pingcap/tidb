@@ -216,8 +216,8 @@ func subTestEnqueueActionType(t *testing.T) {
 	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7.
 	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	require.True(t, isTablesChanged)
-	require.Equal(t, []int64{1, 2, 3, 4}, relatedChanges.PhyTblIDS)
-	require.Equal(t, []uint64{15, 2, 7, 4}, relatedChanges.ActionTypes)
+	require.Equal(t, []int64{1, 1, 1, 1, 2, 2, 3, 3, 4}, relatedChanges.PhyTblIDS)
+	require.Equal(t, []uint64{1, 1, 1, 15, 2, 2, 3, 4, 4}, relatedChanges.ActionTypes)
 }
 
 type leaseGrantItem struct {

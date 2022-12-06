@@ -179,14 +179,14 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		return res, true
 	}
 
-	changedTblMap := make(map[int64]uint64)
+	changedTblMap := make(map[int64][]uint64)
 	changedSchemaVers := make([]int64, 0)
 	for _, item := range newerDeltas {
 		affected := false
 		for i, tblID := range item.relatedIDs {
 			for _, relatedTblID := range tableIDs {
 				if tblID == relatedTblID {
-					changedTblMap[tblID] |= item.relatedActions[i]
+					changedTblMap[tblID] = append(changedTblMap[tblID], item.relatedActions[i])
 					affected = true
 				}
 			}
@@ -198,12 +198,19 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 	if len(changedTblMap) > 0 {
 		tblIds := make([]int64, 0, len(changedTblMap))
 		actionTypes := make([]uint64, 0, len(changedTblMap))
-		for id := range changedTblMap {
-			tblIds = append(tblIds, id)
+		for k, v := range changedTblMap {
+			for i := 0; i < len(v); i++ {
+				tblIds = append(tblIds, k)
+			}
 		}
 		slices.Sort(tblIds)
+		prevID := int64(-1)
 		for _, tblID := range tblIds {
-			actionTypes = append(actionTypes, changedTblMap[tblID])
+			if prevID == tblID {
+				continue
+			}
+			actionTypes = append(actionTypes, changedTblMap[tblID]...)
+			prevID = tblID
 		}
 		res.PhyTblIDS = tblIds
 		res.ActionTypes = actionTypes
