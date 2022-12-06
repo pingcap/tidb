@@ -86,11 +86,11 @@
       {
         "Plan": [
           "Sort_9 12500.00 root  test.t.a, test.t.a",
-          "└─HashJoin_30 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "  ├─IndexReader_43(Build) 10000.00 root  index:IndexFullScan_42",
-          "  │ └─IndexFullScan_42 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─IndexReader_39(Probe) 10000.00 root  index:IndexFullScan_38",
-          "    └─IndexFullScan_38 10000.00 cop[tikv] table:t1, index:b(b) keep order:false, stats:pseudo"
+          "└─MergeJoin_11 12500.00 root  inner join, left key:test.t.a, right key:test.t.a",
+          "  ├─TableReader_35(Build) 10000.00 root  data:TableFullScan_34",
+          "  │ └─TableFullScan_34 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader_33(Probe) 10000.00 root  data:TableFullScan_32",
+          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {
@@ -183,12 +183,13 @@
       {
         "Plan": [
           "Sort_11 9990.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_23 9990.00 root  inner join, equal:[eq(test.t1.a, test.t2.b)]",
-          "  ├─HashAgg_36(Build) 7992.00 root  group by:test.t2.b, funcs:firstrow(test.t2.b)->test.t2.b",
-          "  │ └─IndexReader_43 9990.00 root  index:IndexFullScan_42",
-          "  │   └─IndexFullScan_42 9990.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableReader_47(Probe) 10000.00 root  data:TableFullScan_46",
-          "    └─TableFullScan_46 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin_13 9990.00 root  inner join, left key:test.t1.a, right key:test.t2.b",
+          "  ├─StreamAgg_30(Build) 7992.00 root  group by:test.t2.b, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  │ └─IndexReader_31 7992.00 root  index:StreamAgg_27",
+          "  │   └─StreamAgg_27 7992.00 cop[tikv]  group by:test.t2.b, ",
+          "  │     └─IndexFullScan_29 9990.00 cop[tikv] table:t2, index:b(b) keep order:true, stats:pseudo",
+          "  └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {
@@ -309,11 +310,11 @@
       {
         "Plan": [
           "Sort_8 12500.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_20 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─IndexReader_31(Build) 10000.00 root  index:IndexFullScan_30",
-          "  │ └─IndexFullScan_30 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
-          "    └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin_10 12500.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
+          "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {

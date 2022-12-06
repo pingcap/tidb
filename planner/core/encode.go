@@ -69,7 +69,9 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if statsInfo := p.statsInfo(); statsInfo != nil {
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		} else if statsInfo := p.statsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
@@ -98,7 +100,9 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if statsInfo := p.statsInfo(); statsInfo != nil {
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		} else if statsInfo := p.statsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
@@ -199,8 +203,10 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
-	if statsInfo := p.statsInfo(); statsInfo != nil {
-		rowCount = p.statsInfo().RowCount
+	if pp, ok := p.(PhysicalPlan); ok {
+		rowCount = pp.getEstRowCountForDisplay()
+	} else if statsInfo := p.statsInfo(); statsInfo != nil {
+		rowCount = statsInfo.RowCount
 	}
 	plancodec.EncodePlanNode(depth, strconv.Itoa(p.ID()), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
@@ -269,7 +275,13 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
 	depthOffset := len(flat.Main) - len(selectPlan)
+loop1:
 	for _, op := range selectPlan {
+		switch op.Origin.(type) {
+		case *FKCheck, *FKCascade:
+			// Generate plan digest doesn't need to contain the foreign key check/cascade plan, so just break the loop.
+			break loop1
+		}
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
@@ -281,6 +293,9 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		)
 	}
 	normalized = d.buf.String()
+	if len(normalized) == 0 {
+		return "", parser.NewDigest(nil)
+	}
 	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)

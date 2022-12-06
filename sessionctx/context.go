@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -59,6 +60,7 @@ type PlanCache interface {
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
+	Close()
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -178,6 +180,15 @@ type Context interface {
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+	// GetExtensions returns the `*extension.SessionExtensions` object
+	GetExtensions() *extension.SessionExtensions
+	// InSandBoxMode indicates that this Session is in sandbox mode
+	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
+	InSandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

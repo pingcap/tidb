@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
@@ -46,7 +47,7 @@ func genKeyExistsError(name string, value string, err error) error {
 }
 
 func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
+	name := tblInfo.Name.String() + ".PRIMARY"
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
 		return genKeyExistsError(name, key.String(), err)
@@ -100,6 +101,9 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if col.Length > 0 && len(str) > col.Length {
 			str = str[:col.Length]
 		}
+		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) || types.IsTypeBit(&tblInfo.Columns[col.Offset].FieldType) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
@@ -115,7 +119,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 	if idxInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
 	}
-	name := idxInfo.Name.String()
+	name := tblInfo.Name.String() + "." + idxInfo.Name.String()
 
 	if len(value) == 0 {
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))
@@ -135,6 +139,9 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		str, err := d.ToString()
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
+		}
+		if types.IsBinaryStr(colInfo[i].Ft) || types.IsTypeBit(colInfo[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		valueStr = append(valueStr, str)
 	}

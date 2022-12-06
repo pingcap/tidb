@@ -99,6 +99,8 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util",
+        "//util/gctuner",
+        "//util/memory",
         "//util/pdapi",
         "//util/resourcegrouptag",
         "//util/set",

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -114,12 +115,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
+				memTracker:   e.ctx.GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
 		e.executed = true
-		chk := newFirstChunk(e.analyzeExec)
+		chk := tryNewCacheChunk(e.analyzeExec)
 		for {
 			err = Next(ctx, e.analyzeExec, chk)
 			if err != nil || chk.NumRows() == 0 {
@@ -168,8 +169,7 @@ func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, tr
 	if gc {
 		runtime.GC()
 	}
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ForceReadMemStats()
 	heapInUse = instanceStats.HeapInuse
 	trackedMem = uint64(h.memTracker.BytesConsumed())
 	return
@@ -186,6 +186,20 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 		h.infoField = append(h.infoField, zap.String("heap profile", fileName))
 	}
 	return h.infoField, err
+}
+
+func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
+	trackerMemUseMap := h.memTracker.CountAllChildrenMemUse()
+	logs := make([]zap.Field, 0, len(trackerMemUseMap))
+	keys := make([]string, 0, len(trackerMemUseMap))
+	for k := range trackerMemUseMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		logs = append(logs, zap.String("TrackerTree "+k, memory.FormatBytes(trackerMemUseMap[k])))
+	}
+	return logs
 }
 
 func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
@@ -264,7 +278,8 @@ func (h *memoryDebugModeHandler) run() {
 					for _, t := range ts {
 						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 					}
-					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log all executors that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log the tracker tree", h.getTrackerTreeMemUseLogs()...)
 				}
 			}
 		}

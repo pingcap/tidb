@@ -292,7 +292,7 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 	// Modify column(reorg).
 	tk.MustExec("begin")
 	tkDDL.MustExec("alter table test.t modify column a char(10);")
-	tk.MustGetErrCode("select * from t", mysql.ErrSchemaChanged)
+	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil>"))
 
@@ -1104,4 +1104,17 @@ func TestMDLRenameTable(t *testing.T) {
 	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
 	tk.MustGetErrCode("select * from test2.t1;", mysql.ErrNoSuchTable)
 	tk.MustExec("commit")
+}
+
+func TestMDLPrepareFail(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	_, _, _, err := tk.Session().PrepareStmt("select b from t")
+	require.Error(t, err)
+
+	tk2.MustExec("alter table test.t add column c int")
 }

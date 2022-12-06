@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func TestDumpBlock(t *testing.T) {
+func TestDumpExit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -56,7 +56,6 @@ func TestDumpBlock(t *testing.T) {
 	})
 
 	writerCtx := tctx.WithContext(writingCtx)
-	// simulate taskChan is full
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)

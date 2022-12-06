@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -378,6 +380,49 @@ func TestAlterTableWithValidation(t *testing.T) {
 	tk.MustExec("alter table t1 without validation")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
+}
+
+func TestCreateTableWithInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+	info := []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("t"),
+	}}
+
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return false
+	})))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+
+	var id int64
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		id, err = m.GenGlobalID()
+		return err
+	})
+
+	require.NoError(t, err)
+	info = []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("tt"),
+	}}
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return true
+	})))
+	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tt'").Rows()[0][0].(string)
+	require.True(t, ok)
+	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, idGenNum, id)
 }
 
 func TestBatchCreateTable(t *testing.T) {

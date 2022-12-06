@@ -270,7 +270,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
-		return nil, false
+		return autoid.Allocators{}, false
 	}
 	return tbl.Allocators(nil), true
 }
@@ -463,7 +463,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
 				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
 			}
-			return newReferredFKList[i].ChildFKName.L != newReferredFKList[j].ChildFKName.L
+			return newReferredFKList[i].ChildFKName.L < newReferredFKList[j].ChildFKName.L
 		})
 		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
@@ -671,6 +671,12 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 	if ts.LocalTemporaryTables != nil {
 		if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
 			return db, true
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.SchemaByTable(tableInfo); ok {
+			return tbl, true
 		}
 	}
 

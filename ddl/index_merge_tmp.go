@@ -95,7 +95,7 @@ func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.Physica
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	return &mergeIndexWorker{
-		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
+		backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
 		index:          index,
 		jobContext:     jc,
 	}

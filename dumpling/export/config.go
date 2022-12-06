@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -15,8 +16,8 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
@@ -102,7 +103,7 @@ type Config struct {
 	User     string
 	Password string `json:"-"`
 	Security struct {
-		DriveTLSName string `json:"-"`
+		TLS          *tls.Config `json:"-"`
 		CAPath       string
 		CertPath     string
 		KeyPath      string
@@ -202,20 +203,42 @@ func (conf *Config) String() string {
 	return string(cfg)
 }
 
-// GetDSN generates DSN from Config
-func (conf *Config) GetDSN(db string) string {
+// GetDriverConfig returns the MySQL driver config from Config.
+func (conf *Config) GetDriverConfig(db string) *mysql.Config {
+	driverCfg := mysql.NewConfig()
 	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.
 	// https://github.com/go-sql-driver/mysql#maxallowedpacket
 	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
-		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
-	if conf.Security.DriveTLSName != "" {
-		dsn += "&tls=" + conf.Security.DriveTLSName
+	driverCfg.User = conf.User
+	driverCfg.Passwd = conf.Password
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = hostPort
+	driverCfg.DBName = db
+	driverCfg.Collation = "utf8mb4_general_ci"
+	driverCfg.ReadTimeout = conf.ReadTimeout
+	driverCfg.WriteTimeout = 30 * time.Second
+	driverCfg.InterpolateParams = true
+	driverCfg.MaxAllowedPacket = 0
+	if conf.Security.TLS != nil {
+		driverCfg.TLS = conf.Security.TLS
+	} else {
+		// Use TLS first.
+		driverCfg.AllowFallbackToPlaintext = true
+		/* #nosec G402 */
+		driverCfg.TLS = &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS10,
+		}
 	}
 	if conf.AllowCleartextPasswords {
-		dsn += "&allowCleartextPasswords=1"
+		driverCfg.AllowCleartextPasswords = true
 	}
-	return dsn
+	failpoint.Inject("SetWaitTimeout", func(val failpoint.Value) {
+		driverCfg.Params = map[string]string{
+			"wait_timeout": strconv.Itoa(val.(int)),
+		}
+	})
+	return driverCfg
 }
 
 func timestampDirName() string {
@@ -273,7 +296,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagReadTimeout)
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
-	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
+	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -578,6 +601,10 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 		return storage.NoCompression, nil
 	case "gzip", "gz":
 		return storage.Gzip, nil
+	case "snappy":
+		return storage.Snappy, nil
+	case "zstd", "zst":
+		return storage.Zstd, nil
 	default:
 		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}
@@ -606,9 +633,9 @@ const (
 	// DefaultTableFilter is the default exclude table filter. It will exclude all system databases
 	DefaultTableFilter = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
 
-	defaultDumpThreads        = 128
-	defaultDumpGCSafePointTTL = 5 * 60
-	defaultEtcdDialTimeOut    = 3 * time.Second
+	defaultTaskChannelCapacity = 128
+	defaultDumpGCSafePointTTL  = 5 * 60
+	defaultEtcdDialTimeOut     = 3 * time.Second
 
 	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
 	LooseCollationCompatible = "loose"
@@ -634,7 +661,7 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 	return nil
 }
 
-func registerTLSConfig(conf *Config) error {
+func buildTLSConfig(conf *Config) error {
 	tlsConfig, err := util.NewTLSConfig(
 		util.WithCAPath(conf.Security.CAPath),
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
@@ -644,14 +671,8 @@ func registerTLSConfig(conf *Config) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if tlsConfig == nil {
-		return nil
-	}
-
-	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
-	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
-	return errors.Trace(err)
+	conf.Security.TLS = tlsConfig
+	return nil
 }
 
 func validateSpecifiedSQL(conf *Config) error {

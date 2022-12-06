@@ -454,6 +454,7 @@ type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
 	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
 	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceID         string           `toml:"source-id" json:"source-id"`
 	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
 	CharacterSet     string           `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig        `toml:"csv" json:"csv"`
@@ -553,11 +554,12 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string                 `toml:"schema" json:"schema"`
-	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string                 `toml:"driver" json:"driver"`
-	Enable           bool                   `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                    `toml:"schema" json:"schema"`
+	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	MySQLParam       *common.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
+	Driver           string                    `toml:"driver" json:"driver"`
+	Enable           bool                      `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -1142,7 +1144,7 @@ func (cfg *Config) AdjustCheckPoint() {
 				MaxAllowedPacket: defaultMaxAllowedPacket,
 				TLS:              cfg.TiDB.TLS,
 			}
-			cfg.Checkpoint.DSN = param.ToDSN()
+			cfg.Checkpoint.MySQLParam = &param
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}

@@ -67,7 +67,7 @@ func (dc *ddlCtx) excludeJobIDs() string {
 }
 
 const (
-	getJobSQL = "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids) and %s reorg %s order by processing desc, job_id"
+	getJobSQL = "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) and %s reorg %s order by processing desc, job_id"
 )
 
 type jobType int
@@ -252,7 +252,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.once.Store(false)
-					cleanMDLInfo(d.sessPool, job.ID)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 					// Don't have a worker now.
 					return
 				}
@@ -287,13 +287,13 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 			// the newest schema.
 			waitSchemaChanged(context.Background(), d.ddlCtx, d.lease*2, schemaVer, job)
-			cleanMDLInfo(d.sessPool, job.ID)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 			d.synced(job)
 
 			if RunInGoTest {
 				// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 				d.mu.RLock()
-				d.mu.hook.OnSchemaStateChanged()
+				d.mu.hook.OnSchemaStateChanged(schemaVer)
 				d.mu.RUnlock()
 			}
 

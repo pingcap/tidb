@@ -160,13 +160,13 @@
         ],
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexJoin 1.00 root  left outer semi join, inner:IndexReader, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TopN(Build) 1.00 root  test.t.a, offset:0, count:1",
-          "  │ └─IndexReader 1.00 root  index:TopN",
-          "  │   └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "  │     └─IndexRangeScan 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
-          "  └─IndexReader(Probe) 1.04 root  index:IndexRangeScan",
-          "    └─IndexRangeScan 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
+          "└─MergeJoin 1.00 root  left outer semi join, left key:test.t.a, right key:test.t.b",
+          "  ├─IndexReader(Build) 25.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 25.00 cop[tikv] table:t2, index:idx_bc(b, c) keep order:true",
+          "  └─TopN(Probe) 1.00 root  test.t.a, offset:0, count:1",
+          "    └─IndexReader 1.00 root  index:TopN",
+          "      └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "        └─IndexRangeScan 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -259,9 +259,9 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexReader(Probe) 1.25 root  index:Selection",
-          "  └─Selection 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-          "    └─IndexRangeScan 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
+          "└─IndexReader(Probe) 12475.01 root  index:Selection",
+          "  └─Selection 12475.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -272,12 +272,12 @@
         "Plan": [
           "Projection 0.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin 0.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "  ├─TableReader(Build) 0.00 root  data:Selection",
+          "  ├─IndexReader(Build) 0.00 root  index:Selection",
           "  │ └─Selection 0.00 cop[tikv]  isnull(test.t.b), not(isnull(test.t.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │   └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_ab(a, b) keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_ab(a, b) keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -381,27 +381,27 @@
       [
         "Projection 10.00 root  Column#22",
         "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
-        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
-        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#21",
-        "    └─HashJoin 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader(Build) 1.00 root  data:Selection",
-        "      │ └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader(Probe) 1.00 root  data:Selection",
-        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
+        "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
+        "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
+        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
+        "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─IndexReader(Build) 10.00 root  index:Selection",
+        "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─IndexFullScan 100.00 cop[tikv] table:t1, index:idx(c, b, a) keep order:false",
+        "      └─IndexReader(Probe) 10.00 root  index:Selection",
+        "        └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─IndexFullScan 100.00 cop[tikv] table:s, index:idx(c, b, a) keep order:false"
       ],
       [
         "Projection 10.00 root  Column#13",
         "└─Apply 10.00 root  CARTESIAN left outer join",
-        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
-        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─MaxOneRow(Probe) 1.00 root  ",
-        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
-        "      └─IndexReader 0.10 root  index:Selection",
-        "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
-        "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
+        "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
+        "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
+        "  └─MaxOneRow(Probe) 10.00 root  ",
+        "    └─Projection 1.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "      └─IndexReader 1.00 root  index:Selection",
+        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a)",
+        "          └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
       ]
     ]
   },
@@ -414,9 +414,9 @@
           "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
           "└─TopN 0.00 root  test.t.e:desc, offset:0, count:1",
           "  └─IndexLookUp 0.00 root  ",
-          "    ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
-          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
-          "      └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false"
+          "    ├─IndexRangeScan(Build) 0.01 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",
+          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan 0.01 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -425,7 +425,7 @@
     "Name": "TestEmptyTable",
     "Cases": [
       "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
-      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)",
+      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))])->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)",
       "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))}(test.t.c1,test.t1.c1)",
       "Dual"
     ]
@@ -433,23 +433,23 @@
   {
     "Name": "TestIndexRead",
     "Cases": [
-      "IndexReader(Index(t.e)[[NULL,+inf]])->HashAgg",
+      "IndexReader(Index(t.e)[[NULL,+inf]]->StreamAgg)->StreamAgg",
       "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
       "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
-      "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->HashAgg)->HashAgg",
+      "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
       "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
       "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
-      "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 30)])->StreamAgg)->StreamAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 40)])->StreamAgg)->StreamAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 20)])->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 30)])->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 40)])->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->HashAgg)->HashAgg",
       "TableReader(Table(t)->Sel([le(test.t.b, 40)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 10000000000)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
-      "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
+      "TableReader(Table(t)->Sel([le(test.t.b, 1)])->Limit)->Limit",
       "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
       "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
       "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
@@ -501,10 +501,10 @@
         "SQL": "explain format = 'brief' select * from t where a <= 10000 order by b limit 1",
         "Plan": [
           "TopN 1.00 root  test.t.b, offset:0, count:1",
-          "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) range:[-inf,10000], keep order:false",
-          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─TableRowIDScan 10000.00 cop[tikv] table:t keep order:false"
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─Selection 10000.00 cop[tikv]  le(test.t.a, 10000)",
+          "      └─TableFullScan 1000000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
