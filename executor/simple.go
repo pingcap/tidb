@@ -2291,6 +2291,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		if s.User == nil || s.User.CurrentUser ||
 			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
 			disableSandboxMode = true
+		} else {
+			return errMustChangePassword.GenWithStackByArgs()
 		}
 	}
 
