@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourcemanage
+package resourcemanager
 
 import (
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage/scheduler"
-	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
 )
 

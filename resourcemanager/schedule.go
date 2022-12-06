@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourcemanage
+package resourcemanager
 
 import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/resourcemanage/scheduler"
-	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"go.uber.org/zap"
 )
 

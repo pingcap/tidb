@@ -6,10 +6,10 @@ go_library(
         "gradient2_scheduler.go",
         "scheduler.go",
     ],
-    importpath = "github.com/pingcap/tidb/resourcemanage/scheduler",
+    importpath = "github.com/pingcap/tidb/resourcemanager/scheduler",
     visibility = ["//visibility:public"],
     deps = [
-        "//resourcemanage/util",
+        "//resourcemanager/util",
         "//util/mathutil",
     ],
 )
@@ -23,7 +23,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     deps = [
-        "//resourcemanage/util",
+        "//resourcemanager/util",
         "@com_github_stretchr_testify//require",
     ],
 )
