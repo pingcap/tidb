@@ -17,7 +17,6 @@ package tiflashtest
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/parser/auth"
 	"math/rand"
 	"strings"
 	"sync"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
