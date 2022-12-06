@@ -20,10 +20,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -575,8 +575,8 @@ func ZapTables(tables []CreatedTable) zapcore.Field {
 		names := make([]string, 0, len(tables))
 		for _, t := range tables {
 			names = append(names, fmt.Sprintf("%s.%s",
-				metautil.EncloseName(t.OldTable.DB.Name.String()),
-				metautil.EncloseName(t.OldTable.Info.Name.String())))
+				utils.EncloseName(t.OldTable.DB.Name.String()),
+				utils.EncloseName(t.OldTable.Info.Name.String())))
 		}
 		return names
 	})

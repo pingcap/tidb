@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
@@ -76,15 +77,15 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*metautil.Database
+		backupDBs  map[string]*utils.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("test"): {},
+				utils.EncloseName("test"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("test", "t"):  {},
-				metautil.EncloseDBAndTable("test", "t2"): {},
+				utils.EncloseDBAndTable("test", "t"):  {},
+				utils.EncloseDBAndTable("test", "t2"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"test": {"T", "T2"},
@@ -92,11 +93,11 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		},
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("mysql"): {},
+				utils.EncloseName("mysql"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("mysql", "t"):  {},
-				metautil.EncloseDBAndTable("mysql", "t2"): {},
+				utils.EncloseDBAndTable("mysql", "t"):  {},
+				utils.EncloseDBAndTable("mysql", "t2"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"__TiDB_BR_Temporary_mysql": {"T", "T2"},
@@ -104,11 +105,11 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		},
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("test"): {},
+				utils.EncloseName("test"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("test", "T"):  {},
-				metautil.EncloseDBAndTable("test", "T2"): {},
+				utils.EncloseDBAndTable("test", "T"):  {},
+				utils.EncloseDBAndTable("test", "T2"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"test": {"t", "t2"},
@@ -116,11 +117,11 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		},
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("TEST"): {},
+				utils.EncloseName("TEST"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("TEST", "t"):  {},
-				metautil.EncloseDBAndTable("TEST", "T2"): {},
+				utils.EncloseDBAndTable("TEST", "t"):  {},
+				utils.EncloseDBAndTable("TEST", "T2"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"test": {"t", "t2"},
@@ -128,11 +129,11 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		},
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("TeSt"): {},
+				utils.EncloseName("TeSt"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("TeSt", "tabLe"):  {},
-				metautil.EncloseDBAndTable("TeSt", "taBle2"): {},
+				utils.EncloseDBAndTable("TeSt", "tabLe"):  {},
+				utils.EncloseDBAndTable("TeSt", "taBle2"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"TesT": {"TablE", "taBle2"},
@@ -140,13 +141,13 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		},
 		{
 			cfgSchemas: map[string]struct{}{
-				metautil.EncloseName("TeSt"):  {},
-				metautil.EncloseName("MYSQL"): {},
+				utils.EncloseName("TeSt"):  {},
+				utils.EncloseName("MYSQL"): {},
 			},
 			cfgTables: map[string]struct{}{
-				metautil.EncloseDBAndTable("TeSt", "tabLe"):  {},
-				metautil.EncloseDBAndTable("TeSt", "taBle2"): {},
-				metautil.EncloseDBAndTable("MYSQL", "taBle"): {},
+				utils.EncloseDBAndTable("TeSt", "tabLe"):  {},
+				utils.EncloseDBAndTable("TeSt", "taBle2"): {},
+				utils.EncloseDBAndTable("MYSQL", "taBle"): {},
 			},
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"TesT":                      {"table", "TaBLE2"},
@@ -166,7 +167,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -235,7 +236,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := metautil.LoadBackupTables(
+	dbs, err := utils.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,

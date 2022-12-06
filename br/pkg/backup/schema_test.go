@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -313,7 +314,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	schemas2 := GetSchemasFromMeta(t, es2)
 	require.Len(t, schemas2, systemTablesCount)
 	for _, schema := range schemas2 {
-		require.Equal(t, metautil.TemporaryDBName("mysql"), schema.DB.Name)
+		require.Equal(t, utils.TemporaryDBName("mysql"), schema.DB.Name)
 		require.Equal(t, true, strings.HasPrefix(schema.Info.Name.O, tablePrefix))
 	}
 }

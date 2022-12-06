@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -76,7 +76,7 @@ func isStatsTable(tableName string) bool {
 func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	sysDB := mysql.SystemDB
 
-	temporaryDB := metautil.TemporaryDBName(sysDB)
+	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer rc.cleanTemporaryDatabase(ctx, sysDB)
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
@@ -133,7 +133,7 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 	db := &database{
 		ExistingTables: map[string]*model.TableInfo{},
 		Name:           model.NewCIStr(name),
-		TemporaryName:  metautil.TemporaryDBName(name),
+		TemporaryName:  utils.TemporaryDBName(name),
 	}
 	for _, t := range schema.Tables {
 		db.ExistingTables[t.Name.L] = t
@@ -210,7 +210,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-				metautil.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
 			if err := execSQL(deleteSQL); err != nil {
 				return err
 			}
@@ -221,28 +221,28 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
 		for _, col := range ti.Columns {
-			columnNames = append(columnNames, metautil.EncloseName(col.Name.L))
+			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
 		}
 		colListStr := strings.Join(columnNames, ",")
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s %s;",
-			metautil.EncloseDBAndTable(db.Name.L, tableName),
+			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
-			metautil.EncloseDBAndTable(db.TemporaryName.L, tableName),
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
 			whereClause)
 		return execSQL(replaceIntoSQL)
 	}
 
 	renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
-		metautil.EncloseDBAndTable(db.TemporaryName.L, tableName),
-		metautil.EncloseDBAndTable(db.Name.L, tableName),
+		utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
+		utils.EncloseDBAndTable(db.Name.L, tableName),
 	)
 	return execSQL(renameSQL)
 }
 
 func (rc *Client) cleanTemporaryDatabase(ctx context.Context, originDB string) {
-	database := metautil.TemporaryDBName(originDB)
+	database := utils.TemporaryDBName(originDB)
 	log.Debug("dropping temporary database", zap.Stringer("database", database))
-	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", metautil.EncloseName(database.L))
+	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", utils.EncloseName(database.L))
 	if err := rc.db.se.Execute(ctx, sql); err != nil {
 		logutil.WarnTerm("failed to drop temporary database, it should be dropped manually",
 			zap.Stringer("database", database),

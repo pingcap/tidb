@@ -19,7 +19,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -30,8 +29,6 @@ const (
 	azblobAccountName      = "azblob.account-name"
 	azblobAccountKey       = "azblob.account-key"
 )
-
-const maxRetry = 5
 
 // AzblobBackendOptions is the options for Azure Blob storage.
 type AzblobBackendOptions struct {
@@ -283,23 +280,10 @@ func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []by
 // ReadFile reads a file from Azure Blob Storage.
 func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	var resp *azblob.DownloadResponse
-	var err error
-	for retryTimes := 0; ; retryTimes++ {
-		if retryTimes == maxRetry {
-			return nil, errors.Annotatef(err, "Failed to retry to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
-		}
-		resp, err = client.Download(ctx, nil)
-		if err != nil {
-			if utils.MessageIsRetryableStorageError(err.Error()) {
-				log.Warn("Failed to download azure blob file, file info", zap.String("bucket(container)", s.options.Bucket), zap.String("key", s.withPrefix(name)), zap.Int("retry", retryTimes), zap.Error(err))
-				continue
-			}
-			return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
-		}
-		break
+	resp, err := client.Download(ctx, nil)
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
-
 	defer resp.RawResponse.Body.Close()
 	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{}))
 	if err != nil {

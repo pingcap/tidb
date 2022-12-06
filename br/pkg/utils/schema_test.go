@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package metautil
+package utils
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -83,12 +84,12 @@ func TestLoadBackupMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = store.WriteFile(ctx, MetaFile, data)
+	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
 	dbs, err := LoadBackupTables(
 		ctx,
-		NewMetaReader(
+		metautil.NewMetaReader(
 			meta,
 			store,
 			&backuppb.CipherInfo{
@@ -178,12 +179,12 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = store.WriteFile(ctx, MetaFile, data)
+	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
 	dbs, err := LoadBackupTables(
 		ctx,
-		NewMetaReader(
+		metautil.NewMetaReader(
 			meta,
 			store,
 			&backuppb.CipherInfo{
@@ -264,12 +265,12 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = store.WriteFile(ctx, MetaFile, data)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
 		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
-			NewMetaReader(
+			metautil.NewMetaReader(
 				meta,
 				store,
 				&backuppb.CipherInfo{
@@ -296,12 +297,12 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = store.WriteFile(ctx, MetaFile, data)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
 		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
-			NewMetaReader(
+			metautil.NewMetaReader(
 				meta,
 				store,
 				&backuppb.CipherInfo{
@@ -328,12 +329,12 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = store.WriteFile(ctx, MetaFile, data)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
 		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
-			NewMetaReader(
+			metautil.NewMetaReader(
 				meta,
 				store,
 				&backuppb.CipherInfo{
