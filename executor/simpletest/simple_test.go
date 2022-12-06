@@ -1525,14 +1525,14 @@ func TestMixPasswordPolicy(t *testing.T) {
 	// Auto-lock in effect.
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("<wrong-password>"), nil)
 	require.ErrorContains(t, err, "Account is blocked for 1 day(s) (1 day(s) remaining) due to 1 consecutive failed logins.")
-	result = rootTK.MustQuery(`SELECT 
+	result = rootTK.MustQuery(`SELECT
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')),
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.auto_account_locked')) from mysql.user where user = 'u2' and host = '%'`)
 	result.Check(testkit.Rows(`1 Y`))
 	rootTK.MustExec(`ALTER user u2 account unlock`)
 
 	// Unlock in effect.
-	result = rootTK.MustQuery(`SELECT 
+	result = rootTK.MustQuery(`SELECT
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')),
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.auto_account_locked')) from mysql.user where user = 'u2' and host = '%'`)
 	result.Check(testkit.Rows(`0 N`))
@@ -1552,7 +1552,6 @@ func TestMixPasswordPolicy(t *testing.T) {
 	rootTK.MustExec(`set global validate_password.enable = ON`)
 	// Forbid other users to change password.
 	tk.MustGetErrCode(`Alter user root identified by 'Uu3@22222'`, 1820)
-	// tk.MustGetErrCode(`set password for root = 'Uu3@22222'`, 1820)
 	// Disable password reuse.
 	tk.MustGetErrCode(`Alter user u2 identified by 'Uu3@22222'`, 3638)
 	tk.MustGetErrCode(`set password = 'Uu3@22222'`, 3638)
