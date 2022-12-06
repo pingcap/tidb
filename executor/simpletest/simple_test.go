@@ -17,6 +17,7 @@ package simpletest
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -1467,10 +1468,29 @@ func TestUserAlterUser(t *testing.T) {
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 }
 
-func encodePassword(password string) []byte {
-	pwd := auth.EncodePassword(password)
-	hpwd, _ := auth.DecodePassword(pwd)
-	return hpwd
+func sha1Password(s string) []byte {
+	crypt := sha1.New()
+	crypt.Write([]byte(s))
+	hashStage1 := crypt.Sum(nil)
+	crypt.Reset()
+	crypt.Write(hashStage1)
+	hashStage2 := crypt.Sum(nil)
+	crypt.Reset()
+	crypt.Write(hashStage2)
+	hashStage3 := crypt.Sum(nil)
+	for i := range hashStage3 {
+		hashStage3[i] ^= hashStage1[i]
+	}
+	return hashStage3
+}
+
+func TestFailedLoginTrackingAlter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	rootTK := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3`)
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil)
+	require.NoError(t, err)
 }
 
 func TestMixPasswordPolicy(t *testing.T) {
@@ -1503,7 +1523,7 @@ func TestMixPasswordPolicy(t *testing.T) {
 	result = rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
 	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22222")))
 	// Auto-lock in effect.
-	err := tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, encodePassword("<wrong-password>"), nil)
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("<wrong-password>"), nil)
 	require.ErrorContains(t, err, "Account is blocked for 1 day(s) (1 day(s) remaining) due to 1 consecutive failed logins.")
 	result = rootTK.MustQuery(`SELECT 
 	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')),
@@ -1518,15 +1538,14 @@ func TestMixPasswordPolicy(t *testing.T) {
 	result.Check(testkit.Rows(`0 N`))
 
 	rootTK.MustExec(`set global validate_password.enable = OFF`)
-	rootTK.MustExec(`Alter user u2 identified by ''`)
 	rootTK.MustExec(`update mysql.user set Password_last_changed = date_sub(Password_last_changed,interval '3 0:0:1' DAY_SECOND)  where user = 'u2' and host = '%'`)
 	err = domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
 	require.NoError(t, err)
 	// Password expires and takes effect.
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil)
 	require.ErrorContains(t, err, "Your password has expired.")
 	variable.IsSandBoxModeEnabled.Store(true)
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil)
 	require.NoError(t, err)
 	require.True(t, tk.Session().InSandBoxMode())
 
@@ -1545,4 +1564,6 @@ func TestMixPasswordPolicy(t *testing.T) {
 	rootTK.MustQuery(`Select count(*) from mysql.password_history where user = 'u2' and host = '%'`).Check(testkit.Rows("2"))
 	result = rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
 	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22223")))
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22223"), nil)
+	require.NoError(t, err)
 }
