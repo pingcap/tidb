@@ -19,13 +19,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// ErrInSandBoxMode is used to indicate that the session is in sandbox mode.
-type ErrInSandBoxMode struct{}
-
-func (e *ErrInSandBoxMode) Error() string {
-	return "The session will enable sandbox mode"
-}
-
 // error definitions.
 var (
 	errInvalidPrivilegeType                               = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
@@ -36,13 +29,3 @@ var (
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
 	ErrMustChangePasswordLogin                            = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
 )
-
-// ErrUserPasswordFailed is used to indicate that ConnectionVerification fails due to wrong password.
-type ErrUserPasswordFailed struct {
-	// Err is used to include the wrong message.
-	Err error
-}
-
-func (e *ErrUserPasswordFailed) Error() string {
-	return e.Err.Error()
-}
