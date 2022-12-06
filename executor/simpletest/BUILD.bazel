@@ -21,6 +21,7 @@ go_test(
         "//planner/core",
         "//session",
         "//sessionctx",
+        "//sessionctx/variable",
         "//statistics/handle",
         "//store/mockstore",
         "//testkit",

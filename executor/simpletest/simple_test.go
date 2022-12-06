@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -1472,25 +1473,76 @@ func encodePassword(password string) []byte {
 	return hpwd
 }
 
-func TestPasswordInfo(t *testing.T) {
+func TestMixPasswordPolicy(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	tk := testkit.NewTestKit(t, store)
+	// Password Strength Check.
 	rootTK.MustExec(`set global validate_password.enable = ON`)
-	rootTK.MustExecToErr(`create user u2 identified by 'u2' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
+	rootTK.MustGetErrCode(`create user u2 identified by 'u2' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
 		password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
-	rootTK.MustExecToErr(`create user u2`, 1819)
-	rootTK.MustExecToErr(`create user u2 identified by 'u2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
+	rootTK.MustGetErrCode(`create user u2`, 1819)
+	rootTK.MustGetErrCode(`create user u2 identified by 'u2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
 		password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
-	rootTK.MustExecToErr(`create user u2 identified by 'Uu2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
+	rootTK.MustGetErrCode(`create user u2 identified by 'Uu2222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
 		password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
-	rootTK.MustExecToErr(`create user u2 identified by 'Uu3222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
+	rootTK.MustGetErrCode(`create user u2 identified by 'Uu3222222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
 		password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`, 1819)
 	rootTK.MustExec(`create user u2 identified by 'Uu3@22222' PASSWORD EXPIRE INTERVAL 2 DAY password history 2
 		password reuse interval 2 day FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1`)
 	rootTK.MustQuery(`Select count(*) from mysql.password_history where user = 'u2' and host = '%'`).Check(testkit.Rows("1"))
-	err := domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
-	require.NoError(t, err)
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, encodePassword("<wrong-password>"), nil)
+	result := rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22222")))
+	// Disable password reuse.
+	rootTK.MustGetErrCode(`Alter user u2 identified by 'Uu3@22222'`, 3638)
+	rootTK.MustGetErrCode(`Set password for 'u2' = 'Uu3@22222'`, 3638)
+	// Password Strength Check.
+	rootTK.MustGetErrCode(`Alter user u2 identified by 'U2'`, 1819)
+	rootTK.MustGetErrCode(`Set password for 'u2' = 'U2'`, 1819)
+	// Did not modify successfully.
+	result = rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22222")))
+	// Auto-lock in effect.
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, encodePassword("<wrong-password>"), nil)
 	require.ErrorContains(t, err, "Account is blocked for 1 day(s) (1 day(s) remaining) due to 1 consecutive failed logins.")
+	result = rootTK.MustQuery(`SELECT 
+	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')),
+	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.auto_account_locked')) from mysql.user where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows(`1 Y`))
+	rootTK.MustExec(`ALTER user u2 account unlock`)
+
+	// Unlock in effect.
+	result = rootTK.MustQuery(`SELECT 
+	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')),
+	JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.auto_account_locked')) from mysql.user where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows(`0 N`))
+
+	rootTK.MustExec(`set global validate_password.enable = OFF`)
+	rootTK.MustExec(`Alter user u2 identified by ''`)
+	rootTK.MustExec(`update mysql.user set Password_last_changed = date_sub(Password_last_changed,interval '3 0:0:1' DAY_SECOND)  where user = 'u2' and host = '%'`)
+	err = domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	require.NoError(t, err)
+	// Password expires and takes effect.
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired.")
+	variable.IsSandBoxModeEnabled.Store(true)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+
+	rootTK.MustExec(`set global validate_password.enable = ON`)
+	// Forbid other users to change password.
+	tk.MustGetErrCode(`Alter user root identified by 'Uu3@22222'`, 1820)
+	// tk.MustGetErrCode(`set password for root = 'Uu3@22222'`, 1820)
+	// Disable password reuse.
+	tk.MustGetErrCode(`Alter user u2 identified by 'Uu3@22222'`, 3638)
+	tk.MustGetErrCode(`set password = 'Uu3@22222'`, 3638)
+	// Password Strength Check.
+	tk.MustGetErrCode(`Alter user u2 identified by 'U2'`, 1819)
+	tk.MustGetErrCode(`set password = 'U2'`, 1819)
+	tk.MustExec(`Set password = 'Uu3@22223'`)
+	require.False(t, tk.Session().InSandBoxMode())
+	rootTK.MustQuery(`Select count(*) from mysql.password_history where user = 'u2' and host = '%'`).Check(testkit.Rows("2"))
+	result = rootTK.MustQuery(`Select authentication_string from mysql.user where user = 'u2' and host = '%'`)
+	result.Check(testkit.Rows(auth.EncodePassword("Uu3@22223")))
 }

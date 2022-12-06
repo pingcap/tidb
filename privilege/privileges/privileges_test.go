@@ -17,6 +17,7 @@ package privileges_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -3100,39 +3101,39 @@ func TestFailedLoginTrackingCheckError(t *testing.T) {
 	// Set FAILED_LOGIN_ATTEMPTS to 1, and check error messages after  login failure once.
 	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
-	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, sha1Password("password"), nil)
 	lds := strconv.FormatInt(1, 10)
 	errTarget := privileges.GenerateAccountAutoLockErr(1, "testu1", "localhost", lds, lds)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
 	// Check the login error message after the account is locked.
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
 	// Set FAILED_LOGIN_ATTEMPTS to 1 and PASSWORD_LOCK_TIME to UNBOUNDED. Check error messages after failed login once.
 	createAndCheck(tk, "CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": -1}}", "testu2")
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, sha1Password("password"), nil)
 	errTarget = privileges.GenerateAccountAutoLockErr(1, "testu2", "localhost", "unlimited", "unlimited")
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu2", 1, "Y")
 	// Check the login error message after the account is locked.
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu2", 1, "Y")
 	// Set FAILED_LOGIN_ATTEMPTS to 0 or PASSWORD_LOCK_TIME to 0. Check error messages after failed login once.
 	createAndCheck(tk, "CREATE USER 'testu3'@'localhost' IDENTIFIED BY 'testu3' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME UNBOUNDED",
 		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "testu3")
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu3", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu3", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu3'@'localhost' (using password: YES)"))
 	checkAuthUser(t, tk, "testu3", 0, "")
 	createAndCheck(tk, "CREATE USER 'testu4'@'localhost' IDENTIFIED BY 'testu4' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 0",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 0}}", "testu4")
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu4", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu4", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu4'@'localhost' (using password: YES)"))
 	checkAuthUser(t, tk, "testu4", 0, "")
 	tk.MustExec("CREATE USER 'testu5'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
-	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu5", Hostname: "localhost"}, encodePassword("password"), nil)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu5", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu5'@'localhost' (using password: YES)"))
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu5' and host = 'localhost'").Check(testkit.Rows("<nil>"))
 }
@@ -3373,7 +3374,7 @@ func TestFailedLoginTracking(t *testing.T) {
 }
 
 func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 1, "N")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, nil, nil))
 	checkAuthUser(t, rootk, "u6", 0, "N")
@@ -3381,11 +3382,11 @@ func failedLoginTrackingCase1(t *testing.T, tk *testkit.TestKit, rootk *testkit.
 }
 
 func failedLoginTrackingCase2(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 1, "N")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 2, "N")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 3, "Y")
 }
 
@@ -3406,7 +3407,7 @@ func failedLoginTrackingCase4(t *testing.T, tk *testkit.TestKit, rootk *testkit.
 }
 
 func failedLoginTrackingCase5(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 1, "N")
 	alterAndCheck(t, rootk, "ALTER USER 'u6'@'localhost' ACCOUNT UNLOCK;", "u6", 3, 3, 0)
 	checkAuthUser(t, rootk, "u6", 0, "N")
@@ -3417,22 +3418,106 @@ func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit, rootk *testkit.
 	changeAutoLockedLastChanged(rootk, "-72h1s", "u6")
 	loadUser(t, tk, 3, rootk)
 	checkAuthUser(t, rootk, "u6", 3, "Y")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u6", 1, "N")
 }
 
 func failedLoginTrackingCase7(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
 	createAndCheck(rootk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3",
 		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u1")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u1", 0, "")
 	alterAndCheck(t, rootk, "ALTER USER 'u1'@'localhost' PASSWORD_LOCK_TIME 6;", "u1", 3, 6, 0)
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u1", 1, "N")
 }
 
+func TestUserPassword(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set global validate_password.enable = ON`)
+	runSQLAndCheck(t, store, "CREATE USER 'u1'@'localhost' IDENTIFIED BY 'qwe123' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 4;",
+		"CREATE USER 'u1'@'localhost' IDENTIFIED BY '!@#HASHhs123' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 4;", "u1", "localhost",
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 4}}", "qwe123", "!@#HASHhs123")
+
+	runSQLAndCheck(t, store, `CREATE USER 'u2'@'localhost' IDENTIFIED BY 'qwe123' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`,
+		`CREATE USER 'u2'@'localhost' IDENTIFIED BY '!@#HASHhs123' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`, "u2", "localhost",
+		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}}", "qwe123", "!@#HASHhs123")
+}
+
+func runSQLAndCheck(t *testing.T, store kv.Storage, errSQL, sucSQL, user, host, rsJSON, simplePassword, strongPassword string) {
+	tk := testkit.NewTestKit(t, store)
+	rootk := testkit.NewTestKit(t, store)
+	createAndCheckToErr(t, rootk, errSQL, user)
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(simplePassword), nil))
+	createAndCheck(rootk, sucSQL,
+		rsJSON, user)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(strongPassword), nil))
+}
+
+func TestPasswordExpiredAndTacking(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	user := "u3"
+	host := "localhost"
+	tk.MustExec(`set global validate_password.enable = ON`)
+	tk = testkit.NewTestKit(t, store)
+	createAndCheckToErr(t, tk, `CREATE USER 'u3'@'localhost' IDENTIFIED BY 'qwe123' PASSWORD EXPIRE INTERVAL 3 DAY FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`, user)
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("qwe123"), nil))
+	tk = testkit.NewTestKit(t, store)
+	createAndCheck(tk, `CREATE USER 'u3'@'localhost' IDENTIFIED BY '!@#HASHhs123' PASSWORD EXPIRE INTERVAL 3 DAY  FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`,
+		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}}", user)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil))
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("ALTER USER '%s'@'%s' PASSWORD EXPIRE NEVER", user, host))
+	tk = testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil))
+
+	loginFailedAncCheck(t, store, user, host, "password", 1, "N")
+	loginSucAncCheck(t, store, user, host, "!@#HASHhs123", 0, "N")
+	loginFailedAncCheck(t, store, user, host, "password", 1, "N")
+	loginFailedAncCheck(t, store, user, host, "password", 2, "N")
+	loginFailedAncCheck(t, store, user, host, "password", 3, "N")
+	loginFailedAncCheck(t, store, user, host, "password", 4, "Y")
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("ALTER USER '%s'@'%s' PASSWORD EXPIRE", user, host))
+	tk = testkit.NewTestKit(t, store)
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil))
+}
+
+func loginFailedAncCheck(t *testing.T, store kv.Storage, user, host, password string, failedLoginCount int64, autoAccountLocked string) {
+	tk := testkit.NewTestKit(t, store)
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(password), nil))
+	checkAuthUser(t, tk, user, failedLoginCount, autoAccountLocked)
+}
+
+func loginSucAncCheck(t *testing.T, store kv.Storage, user, host, password string, failedLoginCount int64, autoAccountLocked string) {
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(password), nil))
+	tk = testkit.NewTestKit(t, store)
+	checkAuthUser(t, tk, user, failedLoginCount, autoAccountLocked)
+}
+
+func sha1Password(s string) []byte {
+	crypt := sha1.New()
+	crypt.Write([]byte(s))
+	hashStage1 := crypt.Sum(nil)
+	crypt.Reset()
+	crypt.Write(hashStage1)
+	hashStage2 := crypt.Sum(nil)
+	crypt.Reset()
+	crypt.Write(hashStage2)
+	hashStage3 := crypt.Sum(nil)
+	for i := range hashStage3 {
+		hashStage3[i] ^= hashStage1[i]
+	}
+	return hashStage3
+}
+
 func loadUser(t *testing.T, tk *testkit.TestKit, useCount int64, rootk *testkit.TestKit) {
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u5", Hostname: "localhost"}, encodePassword("password"), nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u5", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u5", useCount, "N")
 }
 
@@ -3471,16 +3556,16 @@ func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDay
 	return nil
 }
 
-func encodePassword(password string) []byte {
-	pwd := auth.EncodePassword(password)
-	hpwd, _ := auth.DecodePassword(pwd)
-	return hpwd
-}
-
 func createAndCheck(tk *testkit.TestKit, sql, rsJSON, user string) {
 	tk.MustExec(sql)
 	sql = selectSQL(user)
 	tk.MustQuery(sql).Check(testkit.Rows(rsJSON))
+}
+
+func createAndCheckToErr(t *testing.T, tk *testkit.TestKit, sql, user string) {
+	tk.MustExecToErr(sql)
+	sql = selectSQL(user)
+	require.True(t, len(tk.MustQuery(sql).Rows()) == 0)
 }
 
 func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCount int64, autoAccountLocked string) {

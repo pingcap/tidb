@@ -257,7 +257,7 @@ func (w *ttlDeleteWorker) loop() error {
 	timer := time.NewTimer(w.retryBuffer.retryInterval)
 	defer timer.Stop()
 
-	for w.status == workerStatusRunning {
+	for w.Status() == workerStatusRunning {
 		select {
 		case <-ctx.Done():
 			return nil
