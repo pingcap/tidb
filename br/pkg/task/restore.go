@@ -421,16 +421,16 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
 		dbName := db.Info.Name.L
-		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
+		if dbCIStrName, ok := metautil.GetSysDBCIStrName(db.Info.Name); metautil.IsSysDB(dbCIStrName.O) && ok {
 			dbName = dbCIStrName.L
 		}
-		schemasMap[utils.EncloseName(dbName)] = struct{}{}
+		schemasMap[metautil.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
 			if table.Info == nil {
 				// we may back up empty database.
 				continue
 			}
-			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
+			tablesMap[metautil.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
 		}
 	}
 	restoreSchemas := cfg.Schemas
@@ -797,10 +797,10 @@ func dropToBlackhole(
 func filterRestoreFiles(
 	client *restore.Client,
 	cfg *RestoreConfig,
-) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
+) (files []*backuppb.File, tables []*metautil.Table, dbs []*metautil.Database) {
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+		if name, ok := metautil.GetSysDBName(db.Info.Name); metautil.IsSysDB(name) && ok {
 			dbName = name
 		}
 		if !cfg.TableFilter.MatchSchema(dbName) {

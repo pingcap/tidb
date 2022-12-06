@@ -89,7 +89,7 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-	databases map[string]*utils.Database
+	databases map[string]*metautil.Database
 	ddlJobs   []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
@@ -358,7 +358,7 @@ func (rc *Client) InitBackupMeta(
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
 	if !backupMeta.IsRawKv {
-		databases, err := utils.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -525,8 +525,8 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pd
 }
 
 // GetDatabases returns all databases.
-func (rc *Client) GetDatabases() []*utils.Database {
-	dbs := make([]*utils.Database, 0, len(rc.databases))
+func (rc *Client) GetDatabases() []*metautil.Database {
+	dbs := make([]*metautil.Database, 0, len(rc.databases))
 	for _, db := range rc.databases {
 		dbs = append(dbs, db)
 	}
@@ -534,14 +534,14 @@ func (rc *Client) GetDatabases() []*utils.Database {
 }
 
 // GetDatabase returns a database by name.
-func (rc *Client) GetDatabase(name string) *utils.Database {
+func (rc *Client) GetDatabase(name string) *metautil.Database {
 	return rc.databases[name]
 }
 
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *Client) HasBackedUpSysDB() bool {
-	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
+	temporaryDB := metautil.TemporaryDBName(mysql.SystemDB)
 	_, backedUp := rc.databases[temporaryDB.O]
 	return backedUp
 }
@@ -927,8 +927,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	log.Info("checking target cluster system table compatibility with backed up data")
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
-		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+		decodedSysDBName, ok := metautil.GetSysDBCIStrName(table.DB.Name)
+		if ok && metautil.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -1769,8 +1769,8 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 	}
 
 	sql := fmt.Sprintf("ADMIN RECOVER INDEX %s %s;",
-		utils.EncloseDBAndTable(schema, table),
-		utils.EncloseName(index))
+		metautil.EncloseDBAndTable(schema, table),
+		metautil.EncloseName(index))
 	log.Debug("Executing fix index sql.", zap.String("sql", sql))
 	err := rc.db.se.Execute(ctx, sql)
 	if err != nil {
@@ -1786,7 +1786,7 @@ func (rc *Client) FixIndicesOfTables(
 	onProgress func(),
 ) error {
 	for _, table := range fullBackupTables {
-		if name, ok := utils.GetSysDBName(table.DB.Name); utils.IsSysDB(name) && ok {
+		if name, ok := metautil.GetSysDBName(table.DB.Name); metautil.IsSysDB(name) && ok {
 			// skip system table for now
 			onProgress()
 			continue
@@ -2078,7 +2078,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	dbMap := make(map[stream.OldID]*stream.DBReplace)
 
 	for _, t := range *tables {
-		name, _ := utils.GetSysDBName(t.DB.Name)
+		name, _ := metautil.GetSysDBName(t.DB.Name)
 		dbName := model.NewCIStr(name)
 		newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
 		if !exist {
@@ -2624,7 +2624,7 @@ func (rc *Client) SetWithSysTable(withSysTable bool) {
 }
 
 // MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
+func MockClient(dbs map[string]*metautil.Database) *Client {
 	return &Client{databases: dbs}
 }
 

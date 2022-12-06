@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -34,7 +35,7 @@ var (
 
 	filterOutSysAndMemTables = []string{
 		"*.*",
-		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
+		fmt.Sprintf("!%s.*", metautil.TemporaryDBName("*")),
 		"!mysql.*",
 		"mysql.user",
 		"mysql.db",

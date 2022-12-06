@@ -65,13 +65,13 @@ func (ss *Schemas) AddSchema(
 	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
 ) {
 	if tableInfo == nil {
-		ss.schemas[utils.EncloseName(dbInfo.Name.L)] = &schemaInfo{
+		ss.schemas[metautil.EncloseName(dbInfo.Name.L)] = &schemaInfo{
 			dbInfo: dbInfo,
 		}
 		return
 	}
 	name := fmt.Sprintf("%s.%s",
-		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
+		metautil.EncloseName(dbInfo.Name.L), metautil.EncloseName(tableInfo.Name.L))
 	ss.schemas[name] = &schemaInfo{
 		tableInfo: tableInfo,
 		dbInfo:    dbInfo,
@@ -106,8 +106,8 @@ func (ss *Schemas) BackupSchemas(
 		schema := s
 		// Because schema.dbInfo is a pointer that many tables point to.
 		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
-		if utils.IsSysDB(schema.dbInfo.Name.L) {
-			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
+		if metautil.IsSysDB(schema.dbInfo.Name.L) {
+			schema.dbInfo.Name = metautil.TemporaryDBName(schema.dbInfo.Name.O)
 		}
 
 		var checksum *checkpoint.ChecksumItem
