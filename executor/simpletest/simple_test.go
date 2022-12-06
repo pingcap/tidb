@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -1487,10 +1488,59 @@ func sha1Password(s string) []byte {
 func TestFailedLoginTrackingAlter(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
+	sql := new(strings.Builder)
+	checkUserAttributes := "select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')," +
+		"JSON_EXTRACT(user_attributes, '$.Password_locking.auto_account_locked')," +
+		"JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')," +
+		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')," +
+		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= %? and host = %?"
 	tk := testkit.NewTestKit(t, store)
-	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3`)
-	err := tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil)
+	err := domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
 	require.NoError(t, err)
+	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil)
+	require.NoError(t, err)
+	sqlexec.MustFormatSQL(sql, checkUserAttributes, "test1", "%")
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 <nil> <nil> 3 {"comment": "test"}`))
+	tk = testkit.NewTestKit(t, store)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("<wrong-password>"), nil)
+	require.Error(t, err)
+
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 "N" 1 3 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  FAILED_LOGIN_ATTEMPTS 4 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "N" 1 3 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  PASSWORD_LOCK_TIME 4 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "N" 1 4 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  COMMENT 'test1' `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "N" 1 4 {"comment": "test1"}`))
+	rootTK.MustExec(`Alter user test1 FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 "N" 1 3 {"comment": "test"}`))
+
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("<wrong-password>"), nil)
+	require.Error(t, err)
+	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("<wrong-password>"), nil)
+	require.Error(t, err)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 "Y" 3 3 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  FAILED_LOGIN_ATTEMPTS 4 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "Y" 3 3 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  PASSWORD_LOCK_TIME 4 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "Y" 3 4 {"comment": "test"}`))
+	rootTK.MustExec(`Alter user test1  COMMENT 'test2' `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "Y" 3 4 {"comment": "test2"}`))
+	rootTK.MustExec(`Alter user test1  account unlock `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "N" 0 4 {"comment": "test2"}`))
+
+	rootTK.MustExec(`Alter user test1  FAILED_LOGIN_ATTEMPTS 0 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`0 "N" 0 4 {"comment": "test2"}`))
+	rootTK.MustExec(`Alter user test1  PASSWORD_LOCK_TIME 0 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`<nil> <nil> <nil> <nil> {"comment": "test2"}`))
+
+	rootTK.MustExec(`Alter user test1  account unlock `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`<nil> <nil> <nil> <nil> {"comment": "test2"}`))
+	rootTK.MustExec(`Alter user test1  FAILED_LOGIN_ATTEMPTS 4 `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 <nil> <nil> 0 {"comment": "test2"}`))
+	rootTK.MustExec(`Alter user test1  account unlock `)
+	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`4 "N" 0 0 {"comment": "test2"}`))
 }
 
 func TestMixPasswordPolicy(t *testing.T) {
