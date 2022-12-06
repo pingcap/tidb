@@ -628,7 +628,6 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 
 // GetBackfillJobs gets the backfill jobs in the tblName table according to condition.
 func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]*BackfillJob, error) {
-	logutil.BgLogger().Warn("----------" + condition)
 	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
 		return nil, errors.Trace(err)
