@@ -826,12 +826,13 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 
 func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	var passwdSaveNum, passwdSaveTime int64
-	if plOptions.passwordHistoryChange {
+	// If the user specifies a default, read the global variable.
+	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
 		passwdSaveNum = plOptions.passwordHistory
 	} else {
 		passwdSaveNum = variable.PasswordHistory.Load()
 	}
-	if plOptions.passwordReuseIntervalChange {
+	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
 		passwdSaveTime = plOptions.passwordReuseInterval
 	} else {
 		passwdSaveTime = variable.PasswordReuseInterval.Load()
@@ -1280,10 +1281,20 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		}
 	}
 	if plOptions.passwordHistoryChange {
-		res.passwordHistory = plOptions.passwordHistory
+		// If the user specifies a default, the global variable needs to be re-read.
+		if plOptions.passwordHistory != notSpecified {
+			res.passwordHistory = plOptions.passwordHistory
+		} else {
+			res.passwordHistory = variable.PasswordHistory.Load()
+		}
 	}
 	if plOptions.passwordReuseIntervalChange {
-		res.passwordReuseInterval = plOptions.passwordReuseInterval
+		// If the user specifies a default, the global variable needs to be re-read.
+		if plOptions.passwordReuseInterval != notSpecified {
+			res.passwordReuseInterval = plOptions.passwordReuseInterval
+		} else {
+			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+		}
 	}
 	return res, nil
 }

@@ -1422,6 +1422,15 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
 	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
 	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 2 PASSWORD REUSE INTERVAL 0 DAY`)
+
+	// Support password and default value modification at the same time.
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustExec(`set global password_history = 1`)
+	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`, 3638)
+	rootTK.MustExec(`ALTER USER testReuse identified by 'test1' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
 }
 
 func TestUserReuseMultiuser(t *testing.T) {
