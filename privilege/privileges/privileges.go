@@ -498,14 +498,22 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if len(authentication) == 0 {
 		hasPassword = "NO"
 	}
-	if SkipWithGrant {
-		p.user = authUser
-		p.host = authHost
-		return
-	}
 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(authUser, authHost)
+
+	if SkipWithGrant {
+		p.user = authUser
+		p.host = authHost
+		// special handling to existing users or root user initialized with insecure
+		if record == nil || record.ResourceGroup == "" {
+			info.ResourceGroupName = "default"
+		} else {
+			info.ResourceGroupName = record.ResourceGroup
+		}
+		return
+	}
+
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
@@ -593,6 +601,12 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
+	// special handling to existing users or root user initialized with insecure
+	if record.ResourceGroup == "" {
+		info.ResourceGroupName = "default"
+	} else {
+		info.ResourceGroupName = record.ResourceGroup
+	}
 	info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
 	return
 }

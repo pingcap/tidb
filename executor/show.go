@@ -1540,10 +1540,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		accountLocked = "UNLOCK"
 	}
 
-	// The json string in an sql statement must be contained in single quotation marks.
 	userAttributes := rows[0].GetString(2)
 	if len(userAttributes) > 0 {
-		userAttributes = " ATTRIBUTE " + "'" + userAttributes + "'"
+		userAttributes = fmt.Sprintf(" ATTRIBUTE '%s'", userAttributes)
 	}
 
 	tokenIssuer := rows[0].GetString(3)

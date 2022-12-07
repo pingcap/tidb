@@ -34,6 +34,8 @@ type VerificationInfo struct {
 	InSandBoxMode bool
 	// FailedDueToWrongPassword indicates that the verification failed due to wrong password.
 	FailedDueToWrongPassword bool
+	// ResourceGroupName records the resource group name for the user.
+	ResourceGroupName string
 }
 
 // Manager is the interface for providing privilege related operations.
