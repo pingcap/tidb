@@ -77,10 +77,11 @@ type fakeStore struct {
 	id      uint64
 	regions map[uint64]*region
 
-	clientMu    sync.Mutex
-	supportsSub bool
-	bootstrapAt uint64
-	fsub        func(logbackup.SubscribeFlushEventResponse)
+	clientMu              sync.Mutex
+	supportsSub           bool
+	bootstrapAt           uint64
+	fsub                  func(logbackup.SubscribeFlushEventResponse)
+	onGetRegionCheckpoint func(*logbackup.GetLastFlushTSOfRegionRequest) error
 }
 
 type fakeCluster struct {
@@ -184,6 +185,12 @@ func (f *fakeStore) SetSupportFlushSub(b bool) {
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
+	if f.onGetRegionCheckpoint != nil {
+		err := f.onGetRegionCheckpoint(in)
+		if err != nil {
+			return nil, err
+		}
+	}
 	resp := &logbackup.GetLastFlushTSOfRegionResponse{
 		Checkpoints: []*logbackup.RegionCheckpoint{},
 	}
