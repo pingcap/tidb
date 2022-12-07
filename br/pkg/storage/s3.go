@@ -354,12 +354,17 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-	// we need reassign credential to be compatible with minio authentication.
 	confCred := ses.Config.Credentials
 	setCredOpt := func(req *request.Request) {
+		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+		// we need reassign credential to be compatible with minio authentication.
 		if confCred != nil {
 			req.Config.Credentials = confCred
+		}
+		// s3manager.GetBucketRegionWithClient use path style addressing default.
+		// we need set S3ForcePathStyle by our config if we set endpoint.
+		if qs.Endpoint != "" {
+			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 		}
 	}
 	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
