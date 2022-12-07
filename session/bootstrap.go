@@ -705,11 +705,22 @@ const (
 	version105 = 105
 	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
 	version106 = 106
+<<<<<<< HEAD
+=======
+	// version107 add columns related to password expiration into mysql.user
+	version107 = 107
+	// version108 adds the table tidb_ttl_table_status
+	version108 = 108
+>>>>>>> 8e742bf972 (bootstrap: increase current bootstrap version and fix comment (#39700))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version106
+=======
+var currentBootstrapVersion int64 = version108
+>>>>>>> 8e742bf972 (bootstrap: increase current bootstrap version and fix comment (#39700))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
