@@ -407,30 +407,6 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 }
 
-// BackfillType indicates the backfill type.
-type BackfillType byte
-
-// List backfill types.
-const (
-	TypeAddIndexBackfill     BackfillType = 1
-	TypeUpdateColumnBackfill BackfillType = 2
-	TypeCleanUpIndexBackfill BackfillType = 3
-)
-
-// String implements fmt.Stringer interface.
-func (bt BackfillType) String() string {
-	switch bt {
-	case TypeAddIndexBackfill:
-		return "add index"
-	case TypeUpdateColumnBackfill:
-		return "update column"
-	case TypeCleanUpIndexBackfill:
-		return "clean up index"
-	default:
-		return "unknown"
-	}
-}
-
 // JobMeta is meta info of Job.
 type JobMeta struct {
 	SchemaID int64 `json:"schema_id"`
@@ -443,13 +419,7 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	CurrKey    []byte `json:"curr_key"`
-	StartKey   []byte `json:"start_key"`
-	EndKey     []byte `json:"end_key"`
 	EndInclude bool   `json:"end_include"`
-	StartTS    uint64 `json:"start_ts"`
-	FinishTS   uint64 `json:"finish_ts"`
-	RowCount   int64  `json:"row_count"`
 	ErrMsg     string `json:"err_msg"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`

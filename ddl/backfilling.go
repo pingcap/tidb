@@ -52,17 +52,32 @@ import (
 	"go.uber.org/zap"
 )
 
-type backfillWorkerType byte
+type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillWorkerType = 0
-	typeUpdateColumnWorker     backfillWorkerType = 1
-	typeCleanUpIndexWorker     backfillWorkerType = 2
-	typeAddIndexMergeTmpWorker backfillWorkerType = 3
+	typeAddIndexWorker         backfillerType = 0
+	typeUpdateColumnWorker     backfillerType = 1
+	typeCleanUpIndexWorker     backfillerType = 2
+	typeAddIndexMergeTmpWorker backfillerType = 3
 
 	// InstanceLease is the instance lease.
 	InstanceLease = 1 * time.Minute
 )
+
+func (bWT backfillerType) String() string {
+	switch bWT {
+	case typeAddIndexWorker:
+		return "add index"
+	case typeUpdateColumnWorker:
+		return "update column"
+	case typeCleanUpIndexWorker:
+		return "clean up index"
+	case typeAddIndexMergeTmpWorker:
+		return "merge temporary index"
+	default:
+		return "unknown"
+	}
+}
 
 // BackfillJob is for a tidb_ddl_backfill table's record.
 type BackfillJob struct {
@@ -70,12 +85,20 @@ type BackfillJob struct {
 	JobID         int64
 	EleID         int64
 	EleKey        []byte
-	Tp            model.BackfillType
+	Tp            backfillerType
 	State         model.JobState
 	StoreID       int64
 	InstanceID    string
 	InstanceLease types.Time
-	Meta          *model.BackfillMeta
+	// range info
+	CurrKey  []byte
+	StartKey []byte
+	EndKey   []byte
+
+	StartTS  uint64
+	FinishTS uint64
+	RowCount int64
+	Meta     *model.BackfillMeta
 }
 
 // AbbrStr returns the BackfillJob's info without the Meta info.
@@ -151,21 +174,6 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // Instead, it is divided into batches, each time a kv transaction completes the backfilling
 // of a partial batch.
 
-func (bWT backfillWorkerType) String() string {
-	switch bWT {
-	case typeAddIndexWorker:
-		return "add index"
-	case typeUpdateColumnWorker:
-		return "update column"
-	case typeCleanUpIndexWorker:
-		return "clean up index"
-	case typeAddIndexMergeTmpWorker:
-		return "merge temporary index"
-	default:
-		return "unknown"
-	}
-}
-
 type backfiller interface {
 	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
@@ -232,13 +240,13 @@ type backfillWorker struct {
 	resultCh  chan *backfillResult
 	table     table.Table
 	priority  int
-	tp        backfillWorkerType
+	tp        backfillerType
 	ctx       context.Context
 	cancel    func()
 }
 
 func newBackfillWorker(ctx context.Context, sessCtx sessionctx.Context, id int, t table.PhysicalTable,
-	reorgInfo *reorgInfo, tp backfillWorkerType) *backfillWorker {
+	reorgInfo *reorgInfo, tp backfillerType) *backfillWorker {
 	bfCtx, cancel := context.WithCancel(ctx)
 	return &backfillWorker{
 		id:        id,
@@ -652,7 +660,7 @@ type backfillScheduler struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
 	sessPool     *sessionPool
-	tp           backfillWorkerType
+	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
 	jobCtx       *JobContext
@@ -669,7 +677,7 @@ type backfillScheduler struct {
 const backfillTaskChanSize = 1024
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
-	tp backfillWorkerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
+	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
 	jobCtx *JobContext) *backfillScheduler {
 	return &backfillScheduler{
 		ctx:          ctx,
@@ -846,7 +854,7 @@ func (b *backfillScheduler) Close() {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 

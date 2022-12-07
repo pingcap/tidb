@@ -1749,7 +1749,6 @@ type session struct {
 	sessionctx.Context
 }
 
-// newSession news the session and it is export for testing.
 func newSession(s sessionctx.Context) *session {
 	return &session{s}
 }

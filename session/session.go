@@ -2778,8 +2778,8 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
-	// DDLJobTablesVer1 is a list of tables definitions used in concurrent DDL.
-	DDLJobTablesVer1 = []struct {
+	// BaseDDLJobTableVer is a list of tables definitions used in concurrent DDL.
+	BaseDDLJobTableVer = []struct {
 		SQL string
 		id  int64
 	}{
@@ -2787,8 +2787,8 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
-	// DDLJobTablesVer3 is a list of tables definitions used in dist reorg DDL.
-	DDLJobTablesVer3 = []struct {
+	// BackfillTableVer is a list of tables definitions used in dist reorg DDL.
+	BackfillTableVer = []struct {
 		SQL string
 		id  int64
 	}{
@@ -2813,10 +2813,10 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 }
 
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
-func InitDDLJobTables(store kv.Storage, targetVer string) error {
-	targetTables := DDLJobTablesVer1
-	if targetVer == meta.DDLTableVersion3 {
-		targetTables = DDLJobTablesVer3
+func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
+	targetTables := BaseDDLJobTableVer
+	if targetVer == meta.BackfillTableVersion {
+		targetTables = BackfillTableVer
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -2832,7 +2832,8 @@ func InitDDLJobTables(store kv.Storage, targetVer string) error {
 		p := parser.New()
 		for _, tbl := range targetTables {
 			logutil.BgLogger().Info("init DDL job tables",
-				zap.Int64("tbl id", tbl.id), zap.String("tbl version", tableVer), zap.String("target tbl version", targetVer))
+				zap.Int64("tbl id", tbl.id), zap.ByteString("tbl version", tableVer.Bytes()),
+				zap.ByteString("target tbl version", targetVer.Bytes()), zap.String("sql", tbl.SQL))
 			tableIDs = append(tableIDs, tbl.id)
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
@@ -2859,8 +2860,8 @@ func InitDDLJobTables(store kv.Storage, targetVer string) error {
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckMDLTableExists()
-		if err != nil || exists {
+		tableVer, err := t.CheckDDLTableVersion()
+		if err != nil || tableVer >= meta.MDLTableVersion {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -2885,7 +2886,7 @@ func InitMDLTable(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 
-		return t.SetMDLTables()
+		return t.SetDDLTables(meta.MDLTableVersion)
 	})
 }
 
@@ -2963,7 +2964,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store, meta.DDLTableVersion1)
+	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -2971,7 +2972,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = InitDDLJobTables(store, meta.DDLTableVersion3)
+	err = InitDDLJobTables(store, meta.BackfillTableVersion)
 	if err != nil {
 		return nil, err
 	}

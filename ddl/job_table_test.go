@@ -191,9 +191,6 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 		sKey := []byte(fmt.Sprintf("%d", i))
 		eKey := []byte(fmt.Sprintf("%d", i+1))
 		bm := &model.BackfillMeta{
-			CurrKey:    sKey,
-			StartKey:   sKey,
-			EndKey:     eKey,
 			EndInclude: true,
 			JobMeta: &model.JobMeta{
 				SchemaID: schemaID,
@@ -202,13 +199,15 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 			},
 		}
 		bj := &ddl.BackfillJob{
-			ID:     int64(i),
-			JobID:  jobID,
-			EleID:  eleID,
-			EleKey: meta.IndexElementKey,
-			Tp:     model.TypeAddIndexBackfill,
-			State:  model.JobStateNone,
-			Meta:   bm,
+			ID:       int64(i),
+			JobID:    jobID,
+			EleID:    eleID,
+			EleKey:   meta.IndexElementKey,
+			State:    model.JobStateNone,
+			CurrKey:  sKey,
+			StartKey: sKey,
+			EndKey:   eKey,
+			Meta:     bm,
 		}
 		bJobs = append(bJobs, bj)
 	}
@@ -360,11 +359,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ------------------------
 
 	// test history backfill jobs
-	err = ddl.AddBackfillHistoryJob(se, []*ddl.BackfillJob{bJobs1[0]})
+	err = ddl.AddBackfillHistoryJob(se, []*ddl.BackfillJob{bJobs2[0]})
 	require.NoError(t, err)
 	// ID     jobID     eleID
 	// ------------------------
-	// 0      jobID1     eleID1
+	// 0      jobID2     eleID2
 	readInTxn(se, func(sessionctx.Context) {
 		currTime, err = ddl.GetOracleTime(se)
 		require.NoError(t, err)
@@ -373,6 +372,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
+	require.Greater(t, bJobs[0].FinishTS, uint64(0))
 
 	// test GetInterruptedBackfillJobsForOneEle
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, meta.IndexElementKey)

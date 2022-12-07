@@ -99,14 +99,26 @@ const (
 	MaxInt48 = 0x0000FFFFFFFFFFFF
 	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
 	MaxGlobalID = MaxInt48 - 1000
-
-	// DDLTableVersion1 is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
-	DDLTableVersion1 = "1"
-	// DDLTableVersion2 is for support MDL tables.
-	DDLTableVersion2 = "2"
-	// DDLTableVersion3 is for support distributed reorg stage, it added tidb_ddl_backfill.
-	DDLTableVersion3 = "3"
 )
+
+// DDLTableVersion indicates the DDL table version type.
+type DDLTableVersion int
+
+const (
+	// InitDDLTableVersion is the original version.
+	InitDDLTableVersion DDLTableVersion = 0
+	// BaseDDLTableVersion is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+	BaseDDLTableVersion DDLTableVersion = 1
+	// MDLTableVersion is for support MDL tables.
+	MDLTableVersion DDLTableVersion = 2
+	// BackfillTableVersion is for support distributed reorg stage, it added tidb_ddl_backfill, tidb_ddl_backfill_history.
+	BackfillTableVersion DDLTableVersion = 3
+)
+
+// Bytes returns the byte slice.
+func (ver DDLTableVersion) Bytes() []byte {
+	return []byte(strconv.Itoa(int(ver)))
+}
 
 var (
 	// ErrDBExists is the error for db exists.
@@ -563,18 +575,6 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
-// SetDDLTables write a key into storage.
-func (m *Meta) SetDDLTables(ddlTableVersion string) error {
-	err := m.txn.Set(mDDLTableVersion, []byte(ddlTableVersion))
-	return errors.Trace(err)
-}
-
-// SetMDLTables write a key into storage.
-func (m *Meta) SetMDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte(DDLTableVersion2))
-	return errors.Trace(err)
-}
-
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -611,22 +611,26 @@ func (m *Meta) GetSystemDBID() (int64, error) {
 	return 0, nil
 }
 
-// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckDDLTableVersion() (string, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return string(v), nil
+// SetDDLTables write a key into storage.
+func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
+	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
+	return errors.Trace(err)
 }
 
-// CheckMDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckMDLTableExists() (bool, error) {
+// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableVersion() (DDLTableVersion, error) {
 	v, err := m.txn.Get(mDDLTableVersion)
 	if err != nil {
-		return false, errors.Trace(err)
+		return -1, errors.Trace(err)
 	}
-	return bytes.Compare(v, []byte(DDLTableVersion2)) >= 0, nil
+	if string(v) == "" {
+		return InitDDLTableVersion, nil
+	}
+	ver, err := strconv.Atoi(string(v))
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	return DDLTableVersion(ver), nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.
