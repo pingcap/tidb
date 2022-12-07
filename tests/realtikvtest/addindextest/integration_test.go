@@ -256,24 +256,6 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1 2 1", "2 2 2 4 2", "3 3 3 6 3"))
 	assertLastNDDLUseIngest(4)
 }
-<<<<<<< HEAD
-=======
-
-func TestAddIndexIngestEmptyTable(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec("create table t (a int);")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("alter table t add index idx(a);")
-
-	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
-	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
-}
 
 func TestAddIndexIngestRestoredData(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -322,4 +304,3 @@ func TestAddIndexIngestPanicOnCopRead(t *testing.T) {
 	// Fallback to txn-merge process.
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
 }
->>>>>>> 6924a443f4 (*: fix panic when add index on prefixed pk tables (#39740))
