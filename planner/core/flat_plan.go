@@ -71,11 +71,11 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 			hasDML = true
 		default:
 			if hasDML {
-				for ei := i; ei < len(e); ei++ {
-					switch e[ei].Origin.(type) {
+				for j := i; j < len(e); j++ {
+					switch e[j].Origin.(type) {
 					// Skip foreign key check/cascade plan, since the later plan doesn't belong to select plan.
 					case *FKCheck, *FKCascade:
-						return e[i:ei], i
+						return e[i:j], i
 					}
 				}
 			}
