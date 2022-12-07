@@ -532,6 +532,7 @@ func TestFix31537(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec(`CREATE TABLE trade (
   t_id bigint(16) NOT NULL AUTO_INCREMENT,
   t_dts datetime NOT NULL,
