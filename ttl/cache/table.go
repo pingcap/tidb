@@ -244,11 +244,16 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 	ft := t.KeyColumnTypes[0]
 	scanRanges := make([]ScanRange, 0, len(keyRanges)+1)
 	curScanStart := int64(math.MinInt64)
-	for _, keyRange := range keyRanges {
-		val := GetNextIntHandle(keyRange.EndKey, recordPrefix)
+	for i, keyRange := range keyRanges {
+		if curScanStart == math.MaxInt64 {
+			break
+		}
+
 		curScanEnd := int64(math.MaxInt64)
-		if val != nil {
-			curScanEnd = val.IntValue()
+		if i != len(keyRanges) {
+			if val := GetNextIntHandle(keyRange.EndKey, recordPrefix); val != nil {
+				curScanEnd = val.IntValue()
+			}
 		}
 
 		if curScanStart >= curScanEnd {
@@ -256,24 +261,23 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 		}
 
 		if !mysql.HasUnsignedFlag(ft.GetFlag()) || curScanStart >= 0 {
+			// primary key is signed or range is in [0, math.MaxInt64] when primary key is unsigned
 			scanRanges = append(scanRanges, newInt64Range(curScanStart, curScanEnd))
-			continue
-		}
-
-		if curScanEnd < 0 {
+		} else if curScanEnd < 0 {
+			// primary key is unsigned and range start > math.MaxInt64 && end <= math.MaxUint64
 			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), uint64(curScanEnd)))
-			continue
-		}
-
-		if curScanEnd == 0 {
+		} else if curScanEnd == 0 {
+			// primary key is unsigned and range  start > math.MaxInt64 && end is 0.
 			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), math.MaxUint64))
-			continue
+		} else {
+			// primary key is unsigned and the start > math.MaxInt64 && end < math.MaxInt64
+			// we must split it to two ranges
+			scanRanges = append(scanRanges,
+				newUint64Range(0, uint64(curScanEnd)),
+				newUint64Range(uint64(curScanStart), math.MaxUint64),
+			)
 		}
-
-		scanRanges = append(scanRanges,
-			newUint64Range(0, uint64(curScanEnd)),
-			newUint64Range(uint64(curScanStart), math.MaxUint64),
-		)
+		curScanStart = curScanEnd
 	}
 	return scanRanges, nil
 }
@@ -289,28 +293,42 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
 	var curScanStart types.Datum
 	curScanStart.SetNull()
-	for _, keyRange := range keyRanges {
-		end := GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
-		scanRanges = append(scanRanges, newDatumRange(curScanStart, end))
-		curScanStart = end
+	for i, keyRange := range keyRanges {
+		if i != 0 && curScanStart.IsNull() {
+			break
+		}
+
+		var curScanEnd types.Datum
+		if i == len(keyRanges)-1 {
+			curScanEnd.SetNull()
+		} else {
+			curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+		}
+
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() && kv.Key(curScanStart.GetBytes()).Cmp(curScanEnd.GetBytes()) >= 0 {
+			continue
+		}
+
+		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		curScanStart = curScanEnd
 	}
 	return scanRanges, nil
 }
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage, startKey, endKey kv.Key, maxSplit int) ([]kv.KeyRange, error) {
-	bo := tikv.NewBackofferWithVars(ctx, 20000, nil)
-	regions, err := store.GetRegionCache().LoadRegionsInKeyRange(bo, startKey, endKey)
+	regionCache := store.GetRegionCache()
+	regionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
-	regionsPerRange := len(regions) / maxSplit
-	oversizeCnt := len(regions) % maxSplit
-	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regions), maxSplit))
-	for len(regions) > 0 {
-		rangeStartKey := kv.Key(regions[0].StartKey())
-		if rangeStartKey.Cmp(startKey) < 0 {
-			rangeStartKey = startKey
+	regionsPerRange := len(regionIDs) / maxSplit
+	oversizeCnt := len(regionIDs) % maxSplit
+	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), maxSplit))
+	for len(regionIDs) > 0 {
+		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil), regionIDs[0])
+		if err != nil {
+			return nil, err
 		}
 
 		endRegionIdx := regionsPerRange - 1
@@ -318,14 +336,24 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 			endRegionIdx++
 		}
 
-		rangeEndKey := kv.Key(regions[endRegionIdx].EndKey())
+		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil), regionIDs[endRegionIdx])
+		if err != nil {
+			return nil, err
+		}
+
+		rangeStartKey := kv.Key(startRegion.StartKey)
+		if rangeStartKey.Cmp(startKey) < 0 {
+			rangeStartKey = startKey
+		}
+
+		rangeEndKey := kv.Key(endRegion.EndKey)
 		if rangeEndKey.Cmp(endKey) > 0 {
 			rangeEndKey = endKey
 		}
 
 		ranges = append(ranges, kv.KeyRange{StartKey: rangeStartKey, EndKey: rangeEndKey})
 		oversizeCnt--
-		regions = regions[endRegionIdx+1:]
+		regionIDs = regionIDs[endRegionIdx+1:]
 	}
 	return ranges, nil
 }

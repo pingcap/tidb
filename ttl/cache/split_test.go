@@ -37,6 +37,24 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+	leader := &metapb.Peer{
+		Id:      regionID,
+		StoreId: 1,
+		Role:    metapb.PeerRole_Voter,
+	}
+
+	return &pd.Region{
+		Meta: &metapb.Region{
+			Id:       regionID,
+			StartKey: startKey,
+			EndKey:   endKey,
+			Peers:    []*metapb.Peer{leader},
+		},
+		Leader: leader,
+	}
+}
+
 type mockPDClient struct {
 	t *testing.T
 	pd.Client
@@ -45,6 +63,10 @@ type mockPDClient struct {
 }
 
 func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
+	if len(c.regions) == 0 {
+		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
+	}
+
 	if !c.regionsSorted {
 		sort.Slice(c.regions, func(i, j int) bool {
 			return kv.Key(c.regions[i].Meta.StartKey).Cmp(c.regions[j].Meta.StartKey) < 0
@@ -52,8 +74,12 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 		c.regionsSorted = true
 	}
 
+	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
+	regions = append(regions, c.regions...)
+	regions = append(regions, newMockRegion(math.MaxInt64, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
+
 	result := make([]*pd.Region, 0)
-	for _, r := range c.regions {
+	for _, r := range regions {
 		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
 			continue
 		}
@@ -87,40 +113,42 @@ type mockTiKVStore struct {
 
 func newMockTiKVStore(t *testing.T) *mockTiKVStore {
 	pdClient := &mockPDClient{t: t}
-	regionCache := tikv.NewRegionCache(pdClient)
-	t.Cleanup(regionCache.Close)
-	return &mockTiKVStore{
+	s := &mockTiKVStore{
 		t:        t,
 		pdClient: pdClient,
-		cache:    regionCache,
+		cache:    tikv.NewRegionCache(pdClient),
 	}
+	t.Cleanup(func() {
+		s.cache.Close()
+	})
+	return s
 }
 
-func (s *mockTiKVStore) addFullTableRegion(regionID uint64, tableID ...int64) *mockTiKVStore {
+func (s *mockTiKVStore) addFullTableRegion(regionID int64, tableID ...int64) *mockTiKVStore {
 	prefix1 := tablecodec.GenTablePrefix(tableID[0])
 	prefix2 := tablecodec.GenTablePrefix(tableID[len(tableID)-1])
 	return s.addRegion(regionID, prefix1, prefix2.PrefixNext())
 }
 
-func (s *mockTiKVStore) addRegionBeginWithTablePrefix(regionID uint64, tableID int64, handle kv.Handle) *mockTiKVStore {
+func (s *mockTiKVStore) addRegionBeginWithTablePrefix(regionID int64, tableID int64, handle kv.Handle) *mockTiKVStore {
 	start := tablecodec.GenTablePrefix(tableID)
 	end := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	return s.addRegion(regionID, start, end)
 }
 
-func (s *mockTiKVStore) addRegionEndWithTablePrefix(regionID uint64, handle kv.Handle, tableID int64) *mockTiKVStore {
+func (s *mockTiKVStore) addRegionEndWithTablePrefix(regionID int64, handle kv.Handle, tableID int64) *mockTiKVStore {
 	start := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	end := tablecodec.GenTablePrefix(tableID + 1)
 	return s.addRegion(regionID, start, end)
 }
 
-func (s *mockTiKVStore) addRegionWithTablePrefix(regionID uint64, tableID int64, start kv.Handle, end kv.Handle) *mockTiKVStore {
+func (s *mockTiKVStore) addRegionWithTablePrefix(regionID int64, tableID int64, start kv.Handle, end kv.Handle) *mockTiKVStore {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, start)
 	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, end)
 	return s.addRegion(regionID, startKey, endKey)
 }
 
-func (s *mockTiKVStore) addRegion(regionID uint64, key, endKey []byte) *mockTiKVStore {
+func (s *mockTiKVStore) addRegion(regionID int64, key, endKey []byte) *mockTiKVStore {
 	require.True(s.t, kv.Key(endKey).Cmp(key) > 0)
 	if len(s.pdClient.regions) > 0 {
 		lastRegion := s.pdClient.regions[len(s.pdClient.regions)-1]
@@ -128,14 +156,14 @@ func (s *mockTiKVStore) addRegion(regionID uint64, key, endKey []byte) *mockTiKV
 	}
 
 	leader := &metapb.Peer{
-		Id:      regionID*1000 + 1,
+		Id:      uint64(regionID*1000 + 1),
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
 	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
 		Meta: &metapb.Region{
-			Id:       regionID,
+			Id:       uint64(regionID),
 			StartKey: key,
 			EndKey:   endKey,
 			Peers:    []*metapb.Peer{leader},
@@ -144,23 +172,29 @@ func (s *mockTiKVStore) addRegion(regionID uint64, key, endKey []byte) *mockTiKV
 	})
 
 	s.pdClient.regionsSorted = false
+	_, err := s.cache.LoadRegionsInKeyRange(
+		tikv.NewBackofferWithVars(context.Background(), 1000, nil),
+		[]byte{},
+		[]byte{0xFF},
+	)
+	require.NoError(s.t, err)
 	return s
 }
 
-func (s *mockTiKVStore) prepareIntHandleRegions(tblID int64, regionCnt int, regionSize int) {
+func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt int, regionSize int, offset int64) (end kv.IntHandle) {
 	for i := 0; i < regionCnt; i++ {
-		if i == 0 {
-			s.addRegionBeginWithTablePrefix(uint64(i), tblID, kv.IntHandle((i+1)*regionSize))
-			continue
-		}
-
-		if i == regionCnt-1 {
-			s.addRegionEndWithTablePrefix(uint64(i), kv.IntHandle(i*regionSize), tblID)
-			continue
-		}
-
-		s.addRegionWithTablePrefix(uint64(i), tblID, kv.IntHandle(i*regionSize), kv.IntHandle((i+1)*regionSize))
+		regionID := tblID*1000 + int64(i+1)
+		start := kv.IntHandle(offset + int64(i*regionSize))
+		end = kv.IntHandle(start.IntValue() + int64(regionSize))
+		s.addRegionWithTablePrefix(regionID, tblID, start, end)
 	}
+	return
+}
+
+func (s *mockTiKVStore) clearRegions() {
+	s.pdClient.regions = nil
+	s.cache.Close()
+	s.cache = tikv.NewRegionCache(s.pdClient)
 }
 
 func (s *mockTiKVStore) newCommonHandle(ds ...types.Datum) *kv.CommonHandle {
@@ -192,10 +226,14 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
 	tbl1 := createTTLTable(t, tk, do, "t1", "(id int primary key, t timestamp) TTL = `t` + interval 1 day")
+	tbl1.ID = 1
 
 	tikvStore := newMockTiKVStore(t)
-	tikvStore.prepareIntHandleRegions(tbl1.ID, 10, 100)
+	tikvStore.addRegionBeginWithTablePrefix(tbl1.ID*1000, tbl1.ID, kv.IntHandle(0))
+	end := tikvStore.batchAddIntHandleRegions(tbl1.ID, 8, 100, 0)
+	tikvStore.addRegionEndWithTablePrefix(tbl1.ID*1000+100, end, tbl1.ID)
 
 	ranges, err := tbl1.SplitScanRanges(context.TODO(), tikvStore, 4)
 	require.NoError(t, err)
