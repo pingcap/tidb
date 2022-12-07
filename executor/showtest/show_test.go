@@ -318,9 +318,10 @@ func TestShowCreateTable(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
-	// TiDB defaults (and only supports) foreign_key_checks=0
+	// set @@foreign_key_checks=0,
 	// This means that the child table can be created before the parent table.
 	// This behavior is required for mysqldump restores.
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
 	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
 	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
