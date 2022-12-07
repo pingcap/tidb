@@ -730,9 +730,7 @@ func (sc *StatementContext) SetMessage(msg string) {
 func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	warns := make([]SQLWarn, len(sc.mu.warnings))
-	copy(warns, sc.mu.warnings)
-	return warns
+	return sc.mu.warnings
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
@@ -773,12 +771,6 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.warnings = warns
-	sc.mu.errorCount = 0
-	for _, w := range warns {
-		if w.Level == WarnLevelError {
-			sc.mu.errorCount++
-		}
-	}
 }
 
 // AppendWarning appends a warning with level 'Warning'.
