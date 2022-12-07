@@ -348,7 +348,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
-			actions = append(actions, uint64(1<<diff.Type))
+			actions = append(actions, uint64(diff.Type))
 		}
 	}
 
