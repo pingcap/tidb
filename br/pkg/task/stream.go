@@ -467,9 +467,11 @@ func SetGcStatus(g glue.Glue, store kv.Storage, enable bool) error {
 
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	if err = utils.SetGcEnableStatus(execCtx, enable); err != nil {
-		log.Warn("failed to set gc status", zap.Bool("target-gc-status", enable))
+		log.Warn("failed to set gc status", zap.Bool("target-gc-status", enable), zap.Error(err))
 		return errors.Trace(err)
 	}
+
+	log.Info("set gc status", zap.Bool("enabled", enable))
 	return nil
 }
 
@@ -1162,7 +1164,11 @@ func restoreStream(
 	if err = SetGcStatus(g, mgr.GetStorage(), false); err != nil {
 		return errors.Trace(err)
 	}
-	defer SetGcStatus(g, mgr.GetStorage(), true)
+	defer func() {
+		if err = SetGcStatus(g, mgr.GetStorage(), true); err != nil {
+			log.Info("failed to set gc enabled", zap.Error(err))
+		}
+	}()
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
