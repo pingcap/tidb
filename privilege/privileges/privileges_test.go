@@ -3112,44 +3112,49 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 func TestFailedLoginTrackingCheckError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
 	// Set FAILED_LOGIN_ATTEMPTS to 1, and check error messages after  login failure once.
 	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
-		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}, \"resource_group\": \"default\"}", "testu1")
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, sha1Password("password"), nil)
 	lds := strconv.FormatInt(1, 10)
 	errTarget := privileges.GenerateAccountAutoLockErr(1, "testu1", "localhost", lds, lds)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
+
 	// Check the login error message after the account is locked.
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu1", 1, "Y")
+
 	// Set FAILED_LOGIN_ATTEMPTS to 1 and PASSWORD_LOCK_TIME to UNBOUNDED. Check error messages after failed login once.
 	createAndCheck(tk, "CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED",
-		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": -1}}", "testu2")
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": -1}, \"resource_group\": \"default\"}", "testu2")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, sha1Password("password"), nil)
 	errTarget = privileges.GenerateAccountAutoLockErr(1, "testu2", "localhost", "unlimited", "unlimited")
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu2", 1, "Y")
+
 	// Check the login error message after the account is locked.
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu2", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.Equal(t, err.Error(), errTarget.Error())
 	checkAuthUser(t, tk, "testu2", 1, "Y")
+
 	// Set FAILED_LOGIN_ATTEMPTS to 0 or PASSWORD_LOCK_TIME to 0. Check error messages after failed login once.
 	createAndCheck(tk, "CREATE USER 'testu3'@'localhost' IDENTIFIED BY 'testu3' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME UNBOUNDED",
-		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}}", "testu3")
+		"{\"Password_locking\": {\"failed_login_attempts\": 0, \"password_lock_time_days\": -1}, \"resource_group\": \"default\"}", "testu3")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu3", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu3'@'localhost' (using password: YES)"))
 	checkAuthUser(t, tk, "testu3", 0, "")
 	createAndCheck(tk, "CREATE USER 'testu4'@'localhost' IDENTIFIED BY 'testu4' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 0",
-		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 0}}", "testu4")
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 0}, \"resource_group\": \"default\"}", "testu4")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu4", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu4'@'localhost' (using password: YES)"))
 	checkAuthUser(t, tk, "testu4", 0, "")
 	tk.MustExec("CREATE USER 'testu5'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu5", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.True(t, strings.Contains(err.Error(), "Access denied for user 'testu5'@'localhost' (using password: YES)"))
-	tk.MustQuery("select user_attributes from mysql.user where user= 'testu5' and host = 'localhost'").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select user_attributes from mysql.user where user= 'testu5' and host = 'localhost'").Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 }
 
 func TestFailedLoginTrackingWithSpecifiedUserUserAttributes(t *testing.T) {
@@ -3159,12 +3164,12 @@ func TestFailedLoginTrackingWithSpecifiedUserUserAttributes(t *testing.T) {
 	// Create user specifying only comment.
 	tk.MustExec("CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' comment 'testcomment' ")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu1' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"comment\": \"testcomment\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"comment\": \"testcomment\"}, \"resource_group\": \"default\"}"))
 
 	// Create user specifying only attribute.
 	tk.MustExec("create user testu2@'localhost' identified by 'testu2' ATTRIBUTE '{\"attribute\":\"testattribute\"}'")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu2' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"testattribute\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"testattribute\"}, \"resource_group\": \"default\"}"))
 
 	// Create user specified comment and FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME.
 	tk.MustExec("create user testu3@'localhost' identified by 'testu3' FAILED_LOGIN_ATTEMPTS 1 " +
@@ -3303,18 +3308,18 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	// Create user specifying only comment.
 	tk.MustExec("CREATE USER 'testu1'@'localhost' IDENTIFIED BY 'testu1' comment 'testcomment' ")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu1' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"comment\": \"testcomment\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"comment\": \"testcomment\"}, \"resource_group\": \"default\"}"))
 	tk.MustExec("Alter USER 'testu1'@'localhost' comment ''")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu1' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"comment\": \"\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"comment\": \"\"}, \"resource_group\": \"default\"}"))
 
 	// Create user specifying only attribute.
 	tk.MustExec("CREATE USER 'testu2'@'localhost' IDENTIFIED BY 'testu2' ATTRIBUTE '{\"attribute\":\"testattribute\"}'")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu2' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"testattribute\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"testattribute\"}, \"resource_group\": \"default\"}"))
 	tk.MustExec("Alter USER 'testu2'@'localhost' ATTRIBUTE '{\"attribute\":\"test\"}'")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu2' and host = 'localhost'").
-		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"test\"}}"))
+		Check(testkit.Rows("{\"metadata\": {\"attribute\": \"test\"}, \"resource_group\": \"default\"}"))
 
 	// Create a user and specify FAILED_LOGIN_ATTEMPTS, PASSWORD_LOCK_TIME, and COMMENT.
 	// Check the user_attributes value after alter user.
@@ -3378,7 +3383,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	checkUserUserAttributes(tk, "testu8", "localhost", "1 <nil> <nil> 1 <nil>")
 	tk.MustExec("alter user 'testu8'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu8' and host = 'localhost'").
-		Check(testkit.Rows("<nil>"))
+		Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 
 	// Specify only FAILED_LOGIN_ATTEMPTS one attribute when creating user.
 	// Change the value to 0 and check the user_attributes value.
@@ -3386,7 +3391,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts') " +
 		"from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER 'testu9'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
-	tk.MustQuery("select user_attributes from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select user_attributes from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 
 	// Specify only PASSWORD_LOCK_TIME one attribute when creating user.
 	// Change the value to 0 and check the user_attributes value.
@@ -3394,7 +3399,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days') " +
 		"from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER 'testu10'@'localhost' PASSWORD_LOCK_TIME 0")
-	tk.MustQuery("select user_attributes from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select user_attributes from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 
 	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
 	// change the values of the two attributes to 0, and check the value of user_attributes.
@@ -3408,14 +3413,14 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("1 0"))
 	tk.MustExec("ALTER USER 'testu11'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
 	tk.MustQuery("select user_attributes " +
-		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("<nil>"))
+		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 }
 
 func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
-		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
+		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}, \"resource_group\": \"default\"}", "testu1")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, nil, nil))
 	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
 	// Check user privileges  after successful login.
@@ -3428,9 +3433,9 @@ func TestFailedLoginTracking(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	rootk := testkit.NewTestKit(t, store)
 	createAndCheck(tk, "CREATE USER 'u6'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3",
-		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}}", "u6")
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 3}, \"resource_group\": \"default\"}", "u6")
 	createAndCheck(tk, "CREATE USER 'u5'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 60 PASSWORD_LOCK_TIME 3",
-		"{\"Password_locking\": {\"failed_login_attempts\": 60, \"password_lock_time_days\": 3}}", "u5")
+		"{\"Password_locking\": {\"failed_login_attempts\": 60, \"password_lock_time_days\": 3}, \"resource_group\": \"default\"}", "u5")
 	failedLoginTrackingCase1(t, tk, rootk)
 	failedLoginTrackingCase2(t, tk, rootk)
 	failedLoginTrackingCase3(t, tk, rootk)
@@ -3491,7 +3496,7 @@ func failedLoginTrackingCase6(t *testing.T, tk *testkit.TestKit, rootk *testkit.
 
 func failedLoginTrackingCase7(t *testing.T, tk *testkit.TestKit, rootk *testkit.TestKit) {
 	createAndCheck(rootk, "CREATE USER 'u1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 3",
-		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}}", "u1")
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 0}, \"resource_group\": \"default\"}", "u1")
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u6", Hostname: "localhost"}, sha1Password("password"), nil))
 	checkAuthUser(t, rootk, "u1", 0, "")
 	alterAndCheck(t, rootk, "ALTER USER 'u1'@'localhost' PASSWORD_LOCK_TIME 6;", "u1", 3, 6, 0)
@@ -3505,11 +3510,11 @@ func TestUserPassword(t *testing.T) {
 	tk.MustExec(`set global validate_password.enable = ON`)
 	runSQLAndCheck(t, store, "CREATE USER 'u1'@'localhost' IDENTIFIED BY 'qwe123' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 4;",
 		"CREATE USER 'u1'@'localhost' IDENTIFIED BY '!@#HASHhs123' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 4;", "u1", "localhost",
-		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 4}}", "qwe123", "!@#HASHhs123")
+		"{\"Password_locking\": {\"failed_login_attempts\": 3, \"password_lock_time_days\": 4}, \"resource_group\": \"default\"}", "qwe123", "!@#HASHhs123")
 
 	runSQLAndCheck(t, store, `CREATE USER 'u2'@'localhost' IDENTIFIED BY 'qwe123' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`,
 		`CREATE USER 'u2'@'localhost' IDENTIFIED BY '!@#HASHhs123' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`, "u2", "localhost",
-		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}}", "qwe123", "!@#HASHhs123")
+		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}, \"resource_group\": \"default\"}", "qwe123", "!@#HASHhs123")
 }
 
 func runSQLAndCheck(t *testing.T, store kv.Storage, errSQL, sucSQL, user, host, rsJSON, simplePassword, strongPassword string) {
@@ -3533,7 +3538,7 @@ func TestPasswordExpiredAndTacking(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("qwe123"), nil))
 	tk = testkit.NewTestKit(t, store)
 	createAndCheck(tk, `CREATE USER 'u3'@'localhost' IDENTIFIED BY '!@#HASHhs123' PASSWORD EXPIRE INTERVAL 3 DAY  FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 3 COMMENT 'Some statements to test create user'`,
-		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}}", user)
+		"{\"Password_locking\": {\"failed_login_attempts\": 4, \"password_lock_time_days\": 3}, \"metadata\": {\"comment\": \"Some statements to test create user\"}, \"resource_group\": \"default\"}", user)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil))
 
 	tk = testkit.NewTestKit(t, store)
@@ -3655,12 +3660,10 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 		require.NoError(t, err)
 	}
 	var ua []userAttributes
-	if err := json.Unmarshal(resBuff.Bytes(), &ua); err == nil {
-		require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
-		require.True(t, ua[0].PasswordLocking.AutoAccountLocked == autoAccountLocked)
-	} else {
-		require.NoError(t, err)
-	}
+	err := json.Unmarshal(resBuff.Bytes(), &ua)
+	require.NoError(t, err)
+	require.Equal(t, failedLoginCount, ua[0].PasswordLocking.FailedLoginCount)
+	require.Equal(t, autoAccountLocked, ua[0].PasswordLocking.AutoAccountLocked)
 }
 
 func selectSQL(user string) string {
