@@ -1540,9 +1540,10 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		accountLocked = "UNLOCK"
 	}
 
+	// The json string in an sql statement must be contained in single quotation marks.
 	userAttributes := rows[0].GetString(2)
 	if len(userAttributes) > 0 {
-		userAttributes = " ATTRIBUTE " + userAttributes
+		userAttributes = " ATTRIBUTE " + "'" + userAttributes + "'"
 	}
 
 	tokenIssuer := rows[0].GetString(3)
@@ -1614,8 +1615,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s%s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, userAttributes, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
