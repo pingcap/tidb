@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -24,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -205,7 +208,7 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 			EleKey: meta.IndexElementKey,
 			Tp:     model.TypeAddIndexBackfill,
 			State:  model.JobStateNone,
-			Mate:   bm,
+			Meta:   bm,
 		}
 		bJobs = append(bJobs, bj)
 	}
@@ -221,12 +224,22 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 	require.Equal(t, a.InstanceID, b.InstanceID)
 	require.GreaterOrEqual(t, b.InstanceLease.Compare(lessTime), 0)
 	require.Equal(t, a.State, b.State)
-	require.Equal(t, a.Mate, b.Mate)
+	require.Equal(t, a.Meta, b.Meta)
 }
 
 func getIdxConditionStr(jobID, eleID int64) string {
-	return fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
+	return fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		jobID, eleID, meta.IndexElementKey)
+}
+
+func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
+	err = sessiontxn.NewTxn(context.Background(), se)
+	if err != nil {
+		return err
+	}
+	f(se)
+	se.RollbackTxn(context.Background())
+	return nil
 }
 
 func TestSimpleExecBackfillJobs(t *testing.T) {
@@ -249,7 +262,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout").Error())
 	require.Nil(t, bJobs)
-	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
+	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		jobID1, eleID2, meta.IndexElementKey), "check_backfill_job_count")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
@@ -281,8 +294,13 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		expectJob = bjTestCases[5]
 	}
 	require.Equal(t, expectJob, bJobs[0])
-	previousTime, err := ddl.GetOracleTime(se.GetStore())
-	require.NoError(t, err)
+	previousTime, err := ddl.GetOracleTime(se)
+	require.EqualError(t, err, "[kv:8024]invalid transaction")
+	readInTxn(se, func(sessionctx.Context) {
+		previousTime, err = ddl.GetOracleTime(se)
+		require.NoError(t, err)
+	})
+
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
@@ -292,8 +310,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	}
 	expectJob.InstanceID = uuid
 	equalBackfillJob(t, expectJob, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
-	currTime, err := ddl.GetOracleTime(se.GetStore())
-	require.NoError(t, err)
+	var currTime time.Time
+	readInTxn(se, func(sessionctx.Context) {
+		currTime, err = ddl.GetOracleTime(se)
+		require.NoError(t, err)
+	})
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
 	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].InstanceLease), 0)
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
@@ -344,9 +365,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ID     jobID     eleID
 	// ------------------------
 	// 0      jobID1     eleID1
-	currTime, err = ddl.GetOracleTime(se.GetStore())
-	require.NoError(t, err)
-	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and job_id = %d order by job_id", currTime.Add(-instanceLease), jobID1)
+	readInTxn(se, func(sessionctx.Context) {
+		currTime, err = ddl.GetOracleTime(se)
+		require.NoError(t, err)
+	})
+	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d order by ddl_job_id", currTime.Add(-instanceLease), jobID1)
 	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)

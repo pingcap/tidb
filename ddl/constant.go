@@ -51,8 +51,8 @@ const (
 	HistoryTableSQL = "create table " + HistoryTable + "(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))"
 	// BackfillTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill`.
 	BackfillTableSQL = "create table " + BackfillTable + `(
-		section_id bigint not null,
-		job_id bigint not null,
+		id bigint not null,
+		ddl_job_id bigint not null,
 		ele_id bigint not null,
 		ele_key blob,
 		store_id bigint,
@@ -61,11 +61,11 @@ const (
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,
-		unique key(job_id, ele_id, ele_key(20), section_id))`
+		unique key(ddl_job_id, ele_id, ele_key(20), id))`
 	// BackfillHistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill_history`.
 	BackfillHistoryTableSQL = "create table " + BackfillHistoryTable + `(
-		section_id bigint not null,
-		job_id bigint not null,
+		id bigint not null,
+		ddl_job_id bigint not null,
 		ele_id bigint not null,
 		ele_key blob,
 		store_id bigint,
@@ -74,5 +74,5 @@ const (
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,
-		unique key(job_id, ele_id, ele_key(20), section_id))`
+		unique key(ddl_job_id, ele_id, ele_key(20), id))`
 )

@@ -160,7 +160,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	}()
 
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
-	// NewSession's context will affect the exit of the session.
+	// newSession's context will affect the exit of the session.
 	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionRetryUnlimited, util.SessionTTL)
 	if err != nil {
 		return errors.Trace(err)

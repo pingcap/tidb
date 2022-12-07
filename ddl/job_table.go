@@ -163,7 +163,7 @@ func (d *ddl) startDispatchLoop() {
 		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer d.sessPool.put(se)
-	sess := NewSession(se)
+	sess := newSession(se)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
@@ -499,10 +499,10 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 
 // AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
 func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
-	sqlPrefix := "insert into mysql.tidb_ddl_backfill(section_id, job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
+	sqlPrefix := "insert into mysql.tidb_ddl_backfill(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
 	var sql string
 	// Do runInTxn for get StartTS.
-	return runInTxn(NewSession(sess), func(se *session) error {
+	return runInTxn(newSession(sess), func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
@@ -510,8 +510,8 @@ func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
 
 		startTS := txn.StartTS()
 		for i, bj := range backfillJobs {
-			bj.Mate.StartTS = startTS
-			mateByte, err := bj.Mate.Encode()
+			bj.Meta.StartTS = startTS
+			mateByte, err := bj.Meta.Encode()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -531,21 +531,36 @@ func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
 
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
 func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
-	currTime, err := GetOracleTime(sess.GetStore())
-	if err != nil {
-		return nil, err
-	}
 	excludeJobs := ""
-	for _, id := range excludedJobIDs {
-		excludeJobs += fmt.Sprintf(" and job_id != %d", id)
+	for i, id := range excludedJobIDs {
+		if i == 0 {
+			excludeJobs += " and ddl_job_id not in ("
+		}
+		if i == len(excludedJobIDs)-1 {
+			excludeJobs += fmt.Sprintf("%d)", id)
+		} else {
+			excludeJobs += fmt.Sprintf("%d, ", id)
+		}
 	}
 
-	bJobs, err := GetBackfillJobs(sess, BackfillTable,
-		fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by job_id, ele_key, ele_id limit %d",
-			currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
+	var err error
+	var bJobs []*BackfillJob
+	s := newSession(sess)
+	err = runInTxn(s, func(se *session) error {
+		currTime, err := GetOracleTime(s)
+		if err != nil {
+			return err
+		}
+
+		bJobs, err = GetBackfillJobs(sess, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
+		return err
+	})
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
+
 	validLen := 1
 	firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
 	for i := 1; i < len(bJobs); i++ {
@@ -561,16 +576,17 @@ func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, 
 // GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,
 // and update these jobs with instance ID and lease.
 func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
-	currTime, err := GetOracleTime(sess.GetStore())
-	if err != nil {
-		return nil, err
-	}
-
 	var validLen int
 	var bJobs []*BackfillJob
-	err = runInTxn(NewSession(sess), func(se *session) error {
+	s := newSession(sess)
+	err := runInTxn(s, func(se *session) error {
+		currTime, err := GetOracleTime(se)
+		if err != nil {
+			return err
+		}
+
 		bJobs, err = GetBackfillJobs(sess, BackfillTable,
-			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and job_id = %d order by job_id, ele_key, ele_id limit %d",
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
 				currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
 		if err != nil {
 			return err
@@ -605,7 +621,7 @@ func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid
 
 // GetInterruptedBackfillJobsForOneEle gets the interrupted backfill jobs in the tblName table that contains only one element.
 func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
-	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s' and (state = %d or state = %d)",
+	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and (state = %d or state = %d)",
 		jobID, eleID, eleKey, model.JobStateRollingback, model.JobStateCancelling), "get_interrupt_backfill_job")
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
@@ -645,8 +661,8 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 			InstanceLease: row.GetTime(7),
 			State:         model.JobState(row.GetInt64(8)),
 		}
-		bJob.Mate = &model.BackfillMeta{}
-		err = bJob.Mate.Decode(row.GetBytes(9))
+		bJob.Meta = &model.BackfillMeta{}
+		err = bJob.Meta.Decode(row.GetBytes(9))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -656,23 +672,23 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 }
 
 // RemoveBackfillJob removes the backfill jobs from the tidb_ddl_backfill table.
-// If isOneEle is true, removes all jobs with backfillJob's job_id, ele_id and ele_key. Otherwise, removes the backfillJob.
+// If isOneEle is true, removes all jobs with backfillJob's ddl_job_id, ele_id and ele_key. Otherwise, removes the backfillJob.
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_backfill where job_id = %d and ele_id = %d and ele_key = '%s'",
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_backfill where ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey)
 	if !isOneEle {
-		sql += fmt.Sprintf(" and section_id = %d", backfillJob.ID)
+		sql += fmt.Sprintf(" and id = %d", backfillJob.ID)
 	}
 	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
 	return err
 }
 
 func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob, label string) error {
-	mate, err := backfillJob.Mate.Encode()
+	mate, err := backfillJob.Meta.Encode()
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, backfill_meta = '%s' where job_id = %d and ele_id = %d and ele_key = '%s' and section_id = %d",
+	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, backfill_meta = '%s' where ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
 		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, mate, backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey, backfillJob.ID)
 	_, err = sess.execute(context.Background(), sql, label)
 	return err
@@ -680,10 +696,10 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 
 // AddBackfillHistoryJob adds the backfill jobs to the tidb_ddl_backfill_history table.
 func AddBackfillHistoryJob(sess *session, backfillJobs []*BackfillJob) error {
-	sqlPrefix := "insert into mysql.tidb_ddl_backfill_history(section_id, job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
+	sqlPrefix := "insert into mysql.tidb_ddl_backfill_history(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
 	var sql string
 	for i, bj := range backfillJobs {
-		mateByte, err := bj.Mate.Encode()
+		mateByte, err := bj.Meta.Encode()
 		if err != nil {
 			return err
 		}
@@ -707,7 +723,7 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	return runInTxn(NewSession(sess), func(se *session) error {
+	return runInTxn(newSession(sess), func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
@@ -771,7 +787,7 @@ func (d *ddl) MoveJobFromTable2Queue() error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	return runInTxn(NewSession(sess), func(se *session) error {
+	return runInTxn(newSession(sess), func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)

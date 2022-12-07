@@ -75,22 +75,22 @@ type BackfillJob struct {
 	StoreID       int64
 	InstanceID    string
 	InstanceLease types.Time
-	Mate          *model.BackfillMeta
+	Meta          *model.BackfillMeta
 }
 
-// AbbrStr returns the BackfillJob's info without the Mate info.
+// AbbrStr returns the BackfillJob's info without the Meta info.
 func (bj *BackfillJob) AbbrStr() string {
 	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
 		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
 }
 
 // GetOracleTime returns the current time from TS.
-func GetOracleTime(store kv.Storage) (time.Time, error) {
-	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+func GetOracleTime(se *session) (time.Time, error) {
+	txn, err := se.Txn(true)
 	if err != nil {
-		return time.Time{}, errors.Trace(err)
+		return time.Time{}, err
 	}
-	return oracle.GetTimeFromTS(currentVer.Ver), nil
+	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
 }
 
 // GetLeaseGoTime returns a types.Time by adding a lease.

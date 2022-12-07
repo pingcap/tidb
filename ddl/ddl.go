@@ -662,7 +662,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 				return nil, err
 			}
 			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = NewSession(sessForJob)
+			wk.sess = newSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -1239,7 +1239,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 			return nil
 		}
 		defer d.sessPool.put(sess)
-		se := NewSession(sess)
+		se := newSession(sess)
 		_, err = se.execute(ctx, sql, "disableMDL")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
@@ -1259,7 +1259,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	se := NewSession(sess)
+	se := newSession(sess)
 	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
@@ -1398,7 +1398,7 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	sess := NewSession(s)
+	sess := newSession(s)
 	err := sess.begin()
 	if err != nil {
 		return nil, err
@@ -1412,7 +1412,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	sess := NewSession(s)
+	sess := newSession(s)
 	txn, err := sess.txn()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1581,7 +1581,7 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	}
 	var jobMap = make(map[int64]int) // jobID -> error index
 
-	sess := NewSession(se)
+	sess := newSession(se)
 	err := sess.begin()
 	if err != nil {
 		return nil, err
@@ -1663,7 +1663,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	if variable.EnableConcurrentDDL.Load() {
-		return getJobsBySQL(NewSession(sess), JobTable, "1 order by job_id")
+		return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
 	}
 
 	return getDDLJobs(t)
@@ -1749,8 +1749,8 @@ type session struct {
 	sessionctx.Context
 }
 
-// NewSession news the session and it is export for testing.
-func NewSession(s sessionctx.Context) *session {
+// newSession news the session and it is export for testing.
+func newSession(s sessionctx.Context) *session {
 	return &session{s}
 }
 
@@ -1872,7 +1872,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 
 // AddHistoryDDLJobForTest used for test.
 func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	return AddHistoryDDLJob(NewSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
+	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob record the history job.
