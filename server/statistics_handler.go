@@ -15,6 +15,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -104,6 +106,16 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	defer se.Close()
+	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !enabeld {
+		writeError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
+		return
+	}
+
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
 	if err != nil {
