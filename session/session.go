@@ -2868,23 +2868,26 @@ func getFailedLoginUserAttributes(s *session, user string, host string) (*privil
 	if err != nil {
 		return passwordLocking, err
 	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
 	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err = rs.Next(ctx, req)
-		if err != nil {
-			return passwordLocking, err
-		}
-		if req.NumRows() == 0 {
-			return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
-		}
-		row := iter.Begin()
-		if !row.IsNull(0) {
-			passwordLockingJSON := row.GetJSON(0)
-			return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
-		}
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return passwordLocking, err
+	}
+	if req.NumRows() == 0 {
 		return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
 	}
+	row := iter.Begin()
+	if !row.IsNull(0) {
+		passwordLockingJSON := row.GetJSON(0)
+		return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
+	}
+	return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
 }
 
 func userAutoAccountLocked(s *session, user string, host string, pl *privileges.PasswordLocking) (bool, error) {
