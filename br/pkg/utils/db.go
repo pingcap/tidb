@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -96,6 +97,20 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// SetGcEnableStatus sets the status of GC.
+// gc.ratio-threshold = -1.0, which represents disable gc in TiKV.
+// gc.ratio-threshold = 1.1 is the default value in TiKV.
+func SetGcEnableStatus(ctx sqlexec.RestrictedSQLExecutor, enable bool) error {
+	ratio := 1.1
+	if !enable {
+		ratio = -1.0
+	}
+
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	_, _, err := ctx.ExecRestrictedSQL(internalCtx, nil, "set config tikv `gc.ratio-threshold`=%?", ratio)
+	return errors.Trace(err)
 }
 
 // LogBackupTaskCountInc increases the count of log backup task.
