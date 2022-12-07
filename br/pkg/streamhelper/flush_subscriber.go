@@ -212,7 +212,7 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
 	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	// We should shutdown the background task firstly.
-	// Once yields some error during shuting down, the error won't be bring to next run.
+	// Once it yields some error during shuting down, the error won't be brought to next run.
 	s.close()
 	s.clearError()
 
