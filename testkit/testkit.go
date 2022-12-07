@@ -38,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
+	_ "go.uber.org/automaxprocs"
 )
 
 var testKitIDGenerator atomic.Uint64

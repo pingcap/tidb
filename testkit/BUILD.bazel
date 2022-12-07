@@ -40,5 +40,6 @@ go_library(
         "@io_opencensus_go//stats/view",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_automaxprocs//:automaxprocs",
     ],
 )
