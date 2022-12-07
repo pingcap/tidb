@@ -83,6 +83,7 @@ func TestBootstrap(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, globalVarsCount(), req.GetRow(0).GetInt64(0))
+	require.NoError(t, r.Close())
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExec(t, se, "USE test")
