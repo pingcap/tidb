@@ -925,11 +925,10 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 				fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount),
 				fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)),
 				fmt.Sprintf("\"failed_login_count\": %d", 0))
-		} else {
-			passwordLockingArray = append(passwordLockingArray,
-				fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts),
-				fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
 		}
+		passwordLockingArray = append(passwordLockingArray,
+			fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts),
+			fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
 	}
 	if len(passwordLockingArray) > 0 {
 		return fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
@@ -963,7 +962,11 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if pLO.failedLoginAttemptsChange {
 		alterUserInfo.failedLoginAttempts = pLO.failedLoginAttempts
 	} else if !rows[0].IsNull(0) {
-		alterUserInfo.failedLoginAttempts = rows[0].GetInt64(0)
+		str := rows[0].GetString(0)
+		alterUserInfo.failedLoginAttempts, err = strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
 		alterUserInfo.failedLoginAttempts = mathutil.Max(alterUserInfo.failedLoginAttempts, 0)
 		alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
 	} else {
@@ -973,7 +976,11 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if pLO.passwordLockTimeChange {
 		alterUserInfo.passwordLockTime = pLO.passwordLockTime
 	} else if !rows[0].IsNull(1) {
-		alterUserInfo.passwordLockTime = rows[0].GetInt64(1)
+		str := rows[0].GetString(1)
+		alterUserInfo.passwordLockTime, err = strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
 		alterUserInfo.passwordLockTime = mathutil.Max(alterUserInfo.passwordLockTime, -1)
 		alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
 	} else {

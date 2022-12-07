@@ -971,11 +971,11 @@ func checkUser(t *testing.T, rs string, failedLoginAttempts, passwordLockTimeDay
 	if err := json.Unmarshal([]byte(rs), &ua); err != nil {
 		return err
 	}
-	require.True(t, ua[0].PasswordLocking.FailedLoginAttempts == failedLoginAttempts)
-	require.True(t, ua[0].PasswordLocking.PasswordLockTimeDays == passwordLockTimeDays)
-	require.True(t, ua[0].PasswordLocking.FailedLoginCount == failedLoginCount)
+	require.Equal(t, failedLoginAttempts, ua[0].PasswordLocking.FailedLoginAttempts)
+	require.Equal(t, passwordLockTimeDays, ua[0].PasswordLocking.PasswordLockTimeDays)
+	require.Equal(t, failedLoginCount, ua[0].PasswordLocking.FailedLoginCount)
 	if comment != "" {
-		require.True(t, ua[0].Metadata.Comment == comment)
+		require.Equal(t, comment, ua[0].Metadata.Comment)
 	}
 	return nil
 }
