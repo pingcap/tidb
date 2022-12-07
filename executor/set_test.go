@@ -809,9 +809,9 @@ func TestSetVar(t *testing.T) {
 
 	// test variable 'foreign_key_checks'
 	// global scope
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global tidb_enable_foreign_key = 1")
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 0")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0"))
 
 	// test variable 'tidb_opt_force_inline_cte'
 	tk.MustQuery("select @@session.tidb_opt_force_inline_cte").Check(testkit.Rows("0")) // default value is 0
