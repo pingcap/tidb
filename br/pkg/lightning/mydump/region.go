@@ -302,6 +302,9 @@ func MakeSourceFileRegion(
 	// for compressed files, suggest the compress ratio is 1% to calculate the rowIDMax.
 	// set fileSize to INF to make sure compressed files can be read until EOF. Because we can't get the exact size of the compressed files.
 	if fi.FileMeta.Compression != CompressionNone {
+		// RealSize the estimated file size. There are some cases that the first few bytes of this compressed file
+		// has smaller compress ratio than the whole compressed file. So we still need to multiply this factor to
+		// make sure the rowIDMax computation is correct.
 		rowIDMax = fi.FileMeta.RealSize * CompressSizeFactor / divisor
 		fileSize = TableFileSizeINF
 	}

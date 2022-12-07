@@ -683,7 +683,7 @@ func calculateFileBytes(ctx context.Context,
 
 	readBytes := func() error {
 		n, err2 := compressReader.Read(bytes)
-		if err2 != nil && !strings.Contains(err2.Error(), "EOF") {
+		if err2 != nil && errors.Cause(err2) != io.EOF {
 			return err2
 		}
 		tot += n
@@ -692,7 +692,7 @@ func calculateFileBytes(ctx context.Context,
 
 	if offset == 0 {
 		err = readBytes()
-		if err != nil && !strings.Contains(err.Error(), "EOF") {
+		if err != nil && errors.Cause(err) != io.EOF {
 			return 0, 0, err
 		}
 		pos, err = compressReader.Seek(0, io.SeekCurrent)
@@ -708,7 +708,7 @@ func calculateFileBytes(ctx context.Context,
 			break
 		}
 	}
-	if err != nil && !strings.Contains(err.Error(), "EOF") {
+	if err != nil && errors.Cause(err) != io.EOF {
 		return 0, 0, errors.Trace(err)
 	}
 	return tot, offset, nil
@@ -723,6 +723,12 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 	if err != nil {
 		return 0, err
 	}
+	// We use the following method to sample the compress ratio of the first few bytes of the file.
+	// 1. read first time aiming to find a valid compressed file offset. If we continue read now, the compress reader will
+	// request more data from file reader buffer them in its memory. We can't compute an accurate compress ratio.
+	// 2. we use a second reading and limit the file reader only read n bytes(n is the valid position we find in the first reading).
+	// Then we read all the data out from the compress reader. The data length m we read out is the uncompressed data length.
+	// Use m/n to compute the compress ratio.
 	// read first time, aims to find a valid end pos in compressed file
 	_, pos, err := calculateFileBytes(ctx, fileMeta.Path, compressType, store, 0)
 	if err != nil {
