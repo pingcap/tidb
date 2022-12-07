@@ -3336,35 +3336,65 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= 'testu5' and host = 'localhost'").
 		Check(testkit.Rows("<nil> {\"attribute\": \"test\"}"))
 
-	// Create a user and specify FAILED_LOGIN_ATTEMPTS, PASSWORD_LOCK_TIME.
-	// Check the user_attributes value after alter user.
-	tk.MustExec("CREATE USER 'testu6'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 1 " +
-		"PASSWORD_LOCK_TIME 1")
-	checkUserUserAttributes(tk, "testu6", "localhost", "1 <nil> <nil> 1 <nil>")
-	tk.MustExec("alter user 'testu6'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
-	tk.MustQuery("select user_attributes from mysql.user where user= 'testu6' and host = 'localhost'").
-		Check(testkit.Rows("<nil>"))
-
 	// Create a user to specify a comment, modify the user to add an ATTRIBUTE,
 	// modify the user to delete a comment, and check the user_attributes value.
-	tk.MustExec("CREATE USER 'testu7'@'localhost' IDENTIFIED BY 'testu7' FAILED_LOGIN_ATTEMPTS 1 " +
+	tk.MustExec("CREATE USER 'testu6'@'localhost' IDENTIFIED BY 'testu6' FAILED_LOGIN_ATTEMPTS 1 " +
 		"PASSWORD_LOCK_TIME 1 comment 'testcomment'")
-	checkUserUserAttributes(tk, "testu7", "localhost", "1 <nil> <nil> 1 {\"comment\": \"testcomment\"}")
-	tk.MustExec("alter user 'testu7'@'localhost' ATTRIBUTE '{\"attribute\": \"testattribute\"}'")
-	checkUserUserAttributes(tk, "testu7", "localhost", "1 <nil> <nil> 1 {\"attribute\": \"testattribute\", \"comment\": \"testcomment\"}")
-	tk.MustExec("alter user 'testu7'@'localhost' ATTRIBUTE '{\"comment\": null}'")
-	checkUserUserAttributes(tk, "testu7", "localhost", "1 <nil> <nil> 1 {\"attribute\": \"testattribute\"}")
+	checkUserUserAttributes(tk, "testu6", "localhost", "1 <nil> <nil> 1 {\"comment\": \"testcomment\"}")
+	tk.MustExec("alter user 'testu6'@'localhost' ATTRIBUTE '{\"attribute\": \"testattribute\"}'")
+	checkUserUserAttributes(tk, "testu6", "localhost", "1 <nil> <nil> 1 {\"attribute\": \"testattribute\", \"comment\": \"testcomment\"}")
+	tk.MustExec("alter user 'testu6'@'localhost' ATTRIBUTE '{\"comment\": null}'")
+	checkUserUserAttributes(tk, "testu6", "localhost", "1 <nil> <nil> 1 {\"attribute\": \"testattribute\"}")
 
 	// After consecutive login failures and the account is locked,
 	// change the values of FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME to 0 and check the user_attributes value
-	tk.MustExec("CREATE USER 'testu8'@'localhost' IDENTIFIED BY 'testu8' FAILED_LOGIN_ATTEMPTS 1 " +
+	tk.MustExec("CREATE USER 'testu7'@'localhost' IDENTIFIED BY 'testu7' FAILED_LOGIN_ATTEMPTS 1 " +
 		"PASSWORD_LOCK_TIME 1 comment 'testcomment'")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu8", Hostname: "localhost"},
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu7", Hostname: "localhost"},
 		sha1Password("password"), nil))
-	checkUserUserAttributes(tk, "testu8", "localhost", "1 \"Y\" 1 1 {\"comment\": \"testcomment\"}")
-	tk.MustExec("alter user 'testu8'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
+	checkUserUserAttributes(tk, "testu7", "localhost", "1 \"Y\" 1 1 {\"comment\": \"testcomment\"}")
+	tk.MustExec("alter user 'testu7'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
 	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking'),JSON_EXTRACT(user_attributes,'$.metadata') " +
-		"from mysql.user where user='testu8' and host ='localhost'").Check(testkit.Rows("<nil> {\"comment\": \"testcomment\"}"))
+		"from mysql.user where user='testu7' and host ='localhost'").Check(testkit.Rows("<nil> {\"comment\": \"testcomment\"}"))
+
+	// Create a user and specify FAILED_LOGIN_ATTEMPTS, PASSWORD_LOCK_TIME.
+	// Check the user_attributes value after alter user.
+	tk.MustExec("CREATE USER 'testu8'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 1 " +
+		"PASSWORD_LOCK_TIME 1")
+	checkUserUserAttributes(tk, "testu8", "localhost", "1 <nil> <nil> 1 <nil>")
+	tk.MustExec("alter user 'testu8'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
+	tk.MustQuery("select user_attributes from mysql.user where user= 'testu8' and host = 'localhost'").
+		Check(testkit.Rows("<nil>"))
+
+	// Specify only FAILED_LOGIN_ATTEMPTS one attribute when creating user.
+	// Change the value to 0 and check the user_attributes value.
+	tk.MustExec("CREATE USER 'testu9'@'localhost' IDENTIFIED BY 'testu9' FAILED_LOGIN_ATTEMPTS 1 ")
+	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts') " +
+		"from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("1"))
+	tk.MustExec("ALTER USER 'testu9'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
+	tk.MustQuery("select user_attributes from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("<nil>"))
+
+	// Specify only PASSWORD_LOCK_TIME one attribute when creating user.
+	// Change the value to 0 and check the user_attributes value.
+	tk.MustExec("CREATE USER 'testu10'@'localhost' IDENTIFIED BY 'testu10' PASSWORD_LOCK_TIME 1 ")
+	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days') " +
+		"from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("1"))
+	tk.MustExec("ALTER USER 'testu10'@'localhost' PASSWORD_LOCK_TIME 0")
+	tk.MustQuery("select user_attributes from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("<nil>"))
+
+	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
+	// change the values of the two attributes to 0, and check the value of user_attributes.
+	tk.MustExec("CREATE USER 'testu11'@'localhost' IDENTIFIED BY 'testu11' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1 ")
+	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')," +
+		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days') " +
+		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("1 1"))
+	tk.MustExec("ALTER USER 'testu11'@'localhost' PASSWORD_LOCK_TIME 0")
+	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')," +
+		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days') " +
+		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("1 0"))
+	tk.MustExec("ALTER USER 'testu11'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
+	tk.MustQuery("select user_attributes " +
+		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("<nil>"))
 }
 
 func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
@@ -3373,6 +3403,8 @@ func TestFailedLoginTrackingCheckPrivilges(t *testing.T) {
 	createAndCheck(tk, "CREATE USER 'testu1'@'localhost' IDENTIFIED BY '' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
 		"{\"Password_locking\": {\"failed_login_attempts\": 1, \"password_lock_time_days\": 1}}", "testu1")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testu1", Hostname: "localhost"}, nil, nil))
+	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
+	// Check user privileges  after successful login.
 	tk.MustQuery(`show grants`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'testu1'@'localhost'"))
 	tk.MustQuery(`select user()`).Check(testkit.Rows("testu1@localhost"))
 }
