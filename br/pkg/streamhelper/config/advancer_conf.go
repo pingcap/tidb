@@ -78,3 +78,9 @@ func (conf Config) GetDefaultStartPollThreshold() time.Duration {
 func (conf Config) GetSubscriberErrorStartPollThreshold() time.Duration {
 	return conf.TryAdvanceThreshold / 5
 }
+
+// TickTimeout returns the max duration for each tick.
+func (conf Config) TickTimeout() time.Duration {
+	// If a tick blocks 10x the interval of ticking, we may need to break it and retry.
+	return 10 * conf.TickDuration
+}
