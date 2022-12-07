@@ -1077,6 +1077,7 @@ func SetTiFlashGroupConfig(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("SetTiFlashGroupConfig")
 	return is.tiflashReplicaManager.SetTiFlashGroupConfig(ctx)
 }
 
