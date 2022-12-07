@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"time"
@@ -233,6 +234,7 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, m
 }
 
 func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, maxSplit int) ([]ScanRange, error) {
+	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(t.ID)
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, maxSplit)
 	if err != nil {
@@ -241,28 +243,37 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 
 	ft := t.KeyColumnTypes[0]
 	scanRanges := make([]ScanRange, 0, len(keyRanges)+1)
+	curScanStart := int64(math.MinInt64)
 	for _, keyRange := range keyRanges {
-		rStart, err := tablecodec.DecodeRowKey(keyRange.StartKey)
-		if err != nil {
-			return nil, err
+		val := GetNextIntHandle(keyRange.EndKey, recordPrefix)
+		curScanEnd := int64(math.MaxInt64)
+		if val != nil {
+			curScanEnd = val.IntValue()
 		}
 
-		rEnd, err := tablecodec.DecodeRowKey(keyRange.EndKey)
-		if err != nil {
-			return nil, err
+		if curScanStart >= curScanEnd {
+			continue
 		}
 
-		startVal, endVal := rStart.IntValue(), rEnd.IntValue()
-		if !mysql.HasUnsignedFlag(ft.GetFlag()) {
-			scanRanges = append(scanRanges, newInt64Range(startVal, endVal))
-		} else if startVal < 0 && endVal > 0 {
-			scanRanges = append(scanRanges,
-				newUint64Range(0, uint64(endVal)),
-				newUint64Range(uint64(startVal), math.MaxUint64),
-			)
-		} else {
-			scanRanges = append(scanRanges, newUint64Range(uint64(startVal), uint64(endVal)))
+		if !mysql.HasUnsignedFlag(ft.GetFlag()) || curScanStart >= 0 {
+			scanRanges = append(scanRanges, newInt64Range(curScanStart, curScanEnd))
+			continue
 		}
+
+		if curScanEnd < 0 {
+			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), uint64(curScanEnd)))
+			continue
+		}
+
+		if curScanEnd == 0 {
+			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), math.MaxUint64))
+			continue
+		}
+
+		scanRanges = append(scanRanges,
+			newUint64Range(0, uint64(curScanEnd)),
+			newUint64Range(uint64(curScanStart), math.MaxUint64),
+		)
 	}
 	return scanRanges, nil
 }
@@ -327,8 +338,44 @@ func init() {
 	emptyBytesHandleKey = key
 }
 
+// GetNextIntHandle is used for int handle tables. It returns the min handle whose encoded key is or after argument `key`
+// If it cannot find a valid value, a null datum will be returned.
+func GetNextIntHandle(key kv.Key, recordPrefix []byte) kv.Handle {
+	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {
+		return nil
+	}
+
+	if key.Cmp(recordPrefix) <= 0 {
+		return kv.IntHandle(math.MinInt64)
+	}
+
+	suffix := key[len(recordPrefix):]
+	encodedVal := suffix
+	if len(suffix) < 8 {
+		encodedVal = make([]byte, 8)
+		copy(encodedVal, suffix)
+	}
+
+	findNext := false
+	if len(suffix) > 8 {
+		findNext = true
+		encodedVal = encodedVal[:8]
+	}
+
+	u := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(encodedVal))
+	if !findNext {
+		return kv.IntHandle(u)
+	}
+
+	if u == math.MaxInt64 {
+		return nil
+	}
+
+	return kv.IntHandle(u + 1)
+}
+
 // GetNextBytesHandleDatum is used for a table with one binary or string column common handle.
-// It returns the minValue whose encoded key is after argument `key`
+// It returns the minValue whose encoded key is or after argument `key`
 // If it cannot find a valid value, a null datum will be returned.
 func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {

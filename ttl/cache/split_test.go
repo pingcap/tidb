@@ -17,6 +17,7 @@ package cache_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"testing"
 
@@ -86,10 +87,12 @@ type mockTiKVStore struct {
 
 func newMockTiKVStore(t *testing.T) *mockTiKVStore {
 	pdClient := &mockPDClient{t: t}
+	regionCache := tikv.NewRegionCache(pdClient)
+	t.Cleanup(regionCache.Close)
 	return &mockTiKVStore{
 		t:        t,
 		pdClient: pdClient,
-		cache:    tikv.NewRegionCache(pdClient),
+		cache:    regionCache,
 	}
 }
 
@@ -192,7 +195,6 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 	tbl1 := createTTLTable(t, tk, do, "t1", "(id int primary key, t timestamp) TTL = `t` + interval 1 day")
 
 	tikvStore := newMockTiKVStore(t)
-	defer tikvStore.GetRegionCache().Close()
 	tikvStore.prepareIntHandleRegions(tbl1.ID, 10, 100)
 
 	ranges, err := tbl1.SplitScanRanges(context.TODO(), tikvStore, 4)
@@ -252,6 +254,10 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 		},
 		{
 			key:    tablecodec.GenTableRecordPrefix(tblID),
+			result: []byte{},
+		},
+		{
+			key:    tablecodec.GenTableRecordPrefix(tblID - 1),
 			result: []byte{},
 		},
 		{
@@ -408,6 +414,99 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 		} else {
 			require.Equal(t, types.KindBytes, d.Kind(), i)
 			require.Equal(t, c.result, d.GetBytes(), i)
+		}
+	}
+}
+func TestGetNextIntHandle(t *testing.T) {
+	tblID := int64(7)
+	cases := []struct {
+		key    interface{}
+		result int64
+		isNull bool
+	}{
+		{
+			key:    tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(0)),
+			result: 0,
+		},
+		{
+			key:    tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)),
+			result: 3,
+		},
+		{
+			key:    tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(math.MaxInt64)),
+			result: math.MaxInt64,
+		},
+		{
+			key:    tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(math.MinInt64)),
+			result: math.MinInt64,
+		},
+		{
+			key:    []byte{},
+			result: math.MinInt64,
+		},
+		{
+			key:    tablecodec.GenTableRecordPrefix(tblID),
+			result: math.MinInt64,
+		},
+		{
+			key:    tablecodec.GenTableRecordPrefix(tblID - 1),
+			result: math.MinInt64,
+		},
+		{
+			key:    tablecodec.GenTablePrefix(tblID).PrefixNext(),
+			isNull: true,
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{0}),
+			result: codec.DecodeCmpUintToInt(0),
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{0, 1, 2, 3}),
+			result: codec.DecodeCmpUintToInt(0x0001020300000000),
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{8, 1, 2, 3}),
+			result: codec.DecodeCmpUintToInt(0x0801020300000000),
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{0, 1, 2, 3, 4, 5, 6, 7, 0}),
+			result: codec.DecodeCmpUintToInt(0x0001020304050607) + 1,
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{8, 1, 2, 3, 4, 5, 6, 7, 0}),
+			result: codec.DecodeCmpUintToInt(0x0801020304050607) + 1,
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}),
+			result: math.MaxInt64,
+		},
+		{
+			key:    tablecodec.EncodeRowKey(tblID, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0}),
+			isNull: true,
+		},
+	}
+
+	for i, c := range cases {
+		var key kv.Key
+		switch k := c.key.(type) {
+		case kv.Key:
+			key = k
+		case []byte:
+			key = k
+		case func() []byte:
+			key = k()
+		case func() kv.Key:
+			key = k()
+		default:
+			require.FailNow(t, "%d", i)
+		}
+
+		v := cache.GetNextIntHandle(key, tablecodec.GenTableRecordPrefix(tblID))
+		if c.isNull {
+			require.Nil(t, v, i)
+		} else {
+			require.IsType(t, kv.IntHandle(0), v, i)
+			require.Equal(t, c.result, v.IntValue())
 		}
 	}
 }
