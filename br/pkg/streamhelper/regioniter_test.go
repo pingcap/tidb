@@ -13,8 +13,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type constantRegions []streamhelper.RegionWithLeader
@@ -55,7 +58,7 @@ func (c constantRegions) String() string {
 func (c constantRegions) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {
 	result := make([]streamhelper.RegionWithLeader, 0, limit)
 	for _, region := range c {
-		if overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, kv.KeyRange{StartKey: region.Region.StartKey, EndKey: region.Region.EndKey}) && len(result) < limit {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, kv.KeyRange{StartKey: region.Region.StartKey, EndKey: region.Region.EndKey}) && len(result) < limit {
 			result = append(result, region)
 		} else if bytes.Compare(region.Region.StartKey, key) > 0 {
 			break
@@ -64,6 +67,11 @@ func (c constantRegions) RegionScan(ctx context.Context, key []byte, endKey []by
 	fmt.Printf("all = %s\n", c)
 	fmt.Printf("start = %s, end = %s, result = %s\n", redact.Key(key), redact.Key(endKey), constantRegions(result))
 	return result, nil
+}
+
+// Stores returns the store metadata from the cluster.
+func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, error) {
+	return nil, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
 func makeSubrangeRegions(keys ...string) constantRegions {

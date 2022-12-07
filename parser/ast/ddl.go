@@ -28,18 +28,21 @@ var (
 	_ DDLNode = &AlterTableStmt{}
 	_ DDLNode = &AlterSequenceStmt{}
 	_ DDLNode = &AlterPlacementPolicyStmt{}
+	_ DDLNode = &AlterResourceGroupStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
+	_ DDLNode = &CreateResourceGroupStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
+	_ DDLNode = &DropResourceGroupStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
@@ -1280,6 +1283,32 @@ func (n *DropPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type DropResourceGroupStmt struct {
+	ddlNode
+
+	IfExists          bool
+	ResourceGroupName model.CIStr
+}
+
+// Restore implements Restore interface.
+func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP RESOURCE GROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	return nil
+}
+
+func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropResourceGroupStmt)
+	return v.Leave(n)
+}
+
 // DropSequenceStmt is a statement to drop a Sequence.
 type DropSequenceStmt struct {
 	ddlNode
@@ -1537,6 +1566,43 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreatePlacementPolicyStmt)
+	return v.Leave(n)
+}
+
+// CreateResourceGroupStmt is a statement to create a policy.
+type CreateResourceGroupStmt struct {
+	ddlNode
+
+	IfNotExists             bool
+	ResourceGroupName       model.CIStr
+	ResourceGroupOptionList []*ResourceGroupOption
+}
+
+// Restore implements Node interface.
+func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+
+	ctx.WriteKeyWord("RESOURCE GROUP ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	for i, option := range n.ResourceGroupOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreatePlacementPolicy TableOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateResourceGroupStmt)
 	return v.Leave(n)
 }
 
@@ -2031,6 +2097,59 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 	return ctx.WriteWithSpecialComments(tidb.FeatureIDPlacement, fn)
 }
 
+// ResourceGroupOption is used for parsing resource group option.
+type ResourceGroupOption struct {
+	Tp       ResourceUnitType
+	StrValue string
+}
+
+type ResourceUnitType int
+
+const (
+	ResourceUnitCPU ResourceUnitType = iota
+	ResourceRRURate
+	ResourceWRURate
+	// Only valied when read/wirte not setting.
+	ResourceUnitIORate
+	ResourceUnitIOReadRate
+	ResourceUnitIOWriteRate
+)
+
+func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
+	fn := func() error {
+		switch n.Tp {
+		case ResourceUnitCPU:
+			ctx.WriteKeyWord("CPU ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceRRURate:
+			ctx.WriteKeyWord("RRU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceWRURate:
+			ctx.WriteKeyWord("WRU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceUnitIOReadRate:
+			ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceUnitIOWriteRate:
+			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		default:
+			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
+		}
+		return nil
+	}
+	// WriteSpecialComment
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResouceGroup, fn)
+}
+
 type StatsOptionType int
 
 const (
@@ -2083,7 +2202,6 @@ const (
 	TableOptionEncryption
 	TableOptionTTL
 	TableOptionTTLEnable
-	TableOptionNoTTL
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2138,7 +2256,6 @@ type TableOption struct {
 	BoolValue     bool
 	TimeUnitValue *TimeUnitExpr
 	Value         ValueExpr
-	Expression    ExprNode
 	TableNames    []*TableName
 	ColumnName    *ColumnName
 }
@@ -2425,7 +2542,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.ColumnName.Name.String())
 			ctx.WritePlain(" + INTERVAL ")
-			err := n.Expression.Restore(ctx)
+			err := n.Value.Restore(ctx)
 			ctx.WritePlain(" ")
 			if err != nil {
 				return err
@@ -2443,11 +2560,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
-	case TableOptionNoTTL:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			ctx.WriteKeyWord("NO_TTL")
-			return nil
-		})
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -2461,12 +2573,12 @@ func (n *TableOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableOption)
-	if n.Expression != nil {
-		node, ok := n.Expression.Accept(v)
+	if n.Value != nil {
+		node, ok := n.Value.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expression = node.(ExprNode)
+		n.Value = node.(ValueExpr)
 	}
 	if n.TimeUnitValue != nil {
 		node, ok := n.TimeUnitValue.Accept(v)
@@ -2666,6 +2778,7 @@ const (
 	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
+	AlterTableRemoveTTL
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3347,7 +3460,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
-
+	case AlterTableRemoveTTL:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("REMOVE TTL")
+			return nil
+		})
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -4303,6 +4420,39 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AlterPlacementPolicyStmt)
+	return v.Leave(n)
+}
+
+// AlterResourceGroupStmt is a statement to alter placement policy option.
+type AlterResourceGroupStmt struct {
+	ddlNode
+
+	ResourceGroupName       model.CIStr
+	IfExists                bool
+	ResourceGroupOptionList []*ResourceGroupOption
+}
+
+func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER RESOURCE GROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	for i, option := range n.ResourceGroupOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterResourceStmt Options: [%v]", i)
+		}
+	}
+	return nil
+}
+
+func (n *AlterResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterResourceGroupStmt)
 	return v.Leave(n)
 }
 

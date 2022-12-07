@@ -235,10 +235,12 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	// data-engines that need to be restore or import. Otherwise, all data-engines should
 	// be finished already.
 
+	handleDataEngineThisRun := false
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
+		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
@@ -327,9 +329,9 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
-						if rc.status != nil {
+						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
-								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+								rc.status.FinishedFileSize.Add(chunk.TotalSize())
 							}
 						}
 					}
@@ -339,7 +341,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 				}(restoreWorker, engineID, engine)
 			} else {
 				for _, chunk := range engine.Chunks {
-					rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+					rc.status.FinishedFileSize.Add(chunk.TotalSize())
 				}
 			}
 		}
@@ -370,11 +372,31 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		return errors.Trace(restoreErr)
 	}
 
+	// if data engine is handled in previous run and we continue importing from checkpoint
+	if !handleDataEngineThisRun {
+		for _, engine := range cp.Engines {
+			for _, chunk := range engine.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+			}
+		}
+	}
+
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
+			failpoint.Inject("FailBeforeStartImportingIndexEngine", func() {
+				errMsg := "fail before importing index KV data"
+				tr.logger.Warn(errMsg)
+				failpoint.Return(errors.New(errMsg))
+			})
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				finished := rc.status.FinishedFileSize.Load()
+				total := rc.status.TotalFileSize.Load()
+				tr.logger.Warn("print lightning status",
+					zap.Int64("finished", finished),
+					zap.Int64("total", total),
+					zap.Bool("equal", finished == total))
 				panic("forcing failure due to FailBeforeIndexEngineImported")
 			})
 		}
@@ -405,6 +427,11 @@ func (tr *TableRestore) restoreEngine(
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			return closedEngine, errors.Trace(err)
+		}
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			for _, chunk := range cp.Chunks {
+				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+			}
 		}
 		return closedEngine, nil
 	}
@@ -475,6 +502,9 @@ func (tr *TableRestore) restoreEngine(
 
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
+			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
+		}
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
 			continue
 		}
@@ -516,7 +546,7 @@ func (tr *TableRestore) restoreEngine(
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
-			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
+			remainChunkCnt = float64(chunk.UnfinishedSize()) / float64(chunk.TotalSize())
 			if metrics != nil {
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 			}
@@ -591,7 +621,7 @@ func (tr *TableRestore) restoreEngine(
 	totalSQLSize := int64(0)
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
-		totalSQLSize += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+		totalSQLSize += chunk.UnfinishedSize()
 	}
 
 	err = chunkErr.Get()
@@ -675,7 +705,7 @@ func (tr *TableRestore) importEngine(
 	}
 
 	// 2. perform a level-1 compact if idling.
-	if rc.cfg.PostRestore.Level1Compact && rc.compactState.CAS(compactStateIdle, compactStateDoing) {
+	if rc.cfg.PostRestore.Level1Compact && rc.compactState.CompareAndSwap(compactStateIdle, compactStateDoing) {
 		go func() {
 			// we ignore level-1 compact failure since it is not fatal.
 			// no need log the error, it is done in (*Importer).Compact already.
@@ -786,6 +816,11 @@ func (tr *TableRestore) postProcess(
 				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 				return false, err
 			}
+		}
+
+		if rc.dupIndicator != nil {
+			tr.logger.Debug("set dupIndicator", zap.Bool("has-duplicate", hasDupe))
+			rc.dupIndicator.CompareAndSwap(false, hasDupe)
 		}
 
 		nextStage := checkpoints.CheckpointStatusChecksummed

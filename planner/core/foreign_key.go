@@ -51,6 +51,10 @@ type FKCascade struct {
 	FK         *model.FKInfo
 	FKCols     []*model.ColumnInfo
 	FKIdx      *model.IndexInfo
+	// CascadePlans contains the child cascade plan.
+	// CascadePlans will be filled during execution, so only `explain analyze` statement result contains the cascade plan,
+	// `explain` statement result doesn't contain the cascade plan.
+	CascadePlans []Plan
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
