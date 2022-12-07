@@ -15,6 +15,7 @@ go_test(
         "//domain",
         "//executor",
         "//meta/autoid",
+        "//parser/auth",
         "//parser/terror",
         "//store/mockstore",
         "//store/mockstore/unistore",

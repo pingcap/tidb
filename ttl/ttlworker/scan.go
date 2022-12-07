@@ -212,21 +212,24 @@ func (w *ttlScanWorker) Idle() bool {
 
 func (w *ttlScanWorker) Schedule(task *ttlScanTask) error {
 	w.Lock()
-	defer w.Unlock()
 	if w.status != workerStatusRunning {
+		w.Unlock()
 		return errors.New("worker is not running")
 	}
 
 	if w.curTaskResult != nil {
+		w.Unlock()
 		return errors.New("the result of previous task has not been polled")
 	}
 
 	if w.curTask != nil {
+		w.Unlock()
 		return errors.New("a task is running")
 	}
 
 	w.curTask = task
 	w.curTaskResult = nil
+	w.Unlock()
 	w.baseWorker.ch <- task
 	return nil
 }
@@ -250,7 +253,7 @@ func (w *ttlScanWorker) PollTaskResult() (*ttlScanTaskExecResult, bool) {
 
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
-	for w.status == workerStatusRunning {
+	for w.Status() == workerStatusRunning {
 		select {
 		case <-ctx.Done():
 			return nil
