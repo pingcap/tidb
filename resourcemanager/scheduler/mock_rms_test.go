@@ -21,7 +21,7 @@ type MockResourceManage struct {
 	pool      *util.MockGPool
 }
 
-// NewFakeResourceManage creates a fake resource manage.
+// NewFakeResourceManage creates a fake resource manager.
 func NewFakeResourceManage() *MockResourceManage {
 	return &MockResourceManage{}
 }

@@ -22,10 +22,10 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 )
 
-// GlobalResourceManager is a global resource manage
-var GlobalResourceManager = NewResourceMange()
+// GlobalResourceManager is a global resource manager
+var GlobalResourceManager = NewResourceManger()
 
-// ResourceManager is a resource manage
+// ResourceManager is a resource manager
 type ResourceManager struct {
 	poolMap   *util.ShardPoolMap
 	scheduler []scheduler.Scheduler
@@ -33,8 +33,8 @@ type ResourceManager struct {
 	wg        tidbutil.WaitGroupWrapper
 }
 
-// NewResourceMange is to create a new resource manage
-func NewResourceMange() *ResourceManager {
+// NewResourceManger is to create a new resource manager
+func NewResourceManger() *ResourceManager {
 	sc := make([]scheduler.Scheduler, 0, 1)
 	sc = append(sc, scheduler.NewGradient2Scheduler())
 	return &ResourceManager{
@@ -44,7 +44,7 @@ func NewResourceMange() *ResourceManager {
 	}
 }
 
-// Start is to start resource manage
+// Start is to start resource manager
 func (r *ResourceManager) Start() {
 	r.wg.Run(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
@@ -60,13 +60,13 @@ func (r *ResourceManager) Start() {
 	})
 }
 
-// Stop is to stop resource manage
+// Stop is to stop resource manager
 func (r *ResourceManager) Stop() {
 	close(r.exitCh)
 	r.wg.Done()
 }
 
-// Register is to register pool into resource manage
+// Register is to register pool into resource manager
 func (r *ResourceManager) Register(pool util.GorotinuePool, name string, component util.Component) error {
 	p := util.PoolContainer{Pool: pool, Component: component}
 	return r.registerPool(name, &p)
