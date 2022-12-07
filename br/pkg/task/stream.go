@@ -458,6 +458,21 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	return nil
 }
 
+// SetGcStatus sets status of GC enabled or disabled.
+func SetGcStatus(g glue.Glue, store kv.Storage, enable bool) error {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	if err = utils.SetGcEnableStatus(execCtx, enable); err != nil {
+		log.Warn("failed to set gc status", zap.Bool("target-gc-status", enable))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RunStreamCommand run all kinds of `stream task`
 func RunStreamCommand(
 	ctx context.Context,
@@ -1142,6 +1157,12 @@ func restoreStream(
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
+	// It need disable GC in TiKV when piTR.
+	// because the process of PITR is concurrent and kv events isn't sorted by tso.
+	if err = SetGcStatus(g, mgr.GetStorage(), false); err != nil {
+		return errors.Trace(err)
+	}
+	defer SetGcStatus(g, mgr.GetStorage(), true)
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
