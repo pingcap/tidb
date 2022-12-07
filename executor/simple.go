@@ -110,10 +110,11 @@ type passwordReuseInfo struct {
 }
 
 type userInfo struct {
-	host string
-	user string
-	pLI  *passwordOrLockOptionsInfo
-	pwd  string
+	host       string
+	user       string
+	pLI        *passwordOrLockOptionsInfo
+	pwd        string
+	authString string
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -936,7 +937,7 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 	return ""
 }
 
-func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (*alterUserPasswordLocking, error) {
+func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (aUPL *alterUserPasswordLocking, returnErr error) {
 	alterUserInfo := &alterUserPasswordLocking{
 		failedLoginAttempts:            0,
 		passwordLockTime:               0,
@@ -953,6 +954,11 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			returnErr = closeErr
+		}
+	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
@@ -1261,7 +1267,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
-func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (*passwordReuseInfo, error) {
+func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo,returnErr error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
@@ -1271,6 +1277,11 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			returnErr = closeErr
+		}
+	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
@@ -1366,14 +1377,35 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, use
 	return nil
 }
 
-func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (int64, error) {
+func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, error) {
+	for _, row := range rows {
+		if !row.IsNull(0) {
+			pwd := row.GetString(0)
+			authok, err := auth.CheckHashingPassword([]byte(pwd), oldPwd, authPlugin)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+				return false, err
+			}
+			if authok {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (deleteNum int64, returnErr error) {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return 0, err
 	}
-
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			returnErr = closeErr
+		}
+	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
@@ -1386,65 +1418,149 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	return rows[0].GetInt64(0), nil
 }
 
-func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (bool, error) {
-	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
+func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, returnErr error) {
+	switch authPlugin {
+	case mysql.AuthNativePassword,"":
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				returnErr = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) == 0 {
+			return true, nil
+		}
+		return false, nil
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User= %? AND Host= %? ;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
-	}
-	return false, nil
 }
 
-func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo) (bool, error) {
-	sql := new(strings.Builder)
-	// Exceeded the maximum number of saved items, only check the ones within the limit.
-	checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
-	checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
-	checkRows = checkRows + ` ) as t where t.Password = %? `
-	sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
+func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, returnErr error) {
+	switch authPlugin {
+	case mysql.AuthNativePassword, "":
+		sql := new(strings.Builder)
+		// Exceeded the maximum number of saved items, only check the ones within the limit.
+		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+		checkRows = checkRows + ` ) as t where t.Password = %? `
+		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				returnErr = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) != 0 {
+			return false, nil
+		}
+		return true, nil
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		checkRows := `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) != 0 {
-		return false, nil
-	}
-	return true, nil
+
 }
 
 func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context) (bool, error) {
-	sql := new(strings.Builder)
+	sctx sessionctx.Context, authPlugin string) (canUse bool, returnErr error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
-		mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
+	switch authPlugin {
+	case mysql.AuthNativePassword, "":
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
+			mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				returnErr = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) == 0 {
+			return true, nil
+		}
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), beforeDate)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
 	return false, nil
 }
 
-func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) (bool, int64, error) {
+func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context, authPlugin string) (bool, int64, error) {
 	passwordNum, err := getUserPasswordNum(ctx, sqlExecutor, userDetail)
 	if err != nil {
 		return false, 0, err
@@ -1463,18 +1579,18 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	// The maximum number of saves has not been exceeded.
 	// There are too many retention days, and it is impossible to time out in one's lifetime.
 	if (passwordNum <= passwordReuse.passwordHistory) || (passwordReuse.passwordReuseInterval > math.MaxInt32) {
-		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail)
+		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail, authPlugin)
 		return passChecking, canDeleteNum, err
 	}
 
 	if passwordReuse.passwordHistory > 0 {
-		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse)
+		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse, authPlugin)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
 	}
 	if passwordReuse.passwordReuseInterval > 0 {
-		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx)
+		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx, authPlugin)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
@@ -1482,14 +1598,14 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return true, canDeleteNum, nil
 }
 
-func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context) error {
+func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context, authPlugin string) error {
 	// read password reuse info from mysql.user and global variables.
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
 		return err
 	}
 	// check whether password can be used.
-	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx)
+	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx, authPlugin)
 	if err != nil {
 		return err
 	}
@@ -1673,6 +1789,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
+			// changing the auth method prunes history.
+			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
+				// delete password history from mysql.password_history.
+				sql := new(strings.Builder)
+				sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(spec.User.Hostname), spec.User.Username)
+				if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+					failedUsers = append(failedUsers, spec.User.String())
+					needRollback = true
+					break
+				}
+			}
 			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
 				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
@@ -1686,8 +1813,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// The empty password does not count in the password history and is subject to reuse at any time.
 			// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 			if len(pwd) != 0 {
-				userDetail := &userInfo{spec.User.Hostname, spec.User.Username, &plOptions, pwd}
-				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
+				userDetail := &userInfo{
+					host:       spec.User.Hostname,
+					user:       spec.User.Username,
+					pLI:        &plOptions,
+					pwd:        pwd,
+					authString: spec.AuthOpt.AuthString,
+				}
+				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx, spec.AuthOpt.AuthPlugin)
 				if err != nil {
 					return err
 				}
@@ -2335,12 +2468,13 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 	if len(pwd) != 0 {
 		userDetail := &userInfo{
-			host: h,
-			user: u,
-			pLI:  plOptions,
-			pwd:  pwd,
+			host:       h,
+			user:       u,
+			pLI:        plOptions,
+			pwd:        pwd,
+			authString: s.Password,
 		}
-		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
+		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx, authplugin)
 		if err != nil {
 			return err
 		}

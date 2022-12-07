@@ -1433,6 +1433,40 @@ func TestUserReuseFunction(t *testing.T) {
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
 }
 
+func TestUserReuseDifferentAuth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	rootTK := testkit.NewTestKit(t, store)
+	// test caching_sha2_password.
+	rootTK.MustExec(`CREATE USER testReuse identified with 'caching_sha2_password' by 'test' PASSWORD HISTORY 1 `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
+	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
+	rootTK.MustExec(`alter USER testReuse identified with 'tidb_sm3_password'`)
+	// changing the auth method prunes history.
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustExec(`CREATE USER testReuse identified with 'tidb_sm3_password' by 'test' PASSWORD HISTORY 1 `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
+	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
+	rootTK.MustExec(`alter USER testReuse identified with 'caching_sha2_password'`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustExec(`CREATE USER testReuse identified with 'caching_sha2_password' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
+	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
+	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
+	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '1 0:0:1' DAY_SECOND) where user = 'testReuse' order by Password_timestamp asc limit 1`)
+	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
+}
+
 func TestUserReuseMultiuser(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
