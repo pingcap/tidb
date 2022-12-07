@@ -59,8 +59,9 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 // groupToString only stringifies a single Group.
 // Format:
 // Group#1 Column: [Column#1,Column#2,Column#13] Unique key: []
-//     Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
-//     Projection_15 input:Group#3 Column#1, Column#2
+//
+//	Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
+//	Projection_15 input:Group#3 Column#1, Column#2
 func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 	schema := g.Prop.Schema
 	colStrs := make([]string, 0, len(schema.Columns))
