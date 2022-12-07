@@ -229,6 +229,7 @@ func (txn *LazyTxn) String() string {
 		if txn.enterAggressiveLockingOnValid {
 			res += " (pending aggressive locking)"
 		}
+		return res
 	}
 	return "invalid transaction"
 }
