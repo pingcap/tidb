@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"golang.org/x/exp/slices"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type checkResult int
