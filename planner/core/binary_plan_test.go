@@ -293,7 +293,7 @@ func TestLongBinaryPlan(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	store := testkit.CreateMockStore(t, )
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
