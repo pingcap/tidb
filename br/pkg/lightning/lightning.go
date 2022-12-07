@@ -386,9 +386,9 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		}()
 	})
 	if taskCfg.TiDB.IOTotalBytes != nil {
-		o.logger.Info("not nil io total bytes")
+		o.logger.Info("found IO total bytes counter")
 		mysql.RegisterDialContext(taskCfg.TiDB.UUID, func(ctx context.Context, addr string) (net.Conn, error) {
-			o.logger.Info("io connection")
+			o.logger.Debug("connection with IO bytes counter")
 			d := &net.Dialer{}
 			conn, err := d.DialContext(ctx, "tcp", addr)
 			if err != nil {
