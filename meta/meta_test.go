@@ -252,10 +252,16 @@ func TestMeta(t *testing.T) {
 	table, err := m.GetTable(1, 1)
 	require.NoError(t, err)
 	require.Equal(t, tbInfo, table)
+	tblExist, err := m.CheckTableExists(1, 1)
+	require.NoError(t, err)
+	require.Equal(t, true, tblExist)
 
 	table, err = m.GetTable(1, 2)
 	require.NoError(t, err)
 	require.Nil(t, table)
+	tblExist, err = m.CheckTableExists(1, 2)
+	require.NoError(t, err)
+	require.Equal(t, false, tblExist)
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
@@ -842,25 +848,16 @@ func TestDDLTable(t *testing.T) {
 
 	m := meta.NewMeta(txn)
 
-	ver, err := m.CheckDDLTableVersion()
+	exists, err := m.CheckDDLTableExists()
 	require.NoError(t, err)
-	require.Equal(t, meta.InitDDLTableVersion, ver)
+	require.False(t, exists)
 
-	err = m.SetDDLTables(meta.BaseDDLTableVersion)
+	err = m.SetDDLTables()
 	require.NoError(t, err)
-	ver, err = m.CheckDDLTableVersion()
+
+	exists, err = m.CheckDDLTableExists()
 	require.NoError(t, err)
-	require.Equal(t, meta.BaseDDLTableVersion, ver)
-	err = m.SetDDLTables(meta.MDLTableVersion)
-	require.NoError(t, err)
-	ver, err = m.CheckDDLTableVersion()
-	require.NoError(t, err)
-	require.Equal(t, meta.MDLTableVersion, ver)
-	err = m.SetDDLTables(meta.BackfillTableVersion)
-	require.NoError(t, err)
-	ver, err = m.CheckDDLTableVersion()
-	require.NoError(t, err)
-	require.Equal(t, meta.BackfillTableVersion, ver)
+	require.True(t, exists)
 
 	err = m.SetConcurrentDDL(true)
 	require.NoError(t, err)
