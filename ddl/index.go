@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -710,7 +711,10 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 // canUseIngest indicates whether it can use ingest way to backfill index.
 func canUseIngest(w *worker) bool {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
-	if len(ingest.LitBackCtxMgr.Keys()) > 0 {
+	activeJobIDs := ingest.LitBackCtxMgr.Keys()
+	if len(activeJobIDs) > 0 {
+		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
+			zap.Int64("job ID", activeJobIDs[0]))
 		return false
 	}
 	ctx, err := w.sessPool.get()
@@ -1414,6 +1418,9 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		if err != nil {
 			str = string(val)
 		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
 		valueStr = append(valueStr, str)
 	}
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
@@ -1498,11 +1505,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 		var (
 			idxRecords []*indexRecord
+			copChunk   *chunk.Chunk // only used by the coprocessor request sender.
 			nextKey    kv.Key
 			taskDone   bool
 		)
 		if w.copReqSenderPool != nil {
-			idxRecords, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+			idxRecords, copChunk, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+			defer w.copReqSenderPool.recycleIdxRecordsAndChunk(idxRecords, copChunk)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
@@ -1565,10 +1574,6 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				writeBufs.IndexKeyBuf = key
 			}
 			taskCtx.addedCount++
-		}
-
-		if w.copReqSenderPool != nil {
-			w.copReqSenderPool.recycleIdxRecords(idxRecords)
 		}
 
 		return nil

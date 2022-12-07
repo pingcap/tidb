@@ -1753,6 +1753,10 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
@@ -1785,6 +1789,10 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
 }
 
 // Clone implements PhysicalPlan interface.
