@@ -331,7 +331,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `parent_id` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) /* FOREIGN KEY INVALID */\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -345,7 +345,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `parent_id` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE /* FOREIGN KEY INVALID */\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -358,7 +358,8 @@ func TestShowCreateTable(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`) /* FOREIGN KEY INVALID */\n" +
+		"  KEY `fk` (`b`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test issue #20327

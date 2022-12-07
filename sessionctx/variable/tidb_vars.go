@@ -1190,7 +1190,7 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
