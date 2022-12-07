@@ -467,6 +467,12 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 			zap.String("task failed error", err.Error()),
 			zap.String("take time", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
+		failpoint.Inject("MockGetIndexRecordErr", func() {
+			// Make sure this job didn't failed because by the "Write conflict" error.
+			if dbterror.ErrNotOwner.Equal(err) {
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
 		return errors.Trace(err)
 	}
 

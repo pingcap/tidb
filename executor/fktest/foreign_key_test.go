@@ -1949,6 +1949,7 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	tk.MustExec("set @@global.tidb_enable_foreign_key=0")
 	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) ON DELETE CASCADE ON UPDATE SET NULL);")
 	tbl1Info, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
