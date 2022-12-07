@@ -112,6 +112,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table tt(id int primary key)")
 	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t set c2=1")
 	tk.MustExec("create table t1 like ctwl_db.t")
 	tk.MustExec("insert into t1 set c2=11")
