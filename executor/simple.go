@@ -1207,7 +1207,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		sqlexec.MustFormatSQL(sql, `)`)
 		// The empty password does not count in the password history and is subject to reuse at any time.
-		if savePasswdHistory && len(pwd) != 0 {
+		// AuthTiDBAuthToken is the token login method on the cloud,
+		// and the Password Reuse Policy does not take effect.
+		if savePasswdHistory && len(pwd) != 0 && !strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
 			if !passwordInit {
 				sqlexec.MustFormatSQL(sqlPasswordHistory, ",")
 			} else {
@@ -1426,7 +1428,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 
 func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, err error) {
 	switch authPlugin {
-	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
+	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1470,7 +1472,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 
 func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, err error) {
 	switch authPlugin {
-	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
+	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
 		// Exceeded the maximum number of saved items, only check the ones within the limit.
 		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
@@ -1522,7 +1524,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 	sctx sessionctx.Context, authPlugin string) (canUse bool, err error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
 	switch authPlugin {
-	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
+	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
 			mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
@@ -1604,6 +1606,11 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 }
 
 func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context, authPlugin string) error {
+	if strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
+		// AuthTiDBAuthToken is the token login method on the cloud,
+		// and the Password Reuse Policy does not take effect.
+		return nil
+	}
 	// read password reuse info from mysql.user and global variables.
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
@@ -1798,7 +1805,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
 				// delete password history from mysql.password_history.
 				sql := new(strings.Builder)
-				sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(spec.User.Hostname), spec.User.Username)
+				sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
 				if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 					failedUsers = append(failedUsers, spec.User.String())
 					needRollback = true

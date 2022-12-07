@@ -1465,13 +1465,19 @@ func TestUserReuseDifferentAuth(t *testing.T) {
 	rootTK.MustQuery(`SELECT authentication_string FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(""))
 	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	// AuthTiDBAuthToken is the token login method on the cloud,
+	// and the Password Reuse Policy does not take effect.
 	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
 	rootTK.MustExec(`CREATE USER testReuse identified with 'tidb_auth_token' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
-	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test' `, 3638)
-	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustExec(`ALTER USER testReuse identified by 'test' `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+	rootTK.MustExec(`set password for testReuse = 'test'`)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
 	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
 	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
+	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
 	rootTK.MustExec(`drop USER testReuse`)
 }
 
