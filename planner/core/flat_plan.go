@@ -63,10 +63,21 @@ func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil
 	}
+	hasDML := false
 	for i, op := range e {
 		switch op.Origin.(type) {
 		case *Insert, *Delete, *Update:
+			hasDML = true
 		default:
+			if hasDML {
+				for ei := i; ei < len(e); ei++ {
+					switch e[ei].Origin.(type) {
+					// Skip foreign key check/cascade plan, since the later plan doesn't belong to select plan.
+					case *FKCheck, *FKCascade:
+						return e[i:ei]
+					}
+				}
+			}
 			return e[i:]
 		}
 	}
