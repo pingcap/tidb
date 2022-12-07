@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -782,6 +783,9 @@ const (
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
+	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
+	TiDBStoreBatchSize = "tidb_store_batch_size"
+
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_transaction_aggressive_locking"
@@ -842,6 +846,8 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
+	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -869,6 +875,18 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
+	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
+	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
+	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
+	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
+	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
+	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// PasswordReuseHistory limit a few passwords to reuse.
+	PasswordReuseHistory = "password_history"
+	// PasswordReuseTime limit how long passwords can be reused.
+	PasswordReuseTime = "password_reuse_interval"
 )
 
 // TiDB intentional limits
@@ -943,7 +961,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
@@ -1067,6 +1085,7 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
+	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1112,6 +1131,17 @@ const (
 	DefTiDBUseAlloc                                        = false
 	DefTiDBEnablePlanReplayerCapture                       = false
 	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 500
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefTiDBStoreBatchSize                                  = 0
 	DefTiDBPessimisticTransactionAggressiveLocking         = true
 )
 
@@ -1155,6 +1185,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1164,18 +1195,24 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-
+	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	PasswordValidationLength           = atomic.NewInt32(8)
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
+	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
+	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled               = atomic.NewBool(false)
 )
 
 var (

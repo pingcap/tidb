@@ -119,6 +119,7 @@ type Domain struct {
 	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
+	historicalStatsWorker   *HistoricalStatsWorker
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -347,7 +348,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
-			actions = append(actions, uint64(1<<diff.Type))
+			actions = append(actions, uint64(diff.Type))
 		}
 	}
 
@@ -1572,34 +1573,63 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
 		sctx: collectorSctx,
 	}
+	taskCH := make(chan *PlanReplayerDumpTask, 16)
+	taskStatus := &planReplayerDumpTaskStatus{}
+	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
-		ctx:    ctx,
-		sctx:   dumperSctx,
-		taskCH: make(chan *PlanReplayerDumpTask, 16),
+		taskCH: taskCH,
+		status: taskStatus,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
+	for i := 0; i < len(workersSctxs); i++ {
+		worker := &planReplayerTaskDumpWorker{
+			ctx:    ctx,
+			sctx:   workersSctxs[i],
+			taskCH: taskCH,
+			status: taskStatus,
+		}
+		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
+	}
+}
+
+// SetupHistoricalStatsWorker setups worker
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+	do.historicalStatsWorker = &HistoricalStatsWorker{
+		tblCH: make(chan int64, 16),
+		sctx:  ctx,
 	}
 }
 
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
+	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
+	enableDumpHistoricalStats.Store(true)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
+}
+
+// DisableDumpHistoricalStats4Test disable historical dump worker for test
+func DisableDumpHistoricalStats4Test() {
+	enableDumpHistoricalStats.Store(false)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
@@ -1635,14 +1665,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 		}()
-		for {
-			select {
-			case <-do.exit:
-				return
-			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
-				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
-			}
+		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
+			go worker.run()
 		}
+		<-do.exit
+		do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
 	}()
 }
 
@@ -1668,6 +1695,40 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				return
 			case <-gcTicker.C:
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+			}
+		}
+	}()
+}
+
+// GetHistoricalStatsWorker gets historical workers
+func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
+	return do.historicalStatsWorker
+}
+
+// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+var enableDumpHistoricalStats atomic.Bool
+
+// StartHistoricalStatsWorker start historical workers running
+func (do *Domain) StartHistoricalStatsWorker() {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case tblID := <-do.historicalStatsWorker.tblCH:
+				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				if err != nil {
+					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+				}
 			}
 		}
 	}()

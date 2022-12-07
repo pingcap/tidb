@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cache",
+    srcs = [
+        "base.go",
+        "infoschema.go",
+        "table.go",
+        "ttlstatus.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ttl/cache",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx",
+        "//table/tables",
+        "//ttl/session",
+        "//types",
+        "//util/chunk",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cache_test",
+    srcs = [
+        "base_test.go",
+        "infoschema_test.go",
+        "main_test.go",
+        "table_test.go",
+        "ttlstatus_test.go",
+    ],
+    embed = [":cache"],
+    flaky = True,
+    deps = [
+        "//parser",
+        "//parser/model",
+        "//server",
+        "//testkit",
+        "//testkit/testsetup",
+        "//ttl/session",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

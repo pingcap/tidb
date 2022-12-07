@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ttl
+package cache
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -55,6 +56,8 @@ func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.Fie
 
 // PhysicalTable is used to provide some information for a physical table in TTL job
 type PhysicalTable struct {
+	// ID is the physical ID of the table
+	ID int64
 	// Schema is the database name of the table
 	Schema model.CIStr
 	*model.TableInfo
@@ -91,11 +94,13 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 		return nil, err
 	}
 
+	var physicalID int64
 	var partitionDef *model.PartitionDefinition
 	if tbl.Partition == nil {
 		if partition.L != "" {
 			return nil, errors.Errorf("table '%s.%s' is not a partitioned table", schema, tbl.Name)
 		}
+		physicalID = tbl.ID
 	} else {
 		if partition.L == "" {
 			return nil, errors.Errorf("partition name is required, table '%s.%s' is a partitioned table", schema, tbl.Name)
@@ -111,9 +116,12 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 		if partitionDef == nil {
 			return nil, errors.Errorf("partition '%s' is not found in ttl table '%s.%s'", partition.O, schema, tbl.Name)
 		}
+
+		physicalID = partitionDef.ID
 	}
 
 	return &PhysicalTable{
+		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
 		Partition:      partition,
@@ -133,7 +141,7 @@ func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
 }
 
 // EvalExpireTime returns the expired time
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se Session, now time.Time) (expire time.Time, err error) {
+func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, now time.Time) (expire time.Time, err error) {
 	tz := se.GetSessionVars().TimeZone
 
 	expireExpr := t.TTLInfo.IntervalExprStr

@@ -294,6 +294,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1871,6 +1873,21 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
+}
+
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s Session,
 	sql string, args ...interface{}) (ast.StmtNode, error) {
@@ -2584,7 +2601,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2604,8 +2621,14 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		return err
+	if err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
+		switch err.(type) {
+		case *privileges.ErrInSandBoxMode:
+			// Enter sandbox mode, only execute statement for resetting password.
+			s.EnableSandBoxMode()
+		default:
+			return err
+		}
 	}
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
@@ -3024,12 +3047,24 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
+	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+		planReplayerWorkersSctx[i] = pworkerSes[i]
+	}
 	// setup plan replayer handle
-	dom.SetupPlanReplayerHandle(ses[6], ses[7])
+	dom.SetupPlanReplayerHandle(ses[6], planReplayerWorkersSctx)
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
-	dom.SetupDumpFileGCChecker(ses[8])
+	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
+	// setup historical stats worker
+	dom.SetupHistoricalStatsWorker(ses[8])
+	dom.StartHistoricalStatsWorker()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
@@ -3681,6 +3716,11 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
+	if config.GetGlobalConfig().Performance.TxnTotalSizeLimit != config.DefTxnTotalSizeLimit {
+		// if the user manually specifies the config, don't involve the new memory tracker mechanism, let the old config
+		// work as before.
+		return
+	}
 	hook := func(mem uint64) {
 		if s.sessionVars.MemDBFootprint == nil {
 			tracker := memory.NewTracker(memory.LabelForMemDB, -1)
