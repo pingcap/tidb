@@ -1164,6 +1164,7 @@ import (
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
 	RequireListElement                     "require list element for tls option"
+	ResourceGroupNameOption                "resource group name for user"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -12739,7 +12740,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -12752,6 +12753,9 @@ CreateUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12769,7 +12773,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -12780,6 +12784,9 @@ AlterUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12992,6 +12999,15 @@ CommentOrAttributeOption:
 |	"ATTRIBUTE" stringLit
 	{
 		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
+	}
+
+ResourceGroupNameOption:
+	{
+		$$ = nil
+	}
+|	"RESOURCE" "GROUP" stringLit
+	{
+		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
 
 PasswordOrLockOptions:
