@@ -353,9 +353,8 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		tikvStore.clearRegions()
 		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(ranges))
-		checkRange(t, ranges[0], types.NewUintDatum(uint64(math.MaxInt64)+1), types.Datum{})
-		checkRange(t, ranges[1], types.Datum{}, types.NewUintDatum(uint64(math.MaxInt64)+1))
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test share regions with other table
 		tikvStore.clearRegions()
@@ -365,9 +364,8 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		)
 		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(ranges))
-		checkRange(t, ranges[0], types.NewUintDatum(uint64(math.MaxInt64)+1), types.Datum{})
-		checkRange(t, ranges[1], types.Datum{}, types.NewUintDatum(uint64(math.MaxInt64)+1))
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
 		// test one table has multiple regions: [MinInt64, a) [a, b) [b, 0) [0, c) [c, d) [d, MaxInt64]
 		tikvStore.clearRegions()

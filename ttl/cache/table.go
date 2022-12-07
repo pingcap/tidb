@@ -239,6 +239,10 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 		return nil, err
 	}
 
+	if len(keyRanges) <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
 	ft := t.KeyColumnTypes[0]
 	unsigned := mysql.HasUnsignedFlag(ft.GetFlag())
 	scanRanges := make([]ScanRange, 0, len(keyRanges)+1)
@@ -287,6 +291,10 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, splitCnt)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(keyRanges) <= 1 {
+		return []ScanRange{newFullRange()}, nil
 	}
 
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
