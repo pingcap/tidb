@@ -499,7 +499,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
@@ -513,8 +513,8 @@ func TestScanQueryGenerator(t *testing.T) {
 			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: model.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
 		TimeColumn: &model.ColumnInfo{
@@ -735,7 +735,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
@@ -749,8 +749,8 @@ func TestBuildDeleteSQL(t *testing.T) {
 			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
