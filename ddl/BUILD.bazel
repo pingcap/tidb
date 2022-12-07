@@ -57,6 +57,7 @@ go_library(
         "//br/pkg/utils",
         "//config",
         "//ddl/ingest",
+        "//ddl/internal/session",
         "//ddl/label",
         "//ddl/placement",
         "//ddl/resourcegroup",
