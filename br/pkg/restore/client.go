@@ -988,6 +988,29 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 					backupCol.Name, backupCol.FieldType.String())
 			}
 		}
+
+		if backupTi.Name.L == sysUserTableName {
+			// check whether the columns of table in cluster are less than the backup data
+			clusterColMap := make(map[string]*model.ColumnInfo)
+			for i := range ti.Columns {
+				col := ti.Columns[i]
+				clusterColMap[col.Name.L] = col
+			}
+			// order can be different
+			for i := range backupTi.Columns {
+				col := backupTi.Columns[i]
+				clusterCol := clusterColMap[col.Name.L]
+				if clusterCol == nil {
+					log.Error("missing column in cluster data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+						"missing column in cluster data, table: %s, col: %s %s",
+						table.Info.Name.O,
+						col.Name, col.FieldType.String())
+				}
+			}
+		}
 	}
 	return nil
 }
