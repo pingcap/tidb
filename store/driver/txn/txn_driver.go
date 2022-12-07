@@ -218,8 +218,6 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		} else {
 			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
-	case kv.SchemaAmender:
-		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case kv.SampleStep:
 		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
 	case kv.CommitHook:
