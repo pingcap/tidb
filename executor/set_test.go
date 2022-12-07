@@ -799,15 +799,15 @@ func TestSetVar(t *testing.T) {
 
 	// test variable 'foreign_key_checks'
 	// global scope
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global foreign_key_checks = 1")
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global foreign_key_checks = 0")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0"))
 	// session scope
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set session foreign_key_checks = 1")
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session foreign_key_checks = 0")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0"))
 
-	// test variable 'foreign_key_checks'
+	// test variable 'tidb_enable_foreign_key'
 	// global scope
 	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1")) // default value
 	tk.MustExec("set global tidb_enable_foreign_key = 0")
