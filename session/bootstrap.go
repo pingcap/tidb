@@ -496,6 +496,9 @@ const (
 		current_job_state text DEFAULT NULL,
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
+	// AddSourceColumnToStatsMetaHistoryTable adds source column to mysql.stats_meta_history
+	AddSourceColumnToStatsMetaHistoryTable = `ALTER TABLE mysql.stats_meta_history ADD COLUMN 'source' varchar(16) after 'version'`
 )
 
 // bootstrap initiates system DB for a store.
@@ -732,11 +735,13 @@ const (
 	version107 = 107
 	// version107 adds the table tidb_ttl_table_status
 	version108 = 108
+	// version109 add column to mysql.stats_meta_history
+	version109 = 109
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version107
+var currentBootstrapVersion int64 = version109
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -849,6 +854,7 @@ var (
 		upgradeToVer106,
 		upgradeToVer107,
 		upgradeToVer108,
+		upgradeToVer109,
 	}
 )
 
@@ -2190,6 +2196,13 @@ func upgradeToVer108(s Session, ver int64) {
 	doReentrantDDL(s, CreateTTLTableStatus)
 }
 
+func upgradeToVer109(s Session, ver int64) {
+	if ver >= version109 {
+		return
+	}
+	doReentrantDDL(s, AddSourceColumnToStatsMetaHistoryTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2296,6 +2309,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Add source column to stats_meta_history
+	mustExecute(s, AddSourceColumnToStatsMetaHistoryTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
