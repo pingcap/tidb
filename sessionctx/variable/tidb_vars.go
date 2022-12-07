@@ -1110,7 +1110,7 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = false
+	DefTiDBForeignKeyChecks                      = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
