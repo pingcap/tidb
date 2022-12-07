@@ -249,16 +249,13 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 		return nil, errors.AddStack(err)
 	}
 	if len(rows) < 1 {
-		return nil, fmt.Errorf("failed to get version of stats_meta_history for table_id = %v, snapshot = %v", physicalID, snapshot)
+		return nil, fmt.Errorf("failed to get records of stats_meta_history for table_id = %v, snapshot = %v", physicalID, snapshot)
 	}
 	statsMetaVersion := rows[0].GetInt64(0)
 	// get stats meta
 	rows, _, err = reader.read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
 	if err != nil {
 		return nil, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		return nil, fmt.Errorf("failed to get records of stats_meta_history for table_id = %v, version = %v", physicalID, statsMetaVersion)
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
@@ -268,7 +265,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 		return nil, errors.AddStack(err)
 	}
 	if len(rows) < 1 {
-		return nil, fmt.Errorf("failed to get version of stats_history for table_id = %v, snapshot = %v", physicalID, snapshot)
+		return nil, fmt.Errorf("failed to get record of stats_history for table_id = %v, snapshot = %v", physicalID, snapshot)
 	}
 	statsVersion := rows[0].GetInt64(0)
 
@@ -276,9 +273,6 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	rows, _, err = reader.read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
 	if err != nil {
 		return nil, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		return nil, fmt.Errorf("failed to get records of stats_history for table_id = %v, version = %v", physicalID, statsVersion)
 	}
 	blocks := make([][]byte, 0)
 	for _, row := range rows {
