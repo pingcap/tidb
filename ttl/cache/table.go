@@ -82,24 +82,10 @@ func newDatumRange(start types.Datum, end types.Datum) (r ScanRange) {
 	return r
 }
 
-func newInt64Range(start int64, end int64) (r ScanRange) {
-	if start != math.MinInt64 {
-		r.Start = []types.Datum{types.NewIntDatum(start)}
-	}
-	if end != math.MaxInt64 {
-		r.End = []types.Datum{types.NewIntDatum(end)}
-	}
-	return
-}
-
-func newUint64Range(start uint64, end uint64) (r ScanRange) {
-	if start != 0 {
-		r.Start = []types.Datum{types.NewUintDatum(start)}
-	}
-	if end != math.MaxUint64 {
-		r.End = []types.Datum{types.NewUintDatum(end)}
-	}
-	return
+func nullDatum() types.Datum {
+	d := types.Datum{}
+	d.SetNull()
+	return d
 }
 
 // PhysicalTable is used to provide some information for a physical table in TTL job
@@ -211,8 +197,8 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, 
 }
 
 // SplitScanRanges split ranges for TTL scan
-func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, maxSplit int) ([]ScanRange, error) {
-	if len(t.KeyColumns) != 1 || maxSplit <= 1 {
+func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, splitCnt int) ([]ScanRange, error) {
+	if len(t.KeyColumns) != 1 || splitCnt <= 1 {
 		return []ScanRange{newFullRange()}, nil
 	}
 
@@ -224,57 +210,70 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, m
 	ft := t.KeyColumns[0].FieldType
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
-		return t.splitIntRanges(ctx, tikvStore, maxSplit)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit:
+		return t.splitIntRanges(ctx, tikvStore, splitCnt)
+	case mysql.TypeBit:
+		return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitBinaryRanges(ctx, tikvStore, maxSplit)
+			return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
 		}
 	}
 	return []ScanRange{newFullRange()}, nil
 }
 
-func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, maxSplit int) ([]ScanRange, error) {
+func unsignedEdge(d types.Datum) types.Datum {
+	if d.IsNull() {
+		return types.NewUintDatum(uint64(math.MaxInt64 + 1))
+	}
+	if d.GetInt64() == 0 {
+		return nullDatum()
+	}
+	return types.NewUintDatum(uint64(d.GetInt64()))
+}
+
+func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, splitCnt int) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(t.ID)
-	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, maxSplit)
+	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, splitCnt)
 	if err != nil {
 		return nil, err
 	}
 
 	ft := t.KeyColumnTypes[0]
+	unsigned := mysql.HasUnsignedFlag(ft.GetFlag())
 	scanRanges := make([]ScanRange, 0, len(keyRanges)+1)
-	curScanStart := int64(math.MinInt64)
+	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
-		if curScanStart == math.MaxInt64 {
+		if i != 0 && curScanStart.IsNull() {
 			break
 		}
 
-		curScanEnd := int64(math.MaxInt64)
-		if i != len(keyRanges) {
+		curScanEnd := nullDatum()
+		if i < len(keyRanges)-1 {
 			if val := GetNextIntHandle(keyRange.EndKey, recordPrefix); val != nil {
-				curScanEnd = val.IntValue()
+				curScanEnd = types.NewIntDatum(val.IntValue())
 			}
 		}
 
-		if curScanStart >= curScanEnd {
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() && curScanStart.GetInt64() >= curScanEnd.GetInt64() {
 			continue
 		}
 
-		if !mysql.HasUnsignedFlag(ft.GetFlag()) || curScanStart >= 0 {
-			// primary key is signed or range is in [0, math.MaxInt64] when primary key is unsigned
-			scanRanges = append(scanRanges, newInt64Range(curScanStart, curScanEnd))
-		} else if curScanEnd < 0 {
-			// primary key is unsigned and range start > math.MaxInt64 && end <= math.MaxUint64
-			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), uint64(curScanEnd)))
-		} else if curScanEnd == 0 {
-			// primary key is unsigned and range  start > math.MaxInt64 && end is 0.
-			scanRanges = append(scanRanges, newUint64Range(uint64(curScanStart), math.MaxUint64))
+		if !unsigned {
+			// primary key is signed or range
+			scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		} else if !curScanStart.IsNull() && curScanStart.GetInt64() >= 0 {
+			// primary key is unsigned and range is in the right half side
+			scanRanges = append(scanRanges, newDatumRange(unsignedEdge(curScanStart), unsignedEdge(curScanEnd)))
+		} else if !curScanEnd.IsNull() && curScanEnd.GetInt64() <= 0 {
+			// primary key is unsigned and range is in the left half side
+			scanRanges = append(scanRanges, newDatumRange(unsignedEdge(curScanStart), unsignedEdge(curScanEnd)))
 		} else {
 			// primary key is unsigned and the start > math.MaxInt64 && end < math.MaxInt64
 			// we must split it to two ranges
 			scanRanges = append(scanRanges,
-				newUint64Range(0, uint64(curScanEnd)),
-				newUint64Range(uint64(curScanStart), math.MaxUint64),
+				newDatumRange(unsignedEdge(curScanStart), nullDatum()),
+				newDatumRange(nullDatum(), unsignedEdge(curScanEnd)),
 			)
 		}
 		curScanStart = curScanEnd
@@ -282,26 +281,23 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, maxSplit int) ([]ScanRange, error) {
+func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, splitCnt int) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
-	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, maxSplit)
+	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, splitCnt)
 	if err != nil {
 		return nil, err
 	}
 
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
-	var curScanStart types.Datum
-	curScanStart.SetNull()
+	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
 		if i != 0 && curScanStart.IsNull() {
 			break
 		}
 
-		var curScanEnd types.Datum
-		if i == len(keyRanges)-1 {
-			curScanEnd.SetNull()
-		} else {
+		curScanEnd := nullDatum()
+		if i != len(keyRanges)-1 {
 			curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
 		}
 
@@ -315,16 +311,16 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage, startKey, endKey kv.Key, maxSplit int) ([]kv.KeyRange, error) {
+func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage, startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
 	regionCache := store.GetRegionCache()
 	regionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
-	regionsPerRange := len(regionIDs) / maxSplit
-	oversizeCnt := len(regionIDs) % maxSplit
-	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), maxSplit))
+	regionsPerRange := len(regionIDs) / splitCnt
+	oversizeCnt := len(regionIDs) % splitCnt
+	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), splitCnt))
 	for len(regionIDs) > 0 {
 		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil), regionIDs[0])
 		if err != nil {

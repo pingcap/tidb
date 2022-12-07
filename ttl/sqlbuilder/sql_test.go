@@ -298,7 +298,7 @@ func TestFormatSQLDatum(t *testing.T) {
 				tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
 			}
 			if c.hex {
-				require.True(t, strings.HasPrefix(s, "x'"), s)
+				require.True(t, strings.HasPrefix(s, "x'"), "ft: %s, got: %s", c.ft, s)
 			}
 		}
 	}

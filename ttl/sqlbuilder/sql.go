@@ -40,8 +40,10 @@ func writeHex(in io.Writer, d types.Datum) error {
 }
 
 func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
-	switch d.Kind() {
-	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+	switch ft.GetType() {
+	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
+		return writeHex(restoreCtx.In, d)
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
