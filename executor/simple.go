@@ -937,7 +937,7 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 	return ""
 }
 
-func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (aUPL *alterUserPasswordLocking, returnErr error) {
+func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (aUPL *alterUserPasswordLocking, err error) {
 	alterUserInfo := &alterUserPasswordLocking{
 		failedLoginAttempts:            0,
 		passwordLockTime:               0,
@@ -956,7 +956,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	}
 	defer func() {
 		if closeErr := recordSet.Close(); closeErr != nil {
-			returnErr = closeErr
+			err = closeErr
 		}
 	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1082,10 +1082,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		plOptions.passwordExpired = "Y"
 	}
 
-	var (
-		userAttributesStr any = nil
-		userAttributes    []string
-	)
+	var userAttributes []string
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
@@ -1093,14 +1090,20 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
 	}
+	resourceGroupName := "default"
+	if s.ResourceGroupNameOption != nil {
+		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			resourceGroupName = s.ResourceGroupNameOption.Value
+		}
+	}
+	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
 	if PasswordLocking != "" {
 		userAttributes = append(userAttributes, PasswordLocking)
 	}
-	if len(userAttributes) > 0 {
-		userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
-	}
+	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
+
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
 		switch authTokenOption.Type {
@@ -1108,6 +1111,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			tokenIssuer = authTokenOption.Value
 		}
 	}
+
 	sql := new(strings.Builder)
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
@@ -1176,6 +1180,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		default:
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
+
 		recordTokenIssuer := tokenIssuer
 		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
 			err := fmt.Errorf("TOKEN_ISSUER is not needed for '%s' user", authPlugin)
@@ -1185,6 +1190,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			err := fmt.Errorf("TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
+
 		hostName := strings.ToLower(spec.User.Hostname)
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
 		// add Password_reuse_time value.
@@ -1267,7 +1273,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
-func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo,returnErr error) {
+func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
@@ -1279,7 +1285,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 	defer func() {
 		if closeErr := recordSet.Close(); closeErr != nil {
-			returnErr = closeErr
+			err = closeErr
 		}
 	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1394,7 +1400,7 @@ func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, err
 	return true, nil
 }
 
-func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (deleteNum int64, returnErr error) {
+func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (deleteNum int64, err error) {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1403,7 +1409,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	}
 	defer func() {
 		if closeErr := recordSet.Close(); closeErr != nil {
-			returnErr = closeErr
+			err = closeErr
 		}
 	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1418,9 +1424,9 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	return rows[0].GetInt64(0), nil
 }
 
-func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, returnErr error) {
+func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, err error) {
 	switch authPlugin {
-	case mysql.AuthNativePassword,"":
+	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1429,7 +1435,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		}
 		defer func() {
 			if closeErr := recordSet.Close(); closeErr != nil {
-				returnErr = closeErr
+				err = closeErr
 			}
 		}()
 		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1462,7 +1468,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 	}
 }
 
-func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, returnErr error) {
+func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, err error) {
 	switch authPlugin {
 	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
@@ -1477,7 +1483,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		}
 		defer func() {
 			if closeErr := recordSet.Close(); closeErr != nil {
-				returnErr = closeErr
+				err = closeErr
 			}
 		}()
 		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1510,11 +1516,10 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	default:
 		return false, ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
-
 }
 
 func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context, authPlugin string) (canUse bool, returnErr error) {
+	sctx sessionctx.Context, authPlugin string) (canUse bool, err error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
 	switch authPlugin {
 	case mysql.AuthNativePassword, "":
@@ -1527,7 +1532,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		}
 		defer func() {
 			if closeErr := recordSet.Close(); closeErr != nil {
-				returnErr = closeErr
+				err = closeErr
 			}
 		}()
 		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -1880,6 +1885,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
 		}
+		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
+		}
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
 		}
@@ -1931,6 +1939,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				continue
 			}
 		}
+
 		// Remove useless Password_locking from User_attributes.
 		err = deletePasswordLockingAttribute(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, passwordLockingInfo)
 		if err != nil {
@@ -1938,6 +1947,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			needRollback = true
 			continue
 		}
+
 		if len(privData) > 0 {
 			sql := new(strings.Builder)
 			sqlexec.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))

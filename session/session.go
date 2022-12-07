@@ -2644,6 +2644,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 		return err
 	}
+	s.sessionVars.ResourceGroupName = info.ResourceGroupName
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()
@@ -3263,7 +3264,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 10)
+	ses, err := createSessions(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -3337,14 +3338,23 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
+	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+		planReplayerWorkersSctx[i] = pworkerSes[i]
+	}
 	// setup plan replayer handle
-	dom.SetupPlanReplayerHandle(ses[6], ses[7])
+	dom.SetupPlanReplayerHandle(ses[6], planReplayerWorkersSctx)
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
-	dom.SetupDumpFileGCChecker(ses[8])
+	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
 	// setup historical stats worker
-	dom.SetupHistoricalStatsWorker(ses[9])
+	dom.SetupHistoricalStatsWorker(ses[8])
 	dom.StartHistoricalStatsWorker()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.

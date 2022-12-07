@@ -71,6 +71,7 @@ go_test(
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/storage",
+        "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//kv",
