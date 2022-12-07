@@ -962,7 +962,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
-	var userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
+	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
