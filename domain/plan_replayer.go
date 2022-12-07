@@ -416,6 +416,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		}
 		jsStats[tblID] = r
 	}
+	task.JSONTblStats = jsStats
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("dump plan replayer capture task result failed",
