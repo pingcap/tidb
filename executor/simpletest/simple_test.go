@@ -1465,6 +1465,25 @@ func TestUserReuseDifferentAuth(t *testing.T) {
 	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
 	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '1 0:0:1' DAY_SECOND) where user = 'testReuse' order by Password_timestamp asc limit 1`)
 	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
+
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustGetErrCode(`CREATE USER testReuse identified with 'mysql_clear_password' by 'test' PASSWORD REUSE INTERVAL 1 DAY`, 1524)
+	rootTK.MustGetErrCode(`CREATE USER testReuse identified with 'tidb_session_token' by 'test' PASSWORD REUSE INTERVAL 1 DAY`, 1524)
+	// no password.
+	rootTK.MustExec(`CREATE USER testReuse identified with 'auth_socket' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
+	rootTK.MustExec(`ALTER USER testReuse identified by 'test' `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
+	rootTK.MustQuery(`SELECT authentication_string FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(""))
+	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustExec(`drop USER testReuse`)
+	rootTK.MustExec(`CREATE USER testReuse identified with 'tidb_auth_token' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
+	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test' `, 3638)
+	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
+	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
+	rootTK.MustExec(`drop USER testReuse`)
 }
 
 func TestUserReuseMultiuser(t *testing.T) {

@@ -1267,7 +1267,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
-func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo,returnErr error) {
+func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, returnErr error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
@@ -1420,7 +1420,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 
 func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, returnErr error) {
 	switch authPlugin {
-	case mysql.AuthNativePassword,"":
+	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1464,7 +1464,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 
 func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, returnErr error) {
 	switch authPlugin {
-	case mysql.AuthNativePassword, "":
+	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
 		sql := new(strings.Builder)
 		// Exceeded the maximum number of saved items, only check the ones within the limit.
 		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
@@ -1517,7 +1517,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 	sctx sessionctx.Context, authPlugin string) (canUse bool, returnErr error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
 	switch authPlugin {
-	case mysql.AuthNativePassword, "":
+	case mysql.AuthNativePassword, mysql.AuthTiDBAuthToken, "":
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
 			mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
