@@ -584,6 +584,7 @@ import (
 	sqlTsiSecond          "SQL_TSI_SECOND"
 	sqlTsiWeek            "SQL_TSI_WEEK"
 	sqlTsiYear            "SQL_TSI_YEAR"
+	srid                  "SRID"
 	start                 "START"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsPersistent       "STATS_PERSISTENT"
@@ -3252,6 +3253,11 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
 	}
+|	"SRID" NUM
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSrid, Srid: uint32($2.(int64))}
+	}
+
 
 AutoRandomOpt:
 	{
@@ -6411,6 +6417,7 @@ UnReservedKeyword:
 |	"TTL_ENABLE"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"SRID"
 
 TiDBKeyword:
 	"ADMIN"

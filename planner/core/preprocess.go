@@ -1432,6 +1432,16 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	default:
 		// TODO: Add more types.
 	}
+
+	for _, opt := range colDef.Options {
+		if opt.Tp == ast.ColumnOptionSrid {
+			switch tp.GetType() {
+			case mysql.TypeGeometry:
+			default:
+				return ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")
+			}
+		}
+	}
 	return nil
 }
 

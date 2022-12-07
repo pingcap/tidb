@@ -65,6 +65,7 @@ const (
 	OnUpdateNowFlag    uint = 1 << 13 /* Field is set to NOW on UPDATE */
 	PartKeyFlag        uint = 1 << 14 /* Intern: Part of some keys */
 	NumFlag            uint = 1 << 15 /* Field is a num (for clients) */
+	SridFlag           uint = 1 << 16 /* Field has a SRID */
 
 	GroupFlag             uint = 1 << 15 /* Internal: Group field */
 	UniqueFlag            uint = 1 << 16 /* Internal: Used by sql_yacc */
@@ -161,4 +162,9 @@ func HasPreventNullInsertFlag(flag uint) bool {
 // HasEnumSetAsIntFlag checks if EnumSetAsIntFlag is set.
 func HasEnumSetAsIntFlag(flag uint) bool {
 	return (flag & EnumSetAsIntFlag) > 0
+}
+
+// HasSridFlag checks if SridFlag is set.
+func HasSridFlag(flag uint) bool {
+	return (flag & SridFlag) > 0
 }
