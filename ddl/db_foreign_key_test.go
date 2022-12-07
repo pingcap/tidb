@@ -26,8 +26,7 @@ func TestDuplicateForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t, t1")
 	// Foreign table.
 	tk.MustExec("create table t(id int key)")
 	// Create target table with duplicate fk.
@@ -38,8 +37,7 @@ func TestDuplicateForeignKey(t *testing.T) {
 	// Alter target table with duplicate fk.
 	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
 	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t, t1")
 }
 
 func TestTemporaryTableForeignKey(t *testing.T) {
