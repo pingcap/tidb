@@ -148,7 +148,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.AddGeneralPlanCacheStmt(e.sqlText, stmt)
 		return nil
 	}
-	return vars.AddPreparedStmt(e.ID, stmt)
+	return vars.AddPreparedStmt(ctx, e.ID, stmt)
 }
 
 // ExecuteExec represents an EXECUTE executor.

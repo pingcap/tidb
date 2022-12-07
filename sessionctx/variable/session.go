@@ -2062,12 +2062,15 @@ func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
-func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
+func (s *SessionVars) AddPreparedStmt(ctx context.Context, stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
-		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
-		if err != nil {
-			maxPreparedStmtCount = DefMaxPreparedStmtCount
+		maxPreparedStmtCount := int64(DefMaxPreparedStmtCount)
+		valStr, err := s.GetSessionOrGlobalSystemVar(ctx, MaxPreparedStmtCount)
+		if err == nil {
+			val, err := strconv.ParseInt(valStr, 10, 64)
+			if err == nil {
+				maxPreparedStmtCount = val
+			}
 		}
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
