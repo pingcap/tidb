@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "pooltask",
     srcs = [
-        "doc.go",
         "task.go",
         "task_manage.go",
         "task_manage_iterator.go",
