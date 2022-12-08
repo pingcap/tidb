@@ -3527,8 +3527,8 @@ def go_deps():
         name = "com_github_tiancaiamao_gp",
         build_file_proto_mode = "disable",
         importpath = "github.com/tiancaiamao/gp",
-        sum = "h1:d+J2X9QqF3XvljuIkMjOYfco2FNHICleA4jH85yxObY=",
-        version = "v0.0.0-20221208030109-6c0f9e6cc534",
+        sum = "h1:mSZWAwxF1yvLRNKzEzs2tNuZmtTotUjvwdt3/xbb/Lc=",
+        version = "v0.0.0-20221208073724-7c59693b66d9",
     )
 
     go_repository(

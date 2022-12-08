@@ -932,10 +932,8 @@ github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3 h1:f+jULpR
 github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3/go.mod h1:ON8b8w4BN/kE1EOhwT0o+d62W65a6aPw1nouo9LMgyY=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tiancaiamao/gp v0.0.0-20220929144814-fc029cb31326 h1:3VnFFnw6k1/Nv0y0MQCZRInIgnlUc3K1ijvCGSo0dk8=
-github.com/tiancaiamao/gp v0.0.0-20220929144814-fc029cb31326/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tiancaiamao/gp v0.0.0-20221208030109-6c0f9e6cc534 h1:d+J2X9QqF3XvljuIkMjOYfco2FNHICleA4jH85yxObY=
-github.com/tiancaiamao/gp v0.0.0-20221208030109-6c0f9e6cc534/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tiancaiamao/gp v0.0.0-20221208073724-7c59693b66d9 h1:mSZWAwxF1yvLRNKzEzs2tNuZmtTotUjvwdt3/xbb/Lc=
+github.com/tiancaiamao/gp v0.0.0-20221208073724-7c59693b66d9/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tikv/client-go/v2 v2.0.3-0.20221205084317-ad59ca833a78 h1:Nr2EhvqkOE9xFyU7LV9c9EbsgN3OzVALdbfobK7Fmn4=
 github.com/tikv/client-go/v2 v2.0.3-0.20221205084317-ad59ca833a78/go.mod h1:MDT4J9LzgS7Bj1DnEq6Gk/puy6mp8TgUC92zGEVVLLg=
 github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07 h1:ckPpxKcl75mO2N6a4cJXiZH43hvcHPpqc9dh1TmH1nc=
