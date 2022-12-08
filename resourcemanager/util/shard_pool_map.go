@@ -53,7 +53,7 @@ func (s *ShardPoolMap) Iter(fn func(pool *PoolContainer)) {
 }
 
 type poolMap struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	poolMap map[string]*PoolContainer
 }
 
@@ -72,8 +72,8 @@ func (p *poolMap) Add(key string, pool *PoolContainer) error {
 }
 
 func (p *poolMap) Iter(fn func(pool *PoolContainer)) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	for _, pool := range p.poolMap {
 		fn(pool)
 	}
