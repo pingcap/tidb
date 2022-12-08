@@ -112,6 +112,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table tt(id int primary key)")
 	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t set c2=1")
 	tk.MustExec("create table t1 like ctwl_db.t")
 	tk.MustExec("insert into t1 set c2=11")
@@ -297,7 +298,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int, index(b))")
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
@@ -382,7 +383,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
 	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
-	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table1 (a int, b int, index(b))")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
