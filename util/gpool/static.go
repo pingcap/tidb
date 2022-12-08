@@ -26,9 +26,6 @@ import (
 const bucketSize = 100
 const win = time.Second * 10
 
-// DoneFunc is done function.
-type DoneFunc func()
-
 type counterCache struct {
 	time time.Time
 	val  uint64
