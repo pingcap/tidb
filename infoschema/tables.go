@@ -1324,8 +1324,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
 	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
-	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
-	{name: stmtsummary.PlanHint, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
+	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
+	{name: stmtsummary.PlanHint, tp: mysql.TypeVarchar, size: 64, comment: "Sampled plan hint"},
 }
 
 var tableStorageStatsCols = []columnInfo{
