@@ -99,18 +99,37 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-// SetGcEnableStatus sets the status of GC.
-// gc.ratio-threshold = -1.0, which represents disable gc in TiKV.
-// gc.ratio-threshold = 1.1 is the default value in TiKV.
-func SetGcEnableStatus(ctx sqlexec.RestrictedSQLExecutor, enable bool) error {
-	ratio := 1.1
-	if !enable {
-		ratio = -1.0
+func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
+	valStr := "show config where name = 'log-backup.enable' and type = 'tikv'"
+	rows, fields, errSQL := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		valStr,
+	)
+	if errSQL != nil {
+		return "", errSQL
+	}
+	if len(rows) == 0 {
+		// no rows mean not support log backup.
+		return "", nil
 	}
 
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-	_, _, err := ctx.ExecRestrictedSQL(internalCtx, nil, "set config tikv `gc.ratio-threshold`=%?", ratio)
-	return errors.Trace(err)
+	d := rows[0].GetDatum(3, &fields[3].Column.FieldType)
+	return d.ToString()
+}
+
+func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
+	_, _, err := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		"set config tikv `gc.ratio-threshold`=%?",
+		ratio,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("set config tikv gc.ratio-threshold", zap.String("ratio", ratio))
+	return nil
 }
 
 // LogBackupTaskCountInc increases the count of log backup task.

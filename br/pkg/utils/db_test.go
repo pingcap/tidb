@@ -115,3 +115,37 @@ func TestCheckLogBackupTaskExist(t *testing.T) {
 	utils.LogBackupTaskCountDec()
 	require.False(t, utils.CheckLogBackupTaskExist())
 }
+
+func TestGc(t *testing.T) {
+	// config format:
+	// MySQL [(none)]> show config where name = 'gc.ratio-threshold';
+	// +------+-------------------+--------------------+-------+
+	// | Type | Instance          | Name               | Value |
+	// +------+-------------------+--------------------+-------+
+	// | tikv | 172.16.6.46:3460  | gc.ratio-threshold | 1.1   |
+	// | tikv | 172.16.6.47:3460  | gc.ratio-threshold | 1.1   |
+	// +------+-------------------+--------------------+-------+
+	fields := make([]*ast.ResultField, 4)
+	tps := []*types.FieldType{
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeFloat),
+	}
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *tps[i]
+		fields[i] = rf
+	}
+	rows := make([]chunk.Row, 0, 2)
+	row := chunk.MutRowFromValues("tikv", " 127.0.0.1:20161", "log-backup.enable", 1.1).ToRow()
+	rows = append(rows, row)
+	row = chunk.MutRowFromValues("tikv", " 127.0.0.1:20162", "log-backup.enable", 1.1).ToRow()
+	rows = append(rows, row)
+
+	s := &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	ratio, err := utils.GetGcRatio(s)
+	require.Nil(t, err)
+	require.Equal(t, ratio, 1.1)
+}
