@@ -222,6 +222,10 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.tracker = str[begin+len("8001]") : end]
 		return nil
 	}
+	// They are just common background task and not related to the oom.
+	if entry.Message == "SetTiFlashGroupConfig" {
+		return nil
+	}
 
 	h.mu.Lock()
 	h.tracker = entry.Message

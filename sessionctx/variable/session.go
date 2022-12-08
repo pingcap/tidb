@@ -1325,6 +1325,9 @@ type SessionVars struct {
 
 	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
 	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

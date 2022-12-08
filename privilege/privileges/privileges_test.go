@@ -515,6 +515,12 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
+	tk.MustExec(`ALTER USER 'semuser1' RESOURCE GROUP 'rg1'`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
+
+	tk.MustExec(`ALTER USER 'semuser1' COMMENT 'comment1'`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"metadata\": {\"comment\": \"comment1\"}, \"resource_group\": \"rg1\"}"))
+
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil))
 	tk.MustExec("ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	tk.MustExec("ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
@@ -1124,6 +1130,14 @@ func TestCreateDropUser(t *testing.T) {
 	tk.MustExec(`SET ROLE tcd2;`)
 	tk.MustExec(`CREATE USER tcd3`)
 	tk.MustExec(`DROP USER tcd3`)
+
+	tk.MustExec(`CREATE USER usr1`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"default\"}"))
+	tk.MustExec(`DROP USER usr1`)
+
+	tk.MustExec(`CREATE USER usr1 RESOURCE GROUP 'rg1'`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
+	tk.MustExec(`DROP USER usr1`)
 }
 
 func TestConfigPrivilege(t *testing.T) {
