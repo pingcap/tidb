@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/resourcemanage"
-	"github.com/pingcap/tidb/resourcemanage/pooltask"
-	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager"
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
@@ -53,8 +53,6 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	state         atomic.Int32
 	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
-	limiter       atomic.Bool
-	limiterTTL    atomicutil.Time   // it is relation with limiter
 	waitingTask   atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
 
@@ -82,7 +80,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	err := resourcemanage.GlobalResourceManage.Register(result, name, component)
+	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +133,8 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 // Tune changes the capacity of this pool, note that it is noneffective to the infinite or pre-allocation pool.
 func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 	if isLimit {
-		p.limiter.Store(true)
-		p.limiterTTL.Store(time.Now().Add(p.options.LimitDuration))
+		p.OnLimit()
+		p.SetLastTuneTs(time.Now().Add(p.options.LimitDuration))
 	}
 	capacity := p.Cap()
 	if capacity == -1 || size <= 0 || size == capacity {
@@ -195,13 +193,7 @@ func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 }
 
 func (p *Pool[T, U, C, CT, TF]) isLimit() bool {
-	if p.limiter.Load() {
-		if time.Now().Before(p.limiterTTL.Load()) {
-			return true
-		}
-		p.limiter.Store(false)
-	}
-	return false
+	return p.IsLimit()
 }
 
 func (p *Pool[T, U, C, CT, TF]) addWaitingTask() {

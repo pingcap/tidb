@@ -17,7 +17,7 @@ package limiter
 import (
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
 

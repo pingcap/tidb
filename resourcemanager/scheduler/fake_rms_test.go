@@ -14,7 +14,7 @@
 
 package scheduler
 
-import "github.com/pingcap/tidb/resourcemanage/util"
+import "github.com/pingcap/tidb/resourcemanager/util"
 
 type FakeResourceManage struct {
 	scheduler Scheduler

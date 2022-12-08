@@ -26,7 +26,8 @@ import (
 func (r *ResourceManager) schedule() {
 	r.poolMap.Iter(func(pool *util.PoolContainer) {
 		cmd := r.schedulePool(pool)
-		r.exec(pool, cmd)
+		isLimit := r.limitPool(pool)
+		r.exec(pool, cmd, isLimit)
 	})
 }
 
@@ -43,8 +44,17 @@ func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Comma
 	return scheduler.Hold
 }
 
-func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
-	if cmd == scheduler.Hold {
+func (r *ResourceManager) limitPool(pool *util.PoolContainer) bool {
+	for _, lim := range r.limiter {
+		if lim.Limit(pool.Component, pool.Pool) {
+			return true
+		}
+	}
+	return false
+}
+
+func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command, isLimit bool) {
+	if cmd == scheduler.Hold && !isLimit {
 		return
 	}
 	if time.Since(pool.Pool.LastTunerTs()) > 200*time.Millisecond {
@@ -55,15 +65,18 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 			log.Info("downclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
-				zap.String("name", pool.Pool.Name()))
-			pool.Pool.Tune(concurrency)
+				zap.String("name", pool.Pool.Name()),
+				zap.Bool("isLimit", isLimit))
+			pool.Pool.Tune(concurrency, isLimit)
 		case scheduler.Overclock:
 			concurrency := con + 1
 			log.Info("overclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
-				zap.String("name", pool.Pool.Name()))
-			pool.Pool.Tune(concurrency)
+
+				zap.String("name", pool.Pool.Name()),
+				zap.Bool("isLimit", isLimit))
+			pool.Pool.Tune(concurrency, isLimit)
 		}
 	}
 }

@@ -19,7 +19,7 @@ import "time"
 // GorotinuePool is a pool interface
 type GorotinuePool interface {
 	Release()
-	Tune(size int)
+	Tune(size int, isLimit bool)
 	LastTunerTs() time.Time
 	MaxInFlight() int64
 	InFlight() int64

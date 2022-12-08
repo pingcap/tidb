@@ -6,10 +6,10 @@ go_library(
         "bbr_limiter.go",
         "limiter.go",
     ],
-    importpath = "github.com/pingcap/tidb/resourcemanage/limiter",
+    importpath = "github.com/pingcap/tidb/resourcemanager/limiter",
     visibility = ["//visibility:public"],
     deps = [
-        "//resourcemanage/util",
+        "//resourcemanager/util",
         "//util/cpu",
     ],
 )

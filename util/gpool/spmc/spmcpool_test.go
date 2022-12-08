@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/resourcemanage/pooltask"
-	rmutil "github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/stretchr/testify/require"

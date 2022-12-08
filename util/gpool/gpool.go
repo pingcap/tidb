@@ -50,6 +50,7 @@ type BasePool struct {
 	limiterTTL atomicutil.Time // it is relation with limiter
 	statistic  *Statistic
 	name       string
+	limit      atomic.Bool
 	generator  atomic.Uint64
 }
 
@@ -134,4 +135,25 @@ func (p *BasePool) LastTunerTs() time.Time {
 // SetLastTuneTs sets the last time when the pool was tuned.
 func (p *BasePool) SetLastTuneTs(t time.Time) {
 	p.lastTuneTs.Store(t)
+}
+
+// OnLimit is to be in limit mode.
+func (p *BasePool) OnLimit() {
+	p.limit.Store(true)
+}
+
+// offLimit is to be in non-limit mode.
+func (p *BasePool) offLimit() {
+	p.limit.Store(false)
+}
+
+// IsLimit is to check if in limit mode.
+func (p *BasePool) IsLimit() bool {
+	if !p.limit.Load() {
+		if time.Now().Before(p.limiterTTL.Load()) {
+			return true
+		}
+		p.limit.Store(false)
+	}
+	return false
 }

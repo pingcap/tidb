@@ -16,7 +16,7 @@ package spmc
 
 import (
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/resourcemanage/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )

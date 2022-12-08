@@ -9,10 +9,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/resourcemanager",
     visibility = ["//visibility:public"],
     deps = [
+        "//resourcemanager/limiter",
         "//resourcemanager/scheduler",
         "//resourcemanager/util",
         "//util",
         "//util/cpu",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],

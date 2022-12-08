@@ -17,6 +17,7 @@ package resourcemanager
 import (
 	"time"
 
+	"github.com/pingcap/tidb/resourcemanager/limiter"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -29,6 +30,7 @@ var GlobalResourceManager = NewResourceManger()
 // ResourceManager is a resource manager
 type ResourceManager struct {
 	poolMap     *util.ShardPoolMap
+	limiter     []limiter.Limiter
 	scheduler   []scheduler.Scheduler
 	cpuObserver *cpu.Observer
 	exitCh      chan struct{}
@@ -37,12 +39,15 @@ type ResourceManager struct {
 
 // NewResourceManger is to create a new resource manager
 func NewResourceManger() *ResourceManager {
-	sc := make([]scheduler.Scheduler, 0, 1)
-	sc = append(sc, scheduler.NewCPUScheduler())
+	li := make([]limiter.Limiter, 0, 1)
+	li = append(li, limiter.NewBBRLimiter(80))
+	sc := make([]scheduler.Scheduler, 0, 2)
+	sc = append(sc, scheduler.NewCPUScheduler(), scheduler.NewGradient2Scheduler())
 	return &ResourceManager{
-		cpuObserver: cpu.NewCPUObserver(),
-		exitCh:      make(chan struct{}),
 		poolMap:     util.NewShardPoolMap(),
+		cpuObserver: cpu.NewCPUObserver(),
+		limiter:     li,
+		exitCh:      make(chan struct{}),
 		scheduler:   sc,
 	}
 }

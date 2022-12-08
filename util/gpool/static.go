@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanage/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/window"
 )

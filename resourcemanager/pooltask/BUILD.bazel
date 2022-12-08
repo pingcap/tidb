@@ -8,7 +8,7 @@ go_library(
         "task_manage_iterator.go",
         "task_manage_scheduler.go",
     ],
-    importpath = "github.com/pingcap/tidb/resourcemanage/pooltask",
+    importpath = "github.com/pingcap/tidb/resourcemanager/pooltask",
     visibility = ["//visibility:public"],
     deps = [
         "@org_golang_x_sys//cpu",

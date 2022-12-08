@@ -15,7 +15,7 @@
 package limiter
 
 import (
-	"github.com/pingcap/tidb/resourcemanage/util"
+	"github.com/pingcap/tidb/resourcemanager/util"
 )
 
 // Limiter is a limiter interface
