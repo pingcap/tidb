@@ -57,8 +57,8 @@ type FlatPlanTree []*FlatOperator
 // GetSelectPlan skips Insert, Delete, and Update at the beginning of the FlatPlanTree and the foreign key check/cascade plan at the end of the FlatPlanTree.
 // Note:
 //
-//	It returns a reference to the original FlatPlanTree and the offset, please avoid modifying the returned value.
-//	Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
+//	It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+//	The second return value is the offset. Because the returned FlatPlanTree is a part of the original slice, you need to minus them by the offset when using the returned FlatOperator.Depth and FlatOperator.ChildrenIdx.
 func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 	if len(e) == 0 {
 		return nil, 0
