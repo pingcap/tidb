@@ -33,12 +33,14 @@ func (NilContext) GetContext() any {
 }
 
 const (
-	// PendingTask is a pooltask waiting to start
+	// PendingTask is a task waiting to start
 	PendingTask int32 = iota
-	// RunningTask is a pooltask running
+	// RunningTask is a task running
 	RunningTask
-	// StopTask is a stop pooltask
+	// StopTask is a stop task
 	StopTask
+	// PausingTask is a task running
+	PausingTask
 )
 
 // TaskBox is a box which contains all info about pooltask.

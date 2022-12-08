@@ -35,11 +35,10 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 }
 
 type meta struct {
-	stats       *list.List
-	createTs    time.Time
-	origin      int32
-	concurrency atomic.Int32
-	running     atomic.Int32
+	stats    *list.List
+	createTs time.Time
+	origin   int32
+	running  atomic.Int32
 }
 
 func newStats(concurrency int32) *meta {
@@ -49,14 +48,6 @@ func newStats(concurrency int32) *meta {
 		origin:   concurrency,
 	}
 	return s
-}
-
-func (m *meta) setConcurrency(concurrency int32) {
-	m.concurrency.Store(concurrency)
-}
-
-func (m *meta) getConcurrency() int32 {
-	return m.concurrency.Load()
 }
 
 func (m *meta) getOriginConcurrency() int32 {

@@ -148,10 +148,13 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 			return
 		}
 		p.cond.Broadcast()
+		if tid, boostTask := p.taskManager.Boost(); boostTask != nil {
+			p.taskManager.AddSubTask(tid, boostTask.Clone())
+			p.taskCh <- boostTask
+		}
 	}
-	if tid, boostTask := p.taskManager.Boost(); boostTask != nil {
-		p.taskManager.AddSubTask(tid, boostTask)
-		p.taskCh <- boostTask
+	if size < capacity {
+		p.taskManager.Decrease()
 	}
 }
 
