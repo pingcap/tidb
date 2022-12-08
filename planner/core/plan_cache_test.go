@@ -176,3 +176,35 @@ func TestIssue38710(t *testing.T) {
 	require.Equal(t, 2, len(rows.Rows()))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // can not use the cache because the types for @a and @b are not equal to the cached plan
 }
+
+func TestPlanCacheDiagInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, key(a), key(b))")
+
+	tk.MustExec("prepare stmt from 'select * from t where a in (select a from t)'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+
+	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
+
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+
+	tk.MustExec("prepare stmt from 'select * from t limit ?, 1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?, 10' is un-cacheable"))
+
+	tk.MustExec("prepare stmt from 'select * from t order by ?'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'order by ?' is un-cacheable"))
+
+	tk.MustExec("prepare stmt from 'select * from t where a=?'")
+	tk.MustExec("set @a='123'")
+	tk.MustExec("execute stmt using @a") // '123' -> 123
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '123' may be converted to INT"))
+
+	tk.MustExec("prepare stmt from 'select * from t where a=? and a=?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute stmt using @a, @b") // a=1 and a=1 -> a=1
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
+}

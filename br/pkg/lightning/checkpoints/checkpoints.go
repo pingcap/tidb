@@ -262,6 +262,29 @@ func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
 	}
 }
 
+func (ccp *ChunkCheckpoint) UnfinishedSize() int64 {
+	if ccp.FileMeta.Compression == mydump.CompressionNone {
+		return ccp.Chunk.EndOffset - ccp.Chunk.Offset
+	}
+	return ccp.FileMeta.FileSize - ccp.Chunk.RealOffset
+}
+
+func (ccp *ChunkCheckpoint) TotalSize() int64 {
+	if ccp.FileMeta.Compression == mydump.CompressionNone {
+		return ccp.Chunk.EndOffset - ccp.Key.Offset
+	}
+	// TODO: compressed file won't be split into chunks, so using FileSize as TotalSize is ok
+	//  change this when we support split compressed file into chunks
+	return ccp.FileMeta.FileSize
+}
+
+func (ccp *ChunkCheckpoint) FinishedSize() int64 {
+	if ccp.FileMeta.Compression == mydump.CompressionNone {
+		return ccp.Chunk.Offset - ccp.Key.Offset
+	}
+	return ccp.Chunk.RealOffset - ccp.Key.Offset
+}
+
 type EngineCheckpoint struct {
 	Status CheckpointStatus
 	Chunks []*ChunkCheckpoint // a sorted array

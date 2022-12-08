@@ -218,14 +218,14 @@ id	estRows	task	access object	operator info
 Projection	1.00	root		1->Column#6
 └─StreamAgg	1.00	root		funcs:count(Column#14)->Column#9
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:count(test.t1.c1)->Column#14
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#14
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#6
 └─StreamAgg	1.00	root		funcs:count(Column#13)->Column#8
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:count(test.t1.c1)->Column#13
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#13
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select count(c2) from t1 group by c3) k;
 id	estRows	task	access object	operator info

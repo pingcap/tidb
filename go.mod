@@ -19,6 +19,7 @@ require (
 	github.com/charithe/durationcheck v0.0.9
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
+	github.com/cloudfoundry/gosigar v1.3.4
 	github.com/cockroachdb/errors v1.8.1
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
 	github.com/coocood/freecache v1.2.1
@@ -32,7 +33,7 @@ require (
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
 	github.com/fsouza/fake-gcs-server v1.19.0
-	github.com/go-sql-driver/mysql v1.6.0
+	github.com/go-sql-driver/mysql v1.7.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
@@ -86,7 +87,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.3-0.20221129032117-857772dd0907
+	github.com/tikv/client-go/v2 v2.0.3-0.20221205084317-ad59ca833a78
 	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
@@ -110,7 +111,7 @@ require (
 	golang.org/x/net v0.2.0
 	golang.org/x/oauth2 v0.2.0
 	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.2.0
+	golang.org/x/sys v0.3.0
 	golang.org/x/term v0.2.0
 	golang.org/x/text v0.4.0
 	golang.org/x/time v0.2.0

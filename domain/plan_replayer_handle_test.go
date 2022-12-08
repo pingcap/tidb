@@ -89,8 +89,11 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	tk.MustQuery("select * from t;")
 	task := prHandle.DrainTask()
 	require.NotNil(t, task)
-	success := prHandle.HandlePlanReplayerDumpTask(task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
 	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
+	require.Equal(t, prHandle.GetTaskStatus().GetFinishedTaskStatusLen(), 1)
 	// assert memory task consumed
 	require.Len(t, prHandle.GetTasks(), 0)
 
