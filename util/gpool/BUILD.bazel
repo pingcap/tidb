@@ -13,5 +13,6 @@ go_library(
         "//resourcemanage/pooltask",
         "//util/mathutil",
         "//util/window",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

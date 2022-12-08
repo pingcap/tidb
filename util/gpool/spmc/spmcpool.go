@@ -48,7 +48,6 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
 	taskManager   pooltask.TaskManager[T, U, C, CT, TF]
-	generator     atomic.Uint64
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
@@ -74,7 +73,6 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		options:     opts,
 	}
 	result.SetName(name)
-	result.SetStatistic(gpool.NewStatistic())
 	result.state.Store(int32(gpool.OPENED))
 	result.workerCache.New = func() interface{} {
 		return &goWorker[T, U, C, CT, TF]{

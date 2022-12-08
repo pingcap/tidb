@@ -18,6 +18,8 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
+
+	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -44,17 +46,22 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	name      string
-	generator atomic.Uint64
-	statistic *Statistic
+	lastTuneTs atomicutil.Time
+	limiterTTL atomicutil.Time // it is relation with limiter
+	statistic  *Statistic
+	name       string
+	generator  atomic.Uint64
 }
 
 // NewBasePool is to create a new BasePool.
 func NewBasePool() BasePool {
-	return BasePool{}
+	return BasePool{
+		statistic:  NewStatistic(),
+		lastTuneTs: *atomicutil.NewTime(time.Now()),
+		limiterTTL: *atomicutil.NewTime(time.Now()),
+	}
 }
 
-// SetName is to set name.
 func (p *BasePool) SetName(name string) {
 	p.name = name
 }
@@ -62,11 +69,6 @@ func (p *BasePool) SetName(name string) {
 // Name is to get name.
 func (p *BasePool) Name() string {
 	return p.name
-}
-
-// NewTaskID is to get a new task ID.
-func (p *BasePool) NewTaskID() uint64 {
-	return p.generator.Add(1)
 }
 
 // SetStatistic is to set Statistic
@@ -117,4 +119,19 @@ func (p *BasePool) ShortRTT() uint64 {
 // UpdateLongRTT is to update long rtt.
 func (p *BasePool) UpdateLongRTT(fn func(float64) float64) {
 	p.statistic.UpdateLongRTT(fn)
+}
+
+// NewTaskID is to get new task id.
+func (p *BasePool) NewTaskID() uint64 {
+	return p.generator.Add(1)
+}
+
+// LastTunerTs returns the last time when the pool was tuned.
+func (p *BasePool) LastTunerTs() time.Time {
+	return p.lastTuneTs.Load()
+}
+
+// SetLastTuneTs sets the last time when the pool was tuned.
+func (p *BasePool) SetLastTuneTs(t time.Time) {
+	p.lastTuneTs.Store(t)
 }
