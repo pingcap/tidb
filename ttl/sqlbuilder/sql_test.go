@@ -298,7 +298,7 @@ func TestFormatSQLDatum(t *testing.T) {
 				tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
 			}
 			if c.hex {
-				require.True(t, strings.HasPrefix(s, "x'"), s)
+				require.True(t, strings.HasPrefix(s, "x'"), "ft: %s, got: %s", c.ft, s)
 			}
 		}
 	}
@@ -499,7 +499,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
@@ -513,8 +513,8 @@ func TestScanQueryGenerator(t *testing.T) {
 			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: model.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
 		TimeColumn: &model.ColumnInfo{
@@ -570,11 +570,11 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]interface{}{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY `id` FROM `test`.`t1` WHERE `id` > 1 AND `id` <= 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY `id` FROM `test`.`t1` WHERE `id` >= 1 AND `id` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					result(d(10), 3), 5,
-					"SELECT LOW_PRIORITY `id` FROM `test`.`t1` WHERE `id` > 10 AND `id` <= 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `id` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `id` FROM `test`.`t1` WHERE `id` > 10 AND `id` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `id` ASC LIMIT 5",
 				},
 				{
 					result(d(15), 4), 5,
@@ -663,39 +663,39 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'0e' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 5), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "z", []byte{0x02}), 4), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x01}), 5), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "c", []byte{0x12}), 4), 5,
-					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 3 AND (`a`, `b`, `c`) <= (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 3 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(5, "e", []byte{0xa1}), 4), 5, "",
@@ -735,7 +735,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
@@ -749,8 +749,8 @@ func TestBuildDeleteSQL(t *testing.T) {
 			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
 			Name:      model.NewCIStr("time"),
