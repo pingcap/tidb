@@ -2717,7 +2717,7 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 		return err
 	}
 	// If the lock status in the cache is Unlock, the automatic unlock is skipped.
-	// If memory synchronization is slow and there is a lock in the database, it will be processed upon successful login
+	// If memory synchronization is slow and there is a lock in the database, it will be processed upon successful login.
 	if !lockStatusInMemory {
 		return nil
 	}
