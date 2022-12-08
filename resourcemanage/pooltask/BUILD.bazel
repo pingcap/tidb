@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "pooltask",
+    srcs = [
+        "doc.go",
+        "task.go",
+        "task_manage.go",
+        "task_manage_iterator.go",
+        "task_manage_scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanage/pooltask",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@org_golang_x_sys//cpu",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

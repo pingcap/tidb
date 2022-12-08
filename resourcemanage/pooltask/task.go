@@ -69,8 +69,8 @@ func (t *TaskBox[T, U, C, CT, TF]) ConstArgs() C {
 	return t.constArgs
 }
 
-// GeTaskCh is to get the pooltask channel.
-func (t *TaskBox[T, U, C, CT, TF]) GeTaskCh() chan Task[T] {
+// GetTaskCh is to get the pooltask channel.
+func (t *TaskBox[T, U, C, CT, TF]) GetTaskCh() chan Task[T] {
 	return t.task
 }
 
@@ -116,19 +116,21 @@ type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 
 // TaskController is a controller that can control or watch the pool.
 type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
-	pool   GPool[T, U, C, CT, TF]
-	close  chan struct{}
-	wg     *sync.WaitGroup
-	taskID uint64
+	pool     GPool[T, U, C, CT, TF]
+	close    chan struct{}
+	wg       *sync.WaitGroup
+	taskID   uint64
+	resultCh chan U
 }
 
 // NewTaskController create a controller to deal with pooltask's statue.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
-		pool:   p,
-		taskID: taskID,
-		close:  closeCh,
-		wg:     wg,
+		pool:     p,
+		taskID:   taskID,
+		close:    closeCh,
+		wg:       wg,
+		resultCh: resultCh,
 	}
 }
 
@@ -137,6 +139,7 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 	<-t.close
 	t.wg.Wait()
 	t.pool.DeleteTask(t.taskID)
+	close(t.resultCh)
 }
 
 // IsProduceClose is to judge whether the producer is completed.

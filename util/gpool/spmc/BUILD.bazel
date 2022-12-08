@@ -12,9 +12,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//resourcemanage",
+        "//resourcemanage/pooltask",
         "//resourcemanage/util",
-        "//resourcemanager:resourcemanage",
-        "//resourcemanager/pooltask",
         "//util/gpool",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -35,8 +34,7 @@ go_test(
     embed = [":spmc"],
     race = "on",
     deps = [
-        "//resourcemanage",
-        "//resourcemanager/pooltask",
+        "//resourcemanage/pooltask",
         "//resourcemanage/util",
         "//testkit/testsetup",
         "//util",

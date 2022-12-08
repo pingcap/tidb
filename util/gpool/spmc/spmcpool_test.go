@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/resourcemanage/pooltask"
 	rmutil "github.com/pingcap/tidb/resourcemanage/util"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func TestPool(t *testing.T) {
 	myArgs := ConstArgs{a: 10}
 	// init the pool
 	// input type， output type, constArgs type
-	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("test", 10, rmutil.UNKNOWN)
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
 	require.NoError(t, err)
 	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
 		return task + constArgs.a
@@ -79,7 +79,7 @@ func TestPoolWithEnoughCapacity(t *testing.T) {
 		poolsize    = 30
 		concurrency = 6
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", poolsize, rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", poolsize, rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {

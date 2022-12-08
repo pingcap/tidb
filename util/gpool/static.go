@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/resourcemanage/pooltask"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/window"
 )
@@ -172,7 +173,7 @@ func (s *Statistic) ShortRTT() uint64 {
 }
 
 // Static is to static the job.
-func (s *Statistic) Static() (DoneFunc, error) {
+func (s *Statistic) Static() (pooltask.DoneFunc, error) {
 	s.inFlight.Add(1)
 	start := time.Now().UnixNano()
 	ms := float64(time.Millisecond)

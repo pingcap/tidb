@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/resourcemanage/pooltask"
 	rmutl "github.com/pingcap/tidb/resourcemanage/util"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
 )

@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanage"
+	"github.com/pingcap/tidb/resourcemanage/pooltask"
 	"github.com/pingcap/tidb/resourcemanage/util"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
@@ -47,7 +47,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	options       *Options
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
-	taskManager   gpool.TaskManager[T, U, C, CT, TF]
+	taskManager   pooltask.TaskManager[T, U, C, CT, TF]
 	generator     atomic.Uint64
 	capacity      atomic.Int32
 	running       atomic.Int32
@@ -60,7 +60,6 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
-
 func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name string, size int32, component util.Component, options ...Option) (*Pool[T, U, C, CT, TF], error) {
 	opts := loadOptions(options...)
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
@@ -71,7 +70,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
-		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](size),
+		taskManager: pooltask.NewTaskManager[T, U, C, CT, TF](size),
 		options:     opts,
 	}
 	result.SetName(name)
@@ -267,7 +266,6 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
 	p.taskManager.CreatTask(taskID, int32(opt.Concurrency))
