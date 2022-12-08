@@ -135,6 +135,9 @@ type DBStore struct {
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
 	Vars                       map[string]string `toml:"-" json:"vars"`
+
+	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
+	UUID         string         `toml:"-" json:"-"`
 }
 
 type Config struct {
