@@ -1545,7 +1545,7 @@ func sha1Password(s string) []byte {
 	return hashStage3
 }
 
-func TestFailedLoginTrackingAlter(t *testing.T) {
+func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	rootTK := testkit.NewTestKit(t, store)
 	sql := new(strings.Builder)
