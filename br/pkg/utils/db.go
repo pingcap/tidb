@@ -100,7 +100,7 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 }
 
 func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
-	valStr := "show config where name = 'log-backup.enable' and type = 'tikv'"
+	valStr := "show config where name = 'gc.ratio-threshold' and type = 'tikv'"
 	rows, fields, errSQL := ctx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
 		nil,
@@ -126,9 +126,9 @@ func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 		ratio,
 	)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "failed to set config `gc.ratio-threshold`=%s", ratio)
 	}
-	log.Info("set config tikv gc.ratio-threshold", zap.String("ratio", ratio))
+	log.Warn("set config tikv gc.ratio-threshold", zap.String("ratio", ratio))
 	return nil
 }
 
