@@ -2621,7 +2621,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
+	if s.sessionVars.ResourceGroupName, err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars); err != nil {
 		switch err.(type) {
 		case *privileges.ErrInSandBoxMode:
 			// Enter sandbox mode, only execute statement for resetting password.
