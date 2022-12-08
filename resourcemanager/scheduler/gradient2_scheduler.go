@@ -28,7 +28,9 @@ const (
 	maxOverloadConcurrencyDelta int = 2 // max concurrency = user setting concurrency + delta
 )
 
-// Gradient2Scheduler is a scheduler that uses the gradient of the queue length
+// Gradient2Scheduler is a scheduler using Gradient2 algorithm.
+// Gradient2 attempts to reduce the delay by obeserving the long and short window RTT and queue length to predict
+// reasonable concurrency. Using average algorithm to smooth the result for making scheduler more robust.
 type Gradient2Scheduler struct {
 	smoothing      float64
 	estimatedLimit int16
