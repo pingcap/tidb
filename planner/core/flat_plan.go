@@ -72,8 +72,8 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 			if hasDML {
 				for j := i; j < len(e); j++ {
 					switch e[j].Origin.(type) {
-					// The later plans are belong to foreign key check/cascade plans, doesn't belong to select plan, just skip it.
 					case *FKCheck, *FKCascade:
+						// The later plans are belong to foreign key check/cascade plans, doesn't belong to select plan, just skip it.
 						return e[i:j], i
 					}
 				}
