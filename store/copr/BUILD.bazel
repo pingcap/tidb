@@ -76,6 +76,7 @@ go_test(
         "//testkit/testsetup",
         "//util/paging",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_stathat_consistent//:consistent",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//testutils",
