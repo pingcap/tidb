@@ -54,8 +54,7 @@ type FlatPhysicalPlan struct {
 // depth-first traversal plus some special rule for some operators.
 type FlatPlanTree []*FlatOperator
 
-// GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
-// GetSelectPlan also skips foreign key check/cascade plan.
+// GetSelectPlan skips Insert, Delete, and Update at the beginning of the FlatPlanTree and the foreign key check/cascade plan at the end of the FlatPlanTree.
 // Note:
 //
 //	It returns a reference to the original FlatPlanTree and the offset, please avoid modifying the returned value.
