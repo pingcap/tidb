@@ -172,7 +172,7 @@ func (s *Statistic) ShortRTT() uint64 {
 }
 
 // Static is to static the job.
-func (s *Statistic) Static() (pooltask.DoneFunc, error) {
+func (s *Statistic) Static() (DoneFunc, error) {
 	s.inFlight.Add(1)
 	start := time.Now().UnixNano()
 	ms := float64(time.Millisecond)
