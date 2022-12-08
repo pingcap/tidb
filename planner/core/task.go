@@ -1977,6 +1977,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
+	case NoMpp:
+		t = mpp.convertToRootTask(p.ctx)
+		attachPlan2Task(p, t)
+		return t
 	default:
 		return invalidTask
 	}
