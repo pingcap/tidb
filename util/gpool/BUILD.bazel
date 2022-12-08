@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "gpool.go",
         "spinlock.go",
-        "static.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool",
     visibility = ["//visibility:public"],
