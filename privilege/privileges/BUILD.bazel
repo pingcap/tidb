@@ -56,7 +56,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
-        "//domain",
         "//errno",
         "//executor",
         "//kv",

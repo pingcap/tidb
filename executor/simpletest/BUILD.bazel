@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "password_management_test.go",
         "simple_test.go",
     ],
     flaky = True,
@@ -13,12 +14,15 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//errno",
         "//executor",
+        "//kv",
         "//parser/auth",
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
+        "//privilege/privileges",
         "//session",
         "//sessionctx",
         "//sessionctx/variable",
