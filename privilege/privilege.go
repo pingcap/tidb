@@ -68,7 +68,7 @@ type Manager interface {
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
 	// VerifyAccountAutoLockInMemory automatically unlock when the time comes.
-	VerifyAccountAutoLockInMemory(user string, host string) error
+	VerifyAccountAutoLockInMemory(user string, host string) (bool, error)
 
 	// IsAccountAutoLockEnabled verifies whether the account has enabled Failed-Login Tracking and Temporary Account Locking.
 	IsAccountAutoLockEnabled(user string, host string) bool

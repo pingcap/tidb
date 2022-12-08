@@ -2712,11 +2712,15 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 	// Use the cache to determine whether to unlock the account.
 	// If the account needs to be unlocked, read the database information to determine whether
 	// the account needs to be unlocked. Otherwise, an error message is displayed.
-	err := pm.VerifyAccountAutoLockInMemory(user, host)
+	lockStatusInMemory, err := pm.VerifyAccountAutoLockInMemory(user, host)
 	if err != nil {
 		return err
 	}
-
+	// If the lock status in the cache is Unlock, the automatic unlock is skipped.
+	// If memory synchronization is slow and there is a lock in the database, it will be processed upon successful login
+	if !lockStatusInMemory {
+		return nil
+	}
 	lockStatusChanged := false
 	var plJSON string
 	// After checking the cache, obtain the latest data from the database and determine
@@ -2760,6 +2764,7 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 		}
 	}
 	if plJSON != "" {
+		lockStatusChanged = true
 		if err = s.passwordLocking(user, host, plJSON); err != nil {
 			rollbackErr := failedLoginTrackingRollback(s)
 			if rollbackErr != nil {
@@ -2767,16 +2772,10 @@ func verifyAccountAutoLock(s *session, user, host string) error {
 			}
 			return err
 		}
-		err = failedLoginTrackingCommit(s)
-		if err != nil {
-			return err
-		}
-		lockStatusChanged = true
-	} else {
-		err = failedLoginTrackingCommit(s)
-		if err != nil {
-			return err
-		}
+	}
+	err = failedLoginTrackingCommit(s)
+	if err != nil {
+		return err
 	}
 	if lockStatusChanged {
 		return domain.GetDomain(s).NotifyUpdatePrivilege()
