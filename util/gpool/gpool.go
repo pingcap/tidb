@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	atomicutil "go.uber.org/atomic"
 )
 
@@ -48,7 +49,7 @@ var (
 type BasePool struct {
 	lastTuneTs atomicutil.Time
 	limiterTTL atomicutil.Time // it is relation with limiter
-	statistic  *Statistic
+	statistic  *pooltask.Statistic
 	name       string
 	limit      atomic.Bool
 	generator  atomic.Uint64
@@ -57,7 +58,7 @@ type BasePool struct {
 // NewBasePool is to create a new BasePool.
 func NewBasePool() BasePool {
 	return BasePool{
-		statistic:  NewStatistic(),
+		statistic:  pooltask.NewStatistic(),
 		lastTuneTs: *atomicutil.NewTime(time.Now()),
 		limiterTTL: *atomicutil.NewTime(time.Now()),
 	}
@@ -73,12 +74,12 @@ func (p *BasePool) Name() string {
 }
 
 // SetStatistic is to set Statistic
-func (p *BasePool) SetStatistic(statistic *Statistic) {
+func (p *BasePool) SetStatistic(statistic *pooltask.Statistic) {
 	p.statistic = statistic
 }
 
 // GetStatistic is to get Statistic
-func (p *BasePool) GetStatistic() *Statistic {
+func (p *BasePool) GetStatistic() *pooltask.Statistic {
 	return p.statistic
 }
 
