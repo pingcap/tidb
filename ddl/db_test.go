@@ -1763,15 +1763,3 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
 }
-
-func TestMDLPutETCDFail(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/putEtcdFailed", `return(true)`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/putEtcdFailed"))
-	tk.MustExec("alter table t add column b int")
-}
