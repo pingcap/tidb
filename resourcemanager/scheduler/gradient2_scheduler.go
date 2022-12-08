@@ -32,15 +32,13 @@ const (
 // Gradient2 attempts to reduce the delay by obeserving the long and short window RTT and queue length to predict
 // reasonable concurrency. Using average algorithm to smooth the result for making scheduler more robust.
 type Gradient2Scheduler struct {
-	smoothing      float64
-	estimatedLimit int16
+	smoothing float64
 }
 
 // NewGradient2Scheduler is to create a new Gradient2Scheduler
 func NewGradient2Scheduler() *Gradient2Scheduler {
 	return &Gradient2Scheduler{
-		smoothing:      defaultSmoothing,
-		estimatedLimit: 1,
+		smoothing: defaultSmoothing,
 	}
 }
 
