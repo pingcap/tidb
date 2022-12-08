@@ -59,7 +59,7 @@ func NewStatistic() *Statistic {
 		taskCntStat:     window.NewRollingCounter[uint64](opts),
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),
-		longRTT:         mathutil.NewExponentialMovingAverage(100, 10),
+		longRTT:         mathutil.NewExponentialMovingAverage(0.2, 10),
 	}
 }
 
