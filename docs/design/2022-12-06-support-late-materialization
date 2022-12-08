@@ -32,7 +32,7 @@ With late materialization, the execution processes can be:
 - Return the result
 
 And for more complex queries, like `SELECT * FROM t WHERE col_str1 LIKE '%PingCAP%' AND REGEXP_LIKE(col_str2, 'new\\*.\\*line')`, late materialization, the execution processes can be:
-- Read all the data pack of col_str
+- Read all the data pack of col_str1
 - Run the filter `col_str1 LIKE '%PingCAP%'`
 - Read the needed data pack of rest columns on table t
 - Run the filter `REGEXP_LIKE(col_str2, 'new\\*.\\*line')`
