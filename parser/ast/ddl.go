@@ -1096,7 +1096,8 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	for i, option := range n.Options {
+	options := optionsWithRestoreFlag(ctx.Flags, n.Options)
+	for i, option := range options {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateTableStmt TableOption: [%v]", i)
@@ -3575,9 +3576,19 @@ func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	var specs []*AlterTableSpec
 	for _, spec := range n.Specs {
-		if !(spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag()) {
-			specs = append(specs, spec)
+		if spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+			continue
 		}
+		if spec.Tp == AlterTableOption {
+			newOptions := optionsWithRestoreFlag(ctx.Flags, spec.Options)
+			if len(newOptions) == 0 {
+				continue
+			}
+			newSpec := *spec
+			newSpec.Options = newOptions
+			spec = &newSpec
+		}
+		specs = append(specs, spec)
 	}
 	for i, spec := range specs {
 		if i == 0 || spec.Tp == AlterTablePartition || spec.Tp == AlterTableRemovePartitioning || spec.Tp == AlterTableImportTablespace || spec.Tp == AlterTableDiscardTablespace {
@@ -4509,4 +4520,23 @@ func restorePlacementStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode) err
 		ctx.Flags &= ^format.RestoreTiDBSpecialComment
 		return n.Restore(ctx)
 	})
+}
+
+func optionsWithRestoreFlag(flags format.RestoreFlags, options []*TableOption) []*TableOption {
+	ttlEnableOff := flags.HasRestoreWithTTLEnableOff()
+	newOptions := make([]*TableOption, 0, len(options))
+	for _, opt := range options {
+		if ttlEnableOff && opt.Tp == TableOptionTTLEnable {
+			continue
+		}
+
+		newOptions = append(newOptions, opt)
+		if ttlEnableOff && opt.Tp == TableOptionTTL {
+			newOptions = append(newOptions, &TableOption{
+				Tp:        TableOptionTTLEnable,
+				BoolValue: false,
+			})
+		}
+	}
+	return newOptions
 }
