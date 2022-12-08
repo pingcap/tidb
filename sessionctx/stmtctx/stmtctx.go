@@ -211,7 +211,6 @@ type StatementContext struct {
 
 		message        string
 		warnings       []SQLWarn
-		errorCount     uint16
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
 	}
@@ -761,7 +760,11 @@ func (sc *StatementContext) WarningCount() uint16 {
 func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	ec = sc.mu.errorCount
+	for _, w := range sc.mu.warnings {
+		if w.Level == WarnLevelError {
+			ec++
+		}
+	}
 	wc = len(sc.mu.warnings)
 	return
 }
@@ -806,7 +809,6 @@ func (sc *StatementContext) AppendError(warn error) {
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
-		sc.mu.errorCount++
 	}
 }
 
@@ -852,7 +854,6 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
-	sc.mu.errorCount = 0
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
 	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
