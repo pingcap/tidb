@@ -33,6 +33,7 @@ require (
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
 	github.com/fsouza/fake-gcs-server v1.19.0
+	github.com/ghemawat/stream v0.0.0-20171120220530-696b145b53b9
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
@@ -225,6 +226,7 @@ require (
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
+	github.com/zabawaba99/go-gitignore v0.0.0-20200117185801-39e6bddfb292
 	go.etcd.io/bbolt v1.3.6 // indirect
 	go.etcd.io/etcd/client/v2 v2.305.2 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.5.2 // indirect

@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare
+check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare check-testcase-marker
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -44,6 +44,10 @@ check-file-perm:
 	@echo "check file permission"
 	./tools/check/check-file-perm.sh
 
+check-testcase-marker:
+	@echo "check test case marker"
+	./tools/check/check-testcase-marker.sh
+
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
@@ -55,6 +59,7 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+
 
 tidy:
 	@echo "go mod tidy"

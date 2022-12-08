@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "testmarker_lib",
+    srcs = ["walker.go"],
+    embedsrcs = ["rules.yaml"],
+    importpath = "github.com/pingcap/tidb/tests/testmarker",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_ghemawat_stream//:stream",
+        "@com_github_zabawaba99_go_gitignore//:go-gitignore",
+        "@in_gopkg_yaml_v2//:yaml_v2",
+    ],
+)
+
+go_binary(
+    name = "testmarker",
+    embed = [":testmarker_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "testmarker_test",
+    srcs = ["walker_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":testmarker_lib"],
+    embedsrcs = ["testdata/marker_test_go.txt"],
+    deps = [
+        "@com_github_ghemawat_stream//:stream",
+        "@com_github_stretchr_testify//require",
+        "@in_gopkg_yaml_v2//:yaml_v2",
+    ],
+)

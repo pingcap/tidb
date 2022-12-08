@@ -3841,6 +3841,14 @@ def go_deps():
         version = "v1.2.2",
     )
     go_repository(
+        name = "com_github_zabawaba99_go_gitignore",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/zabawaba99/go-gitignore",
+        sum = "h1:vpcCVk+pSR/6zcurmlGFD3jC5I/7RMl+GwGAPLxvX18=",
+        version = "v0.0.0-20200117185801-39e6bddfb292",
+    )
+
+    go_repository(
         name = "com_gitlab_bosi_decorder",
         build_file_proto_mode = "disable",
         importpath = "gitlab.com/bosi/decorder",
