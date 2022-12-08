@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,7 +108,17 @@ func TestForeignKey(t *testing.T) {
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-
+	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("idx_fk"),
+		Table: model.NewCIStr("t"),
+		Columns: []*model.IndexColumn{{
+			Name:   model.NewCIStr("c1"),
+			Offset: 0,
+			Length: types.UnspecifiedLength,
+		}},
+		State: model.StatePublic,
+	})
 	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 
 	// fix data race
