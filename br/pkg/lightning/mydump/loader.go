@@ -683,7 +683,7 @@ func calculateFileBytes(ctx context.Context,
 
 	readBytes := func() error {
 		n, err2 := compressReader.Read(bytes)
-		if err2 != nil && errors.Cause(err2) != io.EOF {
+		if err2 != nil && errors.Cause(err2) != io.EOF && errors.Cause(err) != io.ErrUnexpectedEOF {
 			return err2
 		}
 		tot += n
@@ -692,7 +692,7 @@ func calculateFileBytes(ctx context.Context,
 
 	if offset == 0 {
 		err = readBytes()
-		if err != nil && errors.Cause(err) != io.EOF {
+		if err != nil && errors.Cause(err) != io.EOF && errors.Cause(err) != io.ErrUnexpectedEOF {
 			return 0, 0, err
 		}
 		pos, err = compressReader.Seek(0, io.SeekCurrent)
@@ -708,7 +708,7 @@ func calculateFileBytes(ctx context.Context,
 			break
 		}
 	}
-	if err != nil && errors.Cause(err) != io.EOF {
+	if err != nil && errors.Cause(err) != io.EOF && errors.Cause(err) != io.ErrUnexpectedEOF {
 		return 0, 0, errors.Trace(err)
 	}
 	return tot, offset, nil
