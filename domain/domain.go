@@ -1417,24 +1417,26 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
-// WatchTiFlashComputeStoreChange create a routine to watch if the topology of tiflash_compute node is changed.
-// TODO: tiflashComputeStoreKey is not put to etcd yet(finish this when AutoScaler is done)
+// WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
+// TODO: tiflashComputeNodeKey is not put to etcd yet(finish this when AutoScaler is done)
 //
 //	store cache will only be invalidated every 30 seconds.
-func (do *Domain) WatchTiFlashComputeStoreChange() error {
+func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	var watchCh clientv3.WatchChan
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeStoreKey)
+		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
 	}
 	do.wg.Add(1)
-	duration := 30 * time.Second
+	duration := 10 * time.Second
 	go func() {
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("WatchTiFlashComputeStoreChange exit")
+			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
+			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 		}()
 
 		var count int
+		var logCount int
 		for {
 			ok := true
 			var watched bool
@@ -1446,8 +1448,8 @@ func (do *Domain) WatchTiFlashComputeStoreChange() error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("WatchTiFlashComputeStoreChange watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeStoreKey)
+				logutil.BgLogger().Error("WatchTiFlashComputeNodeChange watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -1457,8 +1459,13 @@ func (do *Domain) WatchTiFlashComputeStoreChange() error {
 			count = 0
 			switch s := do.store.(type) {
 			case tikv.Storage:
+				logCount++
 				s.GetRegionCache().InvalidateTiFlashComputeStores()
-				logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
+				if logCount == 60 {
+					// Print log every 60*duration seconds.
+					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
+					logCount = 0
+				}
 			default:
 				logutil.BgLogger().Debug("No need to watch tiflash_compute store cache for non-tikv store")
 				return
@@ -2118,9 +2125,9 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 }
 
 const (
-	privilegeKey           = "/tidb/privilege"
-	sysVarCacheKey         = "/tidb/sysvars"
-	tiflashComputeStoreKey = "/tiflash/new_tiflash_compute_stores"
+	privilegeKey          = "/tidb/privilege"
+	sysVarCacheKey        = "/tidb/sysvars"
+	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches

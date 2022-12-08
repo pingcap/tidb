@@ -3020,7 +3020,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		// Invalid client-go tiflash_compute store cache if necessary.
-		err = dom.WatchTiFlashComputeStoreChange()
+		err = dom.WatchTiFlashComputeNodeChange()
 		if err != nil {
 			return nil, err
 		}
