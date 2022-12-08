@@ -159,11 +159,24 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	noCheckpoint, err := flags.GetBool(flagUseCheckpoint)
+	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.UseCheckpoint = !noCheckpoint
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.LastBackupTS > 0 {
+		// TODO: compatible with incremental backup
+		cfg.UseCheckpoint = false
+		log.Info("since incremental backup is used, turn off checkpoint mode")
+	}
+	if cfg.UseBackupMetaV2 {
+		// TODO: compatible with backup meta v2, maybe just clean the meta files
+		cfg.UseCheckpoint = false
+		log.Info("since backup meta v2 is used, turn off checkpoint mode")
+	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -190,10 +203,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.IgnoreStats, err = flags.GetBool(flagIgnoreStats)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -341,8 +350,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// after version check, check the cluster whether support checkpoint mode
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
-		log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
-		cfg.UseCheckpoint = false
+		if err != nil {
+			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
+			cfg.UseCheckpoint = false
+		}
 	}
 	var statsHandle *handle.Handle
 	if !skipStats {
