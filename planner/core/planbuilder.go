@@ -1392,6 +1392,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
+	var noTiFlashComputeNode bool
 	for i := len(paths) - 1; i >= 0; i-- {
 		// availableEngineStr is for warning message.
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
@@ -1405,7 +1406,11 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		// Prune this path if:
 		// 1. path.StoreType doesn't exists in isolationReadEngines or
 		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
-		if (!exists && paths[i].StoreType != kv.TiDB) || (exists && paths[i].StoreType == kv.TiFlash && config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ctx)) {
+		if paths[i].StoreType == kv.TiFlash {
+			noTiFlashComputeNode = (exists && paths[i].StoreType == kv.TiFlash &&
+				config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ctx))
+		}
+		if (!exists && paths[i].StoreType != kv.TiDB) || noTiFlashComputeNode {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -1414,7 +1419,11 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			if noTiFlashComputeNode {
+				helpMsg = ". Please check tiflash_compute node is available"
+			} else {
+				helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			}
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
