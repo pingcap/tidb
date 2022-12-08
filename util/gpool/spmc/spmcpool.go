@@ -84,11 +84,11 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	// Start a goroutine to clean up expired workers periodically.
 	err := resourcemanage.GlobalResourceManage.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
+	// Start a goroutine to clean up expired workers periodically.
 	go result.purgePeriodically()
 	return result, nil
 }
