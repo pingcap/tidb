@@ -1678,12 +1678,16 @@ func TestAddFieldsForBinding(t *testing.T) {
 	tk.MustExec("create table t(a int, key(a))")
 	tk.MustExec("select /*+ ignore_index(t, a)*/ * from t where a = 1")
 	planDigest := "4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb"
-	rows := tk.MustQuery(fmt.Sprintf("select schema_name, query_sample_text, charset, collation, plan_hint from information_schema.cluster_statements_summary where plan_digest = '%s'", planDigest)).Rows()
+	rows := tk.MustQuery(fmt.Sprintf("select stmt_type, prepared, sample_user, schema_name, query_sample_text, charset, collation, plan_hint "+
+		"from information_schema.cluster_statements_summary where plan_digest = '%s'", planDigest)).Rows()
 
-	require.Equal(t, rows[0][0], "test")
-	require.Equal(t, rows[0][1], "select /*+ ignore_index(t, a)*/ * from t where a = 1")
-	require.Equal(t, rows[0][2], "utf8mb4")
-	require.Equal(t, rows[0][3], "utf8mb4_bin")
-	require.Equal(t, rows[0][4], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
+	require.Equal(t, rows[0][0], "Select")
+	require.Equal(t, rows[0][1], "0")
+	require.Equal(t, rows[0][2], "root")
+	require.Equal(t, rows[0][3], "test")
+	require.Equal(t, rows[0][4], "select /*+ ignore_index(t, a)*/ * from t where a = 1")
+	require.Equal(t, rows[0][5], "utf8mb4")
+	require.Equal(t, rows[0][6], "utf8mb4_bin")
+	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	fmt.Println(planDigest)
 }
