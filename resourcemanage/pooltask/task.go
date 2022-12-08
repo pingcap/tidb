@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourcemanage
+package pooltask
 
 import (
 	"sync"
@@ -33,15 +33,15 @@ func (NilContext) GetContext() any {
 }
 
 const (
-	// PendingTask is a task waiting to start
+	// PendingTask is a pooltask waiting to start
 	PendingTask int32 = iota
-	// RunningTask is a task running
+	// RunningTask is a pooltask running
 	RunningTask
-	// StopTask is a stop task
+	// StopTask is a stop pooltask
 	StopTask
 )
 
-// TaskBox is a box which contains all info about task.
+// TaskBox is a box which contains all info about pooltask.
 type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
 	contextFunc TF
@@ -52,7 +52,7 @@ type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	status      atomic.Int32 // task manager is able to make this task stop, wait or running
 }
 
-// NewTaskBox is to create a task box.
+// NewTaskBox is to create a pooltask box.
 func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
 	return TaskBox[T, U, C, CT, TF]{
 		constArgs:   constArgs,
@@ -69,7 +69,7 @@ func (t *TaskBox[T, U, C, CT, TF]) ConstArgs() C {
 	return t.constArgs
 }
 
-// GeTaskCh is to get the task channel.
+// GeTaskCh is to get the pooltask channel.
 func (t *TaskBox[T, U, C, CT, TF]) GeTaskCh() chan Task[T] {
 	return t.task
 }
@@ -84,17 +84,17 @@ func (t *TaskBox[T, U, C, CT, TF]) GetContextFunc() TF {
 	return t.contextFunc
 }
 
-// GetStatus is to get the status of task.
+// GetStatus is to get the status of pooltask.
 func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
 	return t.status.Load()
 }
 
-// SetStatus is to set the status of task.
+// SetStatus is to set the status of pooltask.
 func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 	t.status.Store(s)
 }
 
-// Done is to set the task status to complete.
+// Done is to set the pooltask status to complete.
 func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
@@ -122,7 +122,7 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	taskID uint64
 }
 
-// NewTaskController create a controller to deal with task's statue.
+// NewTaskController create a controller to deal with pooltask's statue.
 func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:   p,
@@ -132,7 +132,7 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U
 	}
 }
 
-// Wait is to wait the task to stop.
+// Wait is to wait the pooltask to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
 	<-t.close
 	t.wg.Wait()
@@ -149,7 +149,7 @@ func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
 	return false
 }
 
-// Task is a task that can be executed.
+// Task is a pooltask that can be executed.
 type Task[T any] struct {
 	Task T
 	Done DoneFunc
