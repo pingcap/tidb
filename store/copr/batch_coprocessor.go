@@ -577,7 +577,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		return nil, err
 	}
 	if len(stores) == 0 {
-		return nil, errors.New("Number of tiflash_compute node is zero")
+		return nil, errors.New("No available tiflash_compute node")
 	}
 
 	hasher := consistent.New()
@@ -604,8 +604,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		task.ctx.Store = store
 		task.ctx.Addr = addr
 	}
-	// TODO: Add metrics
-	logutil.BgLogger().Info("build batchCop tasks using ConsistentHash done.", zap.Int("len(tasks)", len(batchTasks)))
+	logutil.BgLogger().Info("build batchCop tasks for disaggregated tiflash using ConsistentHash done.", zap.Int("len(tasks)", len(batchTasks)))
 	for _, task := range batchTasks {
 		logutil.BgLogger().Debug("batchTasks detailed info", zap.String("addr", task.storeAddr), zap.Int("RegionInfo number", len(task.regionInfos)))
 	}

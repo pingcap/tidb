@@ -690,7 +690,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		}
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ds.ctx) {
 			// TiFlash is in disaggregated mode, need to make sure tiflash_compute node is available.
-			errMsg := "Number of tiflash_compute nodes is zero"
+			errMsg := "No available tiflash_compute node"
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			return
