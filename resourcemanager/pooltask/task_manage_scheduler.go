@@ -14,7 +14,7 @@
 
 package pooltask
 
-// Boost is to increase the concurrency of pooltask.
+// Boost is to increase the concurrency of pool.
 func (t *TaskManager[T, U, C, CT, TF]) Boost() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
 	if t.concurrency > t.running.Load() {
 		return t.getNeedToBoostTask()
@@ -22,7 +22,7 @@ func (t *TaskManager[T, U, C, CT, TF]) Boost() (tid uint64, task *TaskBox[T, U, 
 	return 0, nil
 }
 
-// Decrease is to decrease the concurrency of pooltask.
+// Decrease is to decrease the concurrency of pool.
 func (t *TaskManager[T, U, C, CT, TF]) Decrease() {
 	t.pauseTask()
 }

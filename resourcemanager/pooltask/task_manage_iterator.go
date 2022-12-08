@@ -51,16 +51,10 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 			defer t.task[i].rw.RUnlock()
 			// TODO: for-if-for-if-if is so dirty
 			for _, stats := range t.task[i].stats {
-				d := time.Since(stats.createTs)
-				if d > maxDuration {
-					for e := stats.stats.Front(); e != nil; e = e.Next() {
-						if box, ok := e.Value.(*TaskBox[T, U, C, CT, TF]); ok {
-							if box.status.Load() == RunningTask {
-								result = box
-								maxDuration = d
-							}
-						}
-					}
+				newResult, newMaxDuration, IsnUll := canPause[T, U, C, CT, TF](stats, maxDuration)
+				if !IsnUll {
+					result = newResult
+					maxDuration = newMaxDuration
 				}
 			}
 		}(i)
@@ -68,4 +62,18 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 	if result != nil {
 		result.status.CompareAndSwap(RunningTask, PendingTask)
 	}
+}
+
+func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta, max time.Duration) (result *TaskBox[T, U, C, CT, TF], nm time.Duration, isNull bool) {
+	d := time.Since(m.createTs)
+	if d > max {
+		for e := m.stats.Front(); e != nil; e = e.Next() {
+			if box, ok := e.Value.(*TaskBox[T, U, C, CT, TF]); ok {
+				if box.status.Load() == RunningTask {
+					return box, d, false
+				}
+			}
+		}
+	}
+	return result, nm, true
 }
