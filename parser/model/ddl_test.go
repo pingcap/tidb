@@ -60,10 +60,9 @@ func TestBackfillMetaCodec(t *testing.T) {
 		Priority: 1,
 	}
 	bm := &model.BackfillMeta{
-		CurrKey:  []byte("1"),
-		StartKey: []byte("1"),
-		EndKey:   []byte("10"),
-		JobMeta:  jm,
+		EndInclude: true,
+		ErrMsg:     "has a err",
+		JobMeta:    jm,
 	}
 	bmBytes, err := bm.Encode()
 	require.NoError(t, err)

@@ -157,6 +157,8 @@ func TestBootstrapWithError(t *testing.T) {
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store)
 		require.NoError(t, err)
+		err = InitMDLTable(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
