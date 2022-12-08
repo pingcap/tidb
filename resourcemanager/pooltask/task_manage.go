@@ -90,15 +90,15 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 	}
 }
 
-// CreatTask create a new pooltask.
-func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64, concurrency int32) {
+// RegisterTask register a task to the manager.
+func (t *TaskManager[T, U, C, CT, TF]) RegisterTask(task uint64, concurrency int32) {
 	id := getShardID(task)
 	t.task[id].rw.Lock()
 	t.task[id].stats[task] = newStats(concurrency)
 	t.task[id].rw.Unlock()
 }
 
-// DeleteTask delete a pooltask.
+// DeleteTask delete a task from the manager.
 func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	shardID := getShardID(id)
 	t.task[shardID].rw.Lock()
@@ -106,7 +106,7 @@ func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	t.task[shardID].rw.Unlock()
 }
 
-// AddSubTask AddTask add a pooltask to the manager.
+// AddSubTask AddTask add a task to the manager.
 func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(id uint64, task *TaskBox[T, U, C, CT, TF]) {
 	shardID := getShardID(id)
 	tc := tContainer[T, U, C, CT, TF]{
@@ -119,7 +119,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(id uint64, task *TaskBox[T, U,
 	t.task[shardID].rw.Unlock()
 }
 
-// ExitSubTask is to exit a pooltask, and it will decrease the count of running pooltask.
+// ExitSubTask is to exit a task, and it will decrease the count of running pooltask.
 func (t *TaskManager[T, U, C, CT, TF]) ExitSubTask(id uint64) {
 	shardID := getShardID(id)
 	t.task[shardID].rw.Lock()
