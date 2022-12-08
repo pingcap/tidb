@@ -117,7 +117,11 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
-		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		prepared.UseCache = cacheable
+		if !cacheable {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
+		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
@@ -322,9 +326,7 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
 			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
-			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar) ||
-			// TypeNull should be considered the same as other types.
-			(s[i].GetType() == mysql.TypeNull || tps[i].GetType() == mysql.TypeNull)
+			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar)
 		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
 			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
 			return false

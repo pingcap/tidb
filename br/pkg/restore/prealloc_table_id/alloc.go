@@ -9,6 +9,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 )
 
+const (
+	// insaneTableIDThreshold is the threshold for "normal" table ID.
+	// Sometimes there might be some tables with huge table ID.
+	// For example, DDL metadata relative tables may have table ID up to 1 << 48.
+	// When calculating the max table ID, we would ignore tables with table ID greater than this.
+	// NOTE: In fact this could be just `1 << 48 - 1000` (the max available global ID),
+	// however we are going to keep some gap here for some not-yet-known scenario, which means
+	// at least, BR won't exhaust all global IDs.
+	insaneTableIDThreshold = math.MaxUint32
+)
+
 // Allocator is the interface needed to allocate table IDs.
 type Allocator interface {
 	GetGlobalID() (int64, error)
@@ -34,7 +45,7 @@ func New(tables []*metautil.Table) *PreallocIDs {
 	max := int64(0)
 
 	for _, t := range tables {
-		if t.Info.ID > max {
+		if t.Info.ID > max && t.Info.ID < insaneTableIDThreshold {
 			max = t.Info.ID
 		}
 	}

@@ -15,7 +15,6 @@
 package util
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -26,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -39,28 +40,31 @@ type OOMAlarmVariablesInfo struct {
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	Time                      time.Time
-	Plan                      interface{}
-	ctx                       context.Context
-	StmtCtx                   *stmtctx.StatementContext
-	CurrentAnalyzeRows        func(interface{}, *execdetails.RuntimeStatsColl) [][]string
-	RuntimeStatsColl          *execdetails.RuntimeStatsColl
-	StatsInfo                 func(interface{}) map[string]uint64
-	User                      string
-	Digest                    string
-	DB                        string
-	Port                      string
-	Host                      string
-	Info                      string
-	PlanExplainRows           [][]string
-	OOMAlarmVariablesInfo     OOMAlarmVariablesInfo
-	ID                        uint64
-	CurTxnStartTS             uint64
-	MaxExecutionTime          uint64
-	State                     uint16
-	Command                   byte
-	ExceedExpensiveTimeThresh bool
-	RedactSQL                 bool
+	Time                  time.Time
+	ExpensiveLogTime      time.Time
+	Plan                  interface{}
+	StmtCtx               *stmtctx.StatementContext
+	RefCountOfStmtCtx     *stmtctx.ReferenceCount
+	MemTracker            *memory.Tracker
+	DiskTracker           *disk.Tracker
+	StatsInfo             func(interface{}) map[string]uint64
+	RuntimeStatsColl      *execdetails.RuntimeStatsColl
+	DB                    string
+	Digest                string
+	Host                  string
+	User                  string
+	Info                  string
+	Port                  string
+	PlanExplainRows       [][]string
+	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
+	ID                    uint64
+	CurTxnStartTS         uint64
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the query takes too long, kill it.
+	MaxExecutionTime uint64
+	State            uint16
+	Command          byte
+	RedactSQL        bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -115,11 +119,11 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
 	if pi.StmtCtx != nil {
-		if pi.StmtCtx.MemTracker != nil {
-			bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+		if pi.MemTracker != nil {
+			bytesConsumed = pi.MemTracker.BytesConsumed()
 		}
-		if pi.StmtCtx.DiskTracker != nil {
-			diskConsumed = pi.StmtCtx.DiskTracker.BytesConsumed()
+		if pi.DiskTracker != nil {
+			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
@@ -191,6 +195,8 @@ type SessionManager interface {
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
+	KillNonFlashbackClusterConn()
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

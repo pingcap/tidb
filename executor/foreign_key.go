@@ -17,10 +17,13 @@ package executor
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -29,9 +32,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -55,17 +59,47 @@ type FKCheckExec struct {
 	toBeLockedKeys        []kv.Key
 
 	checkRowsCache map[string]bool
+	stats          *FKCheckRuntimeStats
+}
+
+// FKCheckRuntimeStats contains the FKCheckExec runtime stats.
+type FKCheckRuntimeStats struct {
+	Total time.Duration
+	Check time.Duration
+	Lock  time.Duration
+	Keys  int
 }
 
 // FKCascadeExec uses to execute foreign key cascade behaviour.
 type FKCascadeExec struct {
 	*fkValueHelper
+	plan       *plannercore.FKCascade
 	b          *executorBuilder
 	tp         plannercore.FKCascadeType
 	referredFK *model.ReferredFKInfo
 	childTable *model.TableInfo
 	fk         *model.FKInfo
-	fkValues   [][]types.Datum
+	fkCols     []*model.ColumnInfo
+	fkIdx      *model.IndexInfo
+	// On delete statement, fkValues stores the delete foreign key values.
+	// On update statement and the foreign key cascade is `SET NULL`, fkValues stores the old foreign key values.
+	fkValues [][]types.Datum
+	// new-value-key => UpdatedValuesCouple
+	fkUpdatedValuesMap map[string]*UpdatedValuesCouple
+
+	stats *FKCascadeRuntimeStats
+}
+
+// UpdatedValuesCouple contains the updated new row the old rows, exporting for test.
+type UpdatedValuesCouple struct {
+	NewValues     []types.Datum
+	OldValuesList [][]types.Datum
+}
+
+// FKCascadeRuntimeStats contains the FKCascadeExec runtime stats.
+type FKCascadeRuntimeStats struct {
+	Total time.Duration
+	Keys  int
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
@@ -119,6 +153,10 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 }
 
 func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	if fkc.ReferredFK != nil {
+		// Insert into parent table doesn't need to do foreign key check.
+		return nil
+	}
 	return fkc.addRowNeedToCheck(sc, row)
 }
 
@@ -153,6 +191,20 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 }
 
 func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
+	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCheckRuntimeStats{}
+		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
+	}
+	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
+		return nil
+	}
+	start := time.Now()
+	if fkc.stats != nil {
+		defer func() {
+			fkc.stats.Keys = len(fkc.toBeCheckedKeys) + len(fkc.toBeCheckedPrefixKeys)
+			fkc.stats.Total = time.Since(start)
+		}()
+	}
 	txn, err := fkc.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -164,6 +216,9 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	err = fkc.checkIndexKeys(ctx, txn)
 	if err != nil {
 		return err
+	}
+	if fkc.stats != nil {
+		fkc.stats.Check = time.Since(start)
 	}
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
@@ -180,6 +235,9 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
+	if fkc.stats != nil {
+		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
+	}
 	return err
 }
 
@@ -455,6 +513,10 @@ type fkCheckKey struct {
 }
 
 func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCheckRuntimeStats{}
+		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
+	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -517,8 +579,12 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 			rows[i].ignored = true
 			sc.AppendWarning(fkc.FailedErr)
 			fkc.checkRowsCache[string(k)] = true
+		} else {
+			fkc.checkRowsCache[string(k)] = false
 		}
-		fkc.checkRowsCache[string(k)] = false
+		if fkc.stats != nil {
+			fkc.stats.Keys++
+		}
 	}
 	return nil
 }
@@ -561,12 +627,16 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		fkValuesSet: set.NewStringSet(),
 	}
 	return &FKCascadeExec{
-		b:             b,
-		fkValueHelper: helper,
-		tp:            fkCascade.Tp,
-		referredFK:    fkCascade.ReferredFK,
-		childTable:    fkCascade.ChildTable.Meta(),
-		fk:            fkCascade.FK,
+		b:                  b,
+		fkValueHelper:      helper,
+		plan:               fkCascade,
+		tp:                 fkCascade.Tp,
+		referredFK:         fkCascade.ReferredFK,
+		childTable:         fkCascade.ChildTable.Meta(),
+		fk:                 fkCascade.FK,
+		fkCols:             fkCascade.FKCols,
+		fkIdx:              fkCascade.FKIdx,
+		fkUpdatedValuesMap: make(map[string]*UpdatedValuesCouple),
 	}, nil
 }
 
@@ -579,100 +649,301 @@ func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.
 	return nil
 }
 
+func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	oldVals, err := fkc.fetchFKValuesWithCheck(sc, oldRow)
+	if err != nil || len(oldVals) == 0 {
+		return err
+	}
+	if model.ReferOptionType(fkc.fk.OnUpdate) == model.ReferOptionSetNull {
+		fkc.fkValues = append(fkc.fkValues, oldVals)
+		return nil
+	}
+	newVals, err := fkc.fetchFKValues(newRow)
+	if err != nil {
+		return err
+	}
+	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
+	if err != nil {
+		return err
+	}
+	couple := fkc.fkUpdatedValuesMap[string(newValsKey)]
+	if couple == nil {
+		couple = &UpdatedValuesCouple{
+			NewValues: newVals,
+		}
+	}
+	couple.OldValuesList = append(couple.OldValuesList, oldVals)
+	fkc.fkUpdatedValuesMap[string(newValsKey)] = couple
+	return nil
+}
+
 func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	p, err := fkc.buildFKCascadePlan(ctx)
 	if err != nil || p == nil {
 		return nil, err
 	}
+	fkc.plan.CascadePlans = append(fkc.plan.CascadePlans, p)
 	e := fkc.b.build(p)
 	return e, fkc.b.err
 }
 
+// maxHandleFKValueInOneCascade uses to limit the max handle fk value in one cascade executor,
+// this is to avoid performance issue, see: https://github.com/pingcap/tidb/issues/38631
+var maxHandleFKValueInOneCascade = 1024
+
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
-	if len(fkc.fkValues) == 0 {
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil, nil
 	}
-	var sqlStr string
-	var err error
+	var indexName model.CIStr
+	if fkc.fkIdx != nil {
+		indexName = fkc.fkIdx.Name
+	}
+	var stmtNode ast.StmtNode
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
+		fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
+		switch model.ReferOptionType(fkc.fk.OnDelete) {
+		case model.ReferOptionCascade:
+			stmtNode = GenCascadeDeleteAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
+		case model.ReferOptionSetNull:
+			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
+		}
+	case plannercore.FKCascadeOnUpdate:
+		switch model.ReferOptionType(fkc.fk.OnUpdate) {
+		case model.ReferOptionCascade:
+			couple := fkc.fetchUpdatedValuesCouple()
+			if couple != nil && len(couple.NewValues) != 0 {
+				if fkc.stats != nil {
+					fkc.stats.Keys += len(couple.OldValuesList)
+				}
+				stmtNode = GenCascadeUpdateAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, couple)
+			}
+		case model.ReferOptionSetNull:
+			fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
+			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
+		}
 	}
-	if err != nil {
-		return nil, err
+	if stmtNode == nil {
+		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
-	if sqlStr == "" {
-		return nil, errors.Errorf("generate foreign key cascade sql failed, %v", fkc.tp)
-	}
-
 	sctx := fkc.b.ctx
-	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil
-	}
-	stmtNode, err := exec.ParseWithParams(ctx, sqlStr)
+	err := plannercore.Preprocess(ctx, sctx, stmtNode)
 	if err != nil {
 		return nil, err
 	}
-	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(ctx, sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
-	if err != nil {
-		return nil, err
-	}
-	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}
 	return finalPlan, err
 }
 
-// GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
-func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
-	buf := bytes.NewBuffer(nil)
-	buf.WriteString("DELETE FROM `")
-	buf.WriteString(schema.L)
-	buf.WriteString("`.`")
-	buf.WriteString(table.L)
-	buf.WriteString("` WHERE (")
-	for i, col := range fk.Cols {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("`" + col.L + "`")
+func (fkc *FKCascadeExec) fetchOnDeleteOrUpdateFKValues() [][]types.Datum {
+	var fkValues [][]types.Datum
+	if len(fkc.fkValues) <= maxHandleFKValueInOneCascade {
+		fkValues = fkc.fkValues
+		fkc.fkValues = nil
+	} else {
+		fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
+		fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
 	}
-	// TODO(crazycs520): control the size of IN expression.
-	buf.WriteString(") IN (")
-	for i, vs := range fkValues {
-		if i > 0 {
-			buf.WriteString(", (")
-		} else {
-			buf.WriteString("(")
-		}
-		for i := range vs {
-			val, err := genFKValueString(vs[i])
-			if err != nil {
-				return "", err
-			}
-			if i > 0 {
-				buf.WriteString(",")
-			}
-			buf.WriteString(val)
-		}
-		buf.WriteString(")")
+	if fkc.stats != nil {
+		fkc.stats.Keys += len(fkValues)
 	}
-	buf.WriteString(")")
-	return buf.String(), nil
+	return fkValues
 }
 
-func genFKValueString(v types.Datum) (string, error) {
-	val, err := v.ToString()
-	if err != nil {
-		return "", err
+func (fkc *FKCascadeExec) fetchUpdatedValuesCouple() *UpdatedValuesCouple {
+	for k, couple := range fkc.fkUpdatedValuesMap {
+		if len(couple.OldValuesList) <= maxHandleFKValueInOneCascade {
+			delete(fkc.fkUpdatedValuesMap, k)
+			return couple
+		}
+		result := &UpdatedValuesCouple{
+			NewValues:     couple.NewValues,
+			OldValuesList: couple.OldValuesList[:maxHandleFKValueInOneCascade],
+		}
+		couple.OldValuesList = couple.OldValuesList[maxHandleFKValueInOneCascade:]
+		return result
 	}
-	switch v.Kind() {
-	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		return val, nil
-	default:
-		return "'" + val + "'", nil
+	return nil
+}
+
+// GenCascadeDeleteAST uses to generate cascade delete ast, export for test.
+func GenCascadeDeleteAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.DeleteStmt {
+	deleteStmt := &ast.DeleteStmt{
+		TableRefs: genTableRefsAST(schema, table, idx),
+		Where:     genWhereConditionAst(cols, fkValues),
 	}
+	return deleteStmt
+}
+
+// GenCascadeSetNullAST uses to generate foreign key `SET NULL` ast, export for test.
+func GenCascadeSetNullAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.UpdateStmt {
+	newValues := make([]types.Datum, len(cols))
+	for i := range cols {
+		newValues[i] = types.NewDatum(nil)
+	}
+	couple := &UpdatedValuesCouple{
+		NewValues:     newValues,
+		OldValuesList: fkValues,
+	}
+	return GenCascadeUpdateAST(schema, table, idx, cols, couple)
+}
+
+// GenCascadeUpdateAST uses to generate cascade update ast, export for test.
+func GenCascadeUpdateAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, couple *UpdatedValuesCouple) *ast.UpdateStmt {
+	list := make([]*ast.Assignment, 0, len(cols))
+	for i, col := range cols {
+		v := &driver.ValueExpr{Datum: couple.NewValues[i]}
+		v.Type = col.FieldType
+		assignment := &ast.Assignment{
+			Column: &ast.ColumnName{Name: col.Name},
+			Expr:   v,
+		}
+		list = append(list, assignment)
+	}
+	updateStmt := &ast.UpdateStmt{
+		TableRefs: genTableRefsAST(schema, table, idx),
+		Where:     genWhereConditionAst(cols, couple.OldValuesList),
+		List:      list,
+	}
+	return updateStmt
+}
+
+func genTableRefsAST(schema, table, idx model.CIStr) *ast.TableRefsClause {
+	tn := &ast.TableName{Schema: schema, Name: table}
+	if idx.L != "" {
+		tn.IndexHints = []*ast.IndexHint{{
+			IndexNames: []model.CIStr{idx},
+			HintType:   ast.HintUse,
+			HintScope:  ast.HintForScan,
+		}}
+	}
+	join := &ast.Join{Left: &ast.TableSource{Source: tn}}
+	return &ast.TableRefsClause{TableRefs: join}
+}
+
+func genWhereConditionAst(cols []*model.ColumnInfo, fkValues [][]types.Datum) ast.ExprNode {
+	if len(cols) > 1 {
+		return genWhereConditionAstForMultiColumn(cols, fkValues)
+	}
+	valueList := make([]ast.ExprNode, 0, len(fkValues))
+	for _, fkVals := range fkValues {
+		v := &driver.ValueExpr{Datum: fkVals[0]}
+		v.Type = cols[0].FieldType
+		valueList = append(valueList, v)
+	}
+	return &ast.PatternInExpr{
+		Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: cols[0].Name}},
+		List: valueList,
+	}
+}
+
+func genWhereConditionAstForMultiColumn(cols []*model.ColumnInfo, fkValues [][]types.Datum) ast.ExprNode {
+	colValues := make([]ast.ExprNode, len(cols))
+	for i := range cols {
+		col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: cols[i].Name}}
+		colValues[i] = col
+	}
+	valueList := make([]ast.ExprNode, 0, len(fkValues))
+	for _, fkVals := range fkValues {
+		values := make([]ast.ExprNode, len(fkVals))
+		for i, v := range fkVals {
+			val := &driver.ValueExpr{Datum: v}
+			val.Type = cols[i].FieldType
+			values[i] = val
+		}
+		row := &ast.RowExpr{Values: values}
+		valueList = append(valueList, row)
+	}
+	return &ast.PatternInExpr{
+		Expr: &ast.RowExpr{Values: colValues},
+		List: valueList,
+	}
+}
+
+// String implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("total:")
+	buf.WriteString(execdetails.FormatDuration(s.Total))
+	if s.Check > 0 {
+		buf.WriteString(", check:")
+		buf.WriteString(execdetails.FormatDuration(s.Check))
+	}
+	if s.Lock > 0 {
+		buf.WriteString(", lock:")
+		buf.WriteString(execdetails.FormatDuration(s.Lock))
+	}
+	if s.Keys > 0 {
+		buf.WriteString(", foreign_keys:")
+		buf.WriteString(strconv.Itoa(s.Keys))
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &FKCheckRuntimeStats{
+		Total: s.Total,
+		Check: s.Check,
+		Lock:  s.Lock,
+		Keys:  s.Keys,
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*FKCheckRuntimeStats)
+	if !ok {
+		return
+	}
+	s.Total += tmp.Total
+	s.Check += tmp.Check
+	s.Lock += tmp.Lock
+	s.Keys += tmp.Keys
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *FKCheckRuntimeStats) Tp() int {
+	return execdetails.TpFKCheckRuntimeStats
+}
+
+// String implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("total:")
+	buf.WriteString(execdetails.FormatDuration(s.Total))
+	if s.Keys > 0 {
+		buf.WriteString(", foreign_keys:")
+		buf.WriteString(strconv.Itoa(s.Keys))
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &FKCascadeRuntimeStats{
+		Total: s.Total,
+		Keys:  s.Keys,
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*FKCascadeRuntimeStats)
+	if !ok {
+		return
+	}
+	s.Total += tmp.Total
+	s.Keys += tmp.Keys
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *FKCascadeRuntimeStats) Tp() int {
+	return execdetails.TpFKCascadeRuntimeStats
 }

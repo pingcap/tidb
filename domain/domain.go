@@ -17,7 +17,9 @@ package domain
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -113,8 +116,10 @@ type Domain struct {
 	cancel                  context.CancelFunc
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
+	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
+	historicalStatsWorker   *HistoricalStatsWorker
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -125,6 +130,11 @@ type Domain struct {
 	sysProcesses SysProcesses
 
 	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
 }
 
 type mdlCheckTableInfo struct {
@@ -338,7 +348,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
-			actions = append(actions, uint64(1<<diff.Type))
+			actions = append(actions, uint64(diff.Type))
 		}
 	}
 
@@ -1099,8 +1109,12 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 	}
 }
 
+// Periodically check and update the replica-read status when `tidb_replica_read` is set to "closest-adaptive"
+// We disable "closest-adaptive" in following conditions to ensure the read traffic is evenly distributed across
+// all AZs:
+// - There are no TiKV servers in the AZ of this tidb instance
+// - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
 func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
-	// fast path
 	do.sysVarCache.RLock()
 	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
 	do.sysVarCache.RUnlock()
@@ -1109,6 +1123,24 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
 		return nil
 	}
+
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	zone := ""
+	for k, v := range serverInfo.Labels {
+		if k == placement.DCLabelKey && v != "" {
+			zone = v
+			break
+		}
+	}
+	if zone == "" {
+		logutil.BgLogger().Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
 	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return err
@@ -1128,30 +1160,46 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 	}
 
-	enabled := false
-	// if stores don't have zone labels or are distribued in 1 zone, just disable cloeset replica read.
-	if len(storeZones) > 1 {
-		enabled = true
-		servers, err := infosync.GetAllServerInfo(ctx)
-		if err != nil {
-			return err
-		}
-		for _, s := range servers {
-			if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
-				if _, ok := storeZones[v]; !ok {
-					enabled = false
-					break
-				}
+	// no stores in this AZ
+	if _, ok := storeZones[zone]; !ok {
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return err
+	}
+	svrIdsInThisZone := make([]string, 0)
+	for _, s := range servers {
+		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+			if _, ok := storeZones[v]; ok {
 				storeZones[v] += 1
-			}
-		}
-		if enabled {
-			for _, count := range storeZones {
-				if count == 0 {
-					enabled = false
-					break
+				if v == zone {
+					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
 				}
 			}
+		}
+	}
+	enabledCount := math.MaxInt
+	for _, count := range storeZones {
+		if count < enabledCount {
+			enabledCount = count
+		}
+	}
+	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
+	// because ID is unchangeable, so this is a simple and stable algorithm to select
+	// some instances across all tidb servers.
+	if enabledCount < len(svrIdsInThisZone) {
+		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
+			return strings.Compare(svrIdsInThisZone[i], svrIdsInThisZone[j]) < 0
+		})
+	}
+	enabled := true
+	for _, s := range svrIdsInThisZone[enabledCount:] {
+		if s == serverInfo.ID {
+			enabled = false
+			break
 		}
 	}
 
@@ -1524,6 +1572,112 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// SetupPlanReplayerHandle setup plan replayer handle
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	do.planReplayerHandle = &planReplayerHandle{}
+	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
+		ctx:  ctx,
+		sctx: collectorSctx,
+	}
+	taskCH := make(chan *PlanReplayerDumpTask, 16)
+	taskStatus := &planReplayerDumpTaskStatus{}
+	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+
+	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
+		taskCH: taskCH,
+		status: taskStatus,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
+	for i := 0; i < len(workersSctxs); i++ {
+		worker := &planReplayerTaskDumpWorker{
+			ctx:    ctx,
+			sctx:   workersSctxs[i],
+			taskCH: taskCH,
+			status: taskStatus,
+		}
+		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
+	}
+}
+
+// SetupHistoricalStatsWorker setups worker
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+	do.historicalStatsWorker = &HistoricalStatsWorker{
+		tblCH: make(chan int64, 16),
+		sctx:  ctx,
+	}
+}
+
+// SetupDumpFileGCChecker setup sctx
+func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
+	do.dumpFileGcChecker.setupSctx(ctx)
+	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
+}
+
+var planReplayerHandleLease atomic.Uint64
+
+func init() {
+	planReplayerHandleLease.Store(uint64(10 * time.Second))
+	enableDumpHistoricalStats.Store(true)
+}
+
+// DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
+func DisablePlanReplayerBackgroundJob4Test() {
+	planReplayerHandleLease.Store(0)
+}
+
+// DisableDumpHistoricalStats4Test disable historical dump worker for test
+func DisableDumpHistoricalStats4Test() {
+	enableDumpHistoricalStats.Store(false)
+}
+
+// StartPlanReplayerHandle start plan replayer handle job
+func (do *Domain) StartPlanReplayerHandle() {
+	lease := planReplayerHandleLease.Load()
+	if lease < 1 {
+		return
+	}
+	do.wg.Add(2)
+	go func() {
+		tikcer := time.NewTicker(time.Duration(lease))
+		defer func() {
+			tikcer.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-tikcer.C:
+				err := do.planReplayerHandle.CollectPlanReplayerTask()
+				if err != nil {
+					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+		}()
+		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
+			go worker.run()
+		}
+		<-do.exit
+		do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
+	}()
+}
+
+// GetPlanReplayerHandle returns plan replayer handle
+func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
+	return do.planReplayerHandle
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
@@ -1541,6 +1695,40 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				return
 			case <-gcTicker.C:
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+			}
+		}
+	}()
+}
+
+// GetHistoricalStatsWorker gets historical workers
+func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
+	return do.historicalStatsWorker
+}
+
+// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+var enableDumpHistoricalStats atomic.Bool
+
+// StartHistoricalStatsWorker start historical workers running
+func (do *Domain) StartHistoricalStatsWorker() {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case tblID := <-do.historicalStatsWorker.tblCH:
+				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				if err != nil {
+					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+				}
 			}
 		}
 	}()
@@ -1572,6 +1760,46 @@ func (do *Domain) SetStatsUpdating(val bool) {
 		do.statsUpdating.Store(1)
 	} else {
 		do.statsUpdating.Store(0)
+	}
+}
+
+// ReleaseAnalyzeExec returned extra exec for Analyze
+func (do *Domain) ReleaseAnalyzeExec(sctxs []sessionctx.Context) {
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for _, ctx := range sctxs {
+		do.analyzeMu.sctxs[ctx] = false
+	}
+}
+
+// FetchAnalyzeExec get needed exec for analyze
+func (do *Domain) FetchAnalyzeExec(need int) []sessionctx.Context {
+	if need < 1 {
+		return nil
+	}
+	count := 0
+	r := make([]sessionctx.Context, 0)
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for sctx, used := range do.analyzeMu.sctxs {
+		if used {
+			continue
+		}
+		r = append(r, sctx)
+		do.analyzeMu.sctxs[sctx] = true
+		count++
+		if count >= need {
+			break
+		}
+	}
+	return r
+}
+
+// SetupAnalyzeExec setups exec for Analyze Executor
+func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
+	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
+	for _, ctx := range ctxs {
+		do.analyzeMu.sctxs[ctx] = false
 	}
 }
 
@@ -1655,7 +1883,7 @@ func (do *Domain) loadStatsWorker() {
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
+		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
@@ -1717,7 +1945,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -1725,6 +1955,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
+		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -1738,7 +1969,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Debug("handle ddl event failed", zap.Error(err))
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
@@ -1754,6 +1985,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats using feedback failed", zap.Error(err))
+			}
+		case <-loadLockedTablesTicker.C:
+			err := statsHandle.LoadLockedTables()
+			if err != nil {
+				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
 			err := statsHandle.DumpStatsFeedbackToKV()
@@ -1773,6 +2009,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
+
+		case <-readMemTricker.C:
+			memory.ForceReadMemStats()
 		}
 	}
 }
@@ -1892,7 +2131,10 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 }
 
 // LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
-func (do *Domain) LoadSigningCertLoop() {
+func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
+	sessionstates.SetCertPath(signingCert)
+	sessionstates.SetKeyPath(signingKey)
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {

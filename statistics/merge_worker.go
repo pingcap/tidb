@@ -15,8 +15,10 @@
 package statistics
 
 import (
+	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -37,6 +39,7 @@ func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
 }
 
 type topnStatsMergeWorker struct {
+	killed *uint32
 	taskCh <-chan *TopnStatsMergeTask
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
@@ -47,12 +50,14 @@ type topnStatsMergeWorker struct {
 func NewTopnStatsMergeWorker(
 	taskCh <-chan *TopnStatsMergeTask,
 	respCh chan<- *TopnStatsMergeResponse,
-	wrapper *StatsWrapper) *topnStatsMergeWorker {
+	wrapper *StatsWrapper,
+	killed *uint32) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
 		taskCh: taskCh,
 		respCh: respCh,
 	}
 	worker.statsWrapper = wrapper
+	worker.killed = killed
 	return worker
 }
 
@@ -111,6 +116,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		datumMap := make(map[hack.MutableString]types.Datum)
 
 		for i, topN := range checkTopNs {
+			if atomic.LoadUint32(worker.killed) == 1 {
+				resp.Err = errors.Trace(ErrQueryInterrupted)
+				worker.respCh <- resp
+				return
+			}
 			if topN.TotalCount() == 0 {
 				continue
 			}

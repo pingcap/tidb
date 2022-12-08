@@ -217,7 +217,7 @@ func subTestEnqueueActionType(t *testing.T) {
 	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	require.True(t, isTablesChanged)
 	require.Equal(t, []int64{1, 2, 3, 4}, relatedChanges.PhyTblIDS)
-	require.Equal(t, []uint64{15, 2, 7, 4}, relatedChanges.ActionTypes)
+	require.Equal(t, []uint64{(1 << 1) | (1 << 15), 1 << 2, (1 << 3) | (1 << 4), 1 << 4}, relatedChanges.ActionTypes)
 }
 
 type leaseGrantItem struct {

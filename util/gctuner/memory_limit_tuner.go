@@ -16,7 +16,6 @@ package gctuner
 
 import (
 	"math"
-	"runtime"
 	"runtime/debug"
 	"time"
 
@@ -39,14 +38,16 @@ type memoryLimitTuner struct {
 	nextGCTriggeredByMemoryLimit atomicutil.Bool
 }
 
+// fallbackPercentage indicates the fallback memory limit percentage when turning.
+const fallbackPercentage float64 = 1.1
+
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
 // Go runtime ensure that it will be called serially.
 func (t *memoryLimitTuner) tuning() {
 	if !t.isTuning.Load() {
 		return
 	}
-	r := &runtime.MemStats{}
-	runtime.ReadMemStats(r)
+	r := memory.ForceReadMemStats()
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
 	// This `if` checks whether the **last** GC was triggered by MemoryLimit as far as possible.
@@ -61,7 +62,9 @@ func (t *memoryLimitTuner) tuning() {
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		if t.nextGCTriggeredByMemoryLimit.Load() && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
-				debug.SetMemoryLimit(math.MaxInt64)
+				memory.MemoryLimitGCLast.Store(time.Now())
+				memory.MemoryLimitGCTotal.Add(1)
+				debug.SetMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
@@ -69,15 +72,17 @@ func (t *memoryLimitTuner) tuning() {
 					}
 				})
 				time.Sleep(resetInterval)
-				debug.SetMemoryLimit(t.calcMemoryLimit())
+				debug.SetMemoryLimit(t.calcMemoryLimit(t.GetPercentage()))
 				for !t.waitingReset.CompareAndSwap(true, false) {
 					continue
 				}
 			}()
+			memory.TriggerMemoryLimitGC.Store(true)
 		}
 		t.nextGCTriggeredByMemoryLimit.Store(true)
 	} else {
 		t.nextGCTriggeredByMemoryLimit.Store(false)
+		memory.TriggerMemoryLimitGC.Store(false)
 	}
 }
 
@@ -104,26 +109,27 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	var memoryLimit int64 = math.MaxInt64
-	if !EnableGOGCTuner.Load() {
-		memoryLimit = t.calcMemoryLimit()
-	}
+	var memoryLimit = t.calcMemoryLimit(t.GetPercentage())
 	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
+		memoryLimit = initGOMemoryLimitValue
 	} else {
 		t.isTuning.Store(true)
 	}
 	debug.SetMemoryLimit(memoryLimit)
 }
 
-func (t *memoryLimitTuner) calcMemoryLimit() int64 {
-	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
+func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
+	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
 	}
 	return memoryLimit
 }
 
+var initGOMemoryLimitValue int64
+
 func init() {
+	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
 }

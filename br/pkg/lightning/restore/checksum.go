@@ -374,7 +374,7 @@ func newGCTTLManager(pdClient pd.Client) gcTTLManager {
 
 func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) error {
 	// start gc ttl loop if not started yet.
-	if m.started.CAS(false, true) {
+	if m.started.CompareAndSwap(false, true) {
 		m.start(ctx)
 	}
 	m.lock.Lock()
