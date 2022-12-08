@@ -1890,26 +1890,35 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 		} else {
 			datum = row[pkCol.Offset]
 		}
-		// Try to truncate index values.
-		// Says that primary key(a (8)),
-		// For index t(a), don't truncate the value.
-		// For index t(a(9)), truncate to a(9).
-		// For index t(a(7)), truncate to a(8).
-		truncateTargetCol := pkIdxCol
-		for _, idxCol := range idx.Columns {
-			if idxCol.Offset == pkCol.Offset {
-				truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
-				break
-			}
-		}
-		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
-		if collate.IsBinCollation(pkCol.GetCollate()) {
-			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
-		} else {
-			rsData = append(rsData, datum)
-		}
+		TryTruncateRestoredData(&datum, pkCol, pkIdxCol, idx)
+		ConvertDatumToTailSpaceCount(&datum, pkCol)
+		rsData = append(rsData, datum)
 	}
 	return rsData
+}
+
+// TryTruncateRestoredData tries to truncate index values.
+// Says that primary key(a (8)),
+// For index t(a), don't truncate the value.
+// For index t(a(9)), truncate to a(9).
+// For index t(a(7)), truncate to a(8).
+func TryTruncateRestoredData(datum *types.Datum, pkCol *model.ColumnInfo,
+	pkIdxCol *model.IndexColumn, idx *model.IndexInfo) {
+	truncateTargetCol := pkIdxCol
+	for _, idxCol := range idx.Columns {
+		if idxCol.Offset == pkIdxCol.Offset {
+			truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
+			break
+		}
+	}
+	tablecodec.TruncateIndexValue(datum, truncateTargetCol, pkCol)
+}
+
+// ConvertDatumToTailSpaceCount converts a string datum to an int datum that represents the tail space count.
+func ConvertDatumToTailSpaceCount(datum *types.Datum, col *model.ColumnInfo) {
+	if collate.IsBinCollation(col.GetCollate()) {
+		*datum = types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString()))
+	}
 }
 
 func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
