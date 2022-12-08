@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -316,7 +317,8 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
-		logutil.BgLogger().Debug("[ddl] update progress",
+		// TODO: change back to Debug
+		logutil.BgLogger().Info("[ddl] update progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("totalCount", totalCount))
@@ -350,9 +352,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	// TODO: if Reorganize Partition, only select number of rows from the selected partitions!
-	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	rows, _, err := executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	var rows []chunk.Row
+	if len(tblInfo.Partition.DroppingDefinitions) > 0 {
+		// if Reorganize Partition, only select number of rows from the selected partitions!
+		defs := tblInfo.Partition.DroppingDefinitions
+		partIDs := make([]string, 0, len(defs))
+		for _, def := range defs {
+			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
+		}
+		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+	} else {
+		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	}
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
