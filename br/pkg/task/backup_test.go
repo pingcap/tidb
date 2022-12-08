@@ -7,6 +7,7 @@ import (
 	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,4 +74,52 @@ func TestParseCompressionType(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "invalid compression.*", err.Error())
 	require.Zero(t, ct)
+}
+
+func TestCheckpointConfigAdjust(t *testing.T) {
+	config := &BackupConfig{}
+
+	{
+		flags := &pflag.FlagSet{}
+		DefineBackupFlags(flags)
+		// in default
+		flags.Parse([]string{""})
+		config.ParseFromFlags(flags)
+		require.True(t, config.UseCheckpoint)
+		require.False(t, config.UseBackupMetaV2)
+		require.Equal(t, uint64(0), config.LastBackupTS)
+	}
+
+	{
+		flags := &pflag.FlagSet{}
+		DefineBackupFlags(flags)
+		// use incremental backup feature
+		flags.Parse([]string{"--lastbackupts", "1"})
+		config.ParseFromFlags(flags)
+		require.False(t, config.UseCheckpoint)
+		require.False(t, config.UseBackupMetaV2)
+		require.Equal(t, uint64(1), config.LastBackupTS)
+	}
+
+	{
+		flags := &pflag.FlagSet{}
+		DefineBackupFlags(flags)
+		// use backupmeta v2 feature
+		flags.Parse([]string{"--use-backupmeta-v2"})
+		config.ParseFromFlags(flags)
+		require.False(t, config.UseCheckpoint)
+		require.True(t, config.UseBackupMetaV2)
+		require.Equal(t, uint64(0), config.LastBackupTS)
+	}
+
+	{
+		flags := &pflag.FlagSet{}
+		DefineBackupFlags(flags)
+		// use both backupmeta v2 feature and incremental backup feature
+		flags.Parse([]string{"--use-backupmeta-v2", "--lastbackupts", "1"})
+		config.ParseFromFlags(flags)
+		require.False(t, config.UseCheckpoint)
+		require.True(t, config.UseBackupMetaV2)
+		require.Equal(t, uint64(1), config.LastBackupTS)
+	}
 }
