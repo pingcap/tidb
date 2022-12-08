@@ -1,0 +1,105 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package gpool
+
+import (
+	"errors"
+	"time"
+)
+
+const (
+	// DefaultCleanIntervalTime is the interval time to clean up goroutines.
+	DefaultCleanIntervalTime = 5 * time.Second
+
+	// OPENED represents that the pool is opened.
+	OPENED = iota
+
+	// CLOSED represents that the pool is closed.
+	CLOSED
+)
+
+var (
+	// ErrPoolClosed will be returned when submitting task to a closed pool.
+	ErrPoolClosed = errors.New("this pool has been closed")
+
+	// ErrPoolOverload will be returned when the pool is full and no workers available.
+	ErrPoolOverload = errors.New("too many goroutines blocked on submit or Nonblocking is set")
+)
+
+// BasePool is base class of pool
+type BasePool struct {
+	statistic *Statistic
+	name      string
+}
+
+// SetStatistic is to set Statistic
+func (p *BasePool) SetStatistic(statistic *Statistic) {
+	p.statistic = statistic
+}
+
+// GetStatistic is to get Statistic
+func (p *BasePool) GetStatistic() *Statistic {
+	return p.statistic
+}
+
+// MaxInFlight is to get max in flight.
+func (p *BasePool) MaxInFlight() int64 {
+	return p.statistic.MaxInFlight()
+}
+
+// GetQueueSize is to get queue size.
+func (p *BasePool) GetQueueSize() int64 {
+	return p.statistic.GetQueueSize()
+}
+
+// MaxPASS is to get max pass.
+func (p *BasePool) MaxPASS() uint64 {
+	return p.statistic.MaxPASS()
+}
+
+// MinRT is to get min rt.
+func (p *BasePool) MinRT() uint64 {
+	return p.statistic.MinRT()
+}
+
+// InFlight is to get in flight.
+func (p *BasePool) InFlight() int64 {
+	return p.statistic.InFlight()
+}
+
+// LongRTT is to get long rtt.
+func (p *BasePool) LongRTT() float64 {
+	return p.statistic.LongRTT()
+}
+
+// ShortRTT is to get short rtt.
+func (p *BasePool) ShortRTT() uint64 {
+	return p.statistic.ShortRTT()
+}
+
+// SetName is to set name.
+func (p *BasePool) SetName(name string) {
+	p.name = name
+}
+
+// Name is to get name.
+func (p *BasePool) Name() string {
+	return p.name
+}
+
+// UpdateLongRTT is to update long rtt.
+func (p *BasePool) UpdateLongRTT(fn func(float64) float64) {
+	p.statistic.UpdateLongRTT(fn)
+}
