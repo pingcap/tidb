@@ -47,8 +47,6 @@ const (
 )
 
 func TestBuildSelectAllQuery(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -172,8 +170,6 @@ func TestBuildSelectAllQuery(t *testing.T) {
 }
 
 func TestBuildOrderByClause(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -252,8 +248,6 @@ func TestBuildOrderByClause(t *testing.T) {
 }
 
 func TestBuildSelectField(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -317,8 +311,6 @@ func TestBuildSelectField(t *testing.T) {
 }
 
 func TestParseSnapshotToTSO(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -347,8 +339,6 @@ func TestParseSnapshotToTSO(t *testing.T) {
 }
 
 func TestShowCreateView(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -376,8 +366,6 @@ func TestShowCreateView(t *testing.T) {
 }
 
 func TestShowCreateSequence(t *testing.T) {
-	t.Parallel()
-
 	conf := defaultConfigForTest(t)
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -418,8 +406,6 @@ func TestShowCreateSequence(t *testing.T) {
 }
 
 func TestShowCreatePolicy(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -442,8 +428,6 @@ func TestShowCreatePolicy(t *testing.T) {
 }
 
 func TestListPolicyNames(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -474,8 +458,6 @@ func TestListPolicyNames(t *testing.T) {
 }
 
 func TestGetSuitableRows(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		avgRowLength uint64
 		expectedRows uint64
@@ -504,8 +486,6 @@ func TestGetSuitableRows(t *testing.T) {
 }
 
 func TestSelectTiDBRowID(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -543,8 +523,6 @@ func TestSelectTiDBRowID(t *testing.T) {
 }
 
 func TestBuildTableSampleQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -864,8 +842,6 @@ func TestBuildTableSampleQueries(t *testing.T) {
 }
 
 func TestBuildPartitionClauses(t *testing.T) {
-	t.Parallel()
-
 	const (
 		dbName        = "test"
 		tbName        = "t"
@@ -924,8 +900,6 @@ func TestBuildPartitionClauses(t *testing.T) {
 }
 
 func TestBuildWhereCondition(t *testing.T) {
-	t.Parallel()
-
 	conf := DefaultConfig()
 	testCases := []struct {
 		confWhere     string
@@ -961,8 +935,6 @@ func TestBuildWhereCondition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1124,8 +1096,6 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithPartitions(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1363,8 +1333,6 @@ func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
 }
 
 func TestBuildVersion3RegionQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1643,8 +1611,6 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 }
 
 func TestCheckTiDBWithTiKV(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1692,8 +1658,6 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 }
 
 func TestPickupPossibleField(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1839,8 +1803,6 @@ func TestPickupPossibleField(t *testing.T) {
 }
 
 func TestCheckIfSeqExists(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1868,8 +1830,6 @@ func TestCheckIfSeqExists(t *testing.T) {
 }
 
 func TestGetCharsetAndDefaultCollation(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1891,8 +1851,6 @@ func TestGetCharsetAndDefaultCollation(t *testing.T) {
 }
 
 func TestGetSpecifiedColumnValueAndClose(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1923,8 +1881,6 @@ func TestGetSpecifiedColumnValueAndClose(t *testing.T) {
 }
 
 func TestGetSpecifiedColumnValuesAndClose(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {

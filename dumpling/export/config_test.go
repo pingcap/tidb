@@ -12,8 +12,6 @@ import (
 )
 
 func TestCreateExternalStorage(t *testing.T) {
-	t.Parallel()
-
 	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
@@ -21,8 +19,6 @@ func TestCreateExternalStorage(t *testing.T) {
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		serverInfo version.ServerInfo
 		expected   bool
@@ -39,8 +35,6 @@ func TestMatchMysqlBugVersion(t *testing.T) {
 }
 
 func TestGetConfTables(t *testing.T) {
-	t.Parallel()
-
 	tablesList := []string{"db1t1", "db2.t1"}
 	_, err := GetConfTables(tablesList)
 	require.EqualError(t, err, fmt.Sprintf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablesList[0]))

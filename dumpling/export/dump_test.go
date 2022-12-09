@@ -20,8 +20,6 @@ import (
 )
 
 func TestDumpExit(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -69,8 +67,6 @@ func TestDumpExit(t *testing.T) {
 }
 
 func TestDumpTableMeta(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -111,8 +107,6 @@ func TestDumpTableMeta(t *testing.T) {
 }
 
 func TestGetListTableTypeByConf(t *testing.T) {
-	t.Parallel()
-
 	conf := defaultConfigForTest(t)
 	cases := []struct {
 		serverInfo  version.ServerInfo
@@ -139,8 +133,6 @@ func TestGetListTableTypeByConf(t *testing.T) {
 }
 
 func TestAdjustDatabaseCollation(t *testing.T) {
-	t.Parallel()
-
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 	parser1 := parser.New()
@@ -170,8 +162,6 @@ func TestAdjustDatabaseCollation(t *testing.T) {
 }
 
 func TestAdjustTableCollation(t *testing.T) {
-	t.Parallel()
-
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 
@@ -237,8 +227,6 @@ func TestUnregisterMetrics(t *testing.T) {
 }
 
 func TestSetDefaultSessionParams(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		si             version.ServerInfo
 		sessionParams  map[string]interface{}
