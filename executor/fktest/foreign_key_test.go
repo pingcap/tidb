@@ -2521,3 +2521,21 @@ func TestTableLockInForeignKeyCascade(t *testing.T) {
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
 }
+
+func TestForeignKeyIssue39732(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	require.NoError(t, err)
+	tk.MustExec("create table t1 (id int key, leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, null), (10, 1), (11, 1), (20, 10)")
+	tk.MustExec(`prepare stmt1 from 'delete from t1 where id = ?';`)
+	tk.MustExec(`set @a = 1;`)
+	tk.MustExec("execute stmt1 using @a;")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+}
