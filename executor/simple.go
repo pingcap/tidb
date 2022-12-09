@@ -1385,6 +1385,7 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, use
 	return nil
 }
 
+// checkPasswordsMatch used to compare whether the password encrypted with mysql.AuthCachingSha2Password or mysql.AuthTiDBSM3Password is repeated.
 func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, error) {
 	for _, row := range rows {
 		if !row.IsNull(0) {
