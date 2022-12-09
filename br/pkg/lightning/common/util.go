@@ -56,6 +56,7 @@ type MySQLConnectParam struct {
 	MaxAllowedPacket         uint64
 	TLSConfig                *tls.Config
 	AllowFallbackToPlaintext bool
+	Net                      string
 	Vars                     map[string]string
 }
 
@@ -66,6 +67,9 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.User = param.User
 	cfg.Passwd = param.Password
 	cfg.Net = "tcp"
+	if param.Net != "" {
+		cfg.Net = param.Net
+	}
 	cfg.Addr = net.JoinHostPort(param.Host, strconv.Itoa(param.Port))
 	cfg.Params["charset"] = "utf8mb4"
 	cfg.Params["sql_mode"] = fmt.Sprintf("'%s'", param.SQLMode)

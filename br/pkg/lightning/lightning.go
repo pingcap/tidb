@@ -33,6 +33,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -53,11 +55,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	_ "github.com/pingcap/tidb/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	_ "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -369,6 +373,36 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
+
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
+		o.logger.Info("set io total bytes")
+		taskCfg.TiDB.IOTotalBytes = atomic.NewUint64(0)
+		taskCfg.TiDB.UUID = uuid.New().String()
+		go func() {
+			for {
+				time.Sleep(time.Millisecond * 10)
+				log.L().Info("IOTotalBytes", zap.Uint64("IOTotalBytes", taskCfg.TiDB.IOTotalBytes.Load()))
+			}
+		}()
+	})
+	if taskCfg.TiDB.IOTotalBytes != nil {
+		o.logger.Info("found IO total bytes counter")
+		mysql.RegisterDialContext(taskCfg.TiDB.UUID, func(ctx context.Context, addr string) (net.Conn, error) {
+			o.logger.Debug("connection with IO bytes counter")
+			d := &net.Dialer{}
+			conn, err := d.DialContext(ctx, "tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			tcpConn := conn.(*net.TCPConn)
+			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
+			err = tcpConn.SetKeepAlive(true)
+			if err != nil {
+				o.logger.Warn("set TCP keep alive failed", zap.Error(err))
+			}
+			return util.NewTCPConnWithIOCounter(tcpConn, taskCfg.TiDB.IOTotalBytes), nil
+		})
+	}
 
 	return l.run(taskCtx, taskCfg, o)
 }

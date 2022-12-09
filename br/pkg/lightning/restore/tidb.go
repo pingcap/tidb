@@ -74,6 +74,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		MaxAllowedPacket:         dsn.MaxAllowedPacket,
 		TLSConfig:                dsn.Security.TLSConfig,
 		AllowFallbackToPlaintext: dsn.Security.AllowFallbackToPlaintext,
+		Net:                      dsn.UUID,
 	}
 
 	db, err := param.Connect()
