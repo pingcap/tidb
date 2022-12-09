@@ -24,7 +24,7 @@ import (
 
 func TestGradient2Scheduler(t *testing.T) {
 	scheduler := NewGradient2Scheduler()
-	pool := util.NewFakeGPool(10)
+	pool := util.NewMockGPool(10)
 	rms := NewFakeResourceManage()
 	rms.RegisterPool(pool)
 	rms.Register(scheduler)
