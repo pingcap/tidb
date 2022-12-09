@@ -33,8 +33,9 @@ var (
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
 
-	checkpointSupportError  error = nil
-	pitrSupportBatchKVFiles bool  = true
+	checkpointSupportError error = nil
+	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
+	pitrSupportBatchKVFiles bool = false
 )
 
 // NextMajorVersion returns the next major version.
@@ -140,6 +141,8 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 	// If tikv version < 6.5, PITR do not support restoring batch kv files.
 	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
 		pitrSupportBatchKVFiles = false
+	} else {
+		pitrSupportBatchKVFiles = true
 	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
