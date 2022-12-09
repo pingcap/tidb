@@ -523,6 +523,7 @@ var statsHealthyGauges = []prometheus.Gauge{
 	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 }
 
+// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
 	v := h.statsCache.Load()
 	if v == nil {
