@@ -25,7 +25,7 @@ import (
 func TestGradient2Scheduler(t *testing.T) {
 	scheduler := NewGradient2Scheduler()
 	pool := util.NewFakeGPool()
-	rms := NewFakeResourceManage()
+	rms := NewMockResourceManage()
 	rms.RegisterPool(pool)
 	rms.Register(scheduler)
 	testcases := []struct {

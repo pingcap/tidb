@@ -5,9 +5,9 @@ go_library(
     srcs = [
         "stat.go",
         "task.go",
-        "task_manage.go",
-        "task_manage_iterator.go",
-        "task_manage_scheduler.go",
+        "task_manager.go",
+        "task_manager_iterator.go",
+        "task_manager_scheduler.go",
     ],
     importpath = "github.com/pingcap/tidb/resourcemanager/pooltask",
     visibility = ["//visibility:public"],

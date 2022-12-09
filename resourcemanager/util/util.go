@@ -18,22 +18,23 @@ import "time"
 
 // GorotinuePool is a pool interface
 type GorotinuePool interface {
-	Release()
-	Tune(size int, isLimit bool)
-	LastTunerTs() time.Time
-	MaxInFlight() int64
-	InFlight() int64
-	MinRT() uint64
-	MaxPASS() uint64
+	BoostTask()
 	Cap() int
+	GetQueueSize() int64
+	InFlight() int64
 	// LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
 	LongRTT() float64
-	UpdateLongRTT(f func(float64) float64)
+	LastTunerTs() time.Time
+	MaxInFlight() int64
+	MaxPASS() uint64
+	MinRT() uint64
+	Name() string
+	Release()
+	Running() int
 	// ShortRTT is to represent the current system latency by tracking a measurement of the short time, and more volatile RTT.
 	ShortRTT() uint64
-	GetQueueSize() int64
-	Running() int
-	Name() string
+	Tune(size int, isLimit bool)
+	UpdateLongRTT(f func(float64) float64)
 }
 
 // PoolContainer is a pool container

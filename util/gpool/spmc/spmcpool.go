@@ -158,6 +158,14 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 	}
 }
 
+// BoostTask is used to boost the pool.
+func (p *Pool[T, U, C, CT, TF]) BoostTask() {
+	if tid, boostTask := p.taskManager.Boost(); boostTask != nil {
+		p.taskManager.AddSubTask(tid, boostTask.Clone())
+		p.taskCh <- boostTask
+	}
+}
+
 // Running returns the number of workers currently running.
 func (p *Pool[T, U, C, CT, TF]) Running() int {
 	return int(p.running.Load())

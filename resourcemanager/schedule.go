@@ -69,6 +69,13 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command, is
 				zap.Bool("isLimit", isLimit))
 			pool.Pool.Tune(concurrency, isLimit)
 		case scheduler.Overclock:
+			if pool.Pool.Running() < con {
+				pool.Pool.BoostTask()
+				log.Info("overclock task",
+					zap.Int("origin concurrency", con),
+					zap.String("name", pool.Pool.Name()),
+					zap.Bool("isLimit", isLimit))
+			}
 			concurrency := con + 1
 			log.Info("overclock goroutine pool",
 				zap.Int("origin concurrency", con),

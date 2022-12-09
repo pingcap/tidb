@@ -16,28 +16,28 @@ package scheduler
 
 import "github.com/pingcap/tidb/resourcemanager/util"
 
-type FakeResourceManage struct {
+type MockResourceManage struct {
 	scheduler Scheduler
-	pool      *util.FakeGPool
+	pool      *util.MockGPool
 }
 
-// NewFakeResourceManage creates a fake resource manage.
-func NewFakeResourceManage() *FakeResourceManage {
-	return &FakeResourceManage{}
+// NewMockResourceManage creates a fake resource manage.
+func NewMockResourceManage() *MockResourceManage {
+	return &MockResourceManage{}
 }
 
 // Register registers a scheduler.
-func (f *FakeResourceManage) Register(sch Scheduler) {
+func (f *MockResourceManage) Register(sch Scheduler) {
 	f.scheduler = sch
 }
 
 // Register registers a scheduler.
-func (f *FakeResourceManage) RegisterPool(pool *util.FakeGPool) {
+func (f *MockResourceManage) RegisterPool(pool *util.MockGPool) {
 	f.pool = pool
 }
 
 // Next get scheduler command.
-func (f *FakeResourceManage) Next() Command {
+func (f *MockResourceManage) Next() Command {
 	if f.scheduler != nil {
 		defer f.pool.Next()
 		return f.scheduler.Tune(util.UNKNOWN, f.pool)
@@ -45,6 +45,6 @@ func (f *FakeResourceManage) Next() Command {
 	return Hold
 }
 
-func (f *FakeResourceManage) GetPool() *util.FakeGPool {
+func (f *MockResourceManage) GetPool() *util.MockGPool {
 	return f.pool
 }
