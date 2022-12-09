@@ -279,6 +279,7 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
+	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -658,14 +659,15 @@ type Performance struct {
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
-	IndexUsageSyncLease              string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease              string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                             int    `toml:"gogc" json:"gogc"`
-	EnforceMPP                       bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency             uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize               uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	AnalyzePartitionConcurrencyQuota uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
-	EnableStatsCacheMemQuota         bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                              int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
+	EnableStatsCacheMemQuota          bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -923,16 +925,17 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:              "0s",
-		GOGC:                             100,
-		EnforceMPP:                       false,
-		PlanReplayerGCLease:              "10m",
-		StatsLoadConcurrency:             5,
-		StatsLoadQueueSize:               1000,
-		AnalyzePartitionConcurrencyQuota: 16,
-		EnableStatsCacheMemQuota:         false,
-		RunAutoAnalyze:                   true,
-		EnableLoadFMSketch:               false,
+		IndexUsageSyncLease:               "0s",
+		GOGC:                              100,
+		EnforceMPP:                        false,
+		PlanReplayerGCLease:               "10m",
+		StatsLoadConcurrency:              5,
+		StatsLoadQueueSize:                1000,
+		AnalyzePartitionConcurrencyQuota:  16,
+		PlanReplayerDumpWorkerConcurrency: 1,
+		EnableStatsCacheMemQuota:          false,
+		RunAutoAnalyze:                    true,
+		EnableLoadFMSketch:                false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -986,6 +989,7 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	DisaggregatedTiFlash:                 false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 }

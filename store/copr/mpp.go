@@ -235,19 +235,24 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		}
 	}
 
+	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
+	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
 	var err error
 	var retry bool
+
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
+		if err != nil && disaggregatedTiFlash {
+			m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
+		}
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
@@ -265,6 +270,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
+			if disaggregatedTiFlash {
+				m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
+			}
 			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
 			}
@@ -327,8 +335,9 @@ func (m *mppIterator) cancelMppTasks() {
 		Meta: &mpp.TaskMeta{StartTs: m.startTs},
 	}
 
+	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
+	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	usedStoreAddrs := make(map[string]bool)
 	for _, task := range m.tasks {
@@ -350,6 +359,9 @@ func (m *mppIterator) cancelMppTasks() {
 			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr))
 			if err != nil {
 				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr))
+				if disaggregatedTiFlash {
+					m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
+				}
 			}
 		})
 	}
@@ -365,8 +377,11 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		},
 	}
 
+	var err error
+	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
+
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
+	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
@@ -379,6 +394,9 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 			m.sendError(derr.ErrTiFlashServerTimeout)
 		} else {
 			m.sendError(err)
+		}
+		if disaggregatedTiFlash {
+			m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 		}
 		return
 	}

@@ -73,6 +73,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		SQLMode:          dsn.StrSQLMode,
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
+		Net:              dsn.UUID,
 	}
 
 	db, err := param.Connect()

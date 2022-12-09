@@ -1471,3 +1471,25 @@ func TestCreateBindingForPrepareFromHistory(t *testing.T) {
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
+
+func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("create table t3(id int)")
+
+	sql := "select * from t1 where t1.id in (select id from t2)"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with sub query")
+
+	sql = "select * from t1, t2, t3 where t1.id = t2.id and t2.id = t3.id"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with more than two table join")
+}
