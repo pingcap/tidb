@@ -40,7 +40,7 @@ func TestMatchMysqlBugVersion(t *testing.T) {
 
 func TestGetConfTables(t *testing.T) {
 	t.Parallel()
-	
+
 	tablesList := []string{"db1t1", "db2.t1"}
 	_, err := GetConfTables(tablesList)
 	require.EqualError(t, err, fmt.Sprintf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablesList[0]))

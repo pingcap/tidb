@@ -68,7 +68,7 @@ func TestRowIter(t *testing.T) {
 
 func TestChunkRowIter(t *testing.T) {
 	t.Parallel()
-	
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {

@@ -49,7 +49,7 @@ func TestFilterTables(t *testing.T) {
 
 func TestFilterDatabaseWithNoTable(t *testing.T) {
 	t.Parallel()
-	
+
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 

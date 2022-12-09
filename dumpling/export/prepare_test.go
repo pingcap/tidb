@@ -309,7 +309,7 @@ func TestConfigValidation(t *testing.T) {
 
 func TestValidateResolveAutoConsistency(t *testing.T) {
 	t.Parallel()
-	
+
 	conf1 := defaultConfigForTest(t)
 	d := &Dumper{conf: conf1}
 	conf := d.conf
