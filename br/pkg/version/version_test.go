@@ -77,6 +77,15 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// Default value of `pitrSupportBatchKVFiles` should be `false`.
+		build.ReleaseVersion = "v6.5.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
 		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.2.0`}}

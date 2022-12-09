@@ -65,8 +65,7 @@ func (s *ttlStatistics) Reset() {
 type ttlScanTask struct {
 	tbl        *cache.PhysicalTable
 	expire     time.Time
-	rangeStart []types.Datum
-	rangeEnd   []types.Datum
+	scanRange  cache.ScanRange
 	statistics *ttlStatistics
 }
 
@@ -105,7 +104,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}()
 
 	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.scanRange.Start, t.scanRange.End)
 	if err != nil {
 		return t.result(err)
 	}
