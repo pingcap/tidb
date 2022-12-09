@@ -137,4 +137,5 @@ run_sql "insert into test_db.test_table values (1),(2),(3),(4),(5),(6),(7),(8);"
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetIOTotalBytes=return(1)"
 run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
-grep 'IOTotal' ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v 'IOTotalBytes=0'
+cnt=$(grep "IOTotalBytes=" ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v "IOTotalBytes=0" | wc -l)
+[ "$cnt" -ge 1 ]

@@ -108,11 +108,10 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
 		d.conf.IOTotalBytes = gatomic.NewUint64(0)
 		d.conf.Net = uuid.New().String()
-		d.conf.Logger = log.Zap().Logger
 		go func() {
 			for {
 				time.Sleep(10 * time.Millisecond)
-				d.conf.Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
+				d.tctx.L().Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
 			}
 		}()
 	})
@@ -1357,7 +1356,7 @@ func openSQLDB(d *Dumper) error {
 			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
 			err = tcpConn.SetKeepAlive(true)
 			if err != nil {
-				return nil, err
+				d.tctx.L().Logger.Warn("fail to keep alive", zap.Error(err))
 			}
 			return util.NewTCPConnWithIOCounter(tcpConn, d.conf.IOTotalBytes), nil
 		})
