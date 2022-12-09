@@ -1045,7 +1045,8 @@ func fetchRecordFromClusterStmtSummary(sctx sessionctx.Context, planDigest strin
 	exec, _ := sctx.(sqlexec.SQLExecutor)
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint"
 	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
-		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest)
+		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
+		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
 	if rs == nil {
 		return nil, errors.New("can't find any plans for '" + planDigest + "'")
