@@ -16,6 +16,7 @@ package pooltask
 
 import (
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +34,7 @@ type counterCache struct {
 
 // Statistic is the statistic of the pool.
 type Statistic struct {
+	mu sync.RWMutex
 	// taskCntStat is the statistic of the task complete count.
 	taskCntStat window.RollingCounter[uint64]
 	// rtStat is the statistic of the task complete time.
@@ -177,8 +179,8 @@ func (s *Statistic) Static() (DoneFunc, error) {
 	start := time.Now().UnixNano()
 	ms := float64(time.Millisecond)
 	return func() {
+		s.mu.Lock()
 		rt := uint64(math.Ceil(float64(time.Now().UnixNano()-start)) / ms)
-		s.shortRTT.Store(rt)
 		s.longRTT.Add(float64(rt))
 		long := s.LongRTT()
 		// If the long RTT is substantially larger than the short RTT then reduce the long RTT measurement.
@@ -189,7 +191,8 @@ func (s *Statistic) Static() (DoneFunc, error) {
 				return value * 0.9
 			})
 		}
-
+		s.mu.Unlock()
+		s.shortRTT.Store(rt)
 		s.rtStat.Add(rt)
 		s.inFlight.Add(-1)
 		s.taskCntStat.Add(1)
