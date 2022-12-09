@@ -2525,6 +2525,7 @@ func TestForeignKeyIssue39732(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create user 'u1'@'%' identified by '';")
