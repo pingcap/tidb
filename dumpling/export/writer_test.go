@@ -18,6 +18,8 @@ import (
 )
 
 func TestWriteDatabaseMeta(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -31,12 +33,14 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
 }
 
 func TestWritePolicyMeta(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -56,6 +60,8 @@ func TestWritePolicyMeta(t *testing.T) {
 }
 
 func TestWriteTableMeta(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	config := defaultConfigForTest(t)
@@ -74,6 +80,8 @@ func TestWriteTableMeta(t *testing.T) {
 }
 
 func TestWriteViewMeta(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -102,6 +110,8 @@ func TestWriteViewMeta(t *testing.T) {
 }
 
 func TestWriteTableData(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -140,6 +150,8 @@ func TestWriteTableData(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSize(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -189,6 +201,8 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -239,6 +253,8 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 }
 
 func TestWriteTableDataWithStatementSize(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -331,6 +347,8 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 var mu sync.Mutex
 
 func createTestWriter(conf *Config, t *testing.T) *Writer {
+	t.Helper()
+
 	mu.Lock()
 	extStore, err := conf.createExternalStorage(context.Background())
 	mu.Unlock()

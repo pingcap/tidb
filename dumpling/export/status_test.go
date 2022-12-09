@@ -11,6 +11,8 @@ import (
 )
 
 func TestGetParameters(t *testing.T) {
+	t.Parallel()
+
 	conf := defaultConfigForTest(t)
 	d := &Dumper{conf: conf, speedRecorder: NewSpeedRecorder()}
 	d.metrics = newMetrics(conf.PromFactory, nil)
@@ -34,6 +36,8 @@ func TestGetParameters(t *testing.T) {
 }
 
 func TestSpeedRecorder(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		spentTime int64
 		finished  float64

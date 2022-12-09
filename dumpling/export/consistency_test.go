@@ -18,6 +18,8 @@ import (
 )
 
 func TestConsistencyController(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -72,6 +74,8 @@ func TestConsistencyController(t *testing.T) {
 }
 
 func TestConsistencyLockControllerRetry(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -108,6 +112,8 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 }
 
 func TestConsistencyLockControllerEmpty(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -141,6 +147,8 @@ func TestConsistencyLockControllerEmpty(t *testing.T) {
 }
 
 func TestResolveAutoConsistency(t *testing.T) {
+	t.Parallel()
+
 	conf := defaultConfigForTest(t)
 	cases := []struct {
 		serverTp            version.ServerType
@@ -198,6 +206,8 @@ func TestResolveAutoConsistency(t *testing.T) {
 }
 
 func TestConsistencyControllerError(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -237,6 +247,8 @@ func TestConsistencyControllerError(t *testing.T) {
 }
 
 func TestConsistencyLockTiDBCheck(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {

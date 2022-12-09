@@ -14,6 +14,8 @@ import (
 )
 
 func TestFilterTables(t *testing.T) {
+	t.Parallel()
+
 	tctx := tcontext.Background().WithLogger(appLogger)
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
@@ -46,6 +48,8 @@ func TestFilterTables(t *testing.T) {
 }
 
 func TestFilterDatabaseWithNoTable(t *testing.T) {
+	t.Parallel()
+	
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 

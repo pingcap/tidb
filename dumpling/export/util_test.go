@@ -11,6 +11,8 @@ import (
 )
 
 func TestRepeatableRead(t *testing.T) {
+	t.Parallel()
+
 	data := [][]interface{}{
 		{version.ServerTypeUnknown, ConsistencyTypeNone, true},
 		{version.ServerTypeMySQL, ConsistencyTypeFlush, true},
@@ -31,6 +33,8 @@ func TestRepeatableRead(t *testing.T) {
 }
 
 func TestInfiniteChan(t *testing.T) {
+	t.Parallel()
+
 	in, out := infiniteChan[int]()
 	go func() {
 		for i := 0; i < 10000; i++ {

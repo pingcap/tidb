@@ -16,6 +16,8 @@ import (
 )
 
 func TestWriteMeta(t *testing.T) {
+	t.Parallel()
+
 	createTableStmt := "CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
@@ -34,6 +36,8 @@ func TestWriteMeta(t *testing.T) {
 }
 
 func TestWriteInsert(t *testing.T) {
+	t.Parallel()
+
 	cfg := createMockConfig()
 
 	data := [][]driver.Value{
@@ -69,6 +73,8 @@ func TestWriteInsert(t *testing.T) {
 }
 
 func TestWriteInsertReturnsError(t *testing.T) {
+	t.Parallel()
+
 	cfg := createMockConfig()
 
 	data := [][]driver.Value{
@@ -107,6 +113,8 @@ func TestWriteInsertReturnsError(t *testing.T) {
 }
 
 func TestWriteInsertInCsv(t *testing.T) {
+	t.Parallel()
+
 	cfg := createMockConfig()
 
 	data := [][]driver.Value{
@@ -194,6 +202,8 @@ func TestWriteInsertInCsv(t *testing.T) {
 }
 
 func TestWriteInsertInCsvReturnsError(t *testing.T) {
+	t.Parallel()
+
 	cfg := createMockConfig()
 
 	data := [][]driver.Value{
@@ -227,6 +237,8 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 }
 
 func TestSQLDataTypes(t *testing.T) {
+	t.Parallel()
+
 	cfg := createMockConfig()
 
 	data := [][]driver.Value{
@@ -258,6 +270,8 @@ func TestSQLDataTypes(t *testing.T) {
 }
 
 func TestWrite(t *testing.T) {
+	t.Parallel()
+
 	mocksw := &mockPoisonWriter{}
 	src := []string{"test", "loooooooooooooooooooong", "poison"}
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}

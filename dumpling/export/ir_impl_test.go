@@ -26,6 +26,8 @@ func (s *simpleRowReceiver) BindAddress(args []interface{}) {
 }
 
 func TestRowIter(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -65,6 +67,8 @@ func TestRowIter(t *testing.T) {
 }
 
 func TestChunkRowIter(t *testing.T) {
+	t.Parallel()
+	
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
