@@ -479,18 +479,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}()
 	})
 
-	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
+	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
-	defer func() {
-		// deregister TLS config with name "cluster"
-		if taskCfg.TiDB.Security == nil {
-			return
-		}
-		taskCfg.TiDB.Security.DeregisterMySQL()
-	}()
 
-	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
+	// initiation of default glue should be after BuildTLSConfig, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	g := o.glue
 	if g == nil {
