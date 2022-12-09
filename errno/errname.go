@@ -836,6 +836,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByGeneratedColumn:                            mysql.Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             mysql.Message("Generated column '%s' cannot refer to auto-increment column.", nil),
 	ErrAccountHasBeenLocked:                                  mysql.Message("Access denied for user '%s'@'%s'. Account is locked.", nil),
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock:    mysql.Message("Access denied for user '%s'@'%s'. Account is blocked for %s day(s) (%s day(s) remaining) due to %d consecutive failed logins.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrForeignKeyCascadeDepthExceeded:                        mysql.Message("Foreign key cascade delete/update exceeds max depth of %v.", nil),

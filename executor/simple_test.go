@@ -129,6 +129,7 @@ func TestUserAttributes(t *testing.T) {
 	rootTK.MustExec("alter user usr1 comment 'comment1'")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}}`))
 }
+<<<<<<< HEAD
 
 func TestValidatePassword(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -212,3 +213,5 @@ func TestValidatePassword(t *testing.T) {
 	tk.MustExec("SET GLOBAL validate_password.enable = 1")
 	tk.MustExec("CREATE ROLE role1")
 }
+=======
+>>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
