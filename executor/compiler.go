@@ -176,9 +176,11 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
 	for _, task := range tasks {
-		if task.SQLDigest == sqlDigest.String() && task.PlanDigest == planDigest.String() {
-			sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
-			return
+		if task.SQLDigest == sqlDigest.String() {
+			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
+				sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
+				return
+			}
 		}
 	}
 }
