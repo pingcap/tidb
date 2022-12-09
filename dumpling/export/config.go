@@ -228,6 +228,7 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
 			MinVersion:         tls.VersionTLS10,
+			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
 	if conf.AllowCleartextPasswords {
