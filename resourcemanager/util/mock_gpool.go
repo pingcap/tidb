@@ -31,8 +31,8 @@ type MockGPool struct {
 	lastTunerTs []time.Time
 }
 
-// NewFakeGPool is only for test
-func NewFakeGPool(size int) *MockGPool {
+// NewMockGPool is only for test
+func NewMockGPool(size int) *MockGPool {
 	return &MockGPool{
 		maxInFlight: make([]int64, 0, size),
 		inFlight:    make([]int64, 0, size),
