@@ -196,7 +196,6 @@ type TxnCtxNoNeedToRestore struct {
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
-	shardRand    *rand.Rand
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
@@ -246,21 +245,22 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (tc *TransactionContext) GetCurrentShard(count int) int64 {
-	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard()
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
 	return tc.currentShard
 }
 
-func (tc *TransactionContext) updateShard() {
+func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
@@ -1322,6 +1322,9 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
 
 	// Resource group name
 	ResourceGroupName string
