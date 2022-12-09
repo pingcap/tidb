@@ -64,8 +64,8 @@ const (
 	InstanceLease = 1 * time.Minute
 )
 
-func (bWT backfillerType) String() string {
-	switch bWT {
+func (bT backfillerType) String() string {
+	switch bT {
 	case typeAddIndexWorker:
 		return "add index"
 	case typeUpdateColumnWorker:
