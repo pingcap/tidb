@@ -93,6 +93,8 @@ func selectPushDownConditions(conditions []expression.Expression)([]expression.E
 }
 ```
 
+Since we need statistics to calculate the selectivity of the filter conditions, so this algorithm should be executed in postOptimize phase.
+
 Obviously, beacuse the selectivity of the filter conditions is accurate, and the algorithm is not optimal, we can not guarantee that the pushed down filter conditions are the best. In order to patch a workaround for performance degradation, we will add a optimizer hint `/*+ enable_late_materialization=false */` to disable optimizer to push down filter conditions.
 
 Therefore, it should work like this:
