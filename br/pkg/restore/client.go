@@ -2064,9 +2064,9 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ctx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 	} else {
-		err = ApplyKVFilesWithSingelMethod(ctx, iter, applyFunc)
+		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
 	}
 	if err != nil {
 		return errors.Trace(err)
