@@ -19,19 +19,13 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// ErrInSandBoxMode is used to indicate that the session is in sandbox mode.
-type ErrInSandBoxMode struct{}
-
-func (e *ErrInSandBoxMode) Error() string {
-	return "The session will enable sandbox mode"
-}
-
 // error definitions.
 var (
-	errInvalidPrivilegeType    = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
-	ErrNonexistingGrant        = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
-	errLoadPrivilege           = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
-	ErrAccessDenied            = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
-	errAccountHasBeenLocked    = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
-	ErrMustChangePasswordLogin = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
+	errInvalidPrivilegeType                               = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
+	ErrNonexistingGrant                                   = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
+	errLoadPrivilege                                      = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
+	ErrAccessDenied                                       = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
+	errAccountHasBeenLocked                               = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
+	ErrMustChangePasswordLogin                            = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
 )
