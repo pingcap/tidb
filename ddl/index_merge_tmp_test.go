@@ -331,3 +331,48 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "1 7", "2 7", "5 7", "8 8", "10 10"))
 }
+
+func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (a DATE NULL DEFAULT '1619-01-18', b BOOL NULL DEFAULT '0') CHARACTER SET 'utf8mb4' COLLATE 'utf8mb4_bin';`)
+	tk.MustExec(`INSERT INTO t SET b = '1';`)
+
+	updateSQLs := []string{
+		"UPDATE t SET a = '9432-05-10', b = '0';",
+		"UPDATE t SET a = '9432-05-10', b = '1';",
+	}
+
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
+	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
+
+	var checkErrs []error
+	originHook := dom.DDL().GetHook()
+	callback := &ddl.TestDDLCallback{
+		Do: dom,
+	}
+	onJobUpdatedBefore := func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			for _, sql := range updateSQLs {
+				_, err := tk2.Exec(sql)
+				if err != nil {
+					checkErrs = append(checkErrs, err)
+				}
+			}
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedBefore)
+	dom.DDL().SetHook(callback)
+	tk.MustExec("alter table t add index idx(b);")
+	dom.DDL().SetHook(originHook)
+	for _, err := range checkErrs {
+		require.NoError(t, err)
+	}
+	tk.MustExec("admin check table t;")
+}
