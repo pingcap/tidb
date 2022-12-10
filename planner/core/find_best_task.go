@@ -1986,8 +1986,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	// In disaggregated tiflash mode, only MPP is allowed, Cop and BatchCop is deprecated.
-	if prop.TaskTp == property.MppTaskType || config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash {
+	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
+	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
+	isDisaggregatedTiFlashPath := config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash
+	canMppTaskConvertToRootTask := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	if prop.TaskTp == property.MppTaskType || canMppTaskConvertToRootTask {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
@@ -2015,7 +2018,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		task = mppTask
 		if !mppTask.invalid() {
-			if prop.TaskTp != property.RootTaskType && len(mppTask.rootTaskConds) > 0 {
+			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
+				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
+				// So have to return a rootTask, but prop requires return mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else {
 				task = mppTask
@@ -2024,6 +2029,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 		return task, nil
+	}
+	if isDisaggregatedTiFlashPath {
+		// prop.TaskTp is cop related, just return invalidTask.
+		return invalidTask, nil
 	}
 	copTask := &copTask{
 		tablePlan:         ts,

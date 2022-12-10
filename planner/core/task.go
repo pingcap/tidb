@@ -2065,8 +2065,8 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 type mppTask struct {
 	p PhysicalPlan
 
-	partTp   property.MPPPartitionType
-	hashCols []*property.MPPPartitionColumn
+	partTp        property.MPPPartitionType
+	hashCols      []*property.MPPPartitionColumn
 	rootTaskConds []expression.Expression
 }
 

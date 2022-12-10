@@ -1308,6 +1308,10 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
 	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1321,7 +1325,9 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 
 	tk.MustQuery("explain select    max(   tbl_1.col_1 ) as r0 , sum(   tbl_1.col_1 ) as r1 , sum(   tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939   order by r0,r1,r2 ;")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
-	})
+	tk.MustExec("drop table if exists tbl_7, tbl_8")
+	tk.MustExec("create table tbl_7 ( col_32 int  unsigned  default 1404315863 ,col_33 boolean   not null ,col_34 smallint    default 15119 ,col_35 tinyint  unsigned not null ,col_36 mediumint   not null default -7380012 ,col_37 time   not null ,col_38 char ( 167 ) collate utf8mb4_bin ,col_39 datetime    default '1999-02-07' , unique key idx_7 ( col_36 ,col_32 ,col_39 ) ) charset utf8mb4 collate utf8mb4_bin partition by hash ( col_36 ) partitions 2;")
+	tk.MustExec("create table tbl_8 ( col_40 varchar ( 458 ) collate utf8mb4_bin  not null ,col_41 float ,col_42 varchar ( 111 ) collate utf8mb4_bin  not null default 'iFN1*3sU' ,col_43 mediumint   not null default 3553140 ,col_44 time   not null ,col_45 bigint   not null , unique key idx_8 ( col_45 ) ,key idx_9 ( col_45 ,col_43 ) ,unique key idx_10 ( col_45 ,col_41 ,col_43 ) ,unique key idx_11 ( col_45 ) ) charset utf8mb4 collate utf8mb4_bin partition by hash ( col_45 ) partitions 4;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("explain select   /*+ hash_join( tbl_8 , tbl_7 */ lower( tbl_8.col_42 ) as r0 from tbl_8 , tbl_7 where tbl_8.col_42 < 'e'   order by r0 limit 60 ;")
 }
