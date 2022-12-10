@@ -2195,6 +2195,13 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 			return s
 		}
 		return ret
+	} else if _, _, err := tablecodec.DecodeRecordKey(key); err == nil {
+		ret, err := decodeRecordKey(key, tableID, tbl, loc)
+		if err != nil {
+			sc.AppendWarning(err)
+			return s
+		}
+		return ret
 	}
 	sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 	return s
@@ -2225,53 +2232,57 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		return string(retStr), nil
 	}
 	if tbl != nil {
-		tblInfo := tbl.Meta()
-		idxInfo := tables.FindPrimaryIndex(tblInfo)
-		if idxInfo == nil {
-			return "", errors.Trace(errors.Errorf("primary key not found when decoding record key: %X", key))
-		}
-		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
-		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &(col.FieldType)
-		}
-		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
-		for _, col := range idxInfo.Columns {
-			handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
-		}
-
-		if len(handleColIDs) != handle.NumCols() {
-			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
-		}
-		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
 		ret := make(map[string]interface{})
 		if tbl.Meta().Partition != nil {
 			ret["partition_id"] = tableID
 			tableID = tbl.Meta().ID
 		}
 		ret["table_id"] = tableID
-		handleRet := make(map[string]interface{})
-		for colID := range datumMap {
-			dt := datumMap[colID]
-			dtStr, err := datumToJSONObject(&dt)
+		if tablecodec.IsRecordKey(key) {
+			tblInfo := tbl.Meta()
+			idxInfo := tables.FindPrimaryIndex(tblInfo)
+			if idxInfo == nil {
+				return "", errors.Trace(errors.Errorf("primary key not found when decoding record key: %X", key))
+			}
+			cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+			for _, col := range tblInfo.Columns {
+				cols[col.ID] = &(col.FieldType)
+			}
+			handleColIDs := make([]int64, 0, len(idxInfo.Columns))
+			for _, col := range idxInfo.Columns {
+				handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
+			}
+
+			if len(handleColIDs) != handle.NumCols() {
+				return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
+			}
+			datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
-			found := false
-			for _, colInfo := range tblInfo.Columns {
-				if colInfo.ID == colID {
-					found = true
-					handleRet[colInfo.Name.L] = dtStr
-					break
+			handleRet := make(map[string]interface{})
+			for colID := range datumMap {
+				dt := datumMap[colID]
+				dtStr, err := datumToJSONObject(&dt)
+				if err != nil {
+					return "", errors.Trace(err)
+				}
+				found := false
+				for _, colInfo := range tblInfo.Columns {
+					if colInfo.ID == colID {
+						found = true
+						handleRet[colInfo.Name.L] = dtStr
+						break
+					}
+				}
+				if !found {
+					return "", errors.Trace(errors.Errorf("column not found when decoding record key: %X", key))
 				}
 			}
-			if !found {
-				return "", errors.Trace(errors.Errorf("column not found when decoding record key: %X", key))
-			}
+			ret["handle"] = handleRet
+		} else {
+			ret["handle"] = "{}"
 		}
-		ret["handle"] = handleRet
 		retStr, err := json.Marshal(ret)
 		if err != nil {
 			return "", errors.Trace(err)

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"math"
 	"math/rand"
 	"sort"
@@ -2951,6 +2952,8 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000ffff5f7205bff199999999999a013131000000000000f9' )")
 	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":65535}`))
+	result = tk.MustQuery(`select tidb_decode_key('7480000000000000FF5A5F720000000000FA')`)
+	result.Check(testkit.Rows(`{"handle":"{}","table_id":90}`))
 
 	// Index Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
@@ -3093,6 +3096,25 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	hexKey = buildIndexKeyFromData(tbl.Meta().Partition.Definitions[0].ID, tbl.Indices()[0].Meta().ID, data)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test empty row data
+	rs = fmt.Sprintf(`{"handle":"{}","partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	// like 74800000000000005d5f72 (t90_r)
+	kv := tablecodec.EncodeRowKey(tbl.Meta().Partition.Definitions[0].ID, []byte{})
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", kv)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+	// like 7480000000000000ff5d5f720000000000fa (same but EncodedBytes)
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hex.EncodeToString(codec.EncodeBytes(nil, kv)))
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test empty row data and unknown table id
+	rs = fmt.Sprintf(`{"handle":"{}","table_id":%d}`, meta.MaxInt48-0xff)
+	kv = tablecodec.EncodeRowKey(meta.MaxInt48-0xff, []byte{})
+	// like 748000ffffffffff005f72
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", kv)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hex.EncodeToString(codec.EncodeBytes(nil, kv)))
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
