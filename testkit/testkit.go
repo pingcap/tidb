@@ -290,6 +290,8 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 }
 
 // Exec executes a sql statement using the prepared stmt API
+//
+// Deprecated: we always forget to close the recordset leading to resource leak so that we decide to deprecate this function.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	return tk.ExecWithContext(context.Background(), sql, args...)
 }
