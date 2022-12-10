@@ -1670,11 +1670,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
 		"Warning|1292|Truncated incorrect DECIMAL value: '-1.7976931348623158e+307'",
 		"Warning|1365|Division by 0"))
-	rs, err = tk.Exec("select 1e300 DIV 1.5")
-	require.NoError(t, err)
-	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
-	require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
-	require.NoError(t, rs.Close())
+	tk.MustGetDBError("select 1e300 DIV 1.5", types.ErrOverflow)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
