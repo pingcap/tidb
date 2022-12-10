@@ -26,10 +26,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/parser"
 )
 
 // SliceToMap converts slice to map
