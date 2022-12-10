@@ -2067,6 +2067,7 @@ type mppTask struct {
 
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
+	rootTaskConds []expression.Expression
 }
 
 func (t *mppTask) count() float64 {
@@ -2145,6 +2146,23 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rt := &rootTask{
 		p: p,
+	}
+
+	if len(t.rootTaskConds) > 0 {
+		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
+		// so this Selection will be executed in TiDB.
+		_, isTableScan := t.p.(*PhysicalTableScan)
+		if !isTableScan {
+			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
+			// It's only for TableScan. This is ensured we convert mppTask to rootTask just after TableScan is built,
+			// so no other operators are added into this mppTask.
+			panic("expect task.p is PhysicalTableScan when got task.rootTaskConds")
+		}
+		selectivity := SelectionFactor
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.statsInfo().Scale(selectivity), rt.p.SelectBlockOffset())
+		sel.fromDataSource = true
+		sel.SetChildren(rt.p)
+		rt.p = sel
 	}
 	return rt
 }
