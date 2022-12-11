@@ -2065,8 +2065,20 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 type mppTask struct {
 	p PhysicalPlan
 
-	partTp        property.MPPPartitionType
-	hashCols      []*property.MPPPartitionColumn
+	partTp   property.MPPPartitionType
+	hashCols []*property.MPPPartitionColumn
+
+	tblColHists *statistics.HistColl
+	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
+
+	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
+	// Planner will generate physical plan like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> PhysicalTableScan(cop tiflash)
+	// Because planner will make mppTask invalid directly then use copTask directly.
+
+	// But in DisaggregatedTiFlash mode, cop and batchCop protocol is disabled, so we have to consider this situation for mppTask.
+	// When generating PhysicalTableScan, if prop.TaskTp is RootTaskType, mppTask will be converted to rootTask,
+	// and filters in rootTaskConds will be added in a Selection which will be executed in TiDB.
+	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
 }
 
@@ -2152,13 +2164,22 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
 		_, isTableScan := t.p.(*PhysicalTableScan)
+		_, isSelection := t.p.(*PhysicalSelection)
+		if isSelection {
+			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+		}
 		if !isTableScan {
 			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
-			// It's only for TableScan. This is ensured we convert mppTask to rootTask just after TableScan is built,
+			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
 			// so no other operators are added into this mppTask.
-			panic("expect task.p is PhysicalTableScan when got task.rootTaskConds")
+			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
+			return invalidTask
 		}
-		selectivity := SelectionFactor
+		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.statsInfo().Scale(selectivity), rt.p.SelectBlockOffset())
 		sel.fromDataSource = true
 		sel.SetChildren(rt.p)
