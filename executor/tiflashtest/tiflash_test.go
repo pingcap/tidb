@@ -1316,18 +1316,22 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_1")
-	tk.MustExec("create table tbl_1 ( col_1 bigint   not null default -1443635317331776148 ,col_2 text ( 176 ) collate utf8mb4_bin  not null ,col_3 decimal ( 8 , 3 ) ,col_4 varchar ( 128 ) collate utf8mb4_bin  not null ,col_5 varchar ( 377 ) collate utf8mb4_bin ,col_6 double ,col_7 varchar ( 459 ) collate utf8mb4_bin ,col_8 tinyint    default -88 ) charset utf8mb4 collate utf8mb4_bin ;")
+	tk.MustExec(`create table tbl_1 ( col_1 bigint not null default -1443635317331776148,
+		col_2 text ( 176 ) collate utf8mb4_bin not null,
+		col_3 decimal ( 8, 3 ),
+		col_4 varchar ( 128 ) collate utf8mb4_bin not null,
+		col_5 varchar ( 377 ) collate utf8mb4_bin,
+		col_6 double,
+		col_7 varchar ( 459 ) collate utf8mb4_bin,
+		col_8 tinyint default -88 ) charset utf8mb4 collate utf8mb4_bin ;`)
 	tk.MustExec("alter table tbl_1 set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "tbl_1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
-	tk.MustQuery("explain select    max(   tbl_1.col_1 ) as r0 , sum(   tbl_1.col_1 ) as r1 , sum(   tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939   order by r0,r1,r2 ;")
-
-	tk.MustExec("drop table if exists tbl_7, tbl_8")
-	tk.MustExec("create table tbl_7 ( col_32 int  unsigned  default 1404315863 ,col_33 boolean   not null ,col_34 smallint    default 15119 ,col_35 tinyint  unsigned not null ,col_36 mediumint   not null default -7380012 ,col_37 time   not null ,col_38 char ( 167 ) collate utf8mb4_bin ,col_39 datetime    default '1999-02-07' , unique key idx_7 ( col_36 ,col_32 ,col_39 ) ) charset utf8mb4 collate utf8mb4_bin partition by hash ( col_36 ) partitions 2;")
-	tk.MustExec("create table tbl_8 ( col_40 varchar ( 458 ) collate utf8mb4_bin  not null ,col_41 float ,col_42 varchar ( 111 ) collate utf8mb4_bin  not null default 'iFN1*3sU' ,col_43 mediumint   not null default 3553140 ,col_44 time   not null ,col_45 bigint   not null , unique key idx_8 ( col_45 ) ,key idx_9 ( col_45 ,col_43 ) ,unique key idx_10 ( col_45 ,col_41 ,col_43 ) ,unique key idx_11 ( col_45 ) ) charset utf8mb4 collate utf8mb4_bin partition by hash ( col_45 ) partitions 4;")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("explain select   /*+ hash_join( tbl_8 , tbl_7 */ lower( tbl_8.col_42 ) as r0 from tbl_8 , tbl_7 where tbl_8.col_42 < 'e'   order by r0 limit 60 ;")
+	needCheckTiFlashComputeNode := "false"
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery", fmt.Sprintf("return(%s)", needCheckTiFlashComputeNode))
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery")
+	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
 }
