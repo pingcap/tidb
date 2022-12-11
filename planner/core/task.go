@@ -2068,7 +2068,6 @@ type mppTask struct {
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
 
-	tblColHists *statistics.HistColl
 	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
 
 	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
@@ -2080,6 +2079,7 @@ type mppTask struct {
 	// and filters in rootTaskConds will be added in a Selection which will be executed in TiDB.
 	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
+	tblColHists   *statistics.HistColl
 }
 
 func (t *mppTask) count() float64 {
