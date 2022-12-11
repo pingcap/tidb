@@ -115,7 +115,7 @@ func TestNeedCheckMarkInfo(t *testing.T) {
 		require.NoError(t, yaml.Unmarshal([]byte(test.rules), &rules))
 		var got []bool
 		for _, filePath := range test.filePath {
-			got = append(got, needCheckMarkInfo(filePath, rules))
+			got = append(got, shouldCheckMarker(filePath, rules))
 		}
 		require.Equal(t, test.expect, got, "test: %s", test.name)
 	}
@@ -167,7 +167,7 @@ index 07e29923a..76ab41992 100644
 		},
 	}
 	for _, test := range tests {
-		got, err := indexNewTest(stream.ReadLines(strings.NewReader(test.diff)))
+		got, err := findAddTest(stream.ReadLines(strings.NewReader(test.diff)))
 		require.NoError(t, err)
 		require.Equal(t, test.want, got, "test: %s", test.name)
 	}

@@ -36,13 +36,12 @@ import (
 )
 
 var (
-	//go:embed rules.yaml
+	//go:embed .testmarker.yaml
 	rulesYaml string
 	rules     []*RuleSpec
 
-	// records all the test cases that should be marked
-	newTestCases  map[string][]string = make(map[string][]string)
-	testNameRegex                     = regexp.MustCompile(`^\+func\s+(Test.*)\(`)
+	addTestRegex    = regexp.MustCompile(`^\+func\s+(Test.*)\(t \*testing\.T\)`)
+	deleteTestRegex = regexp.MustCompile(`^\-func\s+(Test.*)\(t \*testing\.T\)`)
 )
 
 // MarkInfo describes the data structure of the feature mapping of a test case
@@ -57,7 +56,7 @@ type MarkInfo struct {
 
 type featureMarkInfo struct {
 	ID          string `yaml:"id"`
-	Description []any  `yaml:"description"`
+	Description []any  `yaml:"description,omitempty"`
 }
 
 type issueMarkInfo struct {
@@ -95,21 +94,34 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	indexNewTests()
-	checkNewTestsMarked(fms)
-	printMarkInfos(fms)
+	testMap := indexIncrementalTest()
+	checkIncrementalTest(fms, testMap)
+	showMarkInfo(fms)
 }
 
 func walkMarker(f *ast.File, filename string) []*MarkInfo {
 	var ret []*MarkInfo
+	var localpkg string
 	ast.Inspect(f, func(node ast.Node) bool {
 		switch e := node.(type) {
+		case *ast.ImportSpec:
+			if e.Path.Value == `"github.com/pingcap/tidb/testkit/marker"` {
+				if e.Name == nil {
+					localpkg = "marker"
+				} else {
+					localpkg = e.Name.Name
+				}
+			}
 		case *ast.FuncDecl:
+			// if not import marker package, just return
+			if localpkg == "" {
+				return false
+			}
 			body := e.Body
 			if body == nil {
 				return false
 			}
-			markInfo := walkTestFuncDeclBody(body, filename)
+			markInfo := walkTestFuncDeclBody(body, filename, localpkg)
 			if markInfo != nil {
 				markInfo.TestName = e.Name.Name
 				ret = append(ret, markInfo)
@@ -121,7 +133,7 @@ func walkMarker(f *ast.File, filename string) []*MarkInfo {
 	return ret
 }
 
-func walkTestFuncDeclBody(body *ast.BlockStmt, filename string) *MarkInfo {
+func walkTestFuncDeclBody(body *ast.BlockStmt, filename string, localpkg string) *MarkInfo {
 	markInfo := &MarkInfo{File: filename}
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch e := node.(type) {
@@ -130,13 +142,10 @@ func walkTestFuncDeclBody(body *ast.BlockStmt, filename string) *MarkInfo {
 				return false
 			}
 			callExpr := e.X.(*ast.CallExpr)
-			if _, ok := callExpr.Fun.(*ast.SelectorExpr); !ok {
-				return false
+			if isMarkCall(callExpr, localpkg) {
+				walkerMarkAsCallExpr(callExpr, markInfo, localpkg)
 			}
-			callee := callExpr.Fun.(*ast.SelectorExpr).Sel.Name
-			if callee == "As" {
-				walkerMarkAsCallExpr(callExpr, markInfo)
-			}
+			return false
 		}
 		return true
 	})
@@ -146,11 +155,11 @@ func walkTestFuncDeclBody(body *ast.BlockStmt, filename string) *MarkInfo {
 	return markInfo
 }
 
-func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo) {
+func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg string) {
 	if len(callExpr.Args) == 0 {
 		return
 	}
-	marktype := parseMarkType(callExpr.Args[1])
+	marktype := parseMarkType(callExpr.Args[1], localpkg)
 	switch marktype {
 	case "Feature":
 		if len(callExpr.Args) < 3 {
@@ -216,17 +225,36 @@ func parseBasicLit(lit *ast.BasicLit) string {
 	}
 }
 
-func parseMarkType(marktype ast.Expr) string {
+func isMarkCall(callExpr *ast.CallExpr, localpkg string) bool {
+	var callee string
+	if _, ok := callExpr.Fun.(*ast.Ident); ok && localpkg == "." {
+		callee = callExpr.Fun.(*ast.Ident).Name
+	}
+	if _, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+		if pkg, ok := callExpr.Fun.(*ast.SelectorExpr).X.(*ast.Ident); ok && localpkg == pkg.Name {
+			callee = callExpr.Fun.(*ast.SelectorExpr).Sel.Name
+		}
+	}
+	return callee == "As"
+}
+
+func parseMarkType(marktype ast.Expr, localpkg string) string {
 	switch e := marktype.(type) {
 	case *ast.SelectorExpr:
-		return e.Sel.Name
+		if _, ok := e.X.(*ast.Ident); ok && localpkg == e.X.(*ast.Ident).Name {
+			return e.Sel.Name
+		}
+	case *ast.Ident:
+		if localpkg == "." {
+			return e.Name
+		}
 	}
 	return ""
 }
 
-func checkNewTestsMarked(fms []*MarkInfo) {
+func checkIncrementalTest(fms []*MarkInfo, newTestMap map[string][]string) {
 	allok := true
-	for filename, tests := range newTestCases {
+	for filename, tests := range newTestMap {
 	loopTests:
 		for _, test := range tests {
 			for _, fm := range fms {
@@ -239,11 +267,16 @@ func checkNewTestsMarked(fms []*MarkInfo) {
 		}
 	}
 	if !allok {
+		log.Println(`Add a marker at the start of incremental tests, please.
+   1) Marking the test is for a feature:
+     marker.As(t, marker.Feature, "FD-$ID", "the description...")
+   2) Mark it for an issue:
+     marker.As(t, marker.Issue, issue-id)`)
 		os.Exit(1)
 	}
 }
 
-func printMarkInfos(fms []*MarkInfo) {
+func showMarkInfo(fms []*MarkInfo) {
 	sort.Slice(fms, func(i, j int) bool {
 		if fms[i].File != fms[j].File {
 			return fms[i].File < fms[j].File
@@ -258,7 +291,7 @@ func printMarkInfos(fms []*MarkInfo) {
 	fmt.Println(string(out))
 }
 
-func needCheckMarkInfo(filePath string, rules []*RuleSpec) bool {
+func shouldCheckMarker(filePath string, rules []*RuleSpec) bool {
 	filePath = string(filepath.Separator) + filepath.Clean(filePath)
 	matchPattern := func(pattern string, filePath string) bool {
 		lastFilePath := ""
@@ -292,47 +325,99 @@ func needCheckMarkInfo(filePath string, rules []*RuleSpec) bool {
 	return false
 }
 
-func indexNewTests() {
-	filterOnDirCmd(func(filenames stream.Filter) error {
-		err := stream.ForEach(stream.Sequence(filenames,
-			stream.Grep(`.*_test.go`),
-		), func(filename string) {
-			if !needCheckMarkInfo(filename, rules) {
-				return
+// indexIncrementalTest collect incremental test cases from git diff from origin/master,
+// consider that inventory cases may be moved to other files, we need also check the deleted files and lines.
+func indexIncrementalTest() map[string][]string {
+	newTestMap := make(map[string][]string)
+	deletedTests := make(map[string]struct{})
+
+	handleGitPatch := func(handler func(filename string, patch stream.Filter) error) {
+		closeFilter := func(filter stream.Filter) {
+			//nolint: errcheck
+			stream.Run(filter)
+		}
+		filterOnDirCmd(func(filenames stream.Filter) error {
+			err := stream.ForEach(stream.Sequence(filenames,
+				stream.Grep(`.*_test.go`),
+			), func(nameStatus string) {
+				switch nameStatus[0] {
+				case 'A', 'D', 'M':
+					re := regexp.MustCompile(`^[^\s]+\s+([^\s]+)$`)
+					filename := re.FindStringSubmatch(nameStatus)[1]
+					filterOnDirCmd(func(patch stream.Filter) error {
+						defer closeFilter(patch)
+						return handler(filename, patch)
+					}, ".", "git", "diff", "--color=never", "origin/master", "--", filename)
+				case 'R':
+					re := regexp.MustCompile(`^[^\s]+\s+([^\s]+)\s+([^\s]+)$`)
+					for _, filename := range re.FindStringSubmatch(nameStatus)[1:] {
+						filterOnDirCmd(func(patch stream.Filter) error {
+							defer closeFilter(patch)
+							return handler(filename, patch)
+						}, ".", "git", "diff", "--color=never", "origin/master", "--", filename)
+					}
+				}
+			})
+			return err
+		}, ".", "git", "diff", "--color=never", "--name-status", "origin/master")
+	}
+
+	handleGitPatch(func(_ string, patch stream.Filter) error {
+		tests, err := findDeleteTest(patch)
+		if err != nil {
+			return err
+		}
+		for _, test := range tests {
+			deletedTests[test] = struct{}{}
+		}
+		return nil
+	})
+
+	handleGitPatch(func(filename string, patch stream.Filter) error {
+		if !shouldCheckMarker(filename, rules) {
+			return nil
+		}
+		tests, err := findAddTest(patch)
+		if err != nil {
+			return err
+		}
+		if len(tests) == 0 {
+			return nil
+		}
+		for _, test := range tests {
+			// since a test case maybe deleted from a file and appears on other file, we don't regard them as incremental test cases.
+			if _, exist := deletedTests[test]; !exist {
+				newTestMap[filename] = append(newTestMap[filename], test)
 			}
-			filterOnDirCmd(func(diffs stream.Filter) error {
-				tests, err := indexNewTest(diffs)
-				if err != nil {
-					return err
-				}
-				if len(tests) == 0 {
-					return nil
-				}
-				if newTestCases[filename] == nil {
-					newTestCases[filename] = make([]string, 0)
-				}
-				newTestCases[filename] = append(newTestCases[filename], tests...)
-				return nil
-			}, ".", "git", "diff", "origin/master", "--", filename)
-		})
-		return err
-	}, ".", "git", "diff", "--name-only", "origin/master")
+		}
+		return nil
+	})
+	return newTestMap
 }
 
-func indexNewTest(filter stream.Filter) (tests []string, err error) {
+func findDeleteTest(filter stream.Filter) (tests []string, err error) {
 	err = stream.ForEach(filter, func(line string) {
-		if !testNameRegex.MatchString(line) {
+		if !deleteTestRegex.MatchString(line) {
 			return
 		}
-		testcase := testNameRegex.FindStringSubmatch(line)[1]
+		testcase := deleteTestRegex.FindStringSubmatch(line)[1]
 		tests = append(tests, testcase)
 	})
 	return
 }
 
-type filterHandler func(stream.Filter) error
+func findAddTest(filter stream.Filter) (tests []string, err error) {
+	err = stream.ForEach(filter, func(line string) {
+		if !addTestRegex.MatchString(line) {
+			return
+		}
+		testcase := addTestRegex.FindStringSubmatch(line)[1]
+		tests = append(tests, testcase)
+	})
+	return
+}
 
-func filterOnDirCmd(handler filterHandler,
+func filterOnDirCmd(handler func(stream.Filter) error,
 	dir string, name string, args ...string) {
 	cmd, stderr, filter, err := dirCmd(dir, name, args...)
 	if err != nil {

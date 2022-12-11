@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint check-testcase-marker
 
 default: server buildsucc
 
@@ -45,7 +45,7 @@ check-file-perm:
 	./tools/check/check-file-perm.sh
 
 check-testcase-marker:
-	@echo "check test case marker"
+	@echo "check incremental tests all marked(from origin/master)"
 	./tools/check/check-testcase-marker.sh
 
 gogenerate:

@@ -15,9 +15,9 @@
 
 set -euo pipefail
 
-go run tests/testmarker/walker.go > tests/testmarker/testdata/marker.yaml
+go run tests/testmarker/walker.go > tests/testmarker/testdata/markdata.yaml
 set +e
-diffline=$(git status -s tests/testmarker/testdata/marker.yaml 2>/dev/null)
+diffline=$(git status -s tests/testmarker/testdata/markdata.yaml 2>/dev/null)
 set -e
 if [[ $diffline != "" ]]
 then

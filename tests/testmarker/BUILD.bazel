@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 go_library(
     name = "testmarker_lib",
     srcs = ["walker.go"],
-    embedsrcs = ["rules.yaml"],
+    embedsrcs = [".testmarker.yaml"],
     importpath = "github.com/pingcap/tidb/tests/testmarker",
     visibility = ["//visibility:private"],
     deps = [

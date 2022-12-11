@@ -40,5 +40,6 @@ header:
     - "tidb-binlog/proto/go-binlog/secondary_binlog.pb.go"
     - "**/*.sql"
     - ".bazelversion"
-    - "tests/testmarker/testdata/marker.yaml"
+    - "tests/testmarker/testdata/"
+    - "tests/testmarker/.testmarker.yaml"
   comment: on-failure

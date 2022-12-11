@@ -1,0 +1,6 @@
+# path and exclude items follow the gitignore spec: https://git-scm.com/docs/gitignore
+# example
+## - path: /executor
+##   exclude:
+##     - /executor/oomtest
+## - path: /bindinfo
