@@ -55,5 +55,7 @@ const (
 	// set the engine label with a value of EngineLabelTiKV.
 	EngineLabelTiKV = "tikv"
 
+	// EngineLabelTiFlashCompute is for disaggregated tiflash mode,
+	// it's the lable of tiflash_compute nodes.
 	EngineLabelTiFlashCompute = "tiflash_compute"
 )
