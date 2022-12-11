@@ -306,13 +306,15 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindRecord
+	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecords = handle.GetAllBindRecord()
+		tmp = handle.GetAllBindRecord()
 	} else {
-		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	bindRecords := make([]*bindinfo.BindRecord, len(tmp))
+	copy(bindRecords, tmp)
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
