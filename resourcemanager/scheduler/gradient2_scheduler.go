@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	defaultSmoothing      float64 = 0.2
-	defaultMinConcurrency int     = 2
-
-	maxOverloadConcurrencyDelta int = 2 // max concurrency = user setting concurrency + delta
+	// defaultSmoothing is a factor, it will be used to smooth the old concurrency limit and new one.
+	defaultSmoothing float64 = 0.2
+	// defaultMinConcurrency is the minimum concurrency limit for a component.
+	defaultMinConcurrency int = 1
+	// max concurrency = user setting concurrency + delta
+	maxOverloadConcurrencyDelta int = 2
 )
 
 // Gradient2Scheduler is a scheduler using Gradient2 algorithm.
