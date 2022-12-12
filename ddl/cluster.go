@@ -339,8 +339,8 @@ func SendPrepareFlashbackToVersionRPC(
 			}
 			continue
 		}
-		flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
-		if respErr := flashbackToVersionResp.GetError(); respErr != "" {
+		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
+		if respErr := prepareFlashbackToVersionResp.GetError(); respErr != "" {
 			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(respErr))
 			if boErr != nil {
 				return taskStat, boErr
