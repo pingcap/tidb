@@ -498,7 +498,7 @@ const (
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
 	// AddSourceColumnToStatsMetaHistoryTable adds source column to mysql.stats_meta_history
-	AddSourceColumnToStatsMetaHistoryTable = `ALTER TABLE mysql.stats_meta_history ADD COLUMN 'source' varchar(16) after 'version'`
+	AddSourceColumnToStatsMetaHistoryTable = "ALTER TABLE mysql.stats_meta_history ADD COLUMN `source` varchar(16) after `version`;"
 )
 
 // bootstrap initiates system DB for a store.
