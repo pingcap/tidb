@@ -15,7 +15,6 @@ go_library(
         "//parser/mysql",
         "//sessionctx/stmtctx",
         "//types",
-        "//util/chunk",
         "//util/execdetails",
         "//util/hack",
         "//util/kvcache",
