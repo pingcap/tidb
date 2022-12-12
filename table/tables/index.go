@@ -311,6 +311,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 
 	key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
 
+	logutil.BgLogger().Info("delete index", zap.String("index", c.idxInfo.Name.O),
+		zap.String("tempKey", hex.EncodeToString(tempKey)), zap.String("keyVer", string(tempKeyVer)),
+		zap.String("handle", h.String()), zap.String("key", hex.EncodeToString(key)))
 	if distinct {
 		if len(key) > 0 {
 			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
