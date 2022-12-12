@@ -109,6 +109,10 @@ func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) err
 	return nil
 }
 
+func (w *baseWorker) Send() chan<- interface{} {
+	return w.ch
+}
+
 func (w *baseWorker) loop() {
 	var err error
 	defer func() {

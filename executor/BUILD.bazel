@@ -247,7 +247,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "long",
+    timeout = "moderate",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
