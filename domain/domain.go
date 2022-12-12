@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -121,6 +122,7 @@ type Domain struct {
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 	historicalStatsWorker   *HistoricalStatsWorker
+	ttlJobManager           *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1058,6 +1060,10 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+
+	do.wg.Run(func() {
+		do.runTTLJobManager(ctx)
+	})
 
 	return nil
 }
@@ -2444,6 +2450,29 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+func (do *Domain) runTTLJobManager(ctx context.Context) {
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+	ttlJobManager.Start()
+	do.ttlJobManager = ttlJobManager
+
+	// TODO: read the worker count from `do.sysVarCache` and resize the workers
+	ttlworker.ScanWorkersCount.Store(4)
+	ttlworker.DeleteWorkerCount.Store(4)
+
+	<-do.exit
+
+	ttlJobManager.Stop()
+	err := ttlJobManager.WaitStopped(ctx, 30*time.Second)
+	if err != nil {
+		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+	}
+}
+
+// TTLJobManager returns the ttl job manager on this domain
+func (do *Domain) TTLJobManager() *ttlworker.JobManager {
+	return do.ttlJobManager
 }
 
 func init() {

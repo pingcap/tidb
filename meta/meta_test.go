@@ -252,10 +252,16 @@ func TestMeta(t *testing.T) {
 	table, err := m.GetTable(1, 1)
 	require.NoError(t, err)
 	require.Equal(t, tbInfo, table)
+	tblExist, err := m.CheckTableExists(1, 1)
+	require.NoError(t, err)
+	require.Equal(t, true, tblExist)
 
 	table, err = m.GetTable(1, 2)
 	require.NoError(t, err)
 	require.Nil(t, table)
+	tblExist, err = m.CheckTableExists(1, 2)
+	require.NoError(t, err)
+	require.Equal(t, false, tblExist)
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
