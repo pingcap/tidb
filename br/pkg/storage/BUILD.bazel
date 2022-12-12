@@ -35,6 +35,7 @@ go_library(
         "@com_github_aws_aws_sdk_go//service/s3",
         "@com_github_aws_aws_sdk_go//service/s3/s3iface",
         "@com_github_aws_aws_sdk_go//service/s3/s3manager",
+        "@com_github_azure_azure_sdk_for_go_sdk_azcore//policy",
         "@com_github_azure_azure_sdk_for_go_sdk_azidentity//:azidentity",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
         "@com_github_golang_snappy//:snappy",

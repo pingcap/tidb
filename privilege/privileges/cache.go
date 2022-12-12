@@ -92,16 +92,27 @@ type baseRecord struct {
 	hostIPNet *net.IPNet
 }
 
+// MetadataInfo is the User_attributes->>"$.metadata".
+type MetadataInfo struct {
+	Email string
+}
+
+// UserAttributesInfo is the 'User_attributes' in privilege cache.
+type UserAttributesInfo struct {
+	MetadataInfo
+	PasswordLocking
+}
+
 // UserRecord is used to represent a user record in privilege cache.
 type UserRecord struct {
 	baseRecord
+	UserAttributesInfo
 
 	AuthenticationString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
 	AuthTokenIssuer      string
-	Email                string
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
@@ -689,6 +700,15 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				}
 				value.ResourceGroup = resourceGroup
 			}
+			passwordLocking := PasswordLocking{}
+			if err := passwordLocking.ParseJSON(bj); err != nil {
+				return err
+			}
+			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
+			value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
+			value.FailedLoginCount = passwordLocking.FailedLoginCount
+			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
+			value.AutoAccountLocked = passwordLocking.AutoAccountLocked
 		case f.ColumnAsName.L == "password_expired":
 			if row.GetEnum(i).String() == "Y" {
 				value.PasswordExpired = true
