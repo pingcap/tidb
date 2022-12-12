@@ -1138,13 +1138,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return remains, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.BatchResponses, task, ch)
+		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
+		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1242,6 +1242,14 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains 
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
+	if len(batchResp) == 0 {
+		allRemains := make([]*copTask, 0, len(remains)+len(batchedTasks))
+		copy(allRemains, remains)
+		for _, t := range batchedTasks {
+			allRemains = append(allRemains, t.task)
+		}
+		return allRemains, nil
+	}
 	batchedRemains, err := worker.handleBatchCopResponse(bo, batchResp, batchedTasks, ch)
 	if err != nil {
 		return nil, err
