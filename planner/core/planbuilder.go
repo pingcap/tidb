@@ -1168,7 +1168,8 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath *util.AccessPath
+	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	prefixMatches := 0
 	for _, path := range paths {
 		if path.StoreType == kv.TiFlash {
 			continue
@@ -1180,9 +1181,18 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 		if path.Index.Name.L == idxName.L {
 			return path
 		}
+		if strings.HasPrefix(path.Index.Name.L, idxName.L) {
+			indexPrefixPath = path
+			prefixMatches++
+		}
 	}
 	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 		return primaryIdxPath
+	}
+
+	// Return only unique prefix matches
+	if prefixMatches == 1 {
+		return indexPrefixPath
 	}
 	return nil
 }
