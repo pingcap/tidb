@@ -51,14 +51,14 @@ var unRecoverableTable = map[string]struct{}{
 // skip clearing or restoring 'cloud_admin'@'%' which is a special
 // user on TiDB Cloud
 var sysPrivilegeTableMap = map[string]string{
-	"user":          "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"db":            "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"tables_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"columns_priv":  "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"default_roles": "not (user = 'cloud_admin' and host = '%')",       // since v3.0.0
-	"role_edges":    "not (to_user = 'cloud_admin' and to_host = '%')", // since v3.0.0
-	"global_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v3.0.8
-	"global_grants": "not (user = 'cloud_admin' and host = '%')",       // since v5.0.3
+	"user":          "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"db":            "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"tables_priv":   "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"columns_priv":  "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"default_roles": "(user = 'cloud_admin' and host = '%')",       // since v3.0.0
+	"role_edges":    "(to_user = 'cloud_admin' and to_host = '%')", // since v3.0.0
+	"global_priv":   "(user = 'cloud_admin' and host = '%')",       // since v3.0.8
+	"global_grants": "(user = 'cloud_admin' and host = '%')",       // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -69,6 +69,50 @@ func isUnrecoverableTable(tableName string) bool {
 func isStatsTable(tableName string) bool {
 	_, ok := statsTables[tableName]
 	return ok
+}
+
+// ClearSystemUsers is used for volume-snapshot restoration.
+// because we can not support restore user in some scenarios, for example in cloud.
+// we'd better use this function to drop cloud_admin user after volume-snapshot restore.
+func (rc *Client) ClearSystemUsers(ctx context.Context) error {
+	sysDB := mysql.SystemDB
+	db, ok := rc.getDatabaseByName(sysDB)
+	if !ok {
+		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
+		return nil
+	}
+
+	execSQL := func(sql string, tableName string) error {
+		// SQLs here only contain table name and database name, seems it is no need to redact them.
+		if err := rc.db.se.Execute(ctx, sql); err != nil {
+			log.Warn("failed to execute SQL restore system database",
+				zap.String("table", tableName),
+				zap.Stringer("database", db.Name),
+				zap.String("sql", sql),
+				zap.Error(err),
+			)
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", sql)
+		}
+		log.Info("successfully restore system database",
+			zap.String("table", tableName),
+			zap.Stringer("database", db.Name),
+			zap.String("sql", sql),
+		)
+		return nil
+	}
+
+	for tableName := range db.ExistingTables {
+		if sysPrivilegeTableMap[tableName] != "" {
+			whereClause := fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
+			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
+				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+			log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
+			if err := execSQL(deleteSQL, tableName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
@@ -203,14 +247,14 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		whereClause := ""
+		whereNotClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereClause = fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
+			whereNotClause = fmt.Sprintf("WHERE NOT %s", sysPrivilegeTableMap[tableName])
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+				utils.EncloseDBAndTable(db.Name.L, tableName), whereNotClause)
 			if err := execSQL(deleteSQL); err != nil {
 				return err
 			}
@@ -228,7 +272,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
-			whereClause)
+			whereNotClause)
 		return execSQL(replaceIntoSQL)
 	}
 
