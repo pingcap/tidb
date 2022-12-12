@@ -3,7 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "ttlworker",
     srcs = [
+        "config.go",
         "del.go",
+        "job.go",
+        "job_manager.go",
         "scan.go",
         "session.go",
         "worker.go",
@@ -11,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/ttlworker",
     visibility = ["//visibility:public"],
     deps = [
+        "//kv",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
@@ -22,9 +26,12 @@ go_library(
         "//util/chunk",
         "//util/logutil",
         "//util/sqlexec",
+        "//util/timeutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_time//rate",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -33,10 +40,13 @@ go_test(
     name = "ttlworker_test",
     srcs = [
         "del_test.go",
+        "job_manager_test.go",
+        "job_test.go",
         "scan_test.go",
         "session_test.go",
     ],
     embed = [":ttlworker"],
+    flaky = True,
     deps = [
         "//infoschema",
         "//parser/ast",
@@ -49,6 +59,7 @@ go_test(
         "//util/chunk",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_time//rate",
     ],

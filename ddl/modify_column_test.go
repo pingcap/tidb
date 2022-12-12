@@ -50,6 +50,11 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	originalTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	defer func() {
+		ddl.ReorgWaitTimeout = originalTimeout
+	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
