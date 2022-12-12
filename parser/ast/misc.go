@@ -1511,10 +1511,11 @@ const (
 	PasswordHistoryDefault
 	PasswordReuseInterval
 	PasswordReuseDefault
-
 	Lock
 	Unlock
-
+	FailedLoginAttempts
+	PasswordLockTime
+	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
 
@@ -1542,6 +1543,14 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ACCOUNT LOCK")
 	case Unlock:
 		ctx.WriteKeyWord("ACCOUNT UNLOCK")
+	case FailedLoginAttempts:
+		ctx.WriteKeyWord("FAILED_LOGIN_ATTEMPTS")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTime:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTimeUnbounded:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
 	case PasswordHistory:
 		ctx.WriteKeyWord("PASSWORD HISTORY")
 		ctx.WritePlainf(" %d", p.Count)

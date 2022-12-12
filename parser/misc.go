@@ -819,6 +819,8 @@ var tokenMap = map[string]int{
 	"YEAR":                     yearType,
 	"ZEROFILL":                 zerofill,
 	"WAIT":                     wait,
+	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
+	"PASSWORD_LOCK_TIME":       passwordLockTime,
 	"REUSE":                    reuse,
 }
 
