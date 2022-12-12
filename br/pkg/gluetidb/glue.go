@@ -207,13 +207,33 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
+// SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
+// The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
+// TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.TableInfo, l int, r int, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	var err error
+	d := domain.GetDomain(gs.se).DDL()
+	if err = d.BatchCreateTableWithInfo(gs.se, schema, info[l:r], append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+		if r-l == 1 {
+			return err
+		}
+		err = gs.SplitBatchCreateTable(schema, info, l, (l+r)/2)
+		if err != nil {
+			return err
+		}
+		err = gs.SplitBatchCreateTable(schema, info, (l+r)/2, r)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return err
+}
+
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
 
-	// Disable foreign key check when batch create tables.
-	gs.se.GetSessionVars().ForeignKeyChecks = false
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
@@ -237,8 +257,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, append(cs, ddl.OnExistIgnore)...)
-		if err != nil {
+		if err := gs.SplitBatchCreateTable(dbName, cloneTables, 0, len(cloneTables)); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
