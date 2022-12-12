@@ -1717,7 +1717,9 @@ func TestCreateExpressionIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(name varchar(20))")
+	tk.MustExec("insert into t values ('Abc'), ('Bcd'), ('abc')")
 	tk.MustExec("create index idx on test.t((lower(test.t.name)))")
+	tk.MustExec("admin check table t")
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
