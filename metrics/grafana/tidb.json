@@ -17005,7 +17005,7 @@
       "bars": false,
       "dashLength": 10,
       "dashes": false,
-      "datasource": "playground",
+      "datasource": "${DS_TEST-CLUSTER}",
       "description": "The query count per second for each type of query in TTL jobs",
       "fieldConfig": {
         "defaults": {},
@@ -17119,7 +17119,7 @@
       "bars": false,
       "dashLength": 10,
       "dashes": false,
-      "datasource": "playground",
+      "datasource": "${DS_TEST-CLUSTER}",
       "description": "The processed rows per second by TTL jobs",
       "fieldConfig": {
         "defaults": {},
@@ -17156,16 +17156,21 @@
       "pointradius": 2,
       "points": false,
       "renderer": "flot",
-      "seriesOverrides": [],
+      "seriesOverrides": [
+        {
+          "alias": "delete error",
+          "color": "#F2495C"
+        }
+      ],
       "spaceLength": 10,
       "stack": false,
       "steppedLine": false,
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
+          "expr": "sum(rate(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type, result)",
           "interval": "",
-          "legendFormat": "{{sql_type}}",
+          "legendFormat": "{{sql_type}} {{result}}",
           "queryType": "randomWalk",
           "refId": "A"
         }

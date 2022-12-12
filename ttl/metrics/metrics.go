@@ -41,9 +41,9 @@ var (
 	DeleteSuccessDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
 	DeleteErrorDuration   = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
 
-	ScannedExpiredRows       = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: "success"})
-	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: "success"})
-	DeleteErrorExpiredRows   = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: "error"})
+	ScannedExpiredRows       = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
+	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
+	DeleteErrorExpiredRows   = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
 
 	RunningJobsCnt    = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
 	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
