@@ -289,7 +289,11 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
 	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
+<<<<<<< HEAD:pkg/sessiontxn/staleread/processor_test.go
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
+=======
+	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -100*time.Second)
+>>>>>>> ee5d8cca174 (staleread: fix flaky test TestStaleReadProcessorWithExecutePreparedStmt (#39805)):sessiontxn/staleread/processor_test.go
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
 	tk.MustExec("set @@tidb_read_staleness=''")
