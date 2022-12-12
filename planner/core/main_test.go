@@ -34,6 +34,8 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
@@ -55,4 +57,8 @@ func TestMain(m *testing.M) {
 
 func GetIndexMergeSuiteData() testdata.TestData {
 	return testDataMap["index_merge_suite"]
+}
+
+func GetRuntimeFilterGeneratorData() testdata.TestData {
+	return testDataMap["runtime_filter_generator_suite"]
 }
