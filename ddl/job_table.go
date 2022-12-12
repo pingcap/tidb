@@ -721,3 +721,14 @@ func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) e
 	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
 	return err
 }
+
+func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob, label string) error {
+	mate, err := backfillJob.Meta.Encode()
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, backfill_meta = '%s' where ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, mate, backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey, backfillJob.ID)
+	_, err = sess.execute(context.Background(), sql, label)
+	return err
+}
