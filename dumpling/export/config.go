@@ -25,6 +25,7 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -144,6 +145,9 @@ type Config struct {
 	PromFactory  promutil.Factory        `json:"-"`
 	PromRegistry promutil.Registry       `json:"-"`
 	ExtStorage   storage.ExternalStorage `json:"-"`
+
+	IOTotalBytes *atomic.Uint64
+	Net          string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -212,6 +216,9 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg.User = conf.User
 	driverCfg.Passwd = conf.Password
 	driverCfg.Net = "tcp"
+	if conf.Net != "" {
+		driverCfg.Net = conf.Net
+	}
 	driverCfg.Addr = hostPort
 	driverCfg.DBName = db
 	driverCfg.Collation = "utf8mb4_general_ci"
@@ -228,6 +235,7 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
 			MinVersion:         tls.VersionTLS10,
+			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
 	if conf.AllowCleartextPasswords {
