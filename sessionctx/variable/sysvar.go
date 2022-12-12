@@ -1104,6 +1104,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableMDL.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLEnableDistributeReorg, Value: BoolToOnOff(DefTiDBDDLEnableDistributeReorg), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if DDLEnableDistributeReorg.Load() != TiDBOptOn(val) {
+			DDLEnableDistributeReorg.Store(TiDBOptOn(val))
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(DDLEnableDistributeReorg.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
@@ -1237,7 +1245,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableForeignKey, Value: BoolToOnOff(false), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableForeignKey.Store(TiDBOptOn(val))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

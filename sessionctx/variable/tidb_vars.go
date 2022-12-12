@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -838,6 +839,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
+	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1074,6 +1077,7 @@ const (
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
+	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1102,7 +1106,7 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = false
+	DefTiDBForeignKeyChecks                      = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1169,9 +1173,10 @@ var (
 	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
-	DDLForce2Queue                       = atomic.NewBool(false)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
+	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
@@ -1180,7 +1185,7 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).

@@ -7638,23 +7638,33 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
+	sqls := []string{
+		"explain select a, b from t where (a = 1 and b = 2) or (a =2 and b = 1) for update;",
+		"explain select a, b from t where a = 1 and b = 2 for update;",
+		"explain select c, d from t1 where c = 1 for update;",
+		"explain select c, d from t1 where c = 1 and d = 1 for update;",
+		"explain select c, d from t1 where (c = 1 or c = 2 )and d = 1 for update;",
+		"explain select c, d from t1 where c in (1,2,3,4) for update;",
+	}
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
-	// assert point get condition with txn commit and tiflash store
-	tk.MustGetErrMsg("explain select a, b from t where a = 1 and b = 2 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
-	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
-	tk.MustGetErrMsg("explain select c, d from t1 where c = 1 and d = 1 for update;", "[planner:1815]Internal : Can't find a proper physical plan for this query")
-	tk.MustQuery("explain select a, b from t where a = 1 for update;")
-	tk.MustQuery("explain select c, d from t1 where c > 1 for update;")
-	tk.MustExec("set tidb_isolation_read_engines='tidb,tikv,tiflash';")
-	tk.MustQuery("explain select a, b from t where a = 1 and b = 2 for update;")
-	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+	// assert point get / batch point get can't work with tiflash in interaction txn
+	for _, sql := range sqls {
+		err = tk.ExecToErr(sql)
+		require.Error(t, err)
+	}
+	// assert point get / batch point get can work with tikv in interaction txn
+	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv,tiflash';")
+	for _, sql := range sqls {
+		tk.MustQuery(sql)
+	}
 	tk.MustExec("commit")
-	tk.MustExec("set tidb_isolation_read_engines='tidb,tiflash';")
-	// assert point get condition with auto commit and tiflash store
-	tk.MustQuery("explain select a, b from t where  a = 1 and b = 2 for update;")
-	tk.MustQuery("explain select c, d from t1 where c = 1 for update;")
+	// assert point get / batch point get can work with tiflash in auto commit
+	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
+	for _, sql := range sqls {
+		tk.MustQuery(sql)
+	}
 }
 
 func TestTableRangeFallback(t *testing.T) {
