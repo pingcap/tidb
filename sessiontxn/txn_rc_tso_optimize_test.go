@@ -790,3 +790,34 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
+
+func TestRcWaitTSInSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// ctx := context.Background()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
+	tk.RefreshSession()
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+
+	res := tk.MustQuery("show variables like 'transaction_isolation'")
+	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+
+	tk.MustExec("begin pessimistic")
+	wait_ts1 := sctx.GetSessionVars().DurationWaitTS
+	fmt.Println("wait_ts1:", wait_ts1)
+	/*
+		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
+		tk.MustExec("select id1+id2 as x from t1 where id1 = 9 for update")
+
+	*/
+}
