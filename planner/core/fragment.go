@@ -357,7 +357,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var allPartitionsIDs []int64
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
-	if ts.Table.GetPartitionInfo() != nil {
+	if e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
 		var partitions []table.PhysicalTable
