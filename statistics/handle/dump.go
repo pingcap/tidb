@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"time"
 
@@ -130,6 +131,42 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
+// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history
+func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
+	}
+	jsonTbl := &JSONTable{
+		DatabaseName: dbName,
+		TableName:    tableInfo.Name.L,
+		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
+	}
+	for _, def := range pi.Definitions {
+		tbl, err := h.tableHistoricalStatsToJSON(def.ID, snapshot)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tbl == nil {
+			continue
+		}
+		jsonTbl.Partitions[def.Name.L] = tbl
+	}
+	h.mu.Lock()
+	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	h.mu.Unlock()
+	if isDynamicMode {
+		tbl, err := h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tbl != nil {
+			jsonTbl.Partitions["global"] = tbl
+		}
+	}
+	return jsonTbl, nil
+}
+
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
 	h.mu.Lock()
@@ -191,6 +228,62 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
+	return jsonTbl, nil
+}
+
+func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*JSONTable, error) {
+	reader, err := h.getGlobalStatsReader(0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err1 := h.releaseGlobalStatsReader(reader)
+		if err == nil && err1 != nil {
+			err = err1
+		}
+	}()
+
+	// get meta version
+	rows, _, err := reader.read("select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
+	if err != nil {
+		return nil, errors.AddStack(err)
+	}
+	if len(rows) < 1 {
+		return nil, fmt.Errorf("failed to get records of stats_meta_history for table_id = %v, snapshot = %v", physicalID, snapshot)
+	}
+	statsMetaVersion := rows[0].GetInt64(0)
+	// get stats meta
+	rows, _, err = reader.read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
+	if err != nil {
+		return nil, errors.AddStack(err)
+	}
+	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
+
+	// get stats version
+	rows, _, err = reader.read("select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
+	if err != nil {
+		return nil, errors.AddStack(err)
+	}
+	if len(rows) < 1 {
+		return nil, fmt.Errorf("failed to get record of stats_history for table_id = %v, snapshot = %v", physicalID, snapshot)
+	}
+	statsVersion := rows[0].GetInt64(0)
+
+	// get stats
+	rows, _, err = reader.read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
+	if err != nil {
+		return nil, errors.AddStack(err)
+	}
+	blocks := make([][]byte, 0)
+	for _, row := range rows {
+		blocks = append(blocks, row.GetBytes(0))
+	}
+	jsonTbl, err := BlocksToJSONTable(blocks)
+	if err != nil {
+		return nil, errors.AddStack(err)
+	}
+	jsonTbl.Count = count
+	jsonTbl.ModifyCount = modifyCount
 	return jsonTbl, nil
 }
 

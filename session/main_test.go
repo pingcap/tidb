@@ -99,7 +99,15 @@ func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
 	return se
 }
 
-func mustExec(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
+	rs, err := exec(se, sql, args...)
+	require.NoError(t, err)
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+}
+
+func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
