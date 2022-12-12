@@ -62,6 +62,8 @@ const (
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
 
+	FlagFilterSysUsers  = "filter-sys-users"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -93,6 +95,8 @@ type RestoreCommonConfig struct {
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
+
+	FilterSysUsers []string `json:"filter-sys-users" toml:"filter-sys-users"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -122,6 +126,8 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
+	flags.StringArrayP(FlagFilterSysUsers, "", []string{"cloud_admin", "root"}, "whether ignore users to restore")
+	_ = flags.MarkHidden(FlagFilterSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -149,6 +155,10 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	cfg.FilterSysUsers, err = flags.GetStringArray(FlagFilterSysUsers)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return errors.Trace(err)
 }
