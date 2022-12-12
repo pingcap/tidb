@@ -2148,6 +2148,7 @@ func TestBuiltin(t *testing.T) {
 
 		{`SELECT 1 member of (a)`, true, "SELECT 1 MEMBER OF (`a`)"},
 		{`SELECT 1 member of a`, false, ""},
+		{`SELECT 1 member a`, false, ""},
 		{`SELECT 1 not member of a`, false, ""},
 		{`SELECT 1 member of (1+1)`, false, ""},
 		{`SELECT concat('a') member of (cast(1 as char(1)))`, true, "SELECT CONCAT(_UTF8MB4'a') MEMBER OF (CAST(1 AS CHAR(1)))"},
