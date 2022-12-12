@@ -33,6 +33,8 @@ var (
 	ExplainFormatTrueCardCost = "true_card_cost"
 	// ExplainFormatBinary prints the proto for binary plan.
 	ExplainFormatBinary = "binary"
+	// ExplainFormatTiDBJSON warp the default result in JSON format
+	ExplainFormatTiDBJSON = "tidb_json"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -45,5 +47,6 @@ var (
 		ExplainFormatTraditional,
 		ExplainFormatTrueCardCost,
 		ExplainFormatBinary,
+		ExplainFormatTiDBJSON,
 	}
 )

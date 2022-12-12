@@ -101,6 +101,42 @@ func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ReferenceCount indicates the reference count of StmtCtx.
+type ReferenceCount int32
+
+const (
+	// ReferenceCountIsFrozen indicates the current StmtCtx is resetting, it'll refuse all the access from other sessions.
+	ReferenceCountIsFrozen int32 = -1
+	// ReferenceCountNoReference indicates the current StmtCtx is not accessed by other sessions.
+	ReferenceCountNoReference int32 = 0
+)
+
+// TryIncrease tries to increase the reference count.
+// There is a small chance that TryIncrease returns true while TryFreeze and
+// UnFreeze are invoked successfully during the execution of TryIncrease.
+func (rf *ReferenceCount) TryIncrease() bool {
+	refCnt := atomic.LoadInt32((*int32)(rf))
+	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+	return refCnt != ReferenceCountIsFrozen
+}
+
+// Decrease decreases the reference count.
+func (rf *ReferenceCount) Decrease() {
+	for refCnt := atomic.LoadInt32((*int32)(rf)); !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+}
+
+// TryFreeze tries to freeze the StmtCtx to frozen before resetting the old StmtCtx.
+func (rf *ReferenceCount) TryFreeze() bool {
+	return atomic.LoadInt32((*int32)(rf)) == ReferenceCountNoReference && atomic.CompareAndSwapInt32((*int32)(rf), ReferenceCountNoReference, ReferenceCountIsFrozen)
+}
+
+// UnFreeze unfreeze the frozen StmtCtx thus the other session can access this StmtCtx.
+func (rf *ReferenceCount) UnFreeze() {
+	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -109,37 +145,38 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
-	NoZeroDate             bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	TruncateAsWarning      bool
-	OverflowAsWarning      bool
-	InShowWarning          bool
-	UseCache               bool
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	AllowInvalidDate       bool
-	IgnoreNoPartition      bool
-	SkipPlanCache          bool
-	IgnoreExplainIDSuffix  bool
-	SkipUTF8Check          bool
-	SkipASCIICheck         bool
-	SkipUTF8MB4Check       bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue               bool
+	DDLJobID                      int64
+	InInsertStmt                  bool
+	InUpdateStmt                  bool
+	InDeleteStmt                  bool
+	InSelectStmt                  bool
+	InLoadDataStmt                bool
+	InExplainStmt                 bool
+	InCreateOrAlterStmt           bool
+	InSetSessionStatesStmt        bool
+	InPreparedPlanBuilding        bool
+	IgnoreTruncate                bool
+	IgnoreZeroInDate              bool
+	NoZeroDate                    bool
+	DupKeyAsWarning               bool
+	BadNullAsWarning              bool
+	DividedByZeroAsWarning        bool
+	TruncateAsWarning             bool
+	OverflowAsWarning             bool
+	ErrAutoincReadFailedAsWarning bool
+	InShowWarning                 bool
+	UseCache                      bool
+	BatchCheck                    bool
+	InNullRejectCheck             bool
+	AllowInvalidDate              bool
+	IgnoreNoPartition             bool
+	SkipPlanCache                 bool
+	IgnoreExplainIDSuffix         bool
+	SkipUTF8Check                 bool
+	SkipASCIICheck                bool
+	SkipUTF8MB4Check              bool
+	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -174,9 +211,8 @@ type StatementContext struct {
 
 		message        string
 		warnings       []SQLWarn
-		errorCount     uint16
 		execDetails    execdetails.ExecDetails
-		allExecDetails []*execdetails.ExecDetails
+		allExecDetails []*execdetails.DetailsNeedP90
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -296,8 +332,6 @@ type StatementContext struct {
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh chan StatsLoadResult
-		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
-		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -329,6 +363,21 @@ type StatementContext struct {
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
+
+	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
+	InHandleForeignKeyTrigger bool
+
+	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
+	ForeignKeyTriggerCtx struct {
+		// The SavepointName is use to do rollback when handle foreign key cascade failed.
+		SavepointName string
+		HasFKCascades bool
+	}
+
+	// TableStats stores the visited runtime table stats by table id during query
+	TableStats map[int64]interface{}
+	// useChunkAlloc indicates whether statement use chunk alloc
+	useChunkAlloc bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -372,6 +421,8 @@ const (
 	StmtNowTsCacheKey StmtCacheKey = iota
 	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
 	StmtSafeTSCacheKey
+	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
+	StmtExternalTSCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -385,6 +436,23 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 		sc.stmtCache.data[key] = value
 	}
 	return sc.stmtCache.data[key]
+}
+
+// GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	}
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		value, err := valueEvaluator()
+		if err != nil {
+			return nil, err
+		}
+		sc.stmtCache.data[key] = value
+	}
+	return sc.stmtCache.data[key], nil
 }
 
 // ResetInStmtCache resets the cache of given key.
@@ -473,6 +541,21 @@ func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger
 	}
 }
 
+// SetUseChunkAlloc set use chunk alloc status
+func (sc *StatementContext) SetUseChunkAlloc() {
+	sc.useChunkAlloc = true
+}
+
+// ClearUseChunkAlloc clear useChunkAlloc status
+func (sc *StatementContext) ClearUseChunkAlloc() {
+	sc.useChunkAlloc = false
+}
+
+// GetUseChunkAllocStatus returns useChunkAlloc status
+func (sc *StatementContext) GetUseChunkAllocStatus() bool {
+	return sc.useChunkAlloc
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
 	if planDigest != nil {
@@ -521,6 +604,10 @@ type TableEntry struct {
 
 // AddAffectedRows adds affected rows.
 func (sc *StatementContext) AddAffectedRows(rows uint64) {
+	if sc.InHandleForeignKeyTrigger {
+		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
+		return
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.affectedRows += rows
@@ -642,9 +729,7 @@ func (sc *StatementContext) SetMessage(msg string) {
 func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	warns := make([]SQLWarn, len(sc.mu.warnings))
-	copy(warns, sc.mu.warnings)
-	return warns
+	return sc.mu.warnings
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
@@ -675,7 +760,11 @@ func (sc *StatementContext) WarningCount() uint16 {
 func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	ec = sc.mu.errorCount
+	for _, w := range sc.mu.warnings {
+		if w.Level == WarnLevelError {
+			ec++
+		}
+	}
 	wc = len(sc.mu.warnings)
 	return
 }
@@ -685,12 +774,6 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.warnings = warns
-	sc.mu.errorCount = 0
-	for _, w := range warns {
-		if w.Level == WarnLevelError {
-			sc.mu.errorCount++
-		}
-	}
 }
 
 // AppendWarning appends a warning with level 'Warning'.
@@ -726,7 +809,6 @@ func (sc *StatementContext) AppendError(warn error) {
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
-		sc.mu.errorCount++
 	}
 }
 
@@ -772,10 +854,9 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
-	sc.mu.errorCount = 0
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
-	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
+	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -799,7 +880,13 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
+		sc.mu.allExecDetails = append(sc.mu.allExecDetails,
+			&execdetails.DetailsNeedP90{
+				BackoffSleep:  details.BackoffSleep,
+				BackoffTimes:  details.BackoffTimes,
+				CalleeAddress: details.CalleeAddress,
+				TimeDetail:    details.TimeDetail,
+			})
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
@@ -918,14 +1005,14 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
 		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
 	})
 	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
 		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
 	})
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
@@ -999,6 +1086,9 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	sc.SkipPlanCache = true
+	if sc.UseCache {
+		sc.AppendWarning(errors.Errorf("skip plan-cache: in-list is too long"))
+	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true

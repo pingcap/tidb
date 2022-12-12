@@ -106,6 +106,7 @@ func TestOrderedResultMode(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
@@ -129,6 +130,7 @@ func TestOrderedResultModeOnSubQuery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -142,6 +144,7 @@ func TestOrderedResultModeOnJoin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -156,6 +159,7 @@ func TestOrderedResultModeOnOtherOperators(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")

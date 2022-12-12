@@ -440,16 +440,20 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.InNullRejectCheck = true
-	result := expression.EvaluateExprWithNull(ctx, schema, expr)
-	sc.InNullRejectCheck = false
-	x, ok := result.(*expression.Constant)
-	if !ok {
-		return false
-	}
-	if x.Value.IsNull() {
-		return true
-	} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
-		return true
+	defer func() {
+		sc.InNullRejectCheck = false
+	}()
+	for _, cond := range expression.SplitCNFItems(expr) {
+		result := expression.EvaluateExprWithNull(ctx, schema, cond)
+		x, ok := result.(*expression.Constant)
+		if !ok {
+			continue
+		}
+		if x.Value.IsNull() {
+			return true
+		} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
+			return true
+		}
 	}
 	return false
 }
@@ -470,8 +474,8 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		}
 	}
 	for _, cond := range predicates {
-		substituted, newFilter := expression.ColumnSubstitute4PPD(cond, p.Schema(), p.Exprs)
-		if substituted && !expression.HasGetSetVarFunc(newFilter) {
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)

@@ -502,7 +502,7 @@ func TestSubquery(t *testing.T) {
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
 		require.NoError(t, err, comment)
 
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
@@ -530,7 +530,7 @@ func TestPlanBuilder(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
@@ -863,7 +863,7 @@ func TestValidate(t *testing.T) {
 			err: ErrUnknownColumn,
 		},
 		{
-			sql: "select * from t t1 use index(e)",
+			sql: "select * from t t1 use index(x)",
 			err: ErrKeyDoesNotExist,
 		},
 		{
@@ -927,7 +927,7 @@ func TestValidate(t *testing.T) {
 		comment := fmt.Sprintf("for %s", sql)
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		_, _, err = BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		if tt.err == nil {
@@ -1422,7 +1422,7 @@ func TestVisitInfo(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		// TODO: to fix, Table 'test.ttt' doesn't exist
-		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		_ = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
@@ -1502,7 +1502,7 @@ func TestUnion(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 		stmt, err := s.p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1535,7 +1535,7 @@ func TestTopNPushDown(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 		stmt, err := s.p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1612,7 +1612,7 @@ func TestOuterJoinEliminator(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 		stmt, err := s.p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1649,7 +1649,7 @@ func TestSelectView(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1732,7 +1732,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1841,7 +1841,7 @@ func TestSkylinePruning(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1914,7 +1914,7 @@ func TestFastPlanContextTables(t *testing.T) {
 	for _, tt := range tests {
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
 		p := TryFastPlan(s.ctx, stmt)
@@ -1946,7 +1946,7 @@ func TestUpdateEQCond(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1965,7 +1965,7 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	ctx := context.TODO()
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	require.NoError(t, err)
 	sctx := MockContext()
 	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -1988,7 +1988,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	ctx := context.TODO()
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	require.NoError(t, err)
 	sctx := MockContext()
 	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
@@ -2042,7 +2042,7 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err, comment)
@@ -2084,7 +2084,7 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tc.sql)
 		stmt, err := s.p.ParseOneStmt(tc.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		plan := TryFastPlan(s.ctx, stmt)
 		if tc.fastPlan {
@@ -2106,7 +2106,7 @@ func TestTraceFastPlan(t *testing.T) {
 	comment := fmt.Sprintf("sql:%s", sql)
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, comment)
-	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	require.NoError(t, err, comment)
 	plan := TryFastPlan(s.ctx, stmt)
 	require.NotNil(t, plan)

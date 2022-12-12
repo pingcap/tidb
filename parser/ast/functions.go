@@ -341,6 +341,7 @@ const (
 	JSONPretty        = "json_pretty"
 	JSONQuote         = "json_quote"
 	JSONSearch        = "json_search"
+	JSONStorageFree   = "json_storage_free"
 	JSONStorageSize   = "json_storage_size"
 	JSONDepth         = "json_depth"
 	JSONKeys          = "json_keys"

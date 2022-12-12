@@ -107,6 +107,39 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestConsistencyLockControllerEmpty(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tctx := tcontext.Background().WithContext(ctx)
+	conf := defaultConfigForTest(t)
+
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Consistency = ConsistencyTypeLock
+	conf.Tables = NewDatabaseTables().
+		AppendTables("db1", []string{"t1"}, []uint64{1}).
+		AppendViews("db2", "t4")
+	mock.ExpectExec("LOCK TABLES `db1`.`t1` READ").
+		WillReturnError(&mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'db1.t1' doesn't exist"})
+	ctrl, _ := NewConsistencyController(ctx, conf, db)
+	_, ok := ctrl.(*ConsistencyLockDumpingTables)
+	require.True(t, ok)
+	require.NoError(t, ctrl.Setup(tctx))
+	require.NoError(t, ctrl.TearDown(tctx))
+
+	// should remove table db1.t1 in tables to dump
+	expectedDumpTables := NewDatabaseTables().
+		AppendViews("db2", "t4")
+	expectedDumpTables["db1"] = make([]*TableInfo, 0)
+	require.Equal(t, expectedDumpTables, conf.Tables)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestResolveAutoConsistency(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	cases := []struct {

@@ -92,6 +92,10 @@ func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
+type hashNANullBucket struct {
+	entries []*naEntry
+}
+
 // hashRowContainer handles the rows and the hash map of a table.
 // NOTE: a hashRowContainer may be shallow copied by the invoker, define all the
 // member attributes as pointer type to avoid unexpected problems.
@@ -104,7 +108,7 @@ type hashRowContainer struct {
 	hashTable baseHashTable
 	// hashNANullBucket stores the rows with any null value in NAAJ join key columns.
 	// After build process, NANUllBucket is read only here for multi probe worker.
-	hashNANullBucket []*naEntry
+	hashNANullBucket *hashNANullBucket
 
 	rowContainer *chunk.RowContainer
 	memTracker   *memory.Tracker
@@ -113,7 +117,7 @@ type hashRowContainer struct {
 	chkBuf *chunk.Chunk
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
 	c := &hashRowContainer{
@@ -123,6 +127,9 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 		memTracker:   memory.NewTracker(memory.LabelForRowContainer, -1),
+	}
+	if isNAAJ := len(hCtx.naKeyColIdx) > 0; isNAAJ {
+		c.hashNANullBucket = &hashNANullBucket{}
 	}
 	rc.GetMemTracker().AttachTo(c.GetMemTracker())
 	return c
@@ -248,7 +255,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 		mayMatchedRow chunk.Row
 	)
 	matched = matched[:0]
-	for _, nullEntry := range c.hashNANullBucket {
+	for _, nullEntry := range c.hashNANullBucket.entries {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(nullEntry.ptr, c.chkBuf)
 		if err != nil {
 			return nil, err
@@ -394,7 +401,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
-				c.hashNANullBucket = append(c.hashNANullBucket, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
+				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
 			} else {
 				// insert the not-null rows to hash table.
 				key := c.hCtx.hashVals[i].Sum64()

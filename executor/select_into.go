@@ -60,7 +60,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	s.started = true
 	s.dstFile = f
 	s.writer = bufio.NewWriter(s.dstFile)
-	s.chk = newFirstChunk(s.children[0])
+	s.chk = tryNewCacheChunk(s.children[0])
 	s.lineBuf = make([]byte, 0, 1024)
 	s.fieldBuf = make([]byte, 0, 64)
 	s.escapeBuf = make([]byte, 0, 64)

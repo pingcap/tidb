@@ -23,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//types",
+        "//util/chunk",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
@@ -44,6 +45,7 @@ go_test(
     ],
     embed = [":table"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//errno",

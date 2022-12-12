@@ -42,8 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, params []expression.Expression) error {
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
@@ -88,7 +87,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
 		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
-		err := Preprocess(sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -116,7 +115,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if err := planCachePreprocess(sctx, isGeneralPlanCache, is, stmt, params); err != nil {
+	if err := planCachePreprocess(ctx, sctx, isGeneralPlanCache, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
 
@@ -305,6 +304,23 @@ func RebuildPlan4CachedPlan(p Plan) error {
 	return rebuildRange(p)
 }
 
+func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		x.Ranges = ranges
+		x.rangeInfo = rangeInfo
+	case *PhysicalIndexScan:
+		x.Ranges = ranges
+		x.rangeInfo = rangeInfo
+	case *PhysicalTableReader:
+		updateRange(x.TablePlans[0], ranges, rangeInfo)
+	case *PhysicalIndexReader:
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
+	case *PhysicalIndexLookUpReader:
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
+	}
+}
+
 // rebuildRange doesn't set mem limit for building ranges. There are two reasons why we don't restrict range mem usage here.
 //  1. The cached plan must be able to build complete ranges under mem limit when it is generated. Hence we can just build
 //     ranges from x.AccessConditions. The only difference between the last ranges and new ranges is the change of parameter
@@ -326,6 +342,12 @@ func rebuildRange(p Plan) error {
 	case *PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(); err != nil {
 			return err
+		}
+		if mutableRange, ok := x.Ranges.(*mutableIndexJoinRange); ok {
+			helper := mutableRange.buildHelper
+			rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
+			innerPlan := x.Children()[x.InnerChildIdx]
+			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
 		}
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
