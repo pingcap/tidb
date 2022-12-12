@@ -376,3 +376,53 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 	}
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (id int primary key, a int);`)
+	tk.MustExec(`INSERT INTO t VALUES (1, 1);`)
+
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
+	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
+
+	originHook := dom.DDL().GetHook()
+	callback := &ddl.TestDDLCallback{
+		Do: dom,
+	}
+	onJobUpdatedBefore := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly {
+			// Write a record to the temp index.
+			_, err := tk2.Exec("update t set a = 2 where id = 1;")
+			assert.NoError(t, err)
+		}
+	}
+
+	ddl.MergeTmpIdxBackfillTxnHookForTest = &ddl.MergeTmpIdxBackfillTxnHook{
+		BeforeTxnBegin: func() {
+			_, err := tk2.Exec("begin pessimistic;")
+			assert.NoError(t, err)
+			_, err = tk2.Exec("update t set a = 3 where id = 1;")
+			assert.NoError(t, err)
+		},
+		AfterTxnCommit: func() {
+			_, err := tk2.Exec("commit;")
+			assert.NoError(t, err)
+		},
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedBefore)
+	dom.DDL().SetHook(callback)
+	tk.MustExec("alter table t add index idx(a);")
+	dom.DDL().SetHook(originHook)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3"))
+}

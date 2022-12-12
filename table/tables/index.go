@@ -17,6 +17,7 @@ package tables
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"sync"
 
@@ -29,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 // index is the data structure for index data in the KV store.
@@ -135,6 +138,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			keyIsTempIdxKey = true
 		}
 	}
+
+	logutil.BgLogger().Info("create index", zap.String("index", c.idxInfo.Name.O),
+		zap.String("tempKey", hex.EncodeToString(tempKey)), zap.String("keyVer", string(keyVer)),
+		zap.String("handle", h.String()), zap.String("key", hex.EncodeToString(key)))
 
 	ctx := opt.Ctx
 	if opt.Untouched {
