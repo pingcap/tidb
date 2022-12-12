@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -119,6 +120,7 @@ type Domain struct {
 	planReplayerHandle      *planReplayerHandle
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
+	historicalStatsWorker   *HistoricalStatsWorker
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -347,7 +349,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
-			actions = append(actions, uint64(1<<diff.Type))
+			actions = append(actions, uint64(diff.Type))
 		}
 	}
 
@@ -724,7 +726,6 @@ func (do *Domain) mdlCheckLoop() {
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
 					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-					jobNeedToSync = true
 				} else {
 					jobCache[jobID] = ver
 				}
@@ -1416,6 +1417,64 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
+// TODO: tiflashComputeNodeKey is not put to etcd yet(finish this when AutoScaler is done)
+//
+//	store cache will only be invalidated every 30 seconds.
+func (do *Domain) WatchTiFlashComputeNodeChange() error {
+	var watchCh clientv3.WatchChan
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
+	}
+	do.wg.Add(1)
+	duration := 10 * time.Second
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
+			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
+		}()
+
+		var count int
+		var logCount int
+		for {
+			ok := true
+			var watched bool
+			select {
+			case <-do.exit:
+				return
+			case _, ok = <-watchCh:
+				watched = true
+			case <-time.After(duration):
+			}
+			if !ok {
+				logutil.BgLogger().Error("WatchTiFlashComputeNodeChange watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+			count = 0
+			switch s := do.store.(type) {
+			case tikv.Storage:
+				logCount++
+				s.GetRegionCache().InvalidateTiFlashComputeStores()
+				if logCount == 60 {
+					// Print log every 60*duration seconds.
+					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
+					logCount = 0
+				}
+			default:
+				logutil.BgLogger().Debug("No need to watch tiflash_compute store cache for non-tikv store")
+				return
+			}
+		}
+	}()
+	return nil
+}
+
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
@@ -1573,34 +1632,63 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(collectorSctx, dumperSctx sessionctx.Context) {
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
 		sctx: collectorSctx,
 	}
+	taskCH := make(chan *PlanReplayerDumpTask, 16)
+	taskStatus := &planReplayerDumpTaskStatus{}
+	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
-		ctx:    ctx,
-		sctx:   dumperSctx,
-		taskCH: make(chan *PlanReplayerDumpTask, 16),
+		taskCH: taskCH,
+		status: taskStatus,
+	}
+	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
+	for i := 0; i < len(workersSctxs); i++ {
+		worker := &planReplayerTaskDumpWorker{
+			ctx:    ctx,
+			sctx:   workersSctxs[i],
+			taskCH: taskCH,
+			status: taskStatus,
+		}
+		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
+	}
+}
+
+// SetupHistoricalStatsWorker setups worker
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+	do.historicalStatsWorker = &HistoricalStatsWorker{
+		tblCH: make(chan int64, 16),
+		sctx:  ctx,
 	}
 }
 
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
+	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
+	enableDumpHistoricalStats.Store(true)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
+}
+
+// DisableDumpHistoricalStats4Test disable historical dump worker for test
+func DisableDumpHistoricalStats4Test() {
+	enableDumpHistoricalStats.Store(false)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
@@ -1636,14 +1724,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 		}()
-		for {
-			select {
-			case <-do.exit:
-				return
-			case task := <-do.planReplayerHandle.planReplayerTaskDumpHandle.taskCH:
-				do.planReplayerHandle.HandlePlanReplayerDumpTask(task)
-			}
+		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
+			go worker.run()
 		}
+		<-do.exit
+		do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
 	}()
 }
 
@@ -1669,6 +1754,40 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				return
 			case <-gcTicker.C:
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+			}
+		}
+	}()
+}
+
+// GetHistoricalStatsWorker gets historical workers
+func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
+	return do.historicalStatsWorker
+}
+
+// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+var enableDumpHistoricalStats atomic.Bool
+
+// StartHistoricalStatsWorker start historical workers running
+func (do *Domain) StartHistoricalStatsWorker() {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case tblID := <-do.historicalStatsWorker.tblCH:
+				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
+				if err != nil {
+					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+				}
 			}
 		}
 	}()
@@ -2018,8 +2137,9 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 }
 
 const (
-	privilegeKey   = "/tidb/privilege"
-	sysVarCacheKey = "/tidb/sysvars"
+	privilegeKey          = "/tidb/privilege"
+	sysVarCacheKey        = "/tidb/sysvars"
+	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches

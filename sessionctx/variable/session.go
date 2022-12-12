@@ -196,7 +196,6 @@ type TxnCtxNoNeedToRestore struct {
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
-	shardRand    *rand.Rand
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
@@ -246,21 +245,22 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (tc *TransactionContext) GetCurrentShard(count int) int64 {
-	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard()
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
 	return tc.currentShard
 }
 
-func (tc *TransactionContext) updateShard() {
+func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
@@ -1319,6 +1319,15 @@ type SessionVars struct {
 
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
+
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1676,18 +1685,19 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:     DefIndexLookupConcurrency,
-		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		projectionConcurrency:      DefTiDBProjectionConcurrency,
-		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		windowConcurrency:          DefTiDBWindowConcurrency,
-		mergeJoinConcurrency:       DefTiDBMergeJoinConcurrency,
-		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
-		ExecutorConcurrency:        DefExecutorConcurrency,
+		indexLookupConcurrency:            DefIndexLookupConcurrency,
+		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency:        DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
+		projectionConcurrency:             DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:                 DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:              DefTiDBMergeJoinConcurrency,
+		streamAggConcurrency:              DefTiDBStreamAggConcurrency,
+		indexMergeIntersectionConcurrency: DefTiDBIndexMergeIntersectionConcurrency,
+		ExecutorConcurrency:               DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
@@ -2402,6 +2412,10 @@ type Concurrency struct {
 	// streamAggConcurrency is deprecated, use ExecutorConcurrency instead.
 	streamAggConcurrency int
 
+	// indexMergeIntersectionConcurrency is the number of indexMergeProcessWorker
+	// Only meaningful for dynamic pruned partition table.
+	indexMergeIntersectionConcurrency int
+
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
 
@@ -2460,6 +2474,11 @@ func (c *Concurrency) SetMergeJoinConcurrency(n int) {
 // SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
 func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
+}
+
+// SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
+func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
+	c.indexMergeIntersectionConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -2540,6 +2559,14 @@ func (c *Concurrency) MergeJoinConcurrency() int {
 func (c *Concurrency) StreamAggConcurrency() int {
 	if c.streamAggConcurrency != ConcurrencyUnset {
 		return c.streamAggConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexMergeIntersectionConcurrency return the number of concurrent process worker.
+func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
+	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
+		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
 }

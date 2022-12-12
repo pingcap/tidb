@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -806,7 +807,30 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
-
+	if ds.isForUpdateRead && ds.ctx.GetSessionVars().TxnCtx.IsExplicit {
+		hasPointGetPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if ds.isPointGetPath(path) {
+				hasPointGetPath = true
+				break
+			}
+		}
+		tblName := ds.tableInfo.Name
+		ds.possibleAccessPaths, err = filterPathByIsolationRead(ds.ctx, ds.possibleAccessPaths, tblName, ds.DBName)
+		if err != nil {
+			return nil, 1, err
+		}
+		if hasPointGetPath {
+			newPaths := make([]*util.AccessPath, 0)
+			for _, path := range ds.possibleAccessPaths {
+				// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path (#39543)
+				if path.StoreType != kv.TiFlash {
+					newPaths = append(newPaths, path)
+				}
+			}
+			ds.possibleAccessPaths = newPaths
+		}
+	}
 	t = ds.getTask(prop)
 	if t != nil {
 		cntPlan = 1
@@ -903,6 +927,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			// We should uncache the tableDual plan.
 			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
 				ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: get a TableDual plan"))
 			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
@@ -912,6 +937,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
+
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
 		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
@@ -1903,6 +1929,36 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	return is
 }
 
+// isPointGetPath indicates whether the conditions are point-get-able.
+// eg: create table t(a int, b int,c int unique, primary (a,b))
+// select * from t where a = 1 and b = 1 and c =1;
+// the datasource can access by primary key(a,b) or unique key c which are both point-get-able
+func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
+	if len(path.Ranges) < 1 {
+		return false
+	}
+	if !path.IsIntHandlePath {
+		if path.Index == nil {
+			return false
+		}
+		if !path.Index.Unique || path.Index.HasPrefixIndex() {
+			return false
+		}
+		idxColsLen := len(path.Index.Columns)
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) != idxColsLen {
+				return false
+			}
+		}
+	}
+	for _, ran := range path.Ranges {
+		if !ran.IsPointNonNullable(ds.ctx) {
+			return false
+		}
+	}
+	return true
+}
+
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	// It will be handled in convertToIndexScan.
@@ -1930,7 +1986,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	if prop.TaskTp == property.MppTaskType {
+	// In disaggregated tiflash mode, only MPP is allowed, Cop and BatchCop is deprecated.
+	if prop.TaskTp == property.MppTaskType || config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
@@ -2289,6 +2346,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
+		constColsByCond:  path.ConstCols,
 		prop:             prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable

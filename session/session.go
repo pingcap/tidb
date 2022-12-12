@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
@@ -145,10 +146,13 @@ var (
 	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
 	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
 	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
+	telemetryTableCompactPartitionUsage         = metrics.TelemetryCompactPartitionCnt
 
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
+
+	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -291,6 +295,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1868,6 +1874,21 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
+}
+
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s Session,
 	sql string, args ...interface{}) (ast.StmtNode, error) {
@@ -2450,7 +2471,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	ctx := context.Background()
-	inTxn := s.GetSessionVars().InTxn()
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	if err = s.PrepareTxnCtx(ctx); err != nil {
@@ -2467,12 +2487,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
+	// Rollback even if err is nil.
+	s.rollbackOnError(ctx)
+
 	if err != nil {
 		return
-	}
-	if !inTxn {
-		// We could start a transaction to build the prepare executor before, we should rollback it here.
-		s.RollbackTxn(ctx)
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
@@ -2583,7 +2602,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2603,14 +2622,316 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+	// Check whether continuous login failure is enabled to lock the account.
+	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
+	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
+	if enableAutoLock {
+		err = failedLoginTrackingBegin(s)
+		if err != nil {
+			return err
+		}
+		lockStatusChanged, err := verifyAccountAutoLock(s, authUser.Username, authUser.Hostname)
+		if err != nil {
+			rollbackErr := failedLoginTrackingRollback(s)
+			if rollbackErr != nil {
+				return rollbackErr
+			}
+			return err
+		}
+		err = failedLoginTrackingCommit(s)
+		if err != nil {
+			rollbackErr := failedLoginTrackingRollback(s)
+			if rollbackErr != nil {
+				return rollbackErr
+			}
+			return err
+		}
+		if lockStatusChanged {
+			// Notification auto unlock.
+			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
+	if err != nil {
+		if info.FailedDueToWrongPassword {
+			// when user enables the account locking function for consecutive login failures,
+			// the system updates the login failure count and determines whether to lock the account when authentication fails.
+			if enableAutoLock {
+				err := failedLoginTrackingBegin(s)
+				if err != nil {
+					return err
+				}
+				lockStatusChanged, passwordLocking, trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname)
+				if trackingErr != nil {
+					if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+						return rollBackErr
+					}
+					return trackingErr
+				}
+				if err := failedLoginTrackingCommit(s); err != nil {
+					if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+						return rollBackErr
+					}
+					return err
+				}
+				if lockStatusChanged {
+					// Notification auto lock.
+					err := autolockAction(s, passwordLocking, authUser.Username, authUser.Hostname)
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return err
 	}
+	s.sessionVars.ResourceGroupName = info.ResourceGroupName
+	if info.InSandBoxMode {
+		// Enter sandbox mode, only execute statement for resetting password.
+		s.EnableSandBoxMode()
+	}
+	if enableAutoLock {
+		err := failedLoginTrackingBegin(s)
+		if err != nil {
+			return err
+		}
+		// The password is correct. If the account is not locked, the number of login failure statistics will be cleared.
+		err = authSuccessClearCount(s, authUser.Username, authUser.Hostname)
+		if err != nil {
+			if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+				return rollBackErr
+			}
+			return err
+		}
+		err = failedLoginTrackingCommit(s)
+		if err != nil {
+			if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+				return rollBackErr
+			}
+			return err
+		}
+	}
+	pm.AuthSuccess(authUser.Username, authUser.Hostname)
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
 	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 	return nil
+}
+
+func authSuccessClearCount(s *session, user string, host string) error {
+	// Obtain accurate lock status and failure count information.
+	passwordLocking, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return err
+	}
+	// If the account is locked, it may be caused by the untimely update of the cache,
+	// directly report the account lock.
+	if passwordLocking.AutoAccountLocked {
+		if passwordLocking.PasswordLockTimeDays == -1 {
+			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+
+		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
+	}
+	if passwordLocking.FailedLoginCount != 0 {
+		// If the number of account login failures is not zero, it will be updated to 0.
+		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
+			passwordLocking.PasswordLockTimeDays)
+		if passwordLockingJSON != "" {
+			if err := s.passwordLocking(user, host, passwordLockingJSON); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	// Use the cache to determine whether to unlock the account.
+	// If the account needs to be unlocked, read the database information to determine whether
+	// the account needs to be unlocked. Otherwise, an error message is displayed.
+	lockStatusInMemory, err := pm.VerifyAccountAutoLockInMemory(user, host)
+	if err != nil {
+		return false, err
+	}
+	// If the lock status in the cache is Unlock, the automatic unlock is skipped.
+	// If memory synchronization is slow and there is a lock in the database, it will be processed upon successful login.
+	if !lockStatusInMemory {
+		return false, nil
+	}
+	lockStatusChanged := false
+	var plJSON string
+	// After checking the cache, obtain the latest data from the database and determine
+	// whether to automatically unlock the database to prevent repeated unlock errors.
+	pl, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return false, err
+	}
+	if pl.AutoAccountLocked {
+		// If it is locked, need to check whether it can be automatically unlocked.
+		lockTimeDay := pl.PasswordLockTimeDays
+		if lockTimeDay == -1 {
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
+		}
+		lastChanged := pl.AutoLockedLastChanged
+		d := time.Now().Unix() - lastChanged
+		if d > lockTimeDay*24*60*60 {
+			// Generate unlock json string.
+			plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+				pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+		} else {
+			lds := strconv.FormatInt(lockTimeDay, 10)
+			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
+		}
+	}
+	if plJSON != "" {
+		lockStatusChanged = true
+		if err = s.passwordLocking(user, host, plJSON); err != nil {
+			return false, err
+		}
+	}
+	return lockStatusChanged, nil
+}
+
+func authFailedTracking(s *session, user string, host string) (bool, *privileges.PasswordLocking, error) {
+	// Obtain the number of consecutive password login failures.
+	passwordLocking, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return false, nil, err
+	}
+	// Consecutive wrong password login failure times +1,
+	// If the lock condition is satisfied, the lock status is updated and the update cache is notified.
+	lockStatusChanged, err := userAutoAccountLocked(s, user, host, passwordLocking)
+	if err != nil {
+		return false, nil, err
+	}
+	return lockStatusChanged, passwordLocking, nil
+}
+
+func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, user, host string) error {
+	// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
+	err := domain.GetDomain(s).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	// The number of failed login attempts reaches FAILED_LOGIN_ATTEMPTS.
+	// An error message is displayed indicating permission denial and account lock.
+	if passwordLocking.PasswordLockTimeDays == -1 {
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+			"unlimited", "unlimited")
+	}
+	lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+	return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
+}
+
+func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
+	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql.String())
+	return err
+}
+
+func failedLoginTrackingBegin(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	return err
+}
+
+func failedLoginTrackingCommit(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "COMMIT")
+	if err != nil {
+		_, rollBackErr := s.ExecuteInternal(ctx, "ROLLBACK")
+		if rollBackErr != nil {
+			return rollBackErr
+		}
+	}
+	return err
+}
+
+func failedLoginTrackingRollback(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "ROLLBACK")
+	return err
+}
+
+// getFailedLoginUserAttributes queries the exact number of consecutive password login failures (concurrency is not allowed).
+func getFailedLoginUserAttributes(s *session, user string, host string) (*privileges.PasswordLocking, error) {
+	passwordLocking := &privileges.PasswordLocking{}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
+	if err != nil {
+		return passwordLocking, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return passwordLocking, err
+	}
+	if req.NumRows() == 0 {
+		return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
+	}
+	row := iter.Begin()
+	if !row.IsNull(0) {
+		passwordLockingJSON := row.GetJSON(0)
+		return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
+	}
+	return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
+}
+
+func userAutoAccountLocked(s *session, user string, host string, pl *privileges.PasswordLocking) (bool, error) {
+	// Indicates whether the user needs to update the lock status change.
+	lockStatusChanged := false
+	// The number of consecutive login failures is stored in the database.
+	// If the current login fails, one is added to the number of consecutive login failures
+	// stored in the database to determine whether the user needs to be locked and the number of update failures.
+	failedLoginCount := pl.FailedLoginCount + 1
+	// If the cache is not updated, but it is already locked, it will report that the account is locked.
+	if pl.AutoAccountLocked {
+		if pl.PasswordLockTimeDays == -1 {
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+		lds := strconv.FormatInt(pl.PasswordLockTimeDays, 10)
+		return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, lds)
+	}
+
+	autoAccountLocked := "N"
+	autoLockedLastChanged := ""
+	if pl.FailedLoginAttempts == 0 || pl.PasswordLockTimeDays == 0 {
+		return false, nil
+	}
+
+	if failedLoginCount >= pl.FailedLoginAttempts {
+		autoLockedLastChanged = time.Now().Format(time.UnixDate)
+		autoAccountLocked = "Y"
+		lockStatusChanged = true
+	}
+
+	newAttributesStr := privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+		pl.PasswordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
+	if newAttributesStr != "" {
+		return lockStatusChanged, s.passwordLocking(user, host, newAttributesStr)
+	}
+	return lockStatusChanged, nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -2763,6 +3084,14 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
+	// BackfillTables is a list of tables definitions used in dist reorg DDL.
+	BackfillTables = []struct {
+		SQL string
+		id  int64
+	}{
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
+	}
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
@@ -2780,25 +3109,33 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		tableIDs := make([]int64, 0, len(DDLJobTables))
-		for _, tbl := range DDLJobTables {
+		tables := append(DDLJobTables, BackfillTables...)
+		if exists {
+			tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+			if err != nil || tblExist {
+				return errors.Trace(err)
+			}
+			tables = BackfillTables
+		}
+		tableIDs := make([]int64, 0, len(tables))
+		for _, tbl := range tables {
 			tableIDs = append(tableIDs, tbl.id)
 		}
 		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
-		for _, tbl := range DDLJobTables {
+		for _, tbl := range tables {
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2899,11 +3236,17 @@ func InitMDLVariable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		if isNull {
+			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+			enable = true
+			logutil.BgLogger().Warn("metadata lock is null")
+			err = t.SetMetadataLock(true)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
-	if isNull {
-		return errors.New("metadata lock is null")
-	}
 	variable.EnableMDL.Store(enable)
 	return err
 }
@@ -2988,6 +3331,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		// Invalid client-go tiflash_compute store cache if necessary.
+		err = dom.WatchTiFlashComputeNodeChange()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
 		return nil, err
 	}
@@ -3017,12 +3368,24 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}()
 	}
 
+	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+		planReplayerWorkersSctx[i] = pworkerSes[i]
+	}
 	// setup plan replayer handle
-	dom.SetupPlanReplayerHandle(ses[6], ses[7])
+	dom.SetupPlanReplayerHandle(ses[6], planReplayerWorkersSctx)
 	dom.StartPlanReplayerHandle()
 	// setup dumpFileGcChecker
-	dom.SetupDumpFileGCChecker(ses[8])
+	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
+	// setup historical stats worker
+	dom.SetupHistoricalStatsWorker(ses[8])
+	dom.StartHistoricalStatsWorker()
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
@@ -3137,7 +3500,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
+	sessionBindHandle := bindinfo.NewSessionBindHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
@@ -3583,6 +3946,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsageNotCTE.Inc()
 	}
 
+	if ti.UseIndexMerge {
+		telemetryIndexMerge.Inc()
+	}
+
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
 	}
@@ -3633,6 +4000,9 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		if ti.PartitionTelemetry.UseDropIntervalPartition {
 			telemetryTablePartitionDropIntervalUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseCompactTablePartition {
+			telemetryTableCompactPartitionUsage.Inc()
+		}
 	}
 
 	if ti.AccountLockTelemetry != nil {
@@ -3667,6 +4037,11 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
+	if config.GetGlobalConfig().Performance.TxnTotalSizeLimit != config.DefTxnTotalSizeLimit {
+		// if the user manually specifies the config, don't involve the new memory tracker mechanism, let the old config
+		// work as before.
+		return
+	}
 	hook := func(mem uint64) {
 		if s.sessionVars.MemDBFootprint == nil {
 			tracker := memory.NewTracker(memory.LabelForMemDB, -1)

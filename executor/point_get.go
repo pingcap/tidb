@@ -80,7 +80,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
 	if p.IndexInfo != nil {
@@ -194,6 +193,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}

@@ -1922,7 +1922,7 @@ func TestCheckIndex(t *testing.T) {
 	tbInfo := tbl.Meta()
 
 	alloc := autoid.NewAllocator(store, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
-	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(false, alloc), tbInfo)
 	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")
@@ -6184,6 +6184,38 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
+	runtime.GC()
+}
+
+func TestGlobalMemoryControlForAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	}()
+	_, err := tk0.Exec(sql)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
 }
 
