@@ -73,6 +73,15 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
+	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
+		// Only allow aggressive locking if it only needs to lock one key. Considering that it's possible that a
+		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in aggressive
+		// locking mode), here we exit aggressive locking mode by calling DoneAggressiveLocking instead of cancelling.
+		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
+		// as if they were locked in normal way.
+		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
+		txn.DoneAggressiveLocking(ctx)
+	}
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)

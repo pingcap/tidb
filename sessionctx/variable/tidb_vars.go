@@ -1142,7 +1142,7 @@ const (
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
 	DefTiDBStoreBatchSize                                  = 0
-	DefTiDBPessimisticTransactionAggressiveLocking         = true
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
 )
 
 // Process global variables.
