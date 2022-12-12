@@ -340,12 +340,16 @@ func SendPrepareFlashbackToVersionRPC(
 			continue
 		}
 		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
-		if respErr := prepareFlashbackToVersionResp.GetError(); respErr != "" {
-			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(respErr))
+		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
+			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(err))
 			if boErr != nil {
 				return taskStat, boErr
 			}
 			continue
+		}
+		taskStat.CompletedRegions++
+		if isLast {
+			break
 		}
 		bo = tikv.NewBackoffer(ctx, flashbackMaxBackoff)
 		startKey = endKey
