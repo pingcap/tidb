@@ -145,6 +145,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	return nil
 }
 
+// ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	h.mu.Lock()
