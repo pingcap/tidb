@@ -16,6 +16,8 @@ package handle
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -70,8 +72,14 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	return nil
 }
 
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) error {
+func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return recordHistoricalStatsMeta(h.mu.ctx, tableID, version, source)
+	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version, source)
+	if err != nil {
+		logutil.BgLogger().Error("record historical stats meta failed",
+			zap.Int64("table-id", tableID),
+			zap.Uint64("version", version),
+			zap.Error(err))
+	}
 }

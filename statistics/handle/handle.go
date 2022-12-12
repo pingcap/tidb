@@ -1627,7 +1627,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = recordHistoricalStatsMeta(sctx, tableID, statsVer, source)
+			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer, source); err1 != nil {
+				logutil.BgLogger().Error("record historical stats meta failed",
+					zap.Int64("table-id", tableID),
+					zap.Uint64("version", statsVer),
+					zap.Error(err1))
+			}
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -1802,7 +1807,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(tableID, statsVer, source)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -1881,7 +1886,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(tableID, statsVer, source)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -2087,7 +2092,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	slices.Sort(colIDs)
@@ -2158,7 +2163,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -2371,7 +2376,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	if extStats == nil || len(extStats.Stats) == 0 {

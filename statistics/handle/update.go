@@ -524,7 +524,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(id, statsVer, StatsMetaHistorySourceFlushStats)
+			h.recordHistoricalStatsMeta(id, statsVer, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
