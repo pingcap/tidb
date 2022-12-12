@@ -26,12 +26,18 @@ import (
 )
 
 const (
-	StatsMetaHistorySourceAnalyze       = "analyze"
-	StatsMetaHistorySourceLoadStats     = "load stats"
-	StatsMetaHistorySourceFlushStats    = "flush stats"
+	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
+	StatsMetaHistorySourceAnalyze = "analyze"
+	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
+	StatsMetaHistorySourceLoadStats = "load stats"
+	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
+	StatsMetaHistorySourceFlushStats = "flush stats"
+	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
 	StatsMetaHistorySourceExtendedStats = "extended stats"
-	StatsMetaHistorySourceSchemaChange  = "schema change"
-	StatsMetaHistorySourceFeedBack      = "feedback"
+	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
+	StatsMetaHistorySourceSchemaChange = "schema change"
+	// StatsMetaHistorySourceFeedBack indicates stats history meta source from feedback
+	StatsMetaHistorySourceFeedBack = "feedback"
 )
 
 func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
