@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -324,6 +325,14 @@ func SendPrepareFlashbackToVersionRPC(
 		if err != nil {
 			return taskStat, err
 		}
+		failpoint.Inject("mockPrepareMeetsEpochNotMatch", func(val failpoint.Value) {
+			if val.(bool) && bo.ErrorsNum() == 0 {
+				regionErr = &errorpb.Error{
+					Message:       "stale epoch",
+					EpochNotMatch: &errorpb.EpochNotMatch{},
+				}
+			}
+		})
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err != nil {
