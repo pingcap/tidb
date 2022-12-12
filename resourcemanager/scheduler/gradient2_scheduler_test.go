@@ -31,10 +31,10 @@ func TestGradient2Scheduler(t *testing.T) {
 	testcases := []struct {
 		Name      string
 		InFlight  int64
-		Capa      int
+		Capacity  int
 		LongRTT   float64
 		ShortRTT  uint64
-		Queuesize int64
+		QueueSize int64
 		Running   int
 		Delta     time.Duration
 		Expected  Command
@@ -46,7 +46,7 @@ func TestGradient2Scheduler(t *testing.T) {
 		},
 		{
 			Name:     "p.InFlight() < int64(p.Cap())/2 is hold",
-			Capa:     100,
+			Capacity: 100,
 			LongRTT:  20,
 			ShortRTT: 30,
 			Delta:    -10 * time.Second,
@@ -55,7 +55,7 @@ func TestGradient2Scheduler(t *testing.T) {
 		{
 			Name:     "p.InFlight() > int64(p.Cap())/2 is hold",
 			InFlight: 2,
-			Capa:     100,
+			Capacity: 100,
 			LongRTT:  20,
 			ShortRTT: 30,
 			Running:  2,
@@ -65,10 +65,10 @@ func TestGradient2Scheduler(t *testing.T) {
 		{
 			Name:      "basic Downclock and LongRTT / ShortRTT < 2",
 			InFlight:  132,
-			Capa:      100,
+			Capacity:  100,
 			LongRTT:   30,
 			ShortRTT:  70,
-			Queuesize: 30,
+			QueueSize: 30,
 			Running:   102,
 			Delta:     -10 * time.Second,
 			Expected:  Downclock,
@@ -76,10 +76,10 @@ func TestGradient2Scheduler(t *testing.T) {
 		{
 			Name:      "near max concurrency，LongRTT / ShortRTT > 2",
 			InFlight:  132,
-			Capa:      100,
+			Capacity:  100,
 			LongRTT:   70,
 			ShortRTT:  30,
-			Queuesize: 30,
+			QueueSize: 30,
 			Running:   102,
 			Delta:     -10 * time.Second,
 			Expected:  Hold,
@@ -87,10 +87,10 @@ func TestGradient2Scheduler(t *testing.T) {
 		{
 			Name:      "basic overlock, ShortRTT > LongRTT and LongRTT / ShortRTT < 2",
 			InFlight:  60,
-			Capa:      100,
+			Capacity:  100,
 			LongRTT:   30,
 			ShortRTT:  80,
-			Queuesize: 50,
+			QueueSize: 50,
 			Running:   10,
 			Delta:     -10 * time.Second,
 			Expected:  Overclock,
@@ -98,17 +98,17 @@ func TestGradient2Scheduler(t *testing.T) {
 		{
 			Name:      "basic overlock, ShortRTT < LongRTT and LongRTT / ShortRTT > 2",
 			InFlight:  60,
-			Capa:      100,
+			Capacity:  100,
 			LongRTT:   70,
 			ShortRTT:  30,
-			Queuesize: 40,
+			QueueSize: 40,
 			Running:   20,
 			Delta:     -10 * time.Second,
 			Expected:  Overclock,
 		},
 	}
 	for _, tc := range testcases {
-		pool.OnSample(0, tc.InFlight, 0, 0, tc.Capa, tc.LongRTT, tc.ShortRTT, tc.Queuesize, tc.Running)
+		pool.OnSample(0, tc.InFlight, 0, 0, tc.Capacity, tc.LongRTT, tc.ShortRTT, tc.QueueSize, tc.Running)
 		pool.ImportLastTunerTs(time.Now().Add(tc.Delta))
 		require.Equal(t, tc.Expected, rms.Next(), tc.Name)
 	}
