@@ -319,34 +319,33 @@ func SendPrepareFlashbackToVersionRPC(
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
 			return taskStat, err
-		} else {
-			regionErr, err := resp.GetRegionError()
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return taskStat, err
+		}
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err != nil {
 				return taskStat, err
 			}
-			if regionErr != nil {
-				err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
-				if err != nil {
-					return taskStat, err
-				}
-				continue
+			continue
+		}
+		if resp.Resp == nil {
+			logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+			err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
+			if err != nil {
+				return taskStat, err
 			}
-			if resp.Resp == nil {
-				logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
-				err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
-				if err != nil {
-					return taskStat, err
-				}
-				continue
+			continue
+		}
+		flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
+		if respErr := flashbackToVersionResp.GetError(); respErr != "" {
+			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(respErr))
+			if boErr != nil {
+				return taskStat, boErr
 			}
-			flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
-			if respErr := flashbackToVersionResp.GetError(); respErr != "" {
-				boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(respErr))
-				if boErr != nil {
-					return taskStat, boErr
-				}
-				continue
-			}
+			continue
 		}
 		bo = tikv.NewBackoffer(ctx, flashbackMaxBackoff)
 		startKey = endKey
