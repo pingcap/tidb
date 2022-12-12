@@ -15,7 +15,6 @@
 package ingest
 
 import (
-	"github.com/pingcap/errors"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -64,7 +63,7 @@ func (d *diskRootImpl) UpdateUsageAndQuota() error {
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
-		return errors.New(LitErrGetStorageQuota)
+		return err
 	}
 	d.maxQuota = mathutil.Min(variable.DDLDiskQuota.Load(), uint64(capacityThreshold*float64(sz.Capacity)))
 	return nil

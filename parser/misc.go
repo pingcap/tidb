@@ -409,6 +409,10 @@ var tokenMap = map[string]int{
 	"INVISIBLE":                invisible,
 	"INVOKER":                  invoker,
 	"IO":                       io,
+	"RRU_PER_SEC":              rruRate,
+	"WRU_PER_SEC":              wruRate,
+	"IO_READ_BANDWIDTH":        ioReadBandwidth,
+	"IO_WRITE_BANDWIDTH":       ioWriteBandwidth,
 	"IPC":                      ipc,
 	"IS":                       is,
 	"ISOLATION":                isolation,
@@ -594,6 +598,7 @@ var tokenMap = map[string]int{
 	"REQUIRE":                  require,
 	"REQUIRED":                 required,
 	"RESET":                    reset,
+	"RESOURCE":                 resource,
 	"RESPECT":                  respect,
 	"RESTART":                  restart,
 	"RESTORE":                  restore,
@@ -814,6 +819,9 @@ var tokenMap = map[string]int{
 	"YEAR":                     yearType,
 	"ZEROFILL":                 zerofill,
 	"WAIT":                     wait,
+	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
+	"PASSWORD_LOCK_TIME":       passwordLockTime,
+	"REUSE":                    reuse,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.

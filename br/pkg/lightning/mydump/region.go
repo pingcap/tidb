@@ -38,6 +38,9 @@ const (
 	// TableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
 	// It's used to make sure compressed files can be read until EOF. Because we can't get the exact decompressed size of the compressed files.
 	TableFileSizeINF = 10 * 1024 * tableRegionSizeWarningThreshold
+	// compressDataRatio is a relatively maximum compress ratio for normal compressed data
+	// It's used to estimate rowIDMax, we use a large value to try to avoid overlapping
+	compressDataRatio = 500
 )
 
 // TableRegion contains information for a table region during import.
@@ -302,7 +305,9 @@ func MakeSourceFileRegion(
 	// set fileSize to INF to make sure compressed files can be read until EOF. Because we can't get the exact size of the compressed files.
 	// TODO: update progress bar calculation for compressed files.
 	if fi.FileMeta.Compression != CompressionNone {
-		rowIDMax = fileSize * 100 / divisor // FIXME: this is not accurate. Need more tests and fix solution.
+		// FIXME: this is not accurate. Need sample ratio in the future and use sampled ratio to compute rowIDMax
+		//  currently we use 500 here. It's a relatively large value for most data.
+		rowIDMax = fileSize * compressDataRatio / divisor
 		fileSize = TableFileSizeINF
 	}
 	tableRegion := &TableRegion{

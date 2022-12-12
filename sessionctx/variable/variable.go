@@ -383,6 +383,10 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	if err != nil {
 		return "", err
 	}
+	// Add a modern date to it, as the timezone shift can differ across the history
+	// For example, the Asia/Shanghai refers to +08:05 before 1900
+	now := time.Now()
+	t = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
 	return t.Format(FullDayTimeFormat), nil
 }
 

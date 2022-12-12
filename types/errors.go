@@ -82,6 +82,8 @@ var (
 	ErrSyntax = dbterror.ClassTypes.NewStdErr(mysql.ErrParse, mysql.MySQLErrName[mysql.ErrSyntax])
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	// ErrWrongValue2 is returned when the input value is in wrong format.
+	ErrWrongValue2 = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 	// ErrWrongValueForType is returned when the input value is in wrong format for function.
 	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType])
 	// ErrPartitionStatsMissing is returned when the partition-level stats is missing and the build global-level stats fails.

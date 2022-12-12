@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -73,7 +74,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.Int64("job ID", job.ID),
 				zap.Int64("index ID", indexID),
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
-			return nil, errors.New(LitErrExceedConcurrency)
+			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
 		}
 		en.writerCount++
 		info = LitInfoAddWriter
