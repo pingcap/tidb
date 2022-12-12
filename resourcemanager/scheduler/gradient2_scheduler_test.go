@@ -29,11 +29,16 @@ func TestGradient2Scheduler(t *testing.T) {
 	rms.RegisterPool(pool)
 	rms.Register(scheduler)
 	testcases := []struct {
-		Name      string
-		InFlight  int64
-		Capacity  int
-		LongRTT   float64
-		ShortRTT  uint64
+		Name string
+		// InFlight is the count of all task submitted to the pool.
+		InFlight int64
+		Capacity int
+		// Tracks a measurement of the short time, and more volatile, RTT meant to represent the current system latency
+		LongRTT float64
+		// Tracks a measurement of the long term, less volatile, RTT meant to represent the baseline latency.  When the system
+		// is under load this number is expect to trend higher.
+		ShortRTT uint64
+		// QueueSize is the size of task queue in the pool.
 		QueueSize int64
 		Running   int
 		Delta     time.Duration
