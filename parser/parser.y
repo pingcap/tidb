@@ -53,6 +53,7 @@ import (
 	identifier  "identifier"
 	asof        "AS OF"
 	toTimestamp "TO TIMESTAMP"
+	memberof    "MEMBER OF"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -192,7 +193,6 @@ import (
 	mediumblobType    "MEDIUMBLOB"
 	mediumIntType     "MEDIUMINT"
 	mediumtextType    "MEDIUMTEXT"
-	memberof	  "MEMBER OF"
 	minuteMicrosecond "MINUTE_MICROSECOND"
 	minuteSecond      "MINUTE_SECOND"
 	mod               "MOD"
