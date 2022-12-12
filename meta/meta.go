@@ -130,7 +130,8 @@ func NewMeta(txn kv.Transaction) *Meta {
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	return &Meta{txn: t,
-		StartTS: txn.StartTS(),
+		StartTS:    txn.StartTS(),
+		jobListKey: DefaultJobListKey,
 	}
 }
 
