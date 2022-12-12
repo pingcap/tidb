@@ -12,34 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache
+package ttlworker
 
 import (
-	"time"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-type baseCache struct {
-	interval time.Duration
+func TestIterScanTask(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
 
-	updateTime time.Time
-}
-
-func newBaseCache(interval time.Duration) baseCache {
-	return baseCache{
-		interval: interval,
+	job := &ttlJob{
+		tbl:   tbl,
+		tasks: []*ttlScanTask{{}},
 	}
-}
+	scanTask, err := job.peekScanTask()
+	assert.NoError(t, err)
+	assert.NotNil(t, scanTask)
+	assert.Len(t, job.tasks, 1)
 
-// ShouldUpdate returns whether this cache needs update
-func (bc *baseCache) ShouldUpdate() bool {
-	return time.Since(bc.updateTime) > bc.interval
-}
-
-// SetInterval sets the interval of updating cache
-func (bc *baseCache) SetInterval(interval time.Duration) {
-	bc.interval = interval
-}
-
-func (bc *baseCache) GetInterval() time.Duration {
-	return bc.interval
+	job.nextScanTask()
+	assert.True(t, job.AllSpawned())
 }
