@@ -1805,14 +1805,16 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	var dbName = "Unknown"
-	if se.GetSessionVars().CurrentDB != "" {
-		dbName = se.GetSessionVars().CurrentDB
+	if config.GetGlobalConfig().Status.RecordQueryDurationByDbAndTbl {
+		var dbName = "Unknown"
+		if se.GetSessionVars().CurrentDB != "" {
+			dbName = se.GetSessionVars().CurrentDB
+		}
+
+		tablesName := ConcatTablesName(se.GetSessionVars().StmtCtx)
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, tablesName).Observe(time.Since(startTime).Seconds())
 	}
 
-	tablesName := ConcatTablesName(se.GetSessionVars().StmtCtx)
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, tablesName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -1983,14 +1985,16 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		var dbName = "Unknown"
-		if se.GetSessionVars().CurrentDB != "" {
-			dbName = se.GetSessionVars().CurrentDB
+		if config.GetGlobalConfig().Status.RecordQueryDurationByDbAndTbl {
+			var dbName = "Unknown"
+			if se.GetSessionVars().CurrentDB != "" {
+				dbName = se.GetSessionVars().CurrentDB
+			}
+
+			tablesName := ConcatTablesName(se.GetSessionVars().StmtCtx)
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, tablesName).Observe(time.Since(startTime).Seconds())
 		}
 
-		tablesName := ConcatTablesName(se.GetSessionVars().StmtCtx)
-
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, tablesName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }

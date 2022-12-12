@@ -1210,13 +1210,16 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		affectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
+	if !config.GetGlobalConfig().Status.RecordQueryDurationByDbAndTbl {
+		return
+	}
+
 	var dbName = "Unknown"
 	if sessionVar.CurrentDB != "" {
 		dbName = sessionVar.CurrentDB
 	}
 
 	tablesName := session.ConcatTablesName(sessionVar.StmtCtx)
-
 	metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, tablesName).Observe(cost.Seconds())
 }
 
