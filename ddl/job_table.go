@@ -550,15 +550,16 @@ func addBackfillJobs(sess *session, tableName string, backfillJobs []*BackfillJo
 
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
 func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
-	excludeJobs := ""
+	eJobIDsBuilder := strings.Builder{}
 	for i, id := range excludedJobIDs {
 		if i == 0 {
-			excludeJobs += " and ddl_job_id not in ("
+			eJobIDsBuilder.WriteString(" and ddl_job_id not in (")
 		}
+		eJobIDsBuilder.WriteString(strconv.Itoa(int(id)))
 		if i == len(excludedJobIDs)-1 {
-			excludeJobs += fmt.Sprintf("%d)", id)
+			eJobIDsBuilder.WriteString(")")
 		} else {
-			excludeJobs += fmt.Sprintf("%d, ", id)
+			eJobIDsBuilder.WriteString(", ")
 		}
 	}
 
@@ -573,7 +574,7 @@ func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, 
 
 		bJobs, err = GetBackfillJobs(sess, BackfillTable,
 			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
-				currTime.Add(-lease), excludeJobs, batch), "get_backfill_job")
+				currTime.Add(-lease), eJobIDsBuilder.String(), batch), "get_backfill_job")
 		return err
 	})
 	if err != nil || len(bJobs) == 0 {
