@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -41,6 +42,8 @@ type Session interface {
 	ResetWithGlobalTimeZone(ctx context.Context) error
 	// Close closes the session
 	Close()
+	// Now returns the current time in location specified by session var
+	Now() time.Time
 }
 
 type session struct {
@@ -144,4 +147,9 @@ func (s *session) Close() {
 		s.sqlExec = nil
 		s.closeFn = nil
 	}
+}
+
+// Now returns the current time in the location of time_zone session var
+func (s *session) Now() time.Time {
+	return time.Now().In(s.Context.GetSessionVars().Location())
 }
