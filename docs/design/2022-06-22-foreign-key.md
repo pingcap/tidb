@@ -206,11 +206,11 @@ So, when execute DML with `non-publick` foreign key, TiDB will do foreign key co
 
 #### Case-2: Auto create index for foreign key and add foreign key constrain
 
-As TiDB support multi-schema change now, we can split this into 2 sub-ddl job.
+As TiDB support multi-schema change now, we create a `ActionMultiSchemaChange` job and contains following 2 sub-ddl job.
 - Add Index DDL job
 - Add Foreign Key Constrain DDL job
 
-We should do add index DDL job first, after index ddl job finish `write-reorg` and ready for public, then start to do add foreign key constrain ddl job.
+When TiDB add foreign key ddl job meet error, TiDB will rollback the `ActionMultiSchemaChange` job and the 2 sub-ddl job will also be rollback.
 
 ### Drop Table
 
