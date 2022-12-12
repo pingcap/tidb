@@ -74,7 +74,7 @@ func isStatsTable(tableName string) bool {
 // ClearSystemUsers is used for volume-snapshot restoration.
 // because we can not support restore user in some scenarios, for example in cloud.
 // we'd better use this function to drop cloud_admin user after volume-snapshot restore.
-func (rc *Client) ClearSystemUsers(ctx context.Context) error {
+func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) error {
 	sysDB := mysql.SystemDB
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
