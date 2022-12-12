@@ -933,8 +933,35 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
+	mDDLJobListKey    = []byte("DDLJobList")
+	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
+
+var (
+	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
+	DefaultJobListKey JobListKeyType = mDDLJobListKey
+	// AddIndexJobListKey only keeps the action of adding index.
+	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
+)
+
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err == nil {
+		err = m.txn.RPush(key, b)
+	}
+	return errors.Trace(err)
+}
+
+// EnQueueDDLJob adds a DDL job to the list.
+func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	return m.enQueueDDLJob(listKey, job, true)
+}
 
 // JobListKeyType is a key type of the DDL job queue.
 type JobListKeyType []byte
@@ -956,6 +983,34 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 		job.Priority = kv.PriorityLow
 	}
 	return job, errors.Trace(err)
+}
+
+// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	values, err := m.txn.LGetAll(listKey)
+	if err != nil || values == nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobs := make([]*model.Job, 0, len(values))
+	for _, val := range values {
+		job := &model.Job{}
+		err = job.Decode(val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+	}
+
+	return jobs, nil
 }
 
 func (*Meta) jobIDKey(id int64) []byte {

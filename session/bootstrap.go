@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -53,6 +54,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -890,7 +892,19 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-
+	// Only upgrade from under version92 and this TiDB is not owner set.
+	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
+	if ver < version92 {
+		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
+		if err != nil {
+			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
+		}
+		if !useConcurrentDDL {
+			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
+			// overwrite variable EnableConcurrentDDL.
+			variable.DDLForce2Queue.Store(true)
+		}
+	}
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
@@ -907,6 +921,7 @@ func upgrade(s Session) {
 		upgradeToVer99After(s)
 	}
 
+	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -929,6 +944,31 @@ func upgrade(s Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
+	}
+}
+
+// checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
+func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+			ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+			if err == concurrency.ErrElectionNoLeader {
+				continue
+			}
+			info, err := infosync.GetAllServerInfo(ctx)
+			if err != nil {
+				return false, err
+			}
+			if s, ok := info[ownerID]; ok {
+				return s.Version == mysql.ServerVersion, nil
+			}
+		}
 	}
 }
 

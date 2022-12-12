@@ -1169,6 +1169,7 @@ var (
 	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	DDLForce2Queue                       = atomic.NewBool(false)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
