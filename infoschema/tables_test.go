@@ -1689,5 +1689,4 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][5], "utf8mb4")
 	require.Equal(t, rows[0][6], "utf8mb4_bin")
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
-	fmt.Println(planDigest)
 }
