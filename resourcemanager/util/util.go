@@ -26,8 +26,10 @@ type GorotinuePool interface {
 	MinRT() uint64
 	MaxPASS() uint64
 	Cap() int
+	// LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
 	LongRTT() float64
 	UpdateLongRTT(f func(float64) float64)
+	// ShortRTT is to represent the current system latency by tracking a measurement of the short time, and more volatile RTT.
 	ShortRTT() uint64
 	GetQueueSize() int64
 	Running() int
