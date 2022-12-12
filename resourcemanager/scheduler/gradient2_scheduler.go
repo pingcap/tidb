@@ -56,7 +56,7 @@ func (b *Gradient2Scheduler) Tune(c util.Component, p util.GorotinuePool) Comman
 }
 
 func (b *Gradient2Scheduler) tune(_ util.Component, p util.GorotinuePool) float64 {
-	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval {
+	if time.Since(p.LastTunerTs()) < minCPUSchedulerInterval.Load() {
 		return float64(p.Running())
 	}
 
