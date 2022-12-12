@@ -18,10 +18,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"go.uber.org/atomic"
 )
 
-const (
-	minCPUSchedulerInterval = time.Duration(800) * time.Millisecond
+var (
+	minCPUSchedulerInterval = atomic.NewDuration(time.Duration(800) * time.Millisecond)
 )
 
 // Command is the command for scheduler
