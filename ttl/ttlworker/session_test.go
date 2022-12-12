@@ -195,6 +195,14 @@ func (s *mockSession) Close() {
 	s.closed = true
 }
 
+func (s *mockSession) Now() time.Time {
+	tz := s.sessionVars.TimeZone
+	if tz != nil {
+		tz = time.UTC
+	}
+	return time.Now().In(tz)
+}
+
 func TestExecuteSQLWithCheck(t *testing.T) {
 	ctx := context.TODO()
 	tbl := newMockTTLTbl(t, "t1")
