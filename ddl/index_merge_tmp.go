@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -154,8 +155,12 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 				} else {
 					err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
 				}
+				logutil.BgLogger().Info("delete index", zap.String("index", w.index.Meta().Name.L),
+					zap.String("key", hex.EncodeToString(w.originIdxKeys[i])))
 			} else {
 				err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
+				logutil.BgLogger().Info("create index", zap.String("index", w.index.Meta().Name.L),
+					zap.String("key", hex.EncodeToString(w.originIdxKeys[i])))
 			}
 			if err != nil {
 				return err
