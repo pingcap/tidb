@@ -260,10 +260,9 @@ func (s *Scanner) Lex(v *yySymType) int {
 		if tok == as {
 			s.lastKeyword = asof
 			return asof
-		} else {
-			s.lastKeyword = memberof
-			return memberof
 		}
+		s.lastKeyword = memberof
+		return memberof
 	}
 	if tok == to {
 		tok1, tok2 := s.getNextTwoTokens()
