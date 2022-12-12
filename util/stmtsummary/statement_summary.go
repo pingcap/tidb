@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -501,25 +500,43 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
-// GetBindableStmtFromCluster gets users' select/update/delete SQL.
-func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
-	for _, row := range rows {
-		user := row.GetString(3)
-		stmtType := row.GetString(0)
-		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
-			// Empty auth users means that it is an internal queries.
+func getBindableStmtByPlanDigest(ssbd *stmtSummaryByDigest, planDigest string) *BindableStmt {
+	ssbd.Lock()
+	defer ssbd.Unlock()
+	if ssbd.initialized && ssbd.planDigest == planDigest && ssbd.history.Len() > 0 &&
+		(ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
+		ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+		ssElement.Lock()
+		defer ssElement.Unlock()
+		// Empty auth users means that it is an internal queries.
+		if len(ssElement.authUsers) > 0 {
 			stmt := &BindableStmt{
-				Schema:    row.GetString(1), //schemaName
-				Query:     row.GetString(5), //sampleSQL
-				PlanHint:  row.GetString(8), //planHint
-				Charset:   row.GetString(6), //charset
-				Collation: row.GetString(7), //collation
+				Schema:    ssbd.schemaName,
+				Query:     ssElement.sampleSQL,
+				PlanHint:  ssElement.planHint,
+				Charset:   ssElement.charset,
+				Collation: ssElement.collation,
+				Users:     ssElement.authUsers,
 			}
 			// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-			if row.GetInt64(4) == 1 {
-				stmt.Query = row.GetString(2) //normalizedSQL
+			if ssElement.prepared {
+				stmt.Query = ssbd.normalizedSQL
 			}
+			return stmt
+		}
+	}
+	return nil
+}
+
+// GetBindableStmtByPlanDigest gets users' select/update/delete SQL by plan digest.
+func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByPlanDigest(planDigest string) *BindableStmt {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+
+	for _, value := range values {
+		if stmt := getBindableStmtByPlanDigest(value.(*stmtSummaryByDigest), planDigest); stmt != nil {
 			return stmt
 		}
 	}
