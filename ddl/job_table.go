@@ -548,6 +548,19 @@ func addBackfillJobs(sess *session, tableName string, backfillJobs []*BackfillJo
 	})
 }
 
+func runInTxn(se *session, f func(*session) error) (err error) {
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+	err = f(se)
+	if err != nil {
+		se.rollback()
+		return
+	}
+	return errors.Trace(se.commit())
+}
+
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
 func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
 	eJobIDsBuilder := strings.Builder{}
