@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample",
+		"match", "until", "placement", "tablesample", "failedLoginAttempts", "passwordLockTime",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -4451,6 +4451,11 @@ func TestPrivilege(t *testing.T) {
 		{"create user 'test@localhost' password expire never;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
 		{"create user 'test@localhost' password expire default;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE DEFAULT"},
 		{"create user 'test@localhost' password expire interval 3 day;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE INTERVAL 3 DAY"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3 password_lock_time 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3 password_lock_time unbounded;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3"},
+		{"create user 'test@localhost' identified by 'password' password_lock_time 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' PASSWORD_LOCK_TIME 3"},
+		{"create user 'test@localhost' identified by 'password' password_lock_time unbounded;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED"},
 		{"CREATE USER 'sha_test'@'localhost' IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'", true, "CREATE USER `sha_test`@`localhost` IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'"},
 		{"CREATE USER 'sha_test3'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS 0x24412430303524255B03496C662C1055127B3B654A2F04207D01485276703644704B76303247474564416A516662346C5868646D32764C6B514F43585A473779565947514F34", true, "CREATE USER `sha_test3`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
 		{"CREATE USER 'sha_test4'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'", true, "CREATE USER `sha_test4`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
