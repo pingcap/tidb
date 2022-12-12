@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"net"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
@@ -31,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
+	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
@@ -101,6 +105,17 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
+		d.conf.IOTotalBytes = gatomic.NewUint64(0)
+		d.conf.Net = uuid.New().String()
+		go func() {
+			for {
+				time.Sleep(10 * time.Millisecond)
+				d.tctx.L().Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
+			}
+		}()
+	})
+
 	err = runSteps(d,
 		initLogger,
 		createExternalStore,
@@ -1330,6 +1345,22 @@ func startHTTPService(d *Dumper) error {
 
 // openSQLDB is an initialization step of Dumper.
 func openSQLDB(d *Dumper) error {
+	if d.conf.IOTotalBytes != nil {
+		mysql.RegisterDialContext(d.conf.Net, func(ctx context.Context, addr string) (net.Conn, error) {
+			dial := &net.Dialer{}
+			conn, err := dial.DialContext(ctx, "tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			tcpConn := conn.(*net.TCPConn)
+			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
+			err = tcpConn.SetKeepAlive(true)
+			if err != nil {
+				d.tctx.L().Logger.Warn("fail to keep alive", zap.Error(err))
+			}
+			return util.NewTCPConnWithIOCounter(tcpConn, d.conf.IOTotalBytes), nil
+		})
+	}
 	conf := d.conf
 	c, err := mysql.NewConnector(conf.GetDriverConfig(""))
 	if err != nil {
