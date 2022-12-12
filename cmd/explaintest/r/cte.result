@@ -91,7 +91,7 @@ c1	c2
 1	1
 1	2
 with recursive tbl_0 (col_943,col_944,col_945,col_946,col_947) AS ( with recursive tbl_0 (col_948,col_949,col_950,col_951,col_952) AS ( select 1, 2,3,4,5 UNION ALL select col_948 + 1,col_949 + 1,col_950 + 1,col_951 + 1,col_952 + 1 from tbl_0 where col_948 < 5 ) select col_948,col_949,col_951,col_950,col_952 from tbl_0 UNION ALL select col_943 + 1,col_944 + 1,col_945 + 1,col_946 + 1,col_947 + 1 from tbl_0 where col_943 < 5 ) select * from tbl_0;
-Error 1054: Unknown column 'col_943' in 'where clause'
+Error 1054 (42S22): Unknown column 'col_943' in 'where clause'
 with recursive cte1 (c1, c2) as (select 1, '1' union select concat(c1, 1), c2 + 1 from cte1 where c1 < 100) select * from cte1;
 c1	c2
 1	1
@@ -283,15 +283,15 @@ union all
 select 3, 0 from qn
 )
 select * from qn;
-Error 1222: The used SELECT statements have a different number of columns
+Error 1222 (21000): The used SELECT statements have a different number of columns
 with recursive cte1 as (select 1 union all (select 1 from cte1 limit 10)) select * from cte1;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive qn as (select 123 as a union all select null from qn where a is not null) select * from qn;
 a
 123
 NULL
 with recursive q (b) as (select 1, 1 union all select 1, 1 from q) select b from q;
-Error 1353: In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 drop table if exists t1;
 create table t1(a int);
 insert into t1 values(1);
@@ -356,7 +356,7 @@ drop table if exists t1;
 create table t1(c1 bigint unsigned);
 insert into t1 values(0);
 with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from cte1 where c1 != 0) select * from cte1 dt1, cte1 dt2;
-Error 1690: BIGINT UNSIGNED value is out of range in '(test.t1.c1 - 1)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(test.t1.c1 - 1)'
 drop table if exists t;
 create table t(a int, b int, key (b));
 desc with cte as (select * from t) select * from cte;

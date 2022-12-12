@@ -532,6 +532,7 @@ import (
 	replicas              "REPLICAS"
 	replication           "REPLICATION"
 	required              "REQUIRED"
+	resource              "RESOURCE"
 	respect               "RESPECT"
 	restart               "RESTART"
 	restore               "RESTORE"
@@ -635,6 +636,8 @@ import (
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
+	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
+	passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -723,6 +726,10 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	rruRate               "RRU_PER_SEC"
+	wruRate               "WRU_PER_SEC"
+	ioReadBandwidth       "IO_READ_BANDWIDTH"
+	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -869,6 +876,7 @@ import (
 	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
+	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
@@ -884,6 +892,7 @@ import (
 	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
@@ -1157,6 +1166,7 @@ import (
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
 	RequireListElement                     "require list element for tls option"
+	ResourceGroupNameOption                "resource group name for user"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -1350,6 +1360,8 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
+	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1415,6 +1427,7 @@ import (
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
 	PolicyName                      "Placement Policy Name"
+	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
@@ -1567,6 +1580,42 @@ AlterTableStmt:
 			PartitionNames: $7.([]model.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
+	}
+
+ResourceGroupOptionList:
+	DirectResourceGroupOption
+	{
+		$$ = []*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}
+	}
+|	ResourceGroupOptionList DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+	}
+|	ResourceGroupOptionList ',' DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+	}
+
+DirectResourceGroupOption:
+	"RRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+	}
+|	"WRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+	}
+|	"CPU" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
+	}
+|	"IO_READ_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+	}
+|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -3869,6 +3918,9 @@ DBName:
 PolicyName:
 	Identifier
 
+ResourceGroupName:
+	Identifier
+
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
@@ -6150,6 +6202,7 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
@@ -6408,6 +6461,8 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"FAILED_LOGIN_ATTEMPTS"
+|	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
 
@@ -6544,6 +6599,10 @@ NotKeywordToken:
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
 |	"TIDB_JSON"
+|	"IO_READ_BANDWIDTH"
+|	"IO_WRITE_BANDWIDTH"
+|	"RRU_PER_SEC"
+|	"WRU_PER_SEC"
 
 /************************************************************************************
  *
@@ -11367,6 +11426,7 @@ Statement:
 |	AlterInstanceStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
+|	AlterResourceGroupStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -11386,6 +11446,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateResourceGroupStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
@@ -12683,7 +12744,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -12696,6 +12757,9 @@ CreateUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12713,7 +12777,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -12724,6 +12788,9 @@ AlterUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12938,6 +13005,15 @@ CommentOrAttributeOption:
 		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
+ResourceGroupNameOption:
+	{
+		$$ = nil
+	}
+|	"RESOURCE" "GROUP" stringLit
+	{
+		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+	}
+
 PasswordOrLockOptions:
 	{
 		$$ = []*ast.PasswordOrLockOption{}
@@ -13021,6 +13097,26 @@ PasswordOrLockOption:
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
+		}
+	}
+|	"FAILED_LOGIN_ATTEMPTS" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.FailedLoginAttempts,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.PasswordLockTime,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" "UNBOUNDED"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
 
@@ -14042,6 +14138,35 @@ DropPolicyStmt:
 		$$ = &ast.DropPlacementPolicyStmt{
 			IfExists:   $4.(bool),
 			PolicyName: model.NewCIStr($5),
+		}
+	}
+
+CreateResourceGroupStmt:
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.CreateResourceGroupStmt{
+			IfNotExists:             $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+AlterResourceGroupStmt:
+	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.AlterResourceGroupStmt{
+			IfExists:                $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+DropPolicyStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+	{
+		$$ = &ast.DropResourceGroupStmt{
+			IfExists:          $4.(bool),
+			ResourceGroupName: model.NewCIStr($5),
 		}
 	}
 

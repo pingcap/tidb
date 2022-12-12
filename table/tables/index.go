@@ -130,7 +130,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	)
 	if !opt.FromBackFill {
 		key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
-		if keyVer == TempIndexKeyTypeBackfill {
+		if keyVer == TempIndexKeyTypeBackfill || keyVer == TempIndexKeyTypeDelete {
 			key, tempKey = tempKey, nil
 			keyIsTempIdxKey = true
 		}
@@ -347,6 +347,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 const (
 	// TempIndexKeyTypeNone means the key is not a temporary index key.
 	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeDelete indicates this value is written in the delete-only stage.
+	TempIndexKeyTypeDelete byte = 'd'
 	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
 	TempIndexKeyTypeBackfill byte = 'b'
 	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
@@ -363,6 +365,9 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			tablecodec.IndexKey2TempIndexKey(indexInfo.ID, indexKey)
+			if indexInfo.State == model.StateDeleteOnly {
+				return nil, indexKey, TempIndexKeyTypeDelete
+			}
 			return nil, indexKey, TempIndexKeyTypeBackfill
 		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
