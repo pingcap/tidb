@@ -235,6 +235,8 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.T
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var dbName model.CIStr
 
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
