@@ -154,7 +154,7 @@ func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.Physical
 
 	if newTblInfo.TTLInfo.IntervalExprStr != tbl.TTLInfo.IntervalExprStr ||
 		newTblInfo.TTLInfo.IntervalTimeUnit != tbl.TTLInfo.IntervalTimeUnit {
-		newExpireTime, err := newTTLTbl.EvalExpireTime(ctx, s, time.Now())
+		newExpireTime, err := newTTLTbl.EvalExpireTime(ctx, s, s.Now())
 		if err != nil {
 			return err
 		}
