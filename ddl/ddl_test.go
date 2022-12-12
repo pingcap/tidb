@@ -56,6 +56,9 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
+// NewSession is only used for test.
+var NewSession = newSession
+
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)

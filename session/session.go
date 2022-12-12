@@ -3084,6 +3084,14 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
+	// BackfillTables is a list of tables definitions used in dist reorg DDL.
+	BackfillTables = []struct {
+		SQL string
+		id  int64
+	}{
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
+	}
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
@@ -3101,25 +3109,33 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		tableIDs := make([]int64, 0, len(DDLJobTables))
-		for _, tbl := range DDLJobTables {
+		tables := append(DDLJobTables, BackfillTables...)
+		if exists {
+			tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+			if err != nil || tblExist {
+				return errors.Trace(err)
+			}
+			tables = BackfillTables
+		}
+		tableIDs := make([]int64, 0, len(tables))
+		for _, tbl := range tables {
 			tableIDs = append(tableIDs, tbl.id)
 		}
 		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
-		for _, tbl := range DDLJobTables {
+		for _, tbl := range tables {
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
