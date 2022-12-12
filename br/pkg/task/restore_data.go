@@ -155,6 +155,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
 
 	// this is used for cloud restoration
+	log.Info("start to clear system user for cloud")
 	err = client.ClearSystemUsers(ctx)
 	if err != nil {
 		return errors.Trace(err)
