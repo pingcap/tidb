@@ -140,7 +140,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// disable batch copr for follower read
 		req.StoreBatchSize = 0
 	}
-	// disable paging for batch copr
+	// disable batch copr when paging is enabled.
 	if req.Paging.Enable {
 		req.StoreBatchSize = 0
 	}
@@ -322,6 +322,34 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if req.StoreBatchSize > 0 {
 		store2Idx = make(map[uint64]int, 16)
 	}
+	handleBatchTask := func(task *copTask) (bool, error) {
+		if req.StoreBatchSize <= 0 {
+			return false, nil
+		}
+		batchedTask, err := cache.BuildBatchTask(bo, task, req.ReplicaRead)
+		if err != nil {
+			return false, err
+		}
+		if batchedTask == nil {
+			return false, nil
+		}
+		if idx, ok := store2Idx[batchedTask.storeID]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
+			tasks = append(tasks, batchedTask.task)
+			store2Idx[batchedTask.storeID] = len(tasks) - 1
+		} else {
+			if tasks[idx].batchTaskList == nil {
+				tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, req.StoreBatchSize)
+				// disable paging for batched task.
+				tasks[idx].paging = false
+				tasks[idx].pagingSize = 0
+			}
+			if task.RowCountHint > 0 {
+				tasks[idx].RowCountHint += task.RowCountHint
+			}
+			tasks[idx].batchTaskList[taskID] = batchedTask
+		}
+		return true, nil
+	}
 	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
@@ -370,27 +398,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
 			}
-			if req.StoreBatchSize > 0 {
-				batchedTask, err := cache.BuildBatchTask(bo, task, req.ReplicaRead)
-				if err != nil {
-					return nil, err
-				}
-				if idx, ok := store2Idx[batchedTask.storeID]; !ok || len(tasks[idx].batchTaskList) >= req.StoreBatchSize {
-					tasks = append(tasks, batchedTask.task)
-					store2Idx[batchedTask.storeID] = len(tasks) - 1
-				} else {
-					if tasks[idx].batchTaskList == nil {
-						tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, req.StoreBatchSize)
-						// disable paging for batched task.
-						tasks[idx].paging = false
-						tasks[idx].pagingSize = 0
-					}
-					if task.RowCountHint > 0 {
-						tasks[idx].RowCountHint += task.RowCountHint
-					}
-					tasks[idx].batchTaskList[taskID] = batchedTask
-				}
-			} else {
+			if handled, err := handleBatchTask(task); err != nil {
+				return nil, err
+			} else if !handled {
 				tasks = append(tasks, task)
 			}
 			i = nextI
@@ -1242,8 +1252,9 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains 
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
+	// handle region error before send to store.
 	if len(batchResp) == 0 {
-		allRemains := make([]*copTask, 0, len(remains)+len(batchedTasks))
+		allRemains := make([]*copTask, len(remains), len(remains)+len(batchedTasks))
 		copy(allRemains, remains)
 		for _, t := range batchedTasks {
 			allRemains = append(allRemains, t.task)
@@ -1264,10 +1275,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 	}
 	var remainTasks []*copTask
 	for _, batchResp := range batchResps {
-		batchedTask, ok := tasks[batchResp.GetTaskId()]
+		taskID := batchResp.GetTaskId()
+		batchedTask, ok := tasks[taskID]
 		if !ok {
 			return nil, errors.Errorf("task id %d not found", batchResp.GetTaskId())
 		}
+		delete(tasks, taskID)
 		resp := &copResponse{
 			pbResp: &coprocessor.Response{
 				Data: batchResp.Data,
@@ -1319,6 +1332,10 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		}
 		// TODO: check OOM
 		worker.sendToRespCh(resp, ch, false)
+	}
+	for _, t := range tasks {
+		logutil.Logger(bo.GetCtx()).Warn("response of batched task missing", zap.Uint64("id", t.task.taskID))
+		remainTasks = append(remainTasks, t.task)
 	}
 	return remainTasks, nil
 }
