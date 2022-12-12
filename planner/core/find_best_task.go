@@ -2023,7 +2023,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
-			} else {
+			} else if prop.TaskTp == property.RootTaskType {
+				// when got here, canMppConvertToRootForDisaggregatedTiFlash is true.
 				task = mppTask
 				task = task.convertToRootTask(ds.ctx)
 				ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
