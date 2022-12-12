@@ -1712,6 +1712,12 @@ func TestCreateExpressionIndex(t *testing.T) {
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+
+	// https://github.com/pingcap/tidb/issues/39784
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(name varchar(20))")
+	tk.MustExec("create index idx on test.t((lower(test.t.name)))")
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
