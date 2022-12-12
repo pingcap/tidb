@@ -29,7 +29,6 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -806,21 +805,12 @@ func (b *backfillScheduler) Close() {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sess *session, sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	sessCtx := newContext(reorgInfo.d.store)
-	m, err := sess.Txn(true)
-	if err != nil {
-		return err
-	}
-	dbInfo, err := meta.NewMeta(m).GetDatabase(job.SchemaID)
-	if err != nil {
-		return err
-	}
-	sessCtx.GetSessionVars().CurrentDB = dbInfo.Name.O
 	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
 	if err != nil {
 		return errors.Trace(err)
