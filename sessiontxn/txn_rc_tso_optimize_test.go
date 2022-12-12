@@ -812,12 +812,12 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	wait_ts1 := sctx.GetSessionVars().DurationWaitTS
-	fmt.Println("wait_ts1:", wait_ts1)
-	/*
-		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
-		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
-		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
-		tk.MustExec("select id1+id2 as x from t1 where id1 = 9 for update")
-
-	*/
+	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
+	wait_ts2 := sctx.GetSessionVars().DurationWaitTS
+	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
+	wait_ts3 := sctx.GetSessionVars().DurationWaitTS
+	tk.MustExec("commit")
+	require.NotEqual(t, wait_ts1, wait_ts2)
+	require.NotEqual(t, wait_ts1, wait_ts3)
+	require.NotEqual(t, wait_ts2, wait_ts3)
 }

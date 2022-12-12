@@ -678,3 +678,25 @@ func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active 
 	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
 	return assert.CheckAndGetProvider(t)
 }
+
+func TestRRWaitTSTimeInSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	wait_ts1 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("update t set v = v + 10 where id = 1")
+	wait_ts2 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("delete from t")
+	wait_ts3 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("commit")
+	require.NotEqual(t, wait_ts1, wait_ts2)
+	require.NotEqual(t, wait_ts1, wait_ts3)
+	require.NotEqual(t, wait_ts2, wait_ts3)
+}
