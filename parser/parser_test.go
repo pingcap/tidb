@@ -7057,8 +7057,6 @@ func TestIntervalPartition(t *testing.T) {
 }
 
 func TestTTLTableOption(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	table := []testCase{
 		// create table with various temporal interval
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 3.1415 YEAR"},
@@ -7082,24 +7080,6 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
-	}
-
-	RunTest(t, table, false)
-}
-
-func TestTTLFeatureGate(t *testing.T) {
-	parser.TTLFeatureGate = false
-
-	table := []testCase{
-		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", false, ""},
-		{"create table t (created_at datetime) TTL_ENABLE = 'OFF'", false, ""},
-		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", false, ""},
-		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH", false, ""},
-		{"alter table t TTL_ENABLE = 'ON'", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", false, ""},
-		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t remove ttl", false, ""},
 	}
 
 	RunTest(t, table, false)
