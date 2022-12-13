@@ -405,7 +405,6 @@ func TestInsertWrongValueForField(t *testing.T) {
 	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(
 		`Warning 1366 Incorrect smallint value: '*' for column 'c0' at row 1`,
 		`Warning 1690 constant 32768 overflows smallint`,
-		`Warning 1467 Failed to read auto-increment value from storage engine`,
 		`Warning 1062 Duplicate entry '32767' for key 't0.PRIMARY'`))
 }
 
