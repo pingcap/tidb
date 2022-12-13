@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
@@ -147,11 +148,11 @@ func (m *JobManager) jobLoop() error {
 			m.checkFinishedJob(se, now)
 			m.checkNotOwnJob()
 		case <-resizeWorkersTicker:
-			err := m.resizeScanWorkers(int(ScanWorkersCount.Load()))
+			err := m.resizeScanWorkers(int(variable.TTLScanWorkerCount.Load()))
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to resize scan workers", zap.Error(err))
 			}
-			err = m.resizeDelWorkers(int(DeleteWorkerCount.Load()))
+			err = m.resizeDelWorkers(int(variable.TTLDeleteWorkerCount.Load()))
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to resize delete workers", zap.Error(err))
 			}
@@ -271,7 +272,7 @@ func (m *JobManager) checkFinishedJob(se session.Session, now time.Time) {
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	if !timeutil.WithinDayTimePeriod(ttlJobScheduleWindowStartTime, ttlJobScheduleWindowEndTime, now) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		// Local jobs will also not run, but as the server is still sending heartbeat,
 		// and keep the job in memory, it could start the left task in the next window.
 		return
@@ -378,7 +379,18 @@ func (m *JobManager) localJobs() []*ttlJob {
 // readyForNewJobTables returns all tables which should spawn a TTL job according to cache
 func (m *JobManager) readyForNewJobTables(now time.Time) []*cache.PhysicalTable {
 	tables := make([]*cache.PhysicalTable, 0, len(m.infoSchemaCache.Tables))
+
+tblLoop:
 	for _, table := range m.infoSchemaCache.Tables {
+		// If this node already has a job for this table, just ignore.
+		// Actually, the logic should ensure this condition never meet, we still add the check here to keep safety
+		// (especially when the content of the status table is incorrect)
+		for _, job := range m.runningJobs {
+			if job.tbl.ID == table.ID {
+				continue tblLoop
+			}
+		}
+
 		status := m.tableStatusCache.Tables[table.ID]
 		ok := m.couldTrySchedule(status, now)
 		if ok {
@@ -413,7 +425,7 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 
 	finishTime := table.LastJobFinishTime
 
-	return finishTime.Add(ttlJobInterval).Before(now)
+	return finishTime.Add(variable.TTLJobRunInterval.Load()).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
