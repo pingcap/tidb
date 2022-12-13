@@ -16,7 +16,7 @@ package server
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,7 +83,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
-		content, err := ioutil.ReadAll(file)
+		content, err := io.ReadAll(file)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -137,7 +137,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 				zap.String("remote-addr", remoteAddr), zap.Int("status-code", resp.StatusCode))
 			continue
 		}
-		content, err := ioutil.ReadAll(resp.Body)
+		content, err := io.ReadAll(resp.Body)
 		if err != nil {
 			writeError(w, err)
 			return
