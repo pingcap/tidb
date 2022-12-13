@@ -19,6 +19,7 @@
 package table
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -328,6 +329,17 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		err = nil
 	} else if err != nil {
 		return casted, err
+	}
+
+	if col.GetType() == mysql.TypeGeometry && mysql.HasSridFlag(col.GetFlag()) {
+		colBytes, err := casted.ToBytes()
+		if err != nil {
+			return casted, err
+		}
+		valSrid := binary.LittleEndian.Uint32(colBytes[:4])
+		if valSrid != col.Srid {
+			return casted, types.ErrWrongSridForColumn.GenWithStackByArgs(col.Name.O, valSrid, col.Srid)
+		}
 	}
 
 	if col.GetType() == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {

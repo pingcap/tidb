@@ -889,6 +889,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
 	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),
+	ErrWrongSridForColumn:                                    mysql.Message("The SRID of the geometry does not match the SRID of the column '%s'. The SRID of the geometry is %d, but the SRID of the column is %d. Consider changing the SRID of the geometry or the SRID property of the column.", nil),
 	ErrForeignKeyCannotDropParent:                            mysql.Message("Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.", nil),
 	ErrForeignKeyCannotUseVirtualColumn:                      mysql.Message("Foreign key '%s' uses virtual column '%s' which is not supported.", nil),
 	ErrForeignKeyNoColumnInParent:                            mysql.Message("Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'", nil),
