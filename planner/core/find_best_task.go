@@ -889,10 +889,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
-			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {
-				ds.ctx.GetSessionVars().StmtCtx.OptimInfo = make(map[int]string)
+			warnErr := errors.New(pruningInfo)
+			if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(warnErr)
+			} else {
+				ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(warnErr)
 			}
-			ds.ctx.GetSessionVars().StmtCtx.OptimInfo[t.plan().ID()] = pruningInfo
 		}
 	}()
 
