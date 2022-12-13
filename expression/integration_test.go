@@ -2734,6 +2734,13 @@ func TestFuncJSON(t *testing.T) {
 	tk.MustExec("insert into tx1 values (1, 0.1, 0.2, 0.3, 0.0)")
 	tk.MustQuery("select a+b, c from tx1").Check(testkit.Rows("0.30000000000000004 0.3"))
 	tk.MustQuery("select json_array(a+b) = json_array(c) from tx1").Check(testkit.Rows("0"))
+
+	tk.MustQuery("SELECT '{\"a\":1}' MEMBER OF('{\"a\":1}');").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT '{\"a\":1}' MEMBER OF('[{\"a\":1}]');").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT 1 MEMBER OF('1');").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT '{\"a\":1}' MEMBER OF('{\"a\":1}');").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT '[4,5]' MEMBER OF('[[3,4],[4,5]]');").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT '[4,5]' MEMBER OF('[[3,4],\"[4,5]\"]');").Check(testkit.Rows("1"))
 }
 
 func TestColumnInfoModified(t *testing.T) {
