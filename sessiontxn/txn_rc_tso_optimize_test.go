@@ -811,13 +811,13 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("begin pessimistic")
-	wait_ts1 := sctx.GetSessionVars().DurationWaitTS
+	waitTs1 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
-	wait_ts2 := sctx.GetSessionVars().DurationWaitTS
+	waitTs2 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
-	wait_ts3 := sctx.GetSessionVars().DurationWaitTS
+	waitTs3 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("commit")
-	require.NotEqual(t, wait_ts1, wait_ts2)
-	require.NotEqual(t, wait_ts1, wait_ts3)
-	require.NotEqual(t, wait_ts2, wait_ts3)
+	require.NotEqual(t, waitTs1, waitTs2)
+	require.NotEqual(t, waitTs1, waitTs2)
+	require.NotEqual(t, waitTs2, waitTs3)
 }
