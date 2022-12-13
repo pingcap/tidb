@@ -751,10 +751,10 @@ const (
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
-	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
-	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
-	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
-	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -1114,8 +1114,8 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableGeneralPlanCache                  = false
-	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240

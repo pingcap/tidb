@@ -101,11 +101,11 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	}
 
 	for _, query := range queries {
-		tk.MustExec(`set tidb_enable_general_plan_cache=0`)
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 		resultNormal := tk.MustQuery(query).Sort()
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-		tk.MustExec(`set tidb_enable_general_plan_cache=1`)
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 		tk.MustQuery(query)                                                    // first process
 		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
