@@ -1717,7 +1717,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
-	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		// If prevSQLDigest is not recorded, it means this `commit` is the first SQL once stmt summary is enabled,
 		// so it's OK just to ignore it.
 		if prevSQLDigest = sessVars.GetPrevStmtDigest(); len(prevSQLDigest) == 0 {
