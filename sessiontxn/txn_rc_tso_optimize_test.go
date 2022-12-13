@@ -793,8 +793,6 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 
 func TestRcWaitTSInSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
-	// ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
