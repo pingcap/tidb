@@ -24,13 +24,6 @@ type Allocator struct {
 	RefCnt *atomic.Int64
 }
 
-func NewAllocator(runInTest bool) Allocator {
-	if runInTest {
-		return Allocator{RefCnt: new(atomic.Int64)}
-	}
-	return Allocator{}
-}
-
 func (a Allocator) Alloc(n int) []byte {
 	if a.RefCnt != nil {
 		a.RefCnt.Add(1)
