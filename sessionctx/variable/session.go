@@ -2734,7 +2734,7 @@ const (
 	SlowLogResultRows = "Result_rows"
 	// SlowLogWarnings is the warnings generated during executing the statement.
 	// Note that some extra warnings would also be printed through slow log.
-	SlowLogWarnings   = "Warnings"
+	SlowLogWarnings = "Warnings"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
