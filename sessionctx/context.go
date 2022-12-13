@@ -182,6 +182,13 @@ type Context interface {
 	ReleaseAllAdvisoryLocks() int
 	// GetExtensions returns the `*extension.SessionExtensions` object
 	GetExtensions() *extension.SessionExtensions
+	// InSandBoxMode indicates that this Session is in sandbox mode
+	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
+	InSandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
