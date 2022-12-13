@@ -16,6 +16,8 @@ package ttlworker
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -62,11 +64,30 @@ func (s *ttlStatistics) Reset() {
 	s.TotalRows.Store(0)
 }
 
+func (s *ttlStatistics) String() string {
+	return fmt.Sprintf("Total Rows: %d, Success Rows: %d, Error Rows: %d", s.TotalRows.Load(), s.SuccessRows.Load(), s.ErrorRows.Load())
+}
+
+func (s *ttlStatistics) MarshalJSON() ([]byte, error) {
+	type jsonStatistics struct {
+		TotalRows   uint64 `json:"total_rows"`
+		SuccessRows uint64 `json:"success_rows"`
+		ErrorRows   uint64 `json:"error_rows"`
+	}
+
+	return json.Marshal(jsonStatistics{
+		TotalRows:   s.TotalRows.Load(),
+		SuccessRows: s.SuccessRows.Load(),
+		ErrorRows:   s.ErrorRows.Load(),
+	})
+}
+
 type ttlScanTask struct {
+	ctx context.Context
+
 	tbl        *cache.PhysicalTable
 	expire     time.Time
-	rangeStart []types.Datum
-	rangeEnd   []types.Datum
+	scanRange  cache.ScanRange
 	statistics *ttlStatistics
 }
 
@@ -88,6 +109,11 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool sessionPool) *ttlScanTaskExecResult {
+	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
+	// now, the taskCtx is only check at the beginning of every loop
+
+	taskCtx := t.ctx
+
 	rawSess, err := getSession(sessPool)
 	if err != nil {
 		return t.result(err)
@@ -105,7 +131,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}()
 
 	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.scanRange.Start, t.scanRange.End)
 	if err != nil {
 		return t.result(err)
 	}
@@ -114,6 +140,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	retryTimes := 0
 	var lastResult [][]types.Datum
 	for {
+		if err = taskCtx.Err(); err != nil {
+			return t.result(err)
+		}
 		if err = ctx.Err(); err != nil {
 			return t.result(err)
 		}
@@ -212,21 +241,24 @@ func (w *ttlScanWorker) Idle() bool {
 
 func (w *ttlScanWorker) Schedule(task *ttlScanTask) error {
 	w.Lock()
-	defer w.Unlock()
 	if w.status != workerStatusRunning {
+		w.Unlock()
 		return errors.New("worker is not running")
 	}
 
 	if w.curTaskResult != nil {
+		w.Unlock()
 		return errors.New("the result of previous task has not been polled")
 	}
 
 	if w.curTask != nil {
+		w.Unlock()
 		return errors.New("a task is running")
 	}
 
 	w.curTask = task
 	w.curTaskResult = nil
+	w.Unlock()
 	w.baseWorker.ch <- task
 	return nil
 }
@@ -237,20 +269,20 @@ func (w *ttlScanWorker) CurrentTask() *ttlScanTask {
 	return w.curTask
 }
 
-func (w *ttlScanWorker) PollTaskResult() (*ttlScanTaskExecResult, bool) {
+func (w *ttlScanWorker) PollTaskResult() *ttlScanTaskExecResult {
 	w.Lock()
 	defer w.Unlock()
 	if r := w.curTaskResult; r != nil {
 		w.curTask = nil
 		w.curTaskResult = nil
-		return r, true
+		return r
 	}
-	return nil, false
+	return nil
 }
 
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
-	for w.status == workerStatusRunning {
+	for w.Status() == workerStatusRunning {
 		select {
 		case <-ctx.Done():
 			return nil
@@ -260,7 +292,7 @@ func (w *ttlScanWorker) loop() error {
 			}
 			switch task := msg.(type) {
 			case *ttlScanTask:
-				w.handleScanTask(ctx, task)
+				w.handleScanTask(task)
 			default:
 				logutil.BgLogger().Warn("unrecognized message for ttlScanWorker", zap.Any("msg", msg))
 			}
@@ -269,8 +301,8 @@ func (w *ttlScanWorker) loop() error {
 	return nil
 }
 
-func (w *ttlScanWorker) handleScanTask(ctx context.Context, task *ttlScanTask) {
-	result := task.doScan(ctx, w.delCh, w.sessionPool)
+func (w *ttlScanWorker) handleScanTask(task *ttlScanTask) {
+	result := task.doScan(w.ctx, w.delCh, w.sessionPool)
 	if result == nil {
 		result = task.result(nil)
 	}
@@ -285,4 +317,11 @@ func (w *ttlScanWorker) handleScanTask(ctx context.Context, task *ttlScanTask) {
 		default:
 		}
 	}
+}
+
+type scanWorker interface {
+	worker
+
+	Idle() bool
+	Schedule(*ttlScanTask) error
 }

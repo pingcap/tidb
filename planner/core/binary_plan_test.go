@@ -17,7 +17,7 @@ package core_test
 import (
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -281,10 +281,6 @@ func TestTooLongBinaryPlan(t *testing.T) {
 // TestLongBinaryPlan asserts that if the binary plan is smaller than 1024*1024 bytes, it should be output to both slow query and stmt summary.
 // The size of the binary plan in this test case is designed to be larger than 1024*1024*0.85 bytes but smaller than 1024*1024 bytes.
 func TestLongBinaryPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
@@ -297,6 +293,10 @@ func TestLongBinaryPlan(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 
 	tk.MustExec("use test")
@@ -521,7 +521,7 @@ func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set global tidb_slow_log_threshold = 1;")
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 100;")
-	slowLogBytes, err := ioutil.ReadAll(f)
+	slowLogBytes, err := io.ReadAll(f)
 	require.NoError(t, err)
 	require.NotContains(t, string(slowLogBytes), `tidb_decode_binary_plan('')`)
 }

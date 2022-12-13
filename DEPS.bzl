@@ -451,6 +451,14 @@ def go_deps():
         version = "v0.3.4",
     )
     go_repository(
+        name = "com_github_cloudfoundry_gosigar",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/cloudfoundry/gosigar",
+        sum = "h1:T3MoGdugg1vdHn8Az7wDn7cZ4+QCjZph+eXf2CjSjo4=",
+        version = "v1.3.4",
+    )
+
+    go_repository(
         name = "com_github_cloudykit_fastprinter",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/CloudyKit/fastprinter",
@@ -3519,8 +3527,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:vlgZedcfExiTzB3BB4nt5CpaghDfm9La/0Ofn7weIUA=",
-        version = "v2.0.3-0.20221129032117-857772dd0907",
+        sum = "h1:/glZOHs/K2pkCioDVae+aThUHFYRYQkEgY4NUTgfh+s=",
+        version = "v2.0.3",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
@@ -4438,8 +4446,8 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sum = "h1:ljd4t30dBnAvMZaQCevtY0xLLD0A+bRZXbgLMLU1F/A=",
-        version = "v0.2.0",
+        sum = "h1:w8ZOecv6NaNa/zC8944JTU3vz4u6Lagfk4RPQxv92NQ=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "org_golang_x_term",

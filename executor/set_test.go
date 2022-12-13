@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"testing"
@@ -799,19 +798,19 @@ func TestSetVar(t *testing.T) {
 
 	// test variable 'foreign_key_checks'
 	// global scope
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global foreign_key_checks = 1")
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global foreign_key_checks = 0")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0"))
 	// session scope
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set session foreign_key_checks = 1")
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session foreign_key_checks = 0")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0"))
 
-	// test variable 'foreign_key_checks'
+	// test variable 'tidb_enable_foreign_key'
 	// global scope
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global tidb_enable_foreign_key = 1")
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 0")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0"))
 
 	// test variable 'tidb_opt_force_inline_cte'
 	tk.MustQuery("select @@session.tidb_opt_force_inline_cte").Check(testkit.Rows("0")) // default value is 0
@@ -1802,7 +1801,7 @@ func TestSetClusterConfig(t *testing.T) {
 	httpCnt = 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(req *http.Request) (*http.Response, error) {
 		httpCnt++
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		require.NoError(t, err)
 		// The `raftstore.` prefix is stripped.
 		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body))
