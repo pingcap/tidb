@@ -192,6 +192,7 @@ go_test(
         "//domain",
         "//errno",
         "//kv",
+        "//meta",
         "//parser",
         "//parser/ast",
         "//parser/auth",
