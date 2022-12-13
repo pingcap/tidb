@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
@@ -113,8 +114,11 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			return
 		}
 
+		sqlStart := time.Now()
 		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
+		sqlInterval := time.Since(sqlStart)
 		if err != nil {
+			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
 			needRetry = needRetry && ctx.Err() == nil
 			logutil.BgLogger().Warn(
 				"delete SQL in TTL failed",
@@ -134,6 +138,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			continue
 		}
 
+		metrics.DeleteSuccessDuration.Observe(sqlInterval.Seconds())
 		t.statistics.IncSuccessRows(len(delBatch))
 	}
 	return retryRows
@@ -243,12 +248,16 @@ func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool sessionPool) *ttlDele
 }
 
 func (w *ttlDeleteWorker) loop() error {
+	tracer := metrics.NewDeleteWorkerPhaseTracer()
+	defer tracer.EndPhase()
+
+	tracer.EnterPhase(metrics.PhaseOther)
 	se, err := getSession(w.sessionPool)
 	if err != nil {
 		return err
 	}
 
-	ctx := w.baseWorker.ctx
+	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
 
 	doRetry := func(task *ttlDeleteTask) [][]types.Datum {
 		return task.doDelete(ctx, se)
@@ -258,13 +267,16 @@ func (w *ttlDeleteWorker) loop() error {
 	defer timer.Stop()
 
 	for w.Status() == workerStatusRunning {
+		tracer.EnterPhase(metrics.PhaseIdle)
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
+			tracer.EnterPhase(metrics.PhaseOther)
 			nextInterval := w.retryBuffer.DoRetry(doRetry)
 			timer.Reset(nextInterval)
 		case task, ok := <-w.delCh:
+			tracer.EnterPhase(metrics.PhaseOther)
 			if !ok {
 				return nil
 			}

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -118,6 +119,7 @@ func (m *JobManager) jobLoop() error {
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
 	for {
+		m.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -160,6 +162,20 @@ func (m *JobManager) jobLoop() error {
 			m.rescheduleJobs(se, now)
 		}
 	}
+}
+
+func (m *JobManager) reportMetrics() {
+	var runningJobs, cancellingJobs float64
+	for _, job := range m.runningJobs {
+		switch job.status {
+		case cache.JobStatusRunning:
+			runningJobs++
+		case cache.JobStatusCancelling:
+			cancellingJobs++
+		}
+	}
+	metrics.RunningJobsCnt.Set(runningJobs)
+	metrics.CancellingJobsCnt.Set(cancellingJobs)
 }
 
 func (m *JobManager) resizeScanWorkers(count int) error {
