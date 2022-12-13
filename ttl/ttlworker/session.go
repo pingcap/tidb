@@ -60,7 +60,8 @@ func getSession(pool sessionPool) (session.Session, error) {
 		pool.Put(resource)
 	})
 
-	if _, err = se.ExecuteSQL(context.Background(), "commit"); err != nil {
+	// Force rollback the session to guarantee the session is not in any explicit transaction
+	if _, err = se.ExecuteSQL(context.Background(), "ROLLBACK"); err != nil {
 		se.Close()
 		return nil, err
 	}
