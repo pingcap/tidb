@@ -743,7 +743,11 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTrueCardCost:
 		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatCostTrace:
-		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
+		if e.Analyze || e.RuntimeStatsColl != nil {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
+		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
@@ -817,7 +821,7 @@ func (e *Explain) RenderResult() error {
 
 	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 		if pp, ok := e.TargetPlan.(PhysicalPlan); ok {
-			// record all cost formulas
+			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
 			if _, err := getPlanCost(pp, property.RootTaskType,
 				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagTrace)); err != nil {
 				return err
@@ -1007,10 +1011,10 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
