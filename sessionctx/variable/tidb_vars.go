@@ -1145,7 +1145,7 @@ const (
 	DefTiDBTTLScanBatchSize                          = 500
 	DefTiDBTTLScanBatchMaxSize                       = 10240
 	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 500
+	DefTiDBTTLDeleteBatchSize                        = 100
 	DefTiDBTTLDeleteBatchMaxSize                     = 10240
 	DefTiDBTTLDeleteBatchMinSize                     = 1
 	DefTiDBTTLDeleteRateLimit                        = 0

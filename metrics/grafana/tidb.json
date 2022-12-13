@@ -17528,6 +17528,10 @@
         {
           "alias": "dispatch",
           "color": "#8F3BB8"
+        },
+        {
+          "alias": "wait_token",
+          "color": "#8AB8FF"
         }
       ],
       "spaceLength": 10,
@@ -17654,6 +17658,10 @@
         {
           "alias": "dispatch",
           "color": "#8F3BB8"
+        },
+        {
+          "alias": "wait_token",
+          "color": "#8AB8FF"
         }
       ],
       "spaceLength": 10,
