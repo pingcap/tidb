@@ -31,6 +31,7 @@ var (
 	PhaseCheckTTL  = "check_ttl"
 	PhaseWaitRetry = "wait_retry"
 	PhaseDispatch  = "dispatch"
+	PhaseWaitToken = "wait_token"
 	PhaseOther     = "other"
 )
 
@@ -58,6 +59,7 @@ func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 		PhaseWaitRetry: metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseWaitRetry),
 		PhaseDispatch:  metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseDispatch),
 		PhaseCheckTTL:  metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseCheckTTL),
+		PhaseWaitToken: metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseWaitToken),
 		PhaseOther:     metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseOther),
 	}
 }
