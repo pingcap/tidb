@@ -2732,6 +2732,8 @@ const (
 	SlowLogBackoffDetail = "Backoff_Detail"
 	// SlowLogResultRows is the row count of the SQL result.
 	SlowLogResultRows = "Result_rows"
+	// SlowLogWarnings is the warnings generated during executing the statement.
+	// Note that some extra warnings would also be printed through slow log.
 	SlowLogWarnings   = "Warnings"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
