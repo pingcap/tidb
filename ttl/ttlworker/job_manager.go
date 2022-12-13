@@ -180,39 +180,73 @@ func (m *JobManager) reportMetrics() {
 
 func (m *JobManager) resizeScanWorkers(count int) error {
 	var err error
-	m.scanWorkers, err = m.resizeWorkers(m.scanWorkers, count, func() worker {
+	var canceledWorkers []worker
+	m.scanWorkers, canceledWorkers, err = m.resizeWorkers(m.scanWorkers, count, func() worker {
 		return newScanWorker(m.delCh, m.notifyStateCh, m.sessPool)
 	})
+	for _, w := range canceledWorkers {
+		s := w.(scanWorker)
+
+		var tableID int64
+		var scanErr error
+		result := s.PollTaskResult()
+		if result != nil {
+			tableID = result.task.tbl.ID
+			scanErr = result.err
+		} else {
+			// if the scan worker failed to poll the task, it's possible that the `WaitStopped` has timeout
+			// we still consider the scan task as finished
+			curTask := s.CurrentTask()
+			if curTask == nil {
+				continue
+			}
+			tableID = curTask.tbl.ID
+			scanErr = errors.New("timeout to cancel scan task")
+		}
+
+		job := findJobWithTableID(m.runningJobs, tableID)
+		if job == nil {
+			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", tableID))
+			continue
+		}
+		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+		job.finishedScanTaskCounter += 1
+		job.scanTaskErr = multierr.Append(job.scanTaskErr, scanErr)
+	}
 	return err
 }
 
 func (m *JobManager) resizeDelWorkers(count int) error {
 	var err error
-	m.delWorkers, err = m.resizeWorkers(m.delWorkers, count, func() worker {
+	m.delWorkers, _, err = m.resizeWorkers(m.delWorkers, count, func() worker {
 		return newDeleteWorker(m.delCh, m.sessPool)
 	})
 	return err
 }
 
-func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() worker) ([]worker, error) {
+// resizeWorkers scales the worker, and returns the full set of workers as the first return value. If there are workers
+// stopped, return the stopped worker in the second return value
+func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() worker) ([]worker, []worker, error) {
 	if count < len(workers) {
 		logutil.Logger(m.ctx).Info("shrink ttl worker", zap.Int("originalCount", len(workers)), zap.Int("newCount", count))
 
 		for _, w := range workers[count:] {
 			w.Stop()
 		}
+
 		var errs error
+		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
 		for _, w := range workers[count:] {
-			err := w.WaitStopped(m.ctx, 30*time.Second)
+			err := w.WaitStopped(ctx, 30*time.Second)
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to stop ttl worker", zap.Error(err))
 				errs = multierr.Append(errs, err)
 			}
 		}
+		cancel()
 
 		// remove the existing workers, and keep the left workers
-		workers = workers[:count]
-		return workers, errs
+		return workers[:count], workers[count:], errs
 	}
 
 	if count > len(workers) {
@@ -223,29 +257,31 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 			w.Start()
 			workers = append(workers, w)
 		}
-		return workers, nil
+		return workers, nil, nil
 	}
 
-	return workers, nil
+	return workers, nil, nil
 }
 
 func (m *JobManager) updateTaskState() {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
 		job := findJobWithTableID(m.runningJobs, result.task.tbl.ID)
-		if job != nil {
-			logutil.Logger(m.ctx).Debug("scan task state changed", zap.String("jobID", job.id))
-
-			job.finishedScanTaskCounter += 1
-			job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
+		if job == nil {
+			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
+			continue
 		}
+		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+
+		job.finishedScanTaskCounter += 1
+		job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
 	}
 }
 
 func (m *JobManager) pollScanWorkerResults() []*ttlScanTaskExecResult {
 	results := make([]*ttlScanTaskExecResult, 0, len(m.scanWorkers))
 	for _, w := range m.scanWorkers {
-		worker := w.(*ttlScanWorker)
+		worker := w.(scanWorker)
 		result := worker.PollTaskResult()
 		if result != nil {
 			results = append(results, result)
