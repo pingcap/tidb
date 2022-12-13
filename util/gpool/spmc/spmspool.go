@@ -120,7 +120,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 		p.SetLastTuneTs(time.Now().Add(p.options.LimitDuration))
 	}
 	capacity := p.Cap()
-	if capacity == -1 || size <= 0 || size == capacity || p.options.PreAlloc {
+	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
 	p.capacity.Store(int32(size))

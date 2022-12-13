@@ -50,10 +50,7 @@ type Options struct {
 	// 0 (default value) means no such limit.
 	MaxBlockingTasks int
 
-	// PreAlloc indicates whether to make memory pre-allocation when initializing Pool.
-	PreAlloc bool
-
-	// When Nonblocking is true, Pool.Submit will never be blocked.
+	// When Nonblocking is true, Pool.AddProduce will never be blocked.
 	// ErrPoolOverload will be returned when Pool.Submit cannot be done at once.
 	// When Nonblocking is true, MaxBlockingTasks is inoperative.
 	Nonblocking bool
@@ -63,13 +60,6 @@ type Options struct {
 func WithExpiryDuration(expiryDuration time.Duration) Option {
 	return func(opts *Options) {
 		opts.ExpiryDuration = expiryDuration
-	}
-}
-
-// WithPreAlloc indicates whether it should malloc for workers.
-func WithPreAlloc(preAlloc bool) Option {
-	return func(opts *Options) {
-		opts.PreAlloc = preAlloc
 	}
 }
 
