@@ -58,6 +58,7 @@ go_test(
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
         "//ddl",
+        "//keyspace",
         "//kv",
         "//meta/autoid",
         "//parser",

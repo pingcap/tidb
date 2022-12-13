@@ -231,6 +231,8 @@ type Controller struct {
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
+
+	keyspaceName string
 }
 
 // LightningStatus provides the finished bytes and total bytes of the current task.
@@ -266,6 +268,8 @@ type ControllerParam struct {
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
 	DupIndicator *atomic.Bool
+	// Keyspace name
+	KeyspaceName string
 }
 
 func NewRestoreController(
@@ -353,7 +357,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -437,6 +441,8 @@ func NewRestoreControllerWithPauser(
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
+
+		keyspaceName: p.KeyspaceName,
 	}
 
 	return rc, nil
@@ -1500,7 +1506,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 
 		// Disable GC because TiDB enables GC already.
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {

@@ -56,7 +56,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 		if !ok {
 			return nil, genBackendAllocMemFailedErr(m.memRoot, jobID)
 		}
-		cfg, err := generateLightningConfig(m.memRoot, jobID, unique)
+		cfg, err := genConfig(m.memRoot, jobID, unique)
 		if err != nil {
 			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
@@ -67,7 +67,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			return nil, err
 		}
 
-		bcCtx := newBackendContext(ctx, jobID, &bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot)
+		bcCtx := newBackendContext(ctx, jobID, &bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot)
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
@@ -80,15 +80,16 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	return bc, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *config.Config, glue glue.Glue) (backend.Backend, error) {
-	tls, err := cfg.ToTLS()
+func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backend.Backend, error) {
+	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
 		return backend.Backend{}, err
 	}
 
-	errorMgr := errormanager.New(nil, cfg, log.Logger{Logger: logutil.BgLogger()})
-	return local.NewLocalBackend(ctx, tls, cfg, glue, int(LitRLimit), errorMgr)
+	logutil.BgLogger().Info("[ddl] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
+	errorMgr := errormanager.New(nil, cfg.Lightning, log.Logger{Logger: logutil.BgLogger()})
+	return local.NewLocalBackend(ctx, tls, cfg.Lightning, glue, int(LitRLimit), errorMgr, cfg.KeyspaceName)
 }
 
 func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,

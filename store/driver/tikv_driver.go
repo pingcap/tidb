@@ -88,7 +88,6 @@ func WithPDClientConfig(client config.PDClient) Option {
 
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
-	keyspaceName    string
 	pdConfig        config.PDClient
 	security        config.Security
 	tikvConfig      config.TiKVClient
