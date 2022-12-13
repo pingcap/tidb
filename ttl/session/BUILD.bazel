@@ -12,6 +12,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//ttl/metrics",
         "//util/chunk",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
