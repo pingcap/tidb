@@ -25,7 +25,6 @@ go_library(
         "//br/pkg/lightning/errormanager",
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
-        "//br/pkg/lightning/manual",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/tikv",
         "//br/pkg/lightning/worker",
