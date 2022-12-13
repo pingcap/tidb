@@ -24,7 +24,6 @@ import (
 
 	"github.com/ghemawat/stream"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
 )
 
 //go:embed testdata/marker_test_go.txt
@@ -92,7 +91,7 @@ func TestNeedCheckMarkInfo(t *testing.T) {
 			name:     "sample",
 			filePath: []string{"tests/featuremarker/walker_test.go", "tests/other/some_test.go"},
 			rules: `
-- path: /tests/featuremarker
+only_files: ["/tests/featuremarker"]
 `,
 			expect: []bool{true, false},
 		},
@@ -100,22 +99,18 @@ func TestNeedCheckMarkInfo(t *testing.T) {
 			name:     "refactor testcase dirs",
 			filePath: []string{"tests/featuremarker/walker_test.go", "executor/admin_test.go", "executor/newdir/old_test.go"},
 			rules: `
-- path: /tests/featuremarker
-  exclude:
-  - /tests/featuremarker/walker_test.go
-- path: /executor
-  exclude:
-  - /executor/newdir
+only_files: ["/tests/featuremarker", "/executor"]
+exclude_files: ["/tests/featuremarker/walker_test.go", "/executor/newdir"]
 `,
 			expect: []bool{false, true, false},
 		},
 	}
 	for _, test := range tests {
-		var rules []*RuleSpec
-		require.NoError(t, yaml.Unmarshal([]byte(test.rules), &rules))
+		var config Config
+		config.init(test.rules)
 		var got []bool
 		for _, filePath := range test.filePath {
-			got = append(got, shouldCheckMarker(filePath, rules))
+			got = append(got, shouldCheckMarker(filePath, &config))
 		}
 		require.Equal(t, test.expect, got, "test: %s", test.name)
 	}

@@ -1,6 +1,8 @@
-# path and exclude items follow the gitignore spec: https://git-scm.com/docs/gitignore
-# example
-## - path: /executor
-##   exclude:
-##     - /executor/oomtest
-## - path: /bindinfo
+# only_files specifies files that this analyzer will emit diagnostics for.
+# exclude_files specifies files that this analyzer will not emit diagnostics for.
+# the items are regular expression strings matching Go file names.
+# for example,
+# only_files:
+#  - /bindinfo/
+# exclude_files:
+#  - /bindinfo/bind_test.go$

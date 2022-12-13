@@ -8,7 +8,6 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "@com_github_ghemawat_stream//:stream",
-        "@com_github_zabawaba99_go_gitignore//:go-gitignore",
         "@in_gopkg_yaml_v2//:yaml_v2",
     ],
 )
@@ -28,6 +27,5 @@ go_test(
     deps = [
         "@com_github_ghemawat_stream//:stream",
         "@com_github_stretchr_testify//require",
-        "@in_gopkg_yaml_v2//:yaml_v2",
     ],
 )

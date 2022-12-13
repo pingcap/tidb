@@ -31,14 +31,13 @@ import (
 	"strconv"
 
 	"github.com/ghemawat/stream"
-	"github.com/zabawaba99/go-gitignore"
 	"gopkg.in/yaml.v2"
 )
 
 var (
 	//go:embed .testmarker.yaml
 	rulesYaml string
-	rules     []*RuleSpec
+	config    Config
 
 	addTestRegex    = regexp.MustCompile(`^\+func\s+(Test.*)\(t \*testing\.T\)`)
 	deleteTestRegex = regexp.MustCompile(`^\-func\s+(Test.*)\(t \*testing\.T\)`)
@@ -64,10 +63,40 @@ type issueMarkInfo struct {
 	IssueURL string `yaml:"url"`
 }
 
-// RuleSpec describes the data structure of the mapping spec
-type RuleSpec struct {
-	Path    string   `yaml:"path"`
-	Exclude []string `yaml:"exclude"`
+// Config describes the data structure of the mapping spec
+type Config struct {
+	OnlyFiles    []string `yaml:"only_files"`
+	ExcludeFiles []string `yaml:"exclude_files"`
+
+	onlyFiles    []*regexp.Regexp `yaml:"-"`
+	excludeFiles []*regexp.Regexp `yaml:"-"`
+}
+
+func (c *Config) init(yamlStr string) {
+	err := yaml.Unmarshal([]byte(yamlStr), c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, f := range c.OnlyFiles {
+		c.onlyFiles = append(c.onlyFiles, regexp.MustCompile(f))
+	}
+	for _, f := range c.ExcludeFiles {
+		c.excludeFiles = append(c.excludeFiles, regexp.MustCompile(f))
+	}
+}
+
+func (c *Config) matchFile(filename string) bool {
+	for _, ignore := range c.excludeFiles {
+		if ignore.MatchString(filename) {
+			return false
+		}
+	}
+	for _, only := range c.onlyFiles {
+		if only.MatchString(filename) {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {
@@ -270,7 +299,7 @@ func checkIncrementalTest(fms []*MarkInfo, newTestMap map[string][]string) {
 		log.Println(`Add a marker at the start of incremental tests, please.
    1) Marking the test is for a feature:
      marker.As(t, marker.Feature, "FD-$ID", "the description...")
-   2) Mark it for an issue:
+   2) Or mark it for an issue:
      marker.As(t, marker.Issue, issue-id)`)
 		os.Exit(1)
 	}
@@ -291,38 +320,9 @@ func showMarkInfo(fms []*MarkInfo) {
 	fmt.Println(string(out))
 }
 
-func shouldCheckMarker(filePath string, rules []*RuleSpec) bool {
+func shouldCheckMarker(filePath string, config *Config) bool {
 	filePath = string(filepath.Separator) + filepath.Clean(filePath)
-	matchPattern := func(pattern string, filePath string) bool {
-		lastFilePath := ""
-		for filePath != lastFilePath {
-			if gitignore.Match(pattern, filePath) {
-				return true
-			}
-			lastFilePath = filePath
-			filePath = filepath.Dir(filePath)
-		}
-		return false
-	}
-
-	path := filePath
-	lastFilePath := ""
-	for path != lastFilePath {
-		// Rules are matched backwards
-		for i := len(rules) - 1; i >= 0; i-- {
-			if gitignore.Match(rules[i].Path, path) {
-				for _, exclude := range rules[i].Exclude {
-					if matchPattern(exclude, filePath) {
-						return false
-					}
-				}
-				return true
-			}
-		}
-		lastFilePath = path
-		path = filepath.Dir(path)
-	}
-	return false
+	return config.matchFile(filePath)
 }
 
 // indexIncrementalTest collect incremental test cases from git diff from origin/master,
@@ -374,7 +374,7 @@ func indexIncrementalTest() map[string][]string {
 	})
 
 	handleGitPatch(func(filename string, patch stream.Filter) error {
-		if !shouldCheckMarker(filename, rules) {
+		if !shouldCheckMarker(filename, &config) {
 			return nil
 		}
 		tests, err := findAddTest(patch)
@@ -451,8 +451,5 @@ func dirCmd(
 }
 
 func init() {
-	err := yaml.Unmarshal([]byte(rulesYaml), &rules)
-	if err != nil {
-		log.Fatalf("failed to unmarshal rules.yaml: %v", err)
-	}
+	config.init(rulesYaml)
 }

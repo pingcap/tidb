@@ -45,7 +45,7 @@ check-file-perm:
 	./tools/check/check-file-perm.sh
 
 check-testcase-marker:
-	@echo "check incremental tests all marked(from origin/master)"
+	@echo "check incremental tests are all marked(from origin/master)"
 	./tools/check/check-testcase-marker.sh
 
 gogenerate:
