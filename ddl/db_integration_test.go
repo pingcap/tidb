@@ -2394,6 +2394,15 @@ func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustGetErrCode("create table t(a int, b int as (lower(test1.t.a)))", errno.ErrWrongDBName)
+
+	tk.MustExec("create table t(a int)")
+	tk.MustGetErrCode("alter table t add column b int as (lower(test.t1.a))", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column c int")
+	tk.MustGetErrCode("alter table t modify column c int as (test.t1.a + 1) stored", errno.ErrWrongTableName)
 }
 
 func TestParserIssue284(t *testing.T) {

@@ -122,13 +122,19 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
+func findDependedColumnNames(schemaName string, tableName string, colDef *ast.ColumnDef) (err error, generated bool, colsMap map[string]struct{}) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
 			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
+				if depCol.Schema.O != "" && schemaName != "" && depCol.Schema.O != schemaName {
+					return dbterror.ErrWrongDBName.GenWithStackByArgs(depCol.Schema.O), false, nil
+				}
+				if depCol.Table.O != "" && tableName != "" && depCol.Table.O != tableName {
+					return dbterror.ErrWrongTableName.GenWithStackByArgs(depCol.Table.O), false, nil
+				}
 				colsMap[depCol.Name.L] = struct{}{}
 			}
 			break
@@ -192,7 +198,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName string, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
@@ -252,7 +258,10 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol
 		}
 
 		// rule 4.
-		_, dependColNames := findDependedColumnNames(newColDef)
+		err, _, dependColNames := findDependedColumnNames(schemaName, tbl.Meta().Name.O, newColDef)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
