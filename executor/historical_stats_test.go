@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -173,6 +175,41 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 	h.GCStats(is, 0)
 
 	// assert stats_history tables delete the record of dropped table
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d' order by create_time",
+		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
+		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+}
+
+func TestGCOutdatedHistoryStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	// assert the records of history stats table
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d' order by create_time",
+		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
+		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
+
+	variable.HistoricalStatsDuration.Store(1 * time.Second)
+	time.Sleep(2 * time.Second)
+	err = dom.StatsHandle().ClearOutdatedHistoryStats()
+	require.NoError(t, err)
+	// assert the records of history stats table
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d' order by create_time",
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
