@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -264,11 +263,6 @@ func checkRange(t *testing.T, r cache.ScanRange, start, end types.Datum) {
 }
 
 func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -331,11 +325,6 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 }
 
 func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -400,11 +389,6 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 }
 
 func TestSplitTTLScanRangesWithBytes(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -454,11 +438,6 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 }
 
 func TestNoTTLSplitSupportTables(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

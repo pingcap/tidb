@@ -16,35 +16,14 @@ package ttlworker
 
 import (
 	"time"
-
-	"go.uber.org/atomic"
 )
-
-// TODO: the following functions should be put in the variable pkg to avoid cyclic dependency after adding variables for the TTL
-// some of them are only used in test
 
 const jobManagerLoopTickerInterval = 10 * time.Second
 
-const updateInfoSchemaCacheInterval = time.Minute
-const updateTTLTableStatusCacheInterval = 10 * time.Minute
+const updateInfoSchemaCacheInterval = 2 * time.Minute
+const updateTTLTableStatusCacheInterval = 2 * time.Minute
 
 const ttlInternalSQLTimeout = 30 * time.Second
-const ttlJobTimeout = 6 * time.Hour
-
-// TODO: add this variable to the sysvar
-const ttlJobInterval = time.Hour
-
-// TODO: add these variables to the sysvar
-var ttlJobScheduleWindowStartTime, _ = time.Parse(timeFormat, "2006-01-02 00:00:00")
-var ttlJobScheduleWindowEndTime, _ = time.Parse(timeFormat, "2006-01-02 23:59:00")
-
-// TODO: migrate these two count to sysvar
-
-// ScanWorkersCount defines the count of scan worker
-var ScanWorkersCount = atomic.NewUint64(0)
-
-// DeleteWorkerCount defines the count of delete worker
-var DeleteWorkerCount = atomic.NewUint64(0)
-
 const resizeWorkersInterval = 30 * time.Second
 const splitScanCount = 64
+const ttlJobTimeout = 6 * time.Hour

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -1071,4 +1072,44 @@ func TestSetAggPushDownGlobally(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiDBOptAggPushDown)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
+}
+
+func TestSetJobScheduleWindow(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default value
+	val, err := mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "00:00 +0000", val)
+
+	// set and get variable in UTC
+	vars.TimeZone = time.UTC
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0000", val)
+
+	// set variable in UTC, get it in Asia/Shanghai
+	vars.TimeZone = time.UTC
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0000", val)
+
+	// set variable in Asia/Shanghai, get it it UTC
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	vars.TimeZone = time.UTC
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0800", val)
 }
