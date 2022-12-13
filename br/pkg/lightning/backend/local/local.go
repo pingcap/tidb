@@ -394,6 +394,13 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	return pebble.Open(dbPath, opts)
 }
 
+var (
+	// RunInTest indicates whether the current process is running in test.
+	RunInTest bool
+	// LastAlloc is the last ID allocator.
+	LastAlloc manual.Allocator
+)
+
 // NewLocalBackend creates new connections to tikv.
 func NewLocalBackend(
 	ctx context.Context,
@@ -461,6 +468,11 @@ func NewLocalBackend(
 	} else {
 		writeLimiter = noopStoreWriteLimiter{}
 	}
+	alloc := manual.Allocator{}
+	if RunInTest {
+		alloc.RefCnt = new(atomic.Int64)
+		LastAlloc = alloc
+	}
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -486,7 +498,7 @@ func NewLocalBackend(
 		keyAdapter:              keyAdapter,
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
-		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
 		encBuilder:              NewEncodingBuilder(ctx),
