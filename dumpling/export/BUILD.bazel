@@ -103,6 +103,7 @@ go_test(
         "//util/filter",
         "//util/promutil",
         "//util/table-filter",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
