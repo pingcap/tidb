@@ -19,11 +19,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-<<<<<<< HEAD
-=======
 	"math"
 	"strconv"
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
@@ -256,8 +254,8 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
+func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
@@ -280,6 +278,22 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 		return record.AuthPlugin, nil
 	}
 	return "", errors.New("Failed to get plugin for user")
+}
+
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	if !p.isValidHash(record) {
+		return "", errors.New("Failed to get plugin for user")
+	}
+	return record.AuthPlugin, nil
 }
 
 // MatchIdentity implements the Manager interface.
@@ -361,10 +375,6 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 	return nil
 }
 
-<<<<<<< HEAD
-// ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
-=======
 // CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
 	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
@@ -483,7 +493,6 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (info privilege.VerificationInfo, err error) {
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -491,17 +500,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
-<<<<<<< HEAD
-		return nil
-=======
-		// special handling to existing users or root user initialized with insecure
-		if record == nil || record.ResourceGroup == "" {
-			info.ResourceGroupName = "default"
-		} else {
-			info.ResourceGroupName = record.ResourceGroup
-		}
 		return
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -509,63 +508,37 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
-<<<<<<< HEAD
-		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	}
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
-		if !p.checkSSL(globalPriv, tlsState) {
+		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
-<<<<<<< HEAD
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		}
 	}
 
 	pwd := record.AuthenticationString
 	if !p.isValidHash(record) {
-<<<<<<< HEAD
-		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	}
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
 			logutil.BgLogger().Error("empty authentication")
-<<<<<<< HEAD
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
-		var (
-			claims map[string]interface{}
-		)
+		var claims map[string]interface{}
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
-<<<<<<< HEAD
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-		}
-		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
-			logutil.BgLogger().Error("check claims failed", zap.Error(err))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
@@ -574,13 +547,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-<<<<<<< HEAD
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-			}
-
-			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 				info.FailedDueToWrongPassword = true
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
@@ -588,7 +554,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
 				info.FailedDueToWrongPassword = true
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -597,29 +562,14 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-<<<<<<< HEAD
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 				info.FailedDueToWrongPassword = true
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-<<<<<<< HEAD
-				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-			}
-		default:
-			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-		}
-	} else if len(pwd) > 0 || len(authentication) > 0 {
-		if record.AuthPlugin != mysql.AuthSocket {
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-=======
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		default:
@@ -630,7 +580,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if record.AuthPlugin != mysql.AuthSocket {
 			info.FailedDueToWrongPassword = true
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		}
 	}
 
@@ -638,23 +587,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	locked := record.AccountLocked
 	if locked {
 		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
-<<<<<<< HEAD
-		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
+		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
 	p.user = authUser
 	p.host = record.Host
-	return nil
-=======
-		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
-	}
-
-	// special handling to existing users or root user initialized with insecure
-	if record.ResourceGroup == "" {
-		info.ResourceGroupName = "default"
-	} else {
-		info.ResourceGroupName = record.ResourceGroup
-	}
 	info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
 	return
 }
@@ -663,7 +600,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.user = authUser
 	p.host = authHost
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 }
 
 type checkResult int

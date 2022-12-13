@@ -295,6 +295,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1872,6 +1874,21 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
+}
+
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s Session,
 	sql string, args ...interface{}) (ast.StmtNode, error) {
@@ -2585,7 +2602,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2605,10 +2622,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-<<<<<<< HEAD
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
-		return err
-=======
 	// Check whether continuous login failure is enabled to lock the account.
 	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
@@ -2676,7 +2689,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 		return err
 	}
-	s.sessionVars.ResourceGroupName = info.ResourceGroupName
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()
@@ -2701,7 +2713,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 			}
 			return err
 		}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	}
 	pm.AuthSuccess(authUser.Username, authUser.Hostname)
 	user.AuthUsername = authUser.Username

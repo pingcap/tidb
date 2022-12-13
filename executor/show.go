@@ -1512,17 +1512,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-<<<<<<< HEAD
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer,
-	    Password_reuse_history, Password_reuse_time  FROM %n.%n WHERE User=%? AND Host=%?`,
-=======
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
         user_attributes->>'$.Password_locking.password_lock_time_days'
 		FROM %n.%n WHERE User=%? AND Host=%?`,
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
@@ -1569,8 +1564,6 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
 	}
 
-<<<<<<< HEAD
-=======
 	passwordExpired := rows[0].GetEnum(6).String()
 	passwordLifetime := int64(-1)
 	if !rows[0].IsNull(7) {
@@ -1598,7 +1591,6 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
 		}
 	}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1622,13 +1614,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-<<<<<<< HEAD
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes, passwordHistory, passwordReuseInterval)
-=======
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
 		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	e.appendRow([]interface{}{showStr})
 	return nil
 }

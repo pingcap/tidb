@@ -21,19 +21,11 @@ import (
 
 // error definitions.
 var (
-<<<<<<< HEAD
-	errInvalidPrivilegeType = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
-	ErrNonexistingGrant     = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
-	errLoadPrivilege        = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
-	ErrAccessDenied         = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
-	errAccountHasBeenLocked = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
-=======
 	errInvalidPrivilegeType                               = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
 	ErrNonexistingGrant                                   = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
 	errLoadPrivilege                                      = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
 	ErrAccessDenied                                       = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
 	errAccountHasBeenLocked                               = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
-	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
 	ErrMustChangePasswordLogin                            = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
 )

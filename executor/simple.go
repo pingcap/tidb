@@ -90,15 +90,6 @@ type SimpleExec struct {
 	staleTxnStartTS uint64
 }
 
-<<<<<<< HEAD
-type passwordLockInfo struct {
-	lockAccount string
-	// -1 notSpecified
-	passwordHistory           int64
-	passwordHistoryFlag       bool
-	passwordReuseInterval     int64
-	passwordReuseIntervalFlag bool
-=======
 type passwordOrLockOptionsInfo struct {
 	lockAccount                 string
 	passwordExpired             string
@@ -111,7 +102,6 @@ type passwordOrLockOptionsInfo struct {
 	passwordLockTime            int64
 	failedLoginAttemptsChange   bool
 	passwordLockTimeChange      bool
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 }
 
 type passwordReuseInfo struct {
@@ -851,31 +841,6 @@ func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
 
-<<<<<<< HEAD
-func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []*ast.PasswordOrLockOption) {
-	// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-	// the last declaration takes effect.
-	for _, option := range PasswordOrLockOptions {
-		switch option.Type {
-		case ast.Lock:
-			pLinfo.lockAccount = "Y"
-
-		case ast.Unlock:
-			pLinfo.lockAccount = "N"
-
-		case ast.PasswordHistory:
-			pLinfo.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
-			pLinfo.passwordHistoryFlag = true
-
-		case ast.PasswordHistoryDefault:
-			pLinfo.passwordHistory = notSpecified
-			pLinfo.passwordHistoryFlag = true
-
-		case ast.PasswordReuseInterval:
-			pLinfo.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
-			pLinfo.passwordReuseIntervalFlag = true
-
-=======
 type alterUserPasswordLocking struct {
 	failedLoginAttempts            int64
 	passwordLockTime               int64
@@ -935,12 +900,12 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.PasswordReuseInterval:
 			info.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
 			info.passwordReuseIntervalChange = true
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
 			info.passwordReuseIntervalChange = true
 		}
 	}
+	return nil
 }
 
 func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
@@ -1058,9 +1023,7 @@ func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin s
 	if authOpt == nil || !authOpt.ByAuthString {
 		return false
 	}
-	return authPlugin == mysql.AuthNativePassword ||
-		authPlugin == mysql.AuthTiDBSM3Password ||
-		authPlugin == mysql.AuthCachingSha2Password
+	return mysql.IsAuthPluginClearText(authPlugin)
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
@@ -1098,17 +1061,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-<<<<<<< HEAD
-	passwdlockinfo := &passwordLockInfo{lockAccount: "N", passwordHistory: notSpecified,
-		passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
-		passwordReuseIntervalFlag: false}
-	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
-	if s.IsCreateRole {
-		passwdlockinfo.lockAccount = "Y"
-	}
-
-	var userAttributes any = nil
-=======
 	plOptions := &passwordOrLockOptionsInfo{
 		lockAccount:                 "N",
 		passwordExpired:             "N",
@@ -1131,30 +1083,22 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	var userAttributes []string
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
 	}
-<<<<<<< HEAD
-=======
-	resourceGroupName := "default"
-	if s.ResourceGroupNameOption != nil {
-		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
-			resourceGroupName = s.ResourceGroupNameOption.Value
-		}
-	}
-	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
 	if PasswordLocking != "" {
 		userAttributes = append(userAttributes, PasswordLocking)
 	}
-	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
+	var userAttributesStr any = nil
+	if len(userAttributes) > 0 {
+		userAttributesStr = fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
+	}
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
@@ -1168,15 +1112,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
 	// Get changed user password reuse info.
-<<<<<<< HEAD
-	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?"
-=======
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -1188,12 +1126,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
-<<<<<<< HEAD
-=======
 		if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
 			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 		}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
 			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
 		}
@@ -1253,11 +1188,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-<<<<<<< HEAD
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer)
-=======
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1703,6 +1634,14 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
+	disableSandBoxMode := false
+	var err error
+	if e.ctx.InSandBoxMode() {
+		if err = e.checkSandboxMode(s.Specs); err != nil {
+			return err
+		}
+		disableSandBoxMode = true
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
@@ -1719,13 +1658,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
-<<<<<<< HEAD
-	passwdlockinfo :=
-		&passwordLockInfo{lockAccount: "", passwordHistory: notSpecified,
-			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
-			passwordReuseIntervalFlag: false}
-	passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
-=======
 	plOptions := passwordOrLockOptionsInfo{
 		lockAccount:                 "",
 		passwordExpired:             "",
@@ -1741,8 +1673,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
-
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1840,24 +1770,23 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := NoNeedAuthTokenOptions
-		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
+		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
+		if err != nil {
 			return err
-		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+		}
+		if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
 
 		type alterField struct {
 			expr  string
-			value string
+			value any
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
+			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
-				curAuthplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
-				if err != nil {
-					return err
-				}
-				spec.AuthOpt.AuthPlugin = curAuthplugin
+				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
@@ -1905,12 +1834,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-<<<<<<< HEAD
-			fields = append(fields,
-				alterField{"authentication_string=%?", pwd},
-				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
-			)
-=======
 			fields = append(fields, alterField{"authentication_string=%?", pwd})
 			if spec.AuthOpt.AuthPlugin != "" {
 				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
@@ -1920,7 +1843,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					plOptions.passwordExpired = "N"
 				}
 			}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		}
 
 		if len(plOptions.lockAccount) != 0 {
@@ -1943,8 +1865,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-<<<<<<< HEAD
-=======
 		passwordLockingInfo, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
 		if err != nil {
 			return err
@@ -1962,19 +1882,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		var newAttributes []string
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		if s.CommentOrAttributeOption != nil {
-			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value))
 			} else {
-				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
-<<<<<<< HEAD
-=======
-		}
-		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
-			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
 		}
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
@@ -1984,7 +1897,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				passwordLockingInfo.containsNoOthers = false
 			}
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 
@@ -2060,7 +1972,27 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege(); err != nil {
+		return err
+	}
+	if disableSandBoxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
+}
+
+func (e *SimpleExec) checkSandboxMode(specs []*ast.UserSpec) error {
+	for _, spec := range specs {
+		if spec.AuthOpt == nil {
+			continue
+		}
+		if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
+			if spec.User.CurrentUser || e.ctx.GetSessionVars().User.Username == spec.User.Username {
+				return nil
+			}
+		}
+	}
+	return errMustChangePassword.GenWithStackByArgs()
 }
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
@@ -2461,15 +2393,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return rows > 0, err
 }
 
-func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
-	pm := privilege.GetPrivilegeManager(e.ctx)
-	authplugin, err := pm.GetAuthPlugin(name, host)
-	if err != nil {
-		return "", err
-	}
-	return authplugin, nil
-}
-
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
@@ -2492,6 +2415,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 
 	var u, h string
+	disableSandboxMode := false
 	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
@@ -2514,8 +2438,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if !exists {
 		return errors.Trace(ErrPasswordNoMatch)
 	}
-<<<<<<< HEAD
-=======
 	if e.ctx.InSandBoxMode() {
 		if s.User == nil || s.User.CurrentUser ||
 			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
@@ -2524,9 +2446,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return errMustChangePassword.GenWithStackByArgs()
 		}
 	}
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 
-	authplugin, err := e.userAuthPlugin(u, h)
+	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}
@@ -2571,7 +2492,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	// update mysql.user
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -2579,7 +2500,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	err = domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	if disableSandboxMode {
+		e.ctx.DisableSandBoxMode()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {

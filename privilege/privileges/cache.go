@@ -66,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	Account_locked,Plugin,Token_issuer,User_attributes FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
@@ -113,14 +113,9 @@ type UserRecord struct {
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
 	AuthTokenIssuer      string
-<<<<<<< HEAD
-	Email                string
-=======
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
-	ResourceGroup        string
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -675,15 +670,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.GetType() == mysql.TypeEnum:
-			if row.GetEnum(i).String() != "Y" {
-				continue
-			}
-			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
-			if !ok {
-				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
-			}
-			value.Privileges |= priv
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
 		case f.ColumnAsName.L == "user_attributes":
@@ -701,19 +687,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 					return err
 				}
 				value.Email = email
-			}
-<<<<<<< HEAD
-=======
-			pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
-			if err != nil {
-				return err
-			}
-			if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
-				resourceGroup, err := resourceGroup.Unquote()
-				if err != nil {
-					return err
-				}
-				value.ResourceGroup = resourceGroup
 			}
 			passwordLocking := PasswordLocking{}
 			if err := passwordLocking.ParseJSON(bj); err != nil {
@@ -750,7 +723,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 		default:
 			value.assignUserOrHost(row, i, f)
 		}

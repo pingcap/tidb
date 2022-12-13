@@ -1134,8 +1134,6 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 3 DAY`))
 	tk.MustExec(`ALTER USER 'reuse_user'@'%' PASSWORD REUSE INTERVAL 31 DAY`)
 	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 31 DAY`))
-<<<<<<< HEAD
-=======
 
 	tk.MustExec("CREATE USER 'jeffrey1'@'localhost' PASSWORD EXPIRE")
 	tk.MustQuery("SHOW CREATE USER 'jeffrey1'@'localhost'").Check(testkit.Rows(`CREATE USER 'jeffrey1'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
@@ -1156,7 +1154,6 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED ATTRIBUTE '{"comment": "testcomment"}'`))
 	tk.MustExec("ALTER USER failed_login_user  ATTRIBUTE '{\"attribute\": \"testattribute\"}'")
 	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED ATTRIBUTE '{"attribute": "testattribute", "comment": "testcomment"}'`))
->>>>>>> 59cda14a4e (*:  Support Failed-Login Tracking and Temporary Account Locking (#39322))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
