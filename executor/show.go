@@ -991,6 +991,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(" VIRTUAL")
 			}
 		}
+		if mysql.HasSridFlag(col.GetFlag()) {
+			buf.WriteString(fmt.Sprintf(" /*!80003 SRID %d */", col.Srid))
+		}
 		if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 			hasAutoIncID = true
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
@@ -1052,9 +1055,6 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
-		}
-		if mysql.HasSridFlag(col.GetFlag()) {
-			buf.WriteString(fmt.Sprintf(" /*!80003 SRID %d */", col.Srid))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
