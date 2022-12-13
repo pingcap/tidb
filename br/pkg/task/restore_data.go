@@ -80,11 +80,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 
-	err = client.Init(g, mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer client.Close()
 
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
@@ -168,6 +163,12 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
 
 	// this is used for cloud restoration
+
+	err = client.Init(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer client.Close()
 	log.Info("start to clear system user for cloud")
 	err = client.ClearSystemUsers(ctx, cfg.FilterSysUsers)
 
