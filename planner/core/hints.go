@@ -35,7 +35,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		nodeTp = utilhint.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint
-	selectPlan := flat.Main.GetSelectPlan()
+	selectPlan, _ := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return nil
 	}
