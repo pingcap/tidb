@@ -193,14 +193,19 @@ func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 }
 
 func (ei *engineInfo) closeWriters() error {
-	var err error
+	var firstErr error
 	for wid := range ei.writerCache.Keys() {
 		if w, ok := ei.writerCache.Load(wid); ok {
-			_, err = w.Close(ei.ctx)
+			_, err := w.Close(ei.ctx)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
 		}
 		ei.writerCache.Delete(wid)
 	}
-	return err
+	return firstErr
 }
 
 // WriteRow Write one row into local writer buffer.
