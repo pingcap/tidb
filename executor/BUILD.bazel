@@ -125,6 +125,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//parser/tidb",
         "//parser/types",
         "//planner",
         "//planner/core",
