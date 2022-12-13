@@ -22,13 +22,13 @@ import (
 // CPUScheduler is a cpu scheduler
 type CPUScheduler struct{}
 
-// NewCpuScheduler is to create a new cpu scheduler
-func NewCpuScheduler() *CPUScheduler {
+// NewCPUScheduler is to create a new cpu scheduler
+func NewCPUScheduler() *CPUScheduler {
 	return &CPUScheduler{}
 }
 
 // Tune is to tune the goroutine pool
-func (b *CPUScheduler) Tune(c util.Component, p util.GorotinuePool) Command {
+func (*CPUScheduler) Tune(_ util.Component, _ util.GorotinuePool) Command {
 	if cpu.GetCPUUsage() < 0.5 {
 		return Downclock
 	}
