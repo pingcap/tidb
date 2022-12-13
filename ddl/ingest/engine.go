@@ -83,6 +83,11 @@ func (ei *engineInfo) Clean() {
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	ei.openedEngine = nil
+	err = ei.closeWriters()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
@@ -102,8 +107,14 @@ func (ei *engineInfo) ImportAndClean() error {
 		return errors.New(LitErrCloseEngineErr)
 	}
 	ei.openedEngine = nil
+	err := ei.closeWriters()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
+	}
 
-	err := ei.diskRoot.UpdateUsageAndQuota()
+	err = ei.diskRoot.UpdateUsageAndQuota()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
@@ -180,6 +191,17 @@ func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 		ctx:    ei.ctx,
 		lWrite: lWrite,
 	}, nil
+}
+
+func (ei *engineInfo) closeWriters() error {
+	var err error
+	for wid := range ei.writerCache.Keys() {
+		if w, ok := ei.writerCache.Load(wid); ok {
+			_, err = w.Close(ei.ctx)
+		}
+		ei.writerCache.Delete(wid)
+	}
+	return err
 }
 
 // WriteRow Write one row into local writer buffer.
