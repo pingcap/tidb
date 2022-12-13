@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,17 +15,15 @@ package executor_test
 
 import (
 	"sync"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestDeleteLockKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite8) TestDeleteLockKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2, t3, t4, t5, t6;`)
@@ -75,26 +72,26 @@ func TestDeleteLockKey(t *testing.T) {
 		},
 	}
 	var wg sync.WaitGroup
-	for _, testCase := range cases {
+	for _, t := range cases {
 		wg.Add(1)
-		go func(testCase struct {
+		go func(t struct {
 			ddl     string
 			pre     string
 			tk1Stmt string
 			tk2Stmt string
 		}) {
-			tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+			tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
 			tk1.MustExec("use test")
 			tk2.MustExec("use test")
-			tk1.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-			tk1.MustExec(testCase.ddl)
-			tk1.MustExec(testCase.pre)
+			tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+			tk1.MustExec(t.ddl)
+			tk1.MustExec(t.pre)
 			tk1.MustExec("begin pessimistic")
 			tk2.MustExec("begin pessimistic")
-			tk1.MustExec(testCase.tk1Stmt)
+			tk1.MustExec(t.tk1Stmt)
 			doneCh := make(chan struct{}, 1)
 			go func() {
-				tk2.MustExec(testCase.tk2Stmt)
+				tk2.MustExec(t.tk2Stmt)
 				doneCh <- struct{}{}
 			}()
 			time.Sleep(50 * time.Millisecond)
@@ -102,15 +99,13 @@ func TestDeleteLockKey(t *testing.T) {
 			<-doneCh
 			tk2.MustExec("commit")
 			wg.Done()
-		}(testCase)
+		}(t)
 	}
 	wg.Wait()
 }
 
-func TestIssue21200(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite8) TestIssue21200(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists TEST1")
 	tk.MustExec("create database TEST1")
 	tk.MustExec("use TEST1")

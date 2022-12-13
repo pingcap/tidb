@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +18,18 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/pingcap/check"
 )
 
-func TestConcurrentBitmapSet(t *testing.T) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testBitmap{})
+
+type testBitmap struct{}
+
+func (s *testBitmap) TestConcurrentBitmapSet(c *C) {
 	const loopCount = 1000
 	const interval = 2
 
@@ -39,16 +46,16 @@ func TestConcurrentBitmapSet(t *testing.T) {
 
 	for i := 0; i < loopCount; i++ {
 		if i%interval == 0 {
-			assert.Equal(t, true, bm.UnsafeIsSet(i))
+			c.Assert(bm.UnsafeIsSet(i), IsTrue)
 		} else {
-			assert.Equal(t, false, bm.UnsafeIsSet(i))
+			c.Assert(bm.UnsafeIsSet(i), IsFalse)
 		}
 	}
 }
 
 // TestConcurrentBitmapUniqueSetter checks if isSetter is unique everytime
 // when a bit is set.
-func TestConcurrentBitmapUniqueSetter(t *testing.T) {
+func (s *testBitmap) TestConcurrentBitmapUniqueSetter(c *C) {
 	const loopCount = 10000
 	const competitorsPerSet = 50
 
@@ -56,7 +63,7 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 	bm := NewConcurrentBitmap(32)
 	var setterCounter uint64
 	var clearCounter uint64
-	// Concurrently set bit, and check if isSetter count matches zero clearing count.
+	// Concurrently set bit, and check if isSetter count matchs zero clearing count.
 	for i := 0; i < loopCount; i++ {
 		// Clear bitmap to zero.
 		if atomic.CompareAndSwapUint32(&(bm.segments[0]), 0x00000001, 0x00000000) {
@@ -74,20 +81,7 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	assert.Less(t, clearCounter, uint64(loopCount))
-	assert.Equal(t, setterCounter, clearCounter+1)
-}
-
-// TestResetConcurrentBitmap test the reset of concurrentBitmap.
-func TestResetConcurrentBitmap(t *testing.T) {
-	bm := NewConcurrentBitmap(32)
-	bm.Set(1)
-	bm.Set(3)
-	bm.Set(7)
-	bm.Set(16)
-	bm.Reset(8)
-	assert.Equal(t, bm.bitLen, 8)
-	assert.Equal(t, bm.UnsafeIsSet(1), false)
-	assert.Equal(t, bm.UnsafeIsSet(3), false)
-	assert.Equal(t, bm.UnsafeIsSet(7), false)
+	// If clearCounter is too big, it means setter concurrency of this test is not enough.
+	c.Assert(clearCounter < loopCount, Equals, true)
+	c.Assert(setterCounter, Equals, clearCounter+1)
 }

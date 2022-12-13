@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +15,7 @@ package types
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -27,13 +24,11 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
+	tidbMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/parser"
 )
 
@@ -43,8 +38,6 @@ const (
 	TimeFormat = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
-	// UTCTimeFormat is used to parse and format gotime.
-	UTCTimeFormat = "2006-01-02 15:04:05 UTC"
 )
 
 const (
@@ -55,9 +48,9 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -(838*gotime.Hour + 59*gotime.Minute + 59*gotime.Second)
+	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
-	MaxTime = 838*gotime.Hour + 59*gotime.Minute + 59*gotime.Second
+	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
 	ZeroDatetimeStr = "0000-00-00 00:00:00"
 	// ZeroDateStr is the string representation of a zero date.
@@ -259,16 +252,16 @@ const (
 	microsecondBitFieldMask uint64 = ((1 << microsecondBitFieldWidth) - 1) << microsecondBitFieldOffset
 	fspTtBitFieldMask       uint64 = ((1 << fspTtBitFieldWidth) - 1) << fspTtBitFieldOffset
 
-	fspTtForDate         uint   = 0b1110
+	fspTtForDate         uint8  = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
 	coreTimeBitFieldMask        = ^fspTtBitFieldMask
 )
 
 // NewTime constructs time from core time, type and fsp.
-func NewTime(coreTime CoreTime, tp uint8, fsp int) Time {
+func NewTime(coreTime CoreTime, tp uint8, fsp int8) Time {
 	t := ZeroTime
 	p := (*uint64)(&t.coreTime)
-	*p |= uint64(coreTime) & coreTimeBitFieldMask
+	*p |= (uint64(coreTime) & coreTimeBitFieldMask)
 	if tp == mysql.TypeDate {
 		*p |= uint64(fspTtForDate)
 		return t
@@ -283,11 +276,11 @@ func NewTime(coreTime CoreTime, tp uint8, fsp int) Time {
 	return t
 }
 
-func (t Time) getFspTt() uint {
-	return uint(uint64(t.coreTime) & fspTtBitFieldMask)
+func (t Time) getFspTt() uint8 {
+	return uint8(uint64(t.coreTime) & fspTtBitFieldMask)
 }
 
-func (t *Time) setFspTt(fspTt uint) {
+func (t *Time) setFspTt(fspTt uint8) {
 	*(*uint64)(&t.coreTime) &= ^(fspTtBitFieldMask)
 	*(*uint64)(&t.coreTime) |= uint64(fspTt)
 }
@@ -304,12 +297,12 @@ func (t Time) Type() uint8 {
 }
 
 // Fsp returns fsp value.
-func (t Time) Fsp() int {
+func (t Time) Fsp() int8 {
 	fspTt := t.getFspTt()
 	if fspTt == fspTtForDate {
 		return 0
 	}
-	return int(fspTt >> 1)
+	return int8(fspTt >> 1)
 }
 
 // SetType updates the type in Time.
@@ -325,13 +318,13 @@ func (t *Time) SetType(tp uint8) {
 	case mysql.TypeTimestamp:
 		fspTt |= 1
 	case mysql.TypeDatetime:
-		fspTt &= ^(uint(1))
+		fspTt &= ^(uint8(1))
 	}
 	t.setFspTt(fspTt)
 }
 
 // SetFsp updates the fsp in Time.
-func (t *Time) SetFsp(fsp int) {
+func (t *Time) SetFsp(fsp int8) {
 	if t.getFspTt() == fspTtForDate {
 		return
 	}
@@ -339,7 +332,7 @@ func (t *Time) SetFsp(fsp int) {
 		fsp = DefaultFsp
 	}
 	*(*uint64)(&t.coreTime) &= ^(fspBitFieldMask)
-	*(*uint64)(&t.coreTime) |= uint64(fsp) << 1
+	*(*uint64)(&t.coreTime) |= (uint64(fsp) << 1)
 }
 
 // CoreTime returns core time.
@@ -350,7 +343,7 @@ func (t Time) CoreTime() CoreTime {
 // SetCoreTime updates core time.
 func (t *Time) SetCoreTime(ct CoreTime) {
 	*(*uint64)(&t.coreTime) &= ^coreTimeBitFieldMask
-	*(*uint64)(&t.coreTime) |= uint64(ct) & coreTimeBitFieldMask
+	*(*uint64)(&t.coreTime) |= (uint64(ct) & coreTimeBitFieldMask)
 }
 
 // CurrentTime returns current time with type tp.
@@ -397,10 +390,6 @@ func (t Time) IsZero() bool {
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
-// Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
-// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
-// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
-// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
 func (t Time) InvalidZero() bool {
 	return t.Month() == 0 || t.Day() == 0
 }
@@ -444,7 +433,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 	fsp := t.Fsp()
 	if fsp > 0 {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Microsecond())
-		s = s1[:len(s)+fsp+1]
+		s = s1[:len(s)+int(fsp)+1]
 	}
 	// We skip checking error here because time formatted string can be parsed certainly.
 	err = dec.FromString([]byte(s))
@@ -476,7 +465,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	hour, minute, second := t.Clock()
 	frac := t.Microsecond() * 1000
 
-	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac) //nolint:durationcheck
+	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
 	// TODO: check convert validation
 	return Duration{Duration: d, Fsp: t.Fsp()}, nil
 }
@@ -500,19 +489,19 @@ func (t Time) CompareString(sc *stmtctx.StatementContext, str string) (int, erro
 }
 
 // roundTime rounds the time value according to digits count specified by fsp.
-func roundTime(t gotime.Time, fsp int) gotime.Time {
-	d := gotime.Duration(math.Pow10(9 - fsp))
+func roundTime(t gotime.Time, fsp int8) gotime.Time {
+	d := gotime.Duration(math.Pow10(9 - int(fsp)))
 	return t.Round(d)
 }
 
 // RoundFrac rounds the fraction part of a time-type value according to `fsp`.
-func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
+func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 	if t.Type() == mysql.TypeDate || t.IsZero() {
 		// date type has no fsp
 		return t, nil
 	}
 
-	fsp, err := CheckFsp(fsp)
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return t, errors.Trace(err)
 	}
@@ -549,18 +538,8 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	return NewTime(nt, t.Type(), fsp), nil
 }
 
-// MarshalJSON implements Marshaler.MarshalJSON interface.
-func (t Time) MarshalJSON() ([]byte, error) {
-	return json.Marshal(t.coreTime)
-}
-
-// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
-func (t *Time) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &t.coreTime)
-}
-
 // GetFsp gets the fsp of a string.
-func GetFsp(s string) int {
+func GetFsp(s string) int8 {
 	index := GetFracIndex(s)
 	var fsp int
 	if index < 0 {
@@ -568,25 +547,20 @@ func GetFsp(s string) int {
 	} else {
 		fsp = len(s) - index - 1
 	}
-	if fsp > 6 {
+
+	if fsp == len(s) {
+		fsp = 0
+	} else if fsp > 6 {
 		fsp = 6
 	}
-	return fsp
+	return int8(fsp)
 }
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
-// It will not be affected by the time zone suffix. For format like '2020-01-01 12:00:00.123456+05:00', the index should be 19.
 func GetFracIndex(s string) (index int) {
-	tzIndex, _, _, _, _ := GetTimezone(s)
-	var end int
-	if tzIndex != -1 {
-		end = tzIndex - 1
-	} else {
-		end = len(s) - 1
-	}
 	index = -1
-	for i := end; i >= 0; i-- {
+	for i := len(s) - 1; i >= 0; i-- {
 		if unicode.IsPunct(rune(s[i])) {
 			if s[i] == '.' {
 				index = i
@@ -602,37 +576,38 @@ func GetFracIndex(s string) (index int) {
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
 // and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
-	_, err := CheckFsp(fsp)
+func RoundFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
+	_, err := CheckFsp(int(fsp))
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil //nolint:durationcheck
+	return t.Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
 }
 
 // TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
 // 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
 // 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
-	if _, err := CheckFsp(fsp); err != nil {
+func TruncateFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
+	if _, err := CheckFsp(int(fsp)); err != nil {
 		return t, err
 	}
-	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil //nolint:durationcheck
+	return t.Truncate(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
 //
-//	 1 bit  0
-//	17 bits year*13+month   (year 0-9999, month 0-12)
-//	 5 bits day             (0-31)
-//	 5 bits hour            (0-23)
-//	 6 bits minute          (0-59)
-//	 6 bits second          (0-59)
-//	24 bits microseconds    (0-999999)
+//    1 bit  0
+//   17 bits year*13+month   (year 0-9999, month 0-12)
+//    5 bits day             (0-31)
+//    5 bits hour            (0-23)
+//    6 bits minute          (0-59)
+//    6 bits second          (0-59)
+//   24 bits microseconds    (0-999999)
 //
-//	Total: 64 bits = 8 bytes
+//   Total: 64 bits = 8 bytes
 //
-//	0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
+//   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
+//
 func (t Time) ToPackedUint() (uint64, error) {
 	tm := t
 	if t.IsZero() {
@@ -811,8 +786,7 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	// for https://github.com/pingcap/tidb/issues/32232
-	if prevParts == 2 && (c == 'T' || c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r') {
+	if prevParts == 2 && (c == ' ' || c == 'T') {
 		return true
 	}
 
@@ -842,13 +816,12 @@ var validIdxCombinations = map[int]struct {
 // empty string will be returned.
 //
 // Supported syntax:
-//
-//	MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
-//	  https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
-//	  the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
-//	  second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
-//	ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
-//	  see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
+//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
+//     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+//     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
+//     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
+//   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
+//     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	idx, zidx, sidx, spidx := -1, -1, -1, -1
 	// idx is for the position of the starting of the timezone information
@@ -916,34 +889,26 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// splitDateTime splits the string literal into 3 parts, date & time, FSP(Fractional Seconds Precision) and time zone.
+// splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
 // therefore we could look from backwards at the literal to find the index of the decimal point.
 // For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
 // https://dev.mysql.com/doc/refman/8.0/en/datetime.html) and Z/z (w.r.t. ISO 8601, see section Time zone in
 // https://www.cl.cam.ac.uk/~mgk25/iso-time.html). We also look from backwards for the delimiter, see GetTimezone.
-func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string, truncated bool) {
+func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string) {
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		hasTZ = true
 		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
-			// In case of multiple separators, e.g. 2020-10--10
-			continue
+			// in case of multiple separators, e.g. 2020-10--10
 		}
 		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
-		// Only contain digits
-		fracEnd := fracIndex + 1
-		for fracEnd < len(format) && isDigit(format[fracEnd]) {
-			fracEnd++
-		}
-		truncated = (fracEnd != len(format))
-		fracStr = format[fracIndex+1 : fracEnd]
+		fracStr = format[fracIndex+1:]
 		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
-			// In case of multiple separators, e.g. 2020-10..10
-			continue
+			// in case of multiple separators, e.g. 2020-10..10
 		}
 		format = format[:fracIndex]
 	}
@@ -952,7 +917,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -961,10 +926,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err                                                            error
 	)
 
-	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
-	if truncatedOrIncorrect {
-		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
-	}
+	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
+
+	var truncatedOrIncorrect bool
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 
@@ -1056,9 +1020,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 
 			year, month, day, hour, minute, second =
 				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
-
-			// case: 0.XXX or like "20170118.999"
-			if seps[0] == "0" || (l >= 9 && l <= 14) {
+			if l >= 9 && l <= 14 {
 				hhmmss = true
 			}
 
@@ -1102,7 +1064,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			// We must handle float => string => datetime, the difference is that fractional
 			// part of float type is discarded directly, while fractional part of string type
 			// is parsed to HH:MM:SS.
-			if !isFloat {
+			if isFloat {
+				// 20170118.123423 => 2017-01-18 00:00:00
+			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
 				switch len(fracStr) {
 				case 0:
@@ -1115,7 +1079,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 				}
 				truncatedOrIncorrect = err != nil
 			}
-			// 20170118.123423 => 2017-01-18 00:00:00
 		}
 		if l == 9 || l == 10 {
 			if len(fracStr) == 0 {
@@ -1156,20 +1119,18 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		hhmmss = true
 	}
 	if err != nil {
-		if err == io.EOF {
-			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
-		}
 		return ZeroDatetime, errors.Trace(err)
 	}
 
-	// If str is sepereated by delimiters, the first one is year, and if the year is 1/2 digit,
+	// If str is sepereated by delimiters, the first one is year, and if the year is 2 digit,
 	// we should adjust it.
 	// TODO: adjust year is very complex, now we only consider the simplest way.
-	if len(seps[0]) <= 2 && !isFloat {
-		if !(year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && fracStr == "") {
+	if len(seps[0]) == 2 {
+		if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && fracStr == "" {
+			// Skip a special case "00-00-00".
+		} else {
 			year = adjustYear(year)
 		}
-		// Skip a special case "00-00-00".
 	}
 
 	var microsecond int
@@ -1254,9 +1215,11 @@ func ParseYear(str string) (int16, error) {
 	}
 	y := int16(v)
 
-	if len(str) == 2 || len(str) == 1 {
+	if len(str) == 4 {
+		// Nothing to do.
+	} else if len(str) == 2 || len(str) == 1 {
 		y = int16(adjustYear(int(y)))
-	} else if len(str) != 4 {
+	} else {
 		return 0, errors.Trace(ErrInvalidYearFormat)
 	}
 
@@ -1285,22 +1248,22 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 	}
 	y = int64(adjustYear(int(y)))
 	if y < 0 {
-		return 0, errors.Trace(ErrWarnDataOutOfRange)
+		return 0, errors.Trace(ErrInvalidYear)
 	}
 	if y < int64(MinYear) {
-		return int64(MinYear), errors.Trace(ErrWarnDataOutOfRange)
+		return int64(MinYear), errors.Trace(ErrInvalidYear)
 	}
 	if y > int64(MaxYear) {
-		return int64(MaxYear), errors.Trace(ErrWarnDataOutOfRange)
+		return int64(MaxYear), errors.Trace(ErrInvalidYear)
 	}
 
 	return y, nil
 }
 
 // NewDuration construct duration with time.
-func NewDuration(hour, minute, second, microsecond int, fsp int) Duration {
+func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
 	return Duration{
-		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond, //nolint:durationcheck
+		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond,
 		Fsp:      fsp,
 	}
 }
@@ -1310,11 +1273,11 @@ type Duration struct {
 	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-	Fsp int
+	Fsp int8
 }
 
 // MaxMySQLDuration returns Duration with maximum mysql time.
-func MaxMySQLDuration(fsp int) Duration {
+func MaxMySQLDuration(fsp int8) Duration {
 	return NewDuration(TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0, fsp)
 }
 
@@ -1499,29 +1462,12 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	return t.Convert(sc, tp)
 }
 
-// ConvertToTimeWithTimestamp converts duration to Time by system timestamp.
-// Tp is TypeDatetime, TypeTimestamp and TypeDate.
-func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
-	year, month, day := ts.In(sc.TimeZone).Date()
-	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
-	mixDateAndDuration(&datePart, d)
-
-	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
-	return t.Convert(sc, tp)
-}
-
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
-	tz := loc
-	if tz == nil {
-		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
-		tz = gotime.Local
-	}
-
-	fsp, err := CheckFsp(fsp)
+func (d Duration) RoundFrac(fsp int8) (Duration, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1530,8 +1476,8 @@ func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
 		return d, nil
 	}
 
-	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n) //nolint:durationcheck
+	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -1551,7 +1497,7 @@ func (d Duration) Compare(o Duration) int {
 // but parses str to Duration then compares.
 func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, _, err := ParseDuration(sc, str, MaxFsp)
+	o, err := ParseDuration(sc, str, MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -1682,7 +1628,7 @@ func checkHHMMSS(hms [3]int) bool {
 }
 
 // matchFrac returns overflow, fraction, rest, error
-func matchFrac(str string, fsp int) (bool, int, string, error) {
+func matchFrac(str string, fsp int8) (bool, int, string, error) {
 	rest, err := parser.Char(str, '.')
 	if err != nil {
 		return false, 0, str, nil
@@ -1701,19 +1647,18 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 	return overflow, frac, rest, nil
 }
 
-func matchDuration(str string, fsp int) (Duration, bool, error) {
-	fsp, err := CheckFsp(fsp)
+func matchDuration(str string, fsp int8) (Duration, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
-		return ZeroDuration, true, errors.Trace(err)
+		return ZeroDuration, errors.Trace(err)
 	}
 
 	if len(str) == 0 {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	negative, rest := isNegativeDuration(str)
 	rest = parser.Space0(rest)
-	charsLen := len(rest)
 
 	hhmmss := [3]int{}
 
@@ -1725,13 +1670,13 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 	} else if hms, remain, err := matchHHMMSSCompact(rest); err == nil {
 		rest, hhmmss = remain, hms
 	} else {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
-	if err != nil || (len(rest) > 0 && charsLen >= 12) {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	if err != nil || len(rest) > 0 {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if overflow {
@@ -1740,7 +1685,7 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 	}
 
 	if !checkHHMMSS(hhmmss) {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if hhmmss[0] > TimeMaxHour {
@@ -1750,24 +1695,21 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 		} else {
 			t = MaxTime
 		}
-		return Duration{t, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return Duration{t, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond //nolint:durationcheck
+	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if negative {
 		d = -d
 	}
 	d, err = TruncateOverflowMySQLTime(d)
-	if err == nil && len(rest) > 0 {
-		return Duration{d, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
-	}
-	return Duration{d, fsp}, false, errors.Trace(err)
+	return Duration{d, fsp}, errors.Trace(err)
 }
 
 // canFallbackToDateTime return true
-//  1. the string is failed to be parsed by `matchDuration`
-//  2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
-//     or the string start with a date literal.
+// 1. the string is failed to be parsed by `matchDuration`
+// 2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
+//	  or the string start with a date literal.
 func canFallbackToDateTime(str string) bool {
 	digits, rest, err := parser.Digit(str, 1)
 	if err != nil {
@@ -1801,30 +1743,29 @@ func canFallbackToDateTime(str string) bool {
 }
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
-// returns the duration type Time value and bool to indicate whether the result is null.
+// returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, bool, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
 	rest := strings.TrimSpace(str)
-	d, isNull, err := matchDuration(rest, fsp)
+	d, err := matchDuration(rest, fsp)
 	if err == nil {
-		return d, isNull, nil
+		return d, nil
 	}
 	if !canFallbackToDateTime(rest) {
-		return d, isNull, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	datetime, err := ParseDatetime(sc, rest)
 	if err != nil {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	d, err = datetime.ConvertToDuration()
 	if err != nil {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d, err = d.RoundFrac(fsp, sc.TimeZone)
-	return d, false, err
+	return d.RoundFrac(fsp)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
@@ -1838,22 +1779,22 @@ func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, error) {
 	return d, nil
 }
 
-func splitDuration(t gotime.Duration) (sign int, hours int, minutes int, seconds int, fraction int) {
-	sign = 1
+func splitDuration(t gotime.Duration) (int, int, int, int, int) {
+	sign := 1
 	if t < 0 {
 		t = -t
 		sign = -1
 	}
 
-	hoursDuration := t / gotime.Hour
-	t -= hoursDuration * gotime.Hour //nolint:durationcheck
-	minutesDuration := t / gotime.Minute
-	t -= minutesDuration * gotime.Minute //nolint:durationcheck
-	secondsDuration := t / gotime.Second
-	t -= secondsDuration * gotime.Second //nolint:durationcheck
-	fractionDuration := t / gotime.Microsecond
+	hours := t / gotime.Hour
+	t -= hours * gotime.Hour
+	minutes := t / gotime.Minute
+	t -= minutes * gotime.Minute
+	seconds := t / gotime.Second
+	t -= seconds * gotime.Second
+	fraction := t / gotime.Microsecond
 
-	return sign, int(hoursDuration), int(minutesDuration), int(secondsDuration), int(fractionDuration)
+	return sign, int(hours), int(minutes), int(seconds), int(fraction)
 }
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
@@ -1970,12 +1911,12 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	return parseTime(sc, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
-func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0.0 should not be converted to null, see #11203
 	if len(str) >= 3 && str[:3] == "0.0" {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
@@ -1983,8 +1924,8 @@ func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte,
 	return parseTime(sc, str, tp, fsp, true)
 }
 
-func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
-	fsp, err := CheckFsp(fsp)
+func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
@@ -2019,7 +1960,7 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 
 // ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
 // Note: the invoker must promise the `year` is in the range [MinYear, MaxYear].
-func ParseTimeFromYear(_ *stmtctx.StatementContext, year int64) (Time, error) {
+func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 	if year == 0 {
 		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
 	}
@@ -2030,23 +1971,12 @@ func ParseTimeFromYear(_ *stmtctx.StatementContext, year int64) (Time, error) {
 
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
-func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int) (Time, error) {
+func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning && sc.NoZeroDate {
-			switch tp {
-			case mysql.TypeTimestamp:
-				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
-			case mysql.TypeDate:
-				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateStr, "0")
-			case mysql.TypeDatetime:
-				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, "0")
-			}
-		}
-		return zt, nil
+		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
 	}
-	fsp, err := CheckFsp(fsp)
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
@@ -2283,8 +2213,8 @@ func ExtractDurationNum(d *Duration, unit string) (res int64, err error) {
 
 // parseSingleTimeValue parse the format according the given unit. If we set strictCheck true, we'll check whether
 // the converted value not exceed the range of MySQL's TIME type.
-// The returned values are year, month, day, nanosecond and fsp.
-func parseSingleTimeValue(unit string, format string, strictCheck bool) (year int64, month int64, day int64, nanosecond int64, fsp int, err error) {
+// The first four returned values are year, month, day and nanosecond.
+func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, int64, int64, int64, error) {
 	// Format is a preformatted number, it format should be A[.[B]].
 	decimalPointPos := strings.IndexRune(format, '.')
 	if decimalPointPos == -1 {
@@ -2296,25 +2226,24 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (year in
 	}
 	iv, err := strconv.ParseInt(format[0:decimalPointPos], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 	}
 	riv := iv // Rounded integer value
 
-	decimalLen := 0
 	dv := int64(0)
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
 		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
-		decimalLen = len(dvPre)
-		if decimalLen >= 6 {
+		dvPreLen := len(dvPre)
+		if dvPreLen >= 6 {
 			// MySQL rounds down to 1e-6.
 			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
-				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); err != nil {
-				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-dvPreLen], 10, 64); err != nil {
+				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
@@ -2327,71 +2256,70 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (year in
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		if strictCheck && mathutil.Abs(riv) > TimeMaxValueSeconds*1000 {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(riv) > TimeMaxValueSeconds*1000 {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Microsecond)
 		riv %= int64(GoDurationDay / gotime.Microsecond)
-		return 0, 0, dayCount, riv * int64(gotime.Microsecond), MaxFsp, err
+		return 0, 0, dayCount, riv * int64(gotime.Microsecond), err
 	case "SECOND":
-		if strictCheck && mathutil.Abs(iv) > TimeMaxValueSeconds {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(iv) > TimeMaxValueSeconds {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := iv / int64(GoDurationDay/gotime.Second)
 		iv %= int64(GoDurationDay / gotime.Second)
-		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), decimalLen, err
+		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), err
 	case "MINUTE":
-		if strictCheck && mathutil.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Minute)
 		riv %= int64(GoDurationDay / gotime.Minute)
-		return 0, 0, dayCount, riv * int64(gotime.Minute), 0, err
+		return 0, 0, dayCount, riv * int64(gotime.Minute), err
 	case "HOUR":
-		if strictCheck && mathutil.Abs(riv) > TimeMaxHour {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / 24
 		riv %= 24
-		return 0, 0, dayCount, riv * int64(gotime.Hour), 0, err
+		return 0, 0, dayCount, riv * int64(gotime.Hour), err
 	case "DAY":
-		if strictCheck && mathutil.Abs(riv) > TimeMaxHour/24 {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour/24 {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 0, riv, 0, 0, err
+		return 0, 0, riv, 0, err
 	case "WEEK":
-		if strictCheck && 7*mathutil.Abs(riv) > TimeMaxHour/24 {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && 7*tidbMath.Abs(riv) > TimeMaxHour/24 {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 0, 7 * riv, 0, 0, err
+		return 0, 0, 7 * riv, 0, err
 	case "MONTH":
-		if strictCheck && mathutil.Abs(riv) > 1 {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && tidbMath.Abs(riv) > 1 {
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, riv, 0, 0, 0, err
+		return 0, riv, 0, 0, err
 	case "QUARTER":
 		if strictCheck {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 3 * riv, 0, 0, 0, err
+		return 0, 3 * riv, 0, 0, err
 	case "YEAR":
 		if strictCheck {
-			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return riv, 0, 0, 0, 0, err
+		return riv, 0, 0, 0, err
 	}
 
-	return 0, 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
+	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 }
 
-// parseTimeValue gets years, months, days, nanoseconds and fsp from a string
+// parseTimeValue gets years, months, days, nanoseconds from a string
 // nanosecond will not exceed length of single day
 // MySQL permits any punctuation delimiter in the expr format.
 // See https://dev.mysql.com/doc/refman/8.0/en/expressions.html#temporal-intervals
-func parseTimeValue(format string, index, cnt int) (years int64, months int64, days int64, nanoseconds int64, fsp int, err error) {
+func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, error) {
 	neg := false
 	originalFmt := format
-	fsp = map[bool]int{true: MaxFsp, false: MinFsp}[index == MicrosecondIndex]
 	format = strings.TrimSpace(format)
 	if len(format) > 0 && format[0] == '-' {
 		neg = true
@@ -2403,7 +2331,7 @@ func parseTimeValue(format string, index, cnt int) (years int64, months int64, d
 	}
 	matches := numericRegex.FindAllString(format, -1)
 	if len(matches) > cnt {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	for i := range matches {
 		if neg {
@@ -2414,60 +2342,60 @@ func parseTimeValue(format string, index, cnt int) (years int64, months int64, d
 		index--
 	}
 
-	years, err = strconv.ParseInt(fields[YearIndex], 10, 64)
+	years, err := strconv.ParseInt(fields[YearIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	months, err = strconv.ParseInt(fields[MonthIndex], 10, 64)
+	months, err := strconv.ParseInt(fields[MonthIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	days, err = strconv.ParseInt(fields[DayIndex], 10, 64)
+	days, err := strconv.ParseInt(fields[DayIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 
 	hours, err := strconv.ParseInt(fields[HourIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	minutes, err := strconv.ParseInt(fields[MinuteIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	seconds, err := strconv.ParseInt(fields[SecondIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
+	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], int(MaxFsp)), 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	seconds = hours*3600 + minutes*60 + seconds
 	days += seconds / (3600 * 24)
 	seconds %= 3600 * 24
-	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), fsp, nil
+	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), nil
 }
 
-func parseAndValidateDurationValue(format string, index, cnt int) (int64, int, error) {
-	year, month, day, nano, fsp, err := parseTimeValue(format, index, cnt)
+func parseAndValidateDurationValue(format string, index, cnt int) (int64, error) {
+	year, month, day, nano, err := parseTimeValue(format, index, cnt)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	if year != 0 || month != 0 || mathutil.Abs(day) > TimeMaxHour/24 {
-		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	if year != 0 || month != 0 || tidbMath.Abs(day) > TimeMaxHour/24 {
+		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	dur := day*int64(GoDurationDay) + nano
-	if mathutil.Abs(dur) > int64(MaxTime) {
-		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	if tidbMath.Abs(dur) > int64(MaxTime) {
+		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
-	return dur, fsp, nil
+	return dur, nil
 }
 
 // ParseDurationValue parses time value from time unit and format.
 // Returns y years m months d days + n nanoseconds
 // Nanoseconds will no longer than one day.
-func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, n int64, fsp int, _ error) {
+func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, n int64, _ error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
 		return parseSingleTimeValue(unit, format, false)
@@ -2494,7 +2422,7 @@ func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, 
 	case "YEAR_MONTH":
 		return parseTimeValue(format, MonthIndex, YearMonthMaxCnt)
 	default:
-		return 0, 0, 0, 0, 0, errors.Errorf("invalid single timeunit - %s", unit)
+		return 0, 0, 0, 0, errors.Errorf("invalid single timeunit - %s", unit)
 	}
 }
 
@@ -2503,74 +2431,77 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 	unit = strings.ToUpper(unit)
 	switch unit {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
-		_, month, day, nano, fsp, err := parseSingleTimeValue(unit, format, true)
+		_, month, day, nano, err := parseSingleTimeValue(unit, format, true)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		dur := Duration{Duration: gotime.Duration((month*30+day)*int64(GoDurationDay) + nano), Fsp: fsp}
+		dur := Duration{Duration: gotime.Duration((month*30+day)*int64(GoDurationDay) + nano)}
+		if unit == "MICROSECOND" {
+			dur.Fsp = MaxFsp
+		}
 		return dur, err
 	case "SECOND_MICROSECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "MINUTE_MICROSECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "MINUTE_SECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, MinuteSecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, SecondIndex, MinuteSecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "HOUR_MICROSECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "HOUR_SECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, HourSecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, SecondIndex, HourSecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "HOUR_MINUTE":
-		d, fsp, err := parseAndValidateDurationValue(format, MinuteIndex, HourMinuteMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MinuteIndex, HourMinuteMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
 	case "DAY_MICROSECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "DAY_SECOND":
-		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, DaySecondMaxCnt)
+		d, err := parseAndValidateDurationValue(format, SecondIndex, DaySecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
 	case "DAY_MINUTE":
-		d, fsp, err := parseAndValidateDurationValue(format, MinuteIndex, DayMinuteMaxCnt)
+		d, err := parseAndValidateDurationValue(format, MinuteIndex, DayMinuteMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
 	case "DAY_HOUR":
-		d, fsp, err := parseAndValidateDurationValue(format, HourIndex, DayHourMaxCnt)
+		d, err := parseAndValidateDurationValue(format, HourIndex, DayHourMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
 	case "YEAR_MONTH":
-		_, _, err := parseAndValidateDurationValue(format, MonthIndex, YearMonthMaxCnt)
+		_, err := parseAndValidateDurationValue(format, MonthIndex, YearMonthMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
@@ -2581,36 +2512,13 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 	}
 }
 
-// IsClockUnit returns true when unit is interval unit with hour, minute, second or microsecond.
+// IsClockUnit returns true when unit is interval unit with hour, minute or second.
 func IsClockUnit(unit string) bool {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR",
-		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND",
-		"MINUTE_SECOND", "HOUR_SECOND", "DAY_SECOND",
-		"HOUR_MINUTE", "DAY_MINUTE",
-		"DAY_HOUR":
-		return true
-	default:
-		return false
-	}
-}
-
-// IsDateUnit returns true when unit is interval unit with year, quarter, month, week or day.
-func IsDateUnit(unit string) bool {
-	switch strings.ToUpper(unit) {
-	case "DAY", "WEEK", "MONTH", "QUARTER", "YEAR",
-		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR",
-		"YEAR_MONTH":
-		return true
-	default:
-		return false
-	}
-}
-
-// IsMicrosecondUnit returns true when unit is interval unit with microsecond.
-func IsMicrosecondUnit(unit string) bool {
-	switch strings.ToUpper(unit) {
-	case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
+		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "MINUTE_SECOND",
+		"HOUR_MICROSECOND", "HOUR_SECOND", "HOUR_MINUTE",
+		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
 		return true
 	default:
 		return false
@@ -2624,8 +2532,7 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		// "20129" will be parsed to 2020-12-09, which is date format.
-		if (length == 8) || (length == 6) || (length == 5) {
+		if (length == 8) || (length == 6) {
 			return true
 		}
 	case 3:
@@ -2637,68 +2544,6 @@ func IsDateFormat(format string) bool {
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return parseDateTimeFromNum(sc, num)
-}
-
-// ParseTimeFromFloat64 parses mysql time value from float64.
-// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being real.
-// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error) {
-	intPart := int64(f)
-	t, err := parseDateTimeFromNum(sc, intPart)
-	if err != nil {
-		return ZeroTime, err
-	}
-	if t.Type() == mysql.TypeDatetime {
-		// US part is only kept when the integral part is recognized as datetime.
-		fracPart := uint32((f - float64(intPart)) * 1000000.0)
-		ct := t.CoreTime()
-		ct.setMicrosecond(fracPart)
-		t.SetCoreTime(ct)
-	}
-	return t, err
-}
-
-// ParseTimeFromDecimal parses mysql time value from decimal.
-// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being decimal.
-// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time, err error) {
-	intPart, err := dec.ToInt()
-	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
-		return ZeroTime, err
-	}
-	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
-	t, err = parseDateTimeFromNum(sc, intPart)
-	if err != nil {
-		return ZeroTime, err
-	}
-	t.SetFsp(fsp)
-	if fsp == 0 || t.Type() == mysql.TypeDate {
-		// Shortcut for integer value or date value (fractional part omitted).
-		return t, err
-	}
-
-	intPartDec := new(MyDecimal).FromInt(intPart)
-	fracPartDec := new(MyDecimal)
-	err = DecimalSub(dec, intPartDec, fracPartDec)
-	if err != nil {
-		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
-	}
-	million := new(MyDecimal).FromInt(1000000)
-	msPartDec := new(MyDecimal)
-	err = DecimalMul(fracPartDec, million, msPartDec)
-	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
-		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
-	}
-	msPart, err := msPartDec.ToInt()
-	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
-		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
-	}
-
-	ct := t.CoreTime()
-	ct.setMicrosecond(uint32(msPart))
-	t.SetCoreTime(ct)
-
-	return t, nil
 }
 
 // DateFormat returns a textual representation of the time value formatted
@@ -2763,18 +2608,18 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'k':
 		buf.WriteString(strconv.FormatInt(int64(t.Hour()), 10))
 	case 'h', 'I':
-		tt := t.Hour()
-		if tt%12 == 0 {
+		t := t.Hour()
+		if t%12 == 0 {
 			buf.WriteString("12")
 		} else {
-			buf.WriteString(FormatIntWidthN(tt%12, 2))
+			buf.WriteString(FormatIntWidthN(t%12, 2))
 		}
 	case 'l':
-		tt := t.Hour()
-		if tt%12 == 0 {
+		t := t.Hour()
+		if t%12 == 0 {
 			buf.WriteString("12")
 		} else {
-			buf.WriteString(strconv.FormatInt(int64(tt%12), 10))
+			buf.WriteString(strconv.FormatInt(int64(t%12), 10))
 		}
 	case 'i':
 		buf.WriteString(FormatIntWidthN(t.Minute(), 2))
@@ -3034,7 +2879,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
-	"%j": dayOfYearNumeric,      // Day of year (001..366)
+	"%j": dayOfYearThreeDigits,  // Day of year (001..366)
 	"%k": hour24Numeric,         // Hour (0..23)
 	"%l": hour12Numeric,         // Hour (1..12)
 	"%M": fullNameMonth,         // Month name (January..December)
@@ -3103,38 +2948,40 @@ func matchDateWithToken(t *CoreTime, date string, token string, ctx map[string]i
 	return date, false
 }
 
-// Try to parse digits with number of `limit` starting from `input`
-// Return <number, n chars to step forward> if success.
-// Return <_, 0> if fail.
-func parseNDigits(input string, limit int) (number int, step int) {
-	if limit <= 0 {
-		return 0, 0
+func parseDigits(input string, count int) (int, bool) {
+	if count <= 0 || len(input) < count {
+		return 0, false
 	}
 
-	var num uint64 = 0
-	step = 0
-	for ; step < len(input) && step < limit && '0' <= input[step] && input[step] <= '9'; step++ {
-		num = num*10 + uint64(input[step]-'0')
+	v, err := strconv.ParseUint(input[:count], 10, 64)
+	if err != nil {
+		return int(v), false
 	}
-	return int(num), step
+	return int(v), true
 }
 
-func secondsNumeric(t *CoreTime, input string, _ map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2)
-	if step <= 0 || v >= 60 {
+func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
+	if !succ || v >= 60 {
 		return input, false
 	}
 	t.setSecond(uint8(v))
-	return input[step:], true
+	return input[length:], true
 }
 
-func minutesNumeric(t *CoreTime, input string, _ map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2)
-	if step <= 0 || v >= 60 {
+func minutesNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
+	if !succ || v >= 60 {
 		return input, false
 	}
 	t.setMinute(uint8(v))
-	return input[step:], true
+	return input[length:], true
 }
 
 type parseState int32
@@ -3159,14 +3006,17 @@ func parseSep(input string) (string, parseState) {
 	return input, parseStateNormal
 }
 
-func time12Hour(t *CoreTime, input string, _ map[string]int) (string, bool) {
+func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	tryParse := func(input string) (string, parseState) {
+		var state parseState
 		// hh:mm:ss AM
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
 		/// that is shorter than "hh:mm:ss"
-		hour, step := parseNDigits(input, 2) // 1..12
-		if step <= 0 || hour > 12 || hour == 0 {
+		result := oneOrTwoDigitRegex.FindString(input) // 1..12
+		length := len(result)
+		hour, succ := parseDigits(input, length)
+		if !succ || hour > 12 || hour == 0 {
 			return input, parseStateFail
 		}
 		// Handle special case: 12:34:56 AM -> 00:34:56
@@ -3177,29 +3027,32 @@ func time12Hour(t *CoreTime, input string, _ map[string]int) (string, bool) {
 		t.setHour(uint8(hour))
 
 		// ':'
-		var state parseState
-		if input, state = parseSep(input[step:]); state != parseStateNormal {
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		minute, step := parseNDigits(input, 2) // 0..59
-		if step <= 0 || minute > 59 {
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		minute, succ := parseDigits(input, length)
+		if !succ || minute > 59 {
 			return input, parseStateFail
 		}
 		t.setMinute(uint8(minute))
 
 		// ':'
-		if input, state = parseSep(input[step:]); state != parseStateNormal {
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		second, step := parseNDigits(input, 2) // 0..59
-		if step <= 0 || second > 59 {
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		second, succ := parseDigits(input, length)
+		if !succ || second > 59 {
 			return input, parseStateFail
 		}
 		t.setSecond(uint8(second))
 
-		input = skipWhiteSpace(input[step:])
+		input = skipWhiteSpace(input[length:])
 		if len(input) == 0 {
 			// No "AM"/"PM" suffix, it is ok
 			return input, parseStateEndOfLine
@@ -3227,41 +3080,47 @@ func time12Hour(t *CoreTime, input string, _ map[string]int) (string, bool) {
 	return remain, true
 }
 
-func time24Hour(t *CoreTime, input string, _ map[string]int) (string, bool) {
+func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	tryParse := func(input string) (string, parseState) {
 		// hh:mm:ss
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
 		/// that is shorter than "hh:mm:ss"
-		hour, step := parseNDigits(input, 2) // 0..23
-		if step <= 0 || hour > 23 {
+		var state parseState
+		result := oneOrTwoDigitRegex.FindString(input) // 0..23
+		length := len(result)
+		hour, succ := parseDigits(input, length)
+		if !succ || hour > 23 {
 			return input, parseStateFail
 		}
 		t.setHour(uint8(hour))
 
 		// ':'
-		var state parseState
-		if input, state = parseSep(input[step:]); state != parseStateNormal {
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		minute, step := parseNDigits(input, 2) // 0..59
-		if step <= 0 || minute > 59 {
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		minute, succ := parseDigits(input, length)
+		if !succ || minute > 59 {
 			return input, parseStateFail
 		}
 		t.setMinute(uint8(minute))
 
 		// ':'
-		if input, state = parseSep(input[step:]); state != parseStateNormal {
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		second, step := parseNDigits(input, 2) // 0..59
-		if step <= 0 || second > 59 {
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		second, succ := parseDigits(input, length)
+		if !succ || second > 59 {
 			return input, parseStateFail
 		}
 		t.setSecond(uint8(second))
-		return input[step:], parseStateNormal
+		return input[length:], parseStateNormal
 	}
 
 	remain, state := tryParse(input)
@@ -3276,7 +3135,7 @@ const (
 	constForPM
 )
 
-func isAMOrPM(_ *CoreTime, input string, ctx map[string]int) (string, bool) {
+func isAMOrPM(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) < 2 {
 		return input, false
 	}
@@ -3293,52 +3152,74 @@ func isAMOrPM(_ *CoreTime, input string, ctx map[string]int) (string, bool) {
 	return input[2:], true
 }
 
+// digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
+var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
+
 // oneToSixDigitRegex: it was just for [0, 999999]
 var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 
 // numericRegex: it was for any numeric characters
 var numericRegex = regexp.MustCompile("[0-9]+")
 
-func dayOfMonthNumeric(t *CoreTime, input string, _ map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2) // 0..31
-	if step <= 0 || v > 31 {
+func dayOfMonthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	result := oneOrTwoDigitRegex.FindString(input) // 0..31
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 31 {
 		return input, false
 	}
 	t.setDay(uint8(v))
-	return input[step:], true
+	return input[length:], true
 }
 
 func hour24Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2) // 0..23
-	if step <= 0 || v > 23 {
+	result := oneOrTwoDigitRegex.FindString(input) // 0..23
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 23 {
 		return input, false
 	}
 	t.setHour(uint8(v))
 	ctx["%H"] = v
-	return input[step:], true
+	return input[length:], true
 }
 
 func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2) // 1..12
-	if step <= 0 || v > 12 || v == 0 {
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
 	t.setHour(uint8(v))
 	ctx["%h"] = v
-	return input[step:], true
+	return input[length:], true
 }
 
-func microSeconds(t *CoreTime, input string, _ map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 6)
-	if step <= 0 {
+func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	result := oneToSixDigitRegex.FindString(input)
+	length := len(result)
+	if length == 0 {
 		t.setMicrosecond(0)
 		return input, true
 	}
-	for i := step; i < 6; i++ {
+
+	v, ok := parseDigits(input, length)
+
+	if !ok {
+		return input, false
+	}
+	for i := length; i < 6; i++ {
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))
-	return input[step:], true
+	return input[length:], true
 }
 
 func yearNumericFourDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -3349,29 +3230,36 @@ func yearNumericTwoDigits(t *CoreTime, input string, ctx map[string]int) (string
 	return yearNumericNDigits(t, input, ctx, 2)
 }
 
-func yearNumericNDigits(t *CoreTime, input string, _ map[string]int, n int) (string, bool) {
-	year, step := parseNDigits(input, n)
-	if step <= 0 {
-		return input, false
-	} else if step <= 2 {
-		year = adjustYear(year)
+func yearNumericNDigits(t *CoreTime, input string, ctx map[string]int, n int) (string, bool) {
+	effectiveCount, effectiveValue := 0, 0
+	for effectiveCount+1 <= n {
+		value, succeed := parseDigits(input, effectiveCount+1)
+		if !succeed {
+			break
+		}
+		effectiveCount++
+		effectiveValue = value
 	}
-	t.setYear(uint16(year))
-	return input[step:], true
+	if effectiveCount == 0 {
+		return input, false
+	}
+	if effectiveCount <= 2 {
+		effectiveValue = adjustYear(effectiveValue)
+	}
+	t.setYear(uint16(effectiveValue))
+	return input[effectiveCount:], true
 }
 
-func dayOfYearNumeric(_ *CoreTime, input string, ctx map[string]int) (string, bool) {
-	// MySQL declares that "%j" should be "Day of year (001..366)". But actually,
-	// it accepts a number that is up to three digits, which range is [1, 999].
-	v, step := parseNDigits(input, 3)
-	if step <= 0 || v == 0 {
+func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	v, succ := parseDigits(input, 3)
+	if !succ || v == 0 || v > 366 {
 		return input, false
 	}
 	ctx["%j"] = v
-	return input[step:], true
+	return input[3:], true
 }
 
-func abbreviatedMonth(t *CoreTime, input string, _ map[string]int) (string, bool) {
+func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
 		monthName := strings.ToLower(input[:3])
 		if month, ok := monthAbbrev[monthName]; ok {
@@ -3389,7 +3277,7 @@ func hasCaseInsensitivePrefix(input, prefix string) bool {
 	return strings.EqualFold(input[:len(prefix)], prefix)
 }
 
-func fullNameMonth(t *CoreTime, input string, _ map[string]int) (string, bool) {
+func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
 		if hasCaseInsensitivePrefix(input, month) {
 			t.setMonth(uint8(i + 1))
@@ -3399,13 +3287,17 @@ func fullNameMonth(t *CoreTime, input string, _ map[string]int) (string, bool) {
 	return input, false
 }
 
-func monthNumeric(t *CoreTime, input string, _ map[string]int) (string, bool) {
-	v, step := parseNDigits(input, 2) // 1..12
-	if step <= 0 || v > 12 {
+func monthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 12 {
 		return input, false
 	}
 	t.setMonth(uint8(v))
-	return input[step:], true
+	return input[length:], true
 }
 
 // DateFSP gets fsp from date string.
@@ -3422,7 +3314,6 @@ func DateFSP(date string) (fsp int) {
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	tz := sc.TimeZone
 	if tz == nil {
-		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 
@@ -3456,7 +3347,7 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 		return false, nil
 	}
 
-	if t, err = date.AdjustedGoTime(tz); err != nil {
+	if t, err = date.GoTime(tz); err != nil {
 		return false, err
 	}
 
@@ -3464,7 +3355,7 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	return !inRange, nil
 }
 
-func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
+func skipAllNums(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
 		if unicode.IsNumber(ch) {
@@ -3476,7 +3367,7 @@ func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	return input[retIdx:], true
 }
 
-func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
+func skipAllPunct(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
 		if unicode.IsPunct(ch) {
@@ -3488,7 +3379,7 @@ func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	return input[retIdx:], true
 }
 
-func skipAllAlpha(_ *CoreTime, input string, _ map[string]int) (string, bool) {
+func skipAllAlpha(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
 		if unicode.IsLetter(ch) {

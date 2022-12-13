@@ -8,18 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package unistore
 
 import (
-	"context"
 	"io"
 	"math"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,10 +31,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -51,10 +51,13 @@ type RPCClient struct {
 	rawHandler *rawHandler
 	persistent bool
 	closed     int32
-}
 
-// CheckResourceTagForTopSQLInGoTest is used to identify whether check resource tag for TopSQL.
-var CheckResourceTagForTopSQLInGoTest bool
+	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
+	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+	// sync.Once uses to avoid concurrency initialize rpcCli.
+	sync.Once
+	rpcCli Client
+}
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook func(*tikvrpc.Request)
@@ -73,15 +76,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	failpoint.Inject("rpcTiKVAllowedOnAlmostFull", func(val failpoint.Value) {
-		if val.(bool) {
-			if req.Type == tikvrpc.CmdPrewrite || req.Type == tikvrpc.CmdCommit {
-				if req.Context.DiskFullOpt != kvrpcpb.DiskFullOpt_AllowedOnAlmostFull {
-					failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{DiskFull: &errorpb.DiskFull{StoreId: []uint64{1}, Reason: "disk full"}}))
-				}
-			}
-		}
-	})
+	if req.StoreTp == tikvrpc.TiDB {
+		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -97,13 +94,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	storeID, err := c.usSvr.GetStoreIDByAddr(addr)
 	if err != nil {
 		return nil, err
-	}
-
-	if CheckResourceTagForTopSQLInGoTest {
-		err = checkResourceTagForTopSQL(req)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	resp := &tikvrpc.Response{}
@@ -276,8 +266,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdMPPCancel:
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
-	case tikvrpc.CmdMPPAlive:
-		resp.Resp, err = c.usSvr.IsAlive(ctx, req.IsMPPAlive())
 	case tikvrpc.CmdMvccGetByStartTs:
 		resp.Resp, err = c.usSvr.MvccGetByStartTs(ctx, req.MvccGetByStartTs())
 	case tikvrpc.CmdSplitRegion:
@@ -295,7 +283,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, err
 	}
 	var regErr *errorpb.Error
-	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask && req.Type != tikvrpc.CmdMPPAlive {
+	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
 		regErr, err = resp.GetRegionError()
 	}
 	if err != nil {
@@ -404,21 +392,50 @@ func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *deb
 		}}}, nil
 }
 
+// Client is a client that sends RPC.
+// This is same with tikv.Client, define again for avoid circle import.
+type Client interface {
+	// Close should release all data.
+	Close() error
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
+// GRPCClientFactory is the GRPC client factory.
+// Use global variable to avoid circle import.
+// TODO: remove this global variable.
+var GRPCClientFactory func() Client
+
+// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
+// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.Once.Do(func() {
+		if GRPCClientFactory != nil {
+			c.rpcCli = GRPCClientFactory()
+		}
+	})
+	if c.rpcCli == nil {
+		return nil, errors.Errorf("GRPCClientFactory is nil")
+	}
+	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
+}
+
 // Close closes RPCClient and cleanup temporal resources.
 func (c *RPCClient) Close() error {
 	atomic.StoreInt32(&c.closed, 1)
 	if c.usSvr != nil {
 		c.usSvr.Stop()
 	}
+	if c.rpcCli != nil {
+		err := c.rpcCli.Close()
+		if err != nil {
+			return err
+		}
+	}
 	if !c.persistent && c.path != "" {
 		err := os.RemoveAll(c.path)
 		_ = err
 	}
-	return nil
-}
-
-// CloseAddr implements tikv.Client interface and it does nothing.
-func (c *RPCClient) CloseAddr(addr string) error {
 	return nil
 }
 

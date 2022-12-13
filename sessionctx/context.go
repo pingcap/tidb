@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,20 +19,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
@@ -44,34 +39,15 @@ type InfoschemaMetaVersion interface {
 	SchemaMetaVersion() int64
 }
 
-// SessionStatesHandler is an interface for encoding and decoding session states.
-type SessionStatesHandler interface {
-	// EncodeSessionStates encodes session states into a JSON.
-	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
-	// DecodeSessionStates decodes a map into session states.
-	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
-}
-
-// PlanCache is an interface for prepare and general plan cache
-type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
-	Delete(key kvcache.Key)
-	DeleteAll()
-	Size() int
-	SetCapacity(capacity uint) error
-	Close()
-}
-
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	SessionStatesHandler
-	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// RollbackTxn rolls back the current transaction.
-	RollbackTxn(ctx context.Context)
-	// CommitTxn commits the current transaction.
-	CommitTxn(ctx context.Context) error
+	// NewTxn creates a new transaction for further execution.
+	// If old transaction is valid, it is committed first.
+	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	NewTxn(context.Context) error
+	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
+	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
+
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
@@ -81,7 +57,7 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
-	// GetMPPClient gets a kv.MPPClient.
+	// GetClient gets a kv.Client.
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
@@ -93,15 +69,7 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
-	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
-	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	// If you want to get the latest infoschema use `GetDomainInfoSchema`
 	GetInfoSchema() InfoschemaMetaVersion
-
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
 
@@ -116,19 +84,18 @@ type Context interface {
 	// only used to daemon session like `statsHandle` to detect global variable change.
 	RefreshVars(context.Context) error
 
+	// InitTxnWithStartTS initializes a transaction with startTS.
+	// It should be called right before we builds an executor.
+	InitTxnWithStartTS(startTS uint64) error
+
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// GetPlanCache returns the cache of the physical plan.
-	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
-	GetPlanCache(isGeneralPlanCache bool) PlanCache
+	// PreparedPlanCache returns the cache of the physical plan
+	PreparedPlanCache() *kvcache.SimpleLRUCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
-
-	// UpdateColStatsUsage updates the column stats usage.
-	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
@@ -139,13 +106,13 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// IsDDLOwner checks whether this session is DDL owner.
-	IsDDLOwner() bool
+	// DDLOwnerChecker returns owner.DDLOwnerChecker.
+	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
 	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
+	// ReleaseTableLockByTableID releases table locks in the session lock map by table ID.
 	ReleaseTableLockByTableIDs(tableIDs []int64)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)
@@ -156,46 +123,11 @@ type Context interface {
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
-	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
-	// It returns nil otherwise.
-	GetPreparedTxnFuture() TxnFuture
+	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
-	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-	GetBuiltinFunctionUsage() map[string]uint32
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
-	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
-	GetStmtStats() *stmtstats.StatementStats
-	// ShowProcess returns ProcessInfo running in current Context
-	ShowProcess() *util.ProcessInfo
-	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
-	GetAdvisoryLock(string, int64) error
-	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
-	ReleaseAdvisoryLock(string) bool
-	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
-	ReleaseAllAdvisoryLocks() int
-	// GetExtensions returns the `*extension.SessionExtensions` object
-	GetExtensions() *extension.SessionExtensions
-	// InSandBoxMode indicates that this Session is in sandbox mode
-	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
-	InSandBoxMode() bool
-	// EnableSandBoxMode enable the sandbox mode of this Session
-	EnableSandBoxMode()
-	// DisableSandBoxMode enable the sandbox mode of this Session
-	DisableSandBoxMode()
-}
-
-// TxnFuture is an interface where implementations have a kv.Transaction field and after
-// calling Wait of the TxnFuture, the kv.Transaction will become valid.
-type TxnFuture interface {
-	// Wait converts pending txn to valid
-	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
 }
 
 type basicCtxType int
@@ -258,12 +190,4 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
-}
-
-// SysProcTracker is used to track background sys processes
-type SysProcTracker interface {
-	Track(id uint64, proc Context) error
-	UnTrack(id uint64)
-	GetSysProcessList() map[uint64]*util.ProcessInfo
-	KillSysProcess(id uint64)
 }

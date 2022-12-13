@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,12 +20,13 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
 type mockVecPlusIntBuiltinFunc struct {
@@ -38,7 +38,7 @@ type mockVecPlusIntBuiltinFunc struct {
 
 func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 	if p.enableAlloc {
-		return p.bufAllocator.get()
+		return p.bufAllocator.get(types.ETInt, n)
 	}
 	if p.buf == nil {
 		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
@@ -98,90 +98,60 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 	return plus, input, buf
 }
 
-func TestMockVecPlusInt(t *testing.T) {
+func (s *testEvaluatorSuite) TestMockVecPlusInt(c *C) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	plus.enableAlloc = false
-	require.NoError(t, plus.vecEvalInt(input, buf))
+	c.Assert(plus.vecEvalInt(input, buf), IsNil)
 	for i := 0; i < 1024; i++ {
-		require.False(t, buf.IsNull(i))
-		require.Equal(t, int64(i*2), buf.GetInt64(i))
+		c.Assert(buf.IsNull(i), IsFalse)
+		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
 	}
 
 	plus.enableAlloc = true
-	require.NoError(t, plus.vecEvalInt(input, buf))
+	c.Assert(plus.vecEvalInt(input, buf), IsNil)
 	for i := 0; i < 1024; i++ {
-		require.False(t, buf.IsNull(i))
-		require.Equal(t, int64(i*2), buf.GetInt64(i))
+		c.Assert(buf.IsNull(i), IsFalse)
+		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
 	}
 }
 
-func TestMockVecPlusIntParallel(t *testing.T) {
+func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	plus.enableAlloc = true // it's concurrency-safe if enableAlloc is true
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			result := buf.CopyConstruct(nil)
-			for i := 0; i < 10; i++ {
-				require.NoError(t, plus.vecEvalInt(input, result))
+			for i := 0; i < 200; i++ {
+				c.Assert(plus.vecEvalInt(input, result), IsNil)
 				for i := 0; i < 1024; i++ {
-					require.False(t, result.IsNull(i))
-					require.Equal(t, int64(i*2), result.GetInt64(i))
+					c.Assert(result.IsNull(i), IsFalse)
+					c.Assert(result.GetInt64(i), Equals, int64(i*2))
 				}
 			}
+			wg.Done()
 		}()
 	}
 	wg.Wait()
 }
 
-const (
-	numColumnPoolOp = 4096
-)
-
-func BenchmarkColumnPoolGet(b *testing.B) {
-	allocator := newLocalColumnPool()
+func BenchmarkColumnBufferAllocate(b *testing.B) {
+	allocator := newLocalSliceBuffer(1)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < numColumnPoolOp; j++ {
-			_, _ = allocator.get()
-		}
+		buf, _ := allocator.get(types.ETInt, 1024)
+		allocator.put(buf)
 	}
 }
 
-func BenchmarkColumnPoolGetParallel(b *testing.B) {
-	allocator := newLocalColumnPool()
+func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
+	allocator := newLocalSliceBuffer(1)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i := 0; i < numColumnPoolOp; i++ {
-				_, _ = allocator.get()
-			}
-		}
-	})
-}
-
-func BenchmarkColumnPoolGetPut(b *testing.B) {
-	allocator := newLocalColumnPool()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < numColumnPoolOp; j++ {
-			col, _ := allocator.get()
-			allocator.put(col)
-		}
-	}
-}
-
-func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
-	allocator := newLocalColumnPool()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			for i := 0; i < numColumnPoolOp; i++ {
-				col, _ := allocator.get()
-				allocator.put(col)
-			}
+			buf, _ := allocator.get(types.ETInt, 1024)
+			allocator.put(buf)
 		}
 	})
 }
@@ -239,7 +209,7 @@ func (p *mockBuiltinDouble) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 func (p *mockBuiltinDouble) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalString(p.ctx, input, buf); err != nil {
@@ -300,7 +270,7 @@ func (p *mockBuiltinDouble) vecEvalDuration(input *chunk.Chunk, result *chunk.Co
 func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalJSON(p.ctx, input, buf); err != nil {
@@ -309,11 +279,11 @@ func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 	result.ReserveString(input.NumRows())
 	for i := 0; i < input.NumRows(); i++ {
 		j := buf.GetJSON(i)
-		path, err := types.ParseJSONPathExpr("$.key")
+		path, err := json.ParseJSONPathExpr("$.key")
 		if err != nil {
 			return err
 		}
-		ret, ok := j.Extract([]types.JSONPathExpression{path})
+		ret, ok := j.Extract([]json.PathExpression{path})
 		if !ok {
 			return errors.Errorf("path not found")
 		}
@@ -384,24 +354,24 @@ func (p *mockBuiltinDouble) evalDuration(row chunk.Row) (types.Duration, bool, e
 	return v, isNull, err
 }
 
-func (p *mockBuiltinDouble) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+func (p *mockBuiltinDouble) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	j, isNull, err := p.args[0].EvalJSON(p.ctx, row)
 	if err != nil {
-		return types.BinaryJSON{}, false, err
+		return json.BinaryJSON{}, false, err
 	}
 	if isNull {
-		return types.BinaryJSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
-	path, err := types.ParseJSONPathExpr("$.key")
+	path, err := json.ParseJSONPathExpr("$.key")
 	if err != nil {
-		return types.BinaryJSON{}, false, err
+		return json.BinaryJSON{}, false, err
 	}
-	ret, ok := j.Extract([]types.JSONPathExpression{path})
+	ret, ok := j.Extract([]json.PathExpression{path})
 	if !ok {
-		return types.BinaryJSON{}, true, err
+		return json.BinaryJSON{}, true, err
 	}
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, 2*ret.GetInt64()))); err != nil {
-		return types.BinaryJSON{}, false, err
+		return json.BinaryJSON{}, false, err
 	}
 	return j, false, nil
 }
@@ -454,7 +424,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 		case types.ETDuration:
 			input.AppendDuration(0, types.Duration{Duration: time.Duration(i)})
 		case types.ETJson:
-			j := new(types.BinaryJSON)
+			j := new(json.BinaryJSON)
 			if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, i))); err != nil {
 				return nil, nil, nil, err
 			}
@@ -469,7 +439,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 	return rowDouble, input, buf, nil
 }
 
-func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.Column) {
+func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int, result *chunk.Column) {
 	if sel == nil {
 		for i := 0; i < 1024; i++ {
 			sel = append(sel, i)
@@ -478,55 +448,55 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 	switch eType {
 	case types.ETInt:
 		i64s := result.Int64s()
-		require.Equal(t, len(sel), len(i64s))
+		c.Assert(len(i64s), Equals, len(sel))
 		for i, j := range sel {
-			require.Equal(t, int64(j*2), i64s[i])
+			c.Assert(i64s[i], Equals, int64(j*2))
 		}
 	case types.ETReal:
 		f64s := result.Float64s()
-		require.Equal(t, len(sel), len(f64s))
+		c.Assert(len(f64s), Equals, len(sel))
 		for i, j := range sel {
-			require.Equal(t, float64(j*2), f64s[i])
+			c.Assert(f64s[i], Equals, float64(j*2))
 		}
 	case types.ETDecimal:
 		ds := result.Decimals()
-		require.Equal(t, len(sel), len(ds))
+		c.Assert(len(ds), Equals, len(sel))
 		for i, j := range sel {
 			dec := new(types.MyDecimal)
-			require.NoError(t, dec.FromFloat64(float64(j)))
+			c.Assert(dec.FromFloat64(float64(j)), IsNil)
 			rst := new(types.MyDecimal)
-			require.NoError(t, types.DecimalAdd(dec, dec, rst))
-			require.Equal(t, 0, rst.Compare(&ds[i]))
+			c.Assert(types.DecimalAdd(dec, dec, rst), IsNil)
+			c.Assert(rst.Compare(&ds[i]), Equals, 0)
 		}
 	case types.ETDuration:
 		ds := result.GoDurations()
-		require.Equal(t, len(sel), len(ds))
+		c.Assert(len(ds), Equals, len(sel))
 		for i, j := range sel {
-			require.Equal(t, time.Duration(j+j), ds[i])
+			c.Assert(ds[i], Equals, time.Duration(j+j))
 		}
 	case types.ETDatetime:
 		ds := result.Times()
-		require.Equal(t, len(sel), len(ds))
+		c.Assert(len(ds), Equals, len(sel))
 		for i, j := range sel {
 			gt := types.FromDate(j, 0, 0, 0, 0, 0, 0)
-			tt := types.NewTime(gt, convertETType(eType), 0)
-			d, err := tt.ConvertToDuration()
-			require.NoError(t, err)
-			v, err := tt.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
-			require.NoError(t, err)
-			require.Equal(t, 0, v.Compare(ds[i]))
+			t := types.NewTime(gt, convertETType(eType), 0)
+			d, err := t.ConvertToDuration()
+			c.Assert(err, IsNil)
+			v, err := t.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
+			c.Assert(err, IsNil)
+			c.Assert(v.Compare(ds[i]), Equals, 0)
 		}
 	case types.ETJson:
 		for i, j := range sel {
-			path, err := types.ParseJSONPathExpr("$.key")
-			require.NoError(t, err)
-			ret, ok := result.GetJSON(i).Extract([]types.JSONPathExpression{path})
-			require.True(t, ok)
-			require.Equal(t, int64(j*2), ret.GetInt64())
+			path, err := json.ParseJSONPathExpr("$.key")
+			c.Assert(err, IsNil)
+			ret, ok := result.GetJSON(i).Extract([]json.PathExpression{path})
+			c.Assert(ok, IsTrue)
+			c.Assert(ret.GetInt64(), Equals, int64(j*2))
 		}
 	case types.ETString:
 		for i, j := range sel {
-			require.Equal(t, fmt.Sprintf("%v%v", j, j), result.GetString(i))
+			c.Assert(result.GetString(i), Equals, fmt.Sprintf("%v%v", j, j))
 		}
 	}
 }
@@ -551,13 +521,13 @@ func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result
 	panic("not implement")
 }
 
-func TestDoubleRow2Vec(t *testing.T) {
+func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, false)
-		require.NoError(t, err)
-		require.NoError(t, vecEvalType(rowDouble, eType, input, result))
-		checkVecEval(t, eType, nil, result)
+		c.Assert(err, IsNil)
+		c.Assert(vecEvalType(rowDouble, eType, input, result), IsNil)
+		s.checkVecEval(c, eType, nil, result)
 
 		sel := []int{0}
 		for {
@@ -569,52 +539,52 @@ func TestDoubleRow2Vec(t *testing.T) {
 			sel = append(sel, end+rand.Intn(gap-1)+1)
 		}
 		input.SetSel(sel)
-		require.NoError(t, vecEvalType(rowDouble, eType, input, result))
+		c.Assert(vecEvalType(rowDouble, eType, input, result), IsNil)
 
-		checkVecEval(t, eType, sel, result)
+		s.checkVecEval(c, eType, sel, result)
 	}
 }
 
-func TestDoubleVec2Row(t *testing.T) {
+func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, true)
 		result.Reset(eType)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		it := chunk.NewIterator4Chunk(input)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			switch eType {
 			case types.ETInt:
 				v, _, err := rowDouble.evalInt(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendInt64(v)
 			case types.ETReal:
 				v, _, err := rowDouble.evalReal(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendFloat64(v)
 			case types.ETDecimal:
 				v, _, err := rowDouble.evalDecimal(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendMyDecimal(v)
 			case types.ETDuration:
 				v, _, err := rowDouble.evalDuration(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendDuration(v)
 			case types.ETString:
 				v, _, err := rowDouble.evalString(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendString(v)
 			case types.ETDatetime:
 				v, _, err := rowDouble.evalTime(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendTime(v)
 			case types.ETJson:
 				v, _, err := rowDouble.evalJSON(row)
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				result.AppendJSON(v)
 			}
 		}
-		checkVecEval(t, eType, nil, result)
+		s.checkVecEval(c, eType, nil, result)
 	}
 }
 
@@ -729,7 +699,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 }
 
 func BenchmarkMockDoubleRow(b *testing.B) {
-	typeNames := []string{"Int", "Real", "decimal", "Duration", "String", "Datetime", "JSON"}
+	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
@@ -742,7 +712,7 @@ func BenchmarkMockDoubleRow(b *testing.B) {
 }
 
 func BenchmarkMockDoubleVec(b *testing.B) {
-	typeNames := []string{"Int", "Real", "decimal", "Duration", "String", "Datetime", "JSON"}
+	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
@@ -757,21 +727,21 @@ func BenchmarkMockDoubleVec(b *testing.B) {
 	}
 }
 
-func TestVectorizedCheck(t *testing.T) {
+func (s *testEvaluatorSuite) TestVectorizedCheck(c *C) {
 	con := &Constant{}
-	require.True(t, con.Vectorized())
+	c.Assert(con.Vectorized(), IsTrue)
 	col := &Column{}
-	require.True(t, col.Vectorized())
+	c.Assert(col.Vectorized(), IsTrue)
 	cor := CorrelatedColumn{Column: *col}
-	require.True(t, cor.Vectorized())
+	c.Assert(cor.Vectorized(), IsTrue)
 
 	vecF, _, _, _ := genMockRowDouble(types.ETInt, true)
 	sf := &ScalarFunction{Function: vecF}
-	require.True(t, sf.Vectorized())
+	c.Assert(sf.Vectorized(), IsTrue)
 
 	rowF, _, _, _ := genMockRowDouble(types.ETInt, false)
 	sf = &ScalarFunction{Function: rowF}
-	require.False(t, sf.Vectorized())
+	c.Assert(sf.Vectorized(), IsFalse)
 }
 
 func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
@@ -785,16 +755,16 @@ func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
 	return col, chk, result
 }
 
-func TestFloat32ColVec(t *testing.T) {
+func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 	col, chk, result := genFloat32Col()
 	ctx := mock.NewContext()
-	require.NoError(t, col.VecEvalReal(ctx, chk, result))
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 	it := chunk.NewIterator4Chunk(chk)
 	i := 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		v, _, err := col.EvalReal(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetFloat64(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
 		i++
 	}
 
@@ -805,116 +775,16 @@ func TestFloat32ColVec(t *testing.T) {
 		sel = append(sel, i)
 	}
 	chk.SetSel(sel)
-	require.NoError(t, col.VecEvalReal(ctx, chk, result))
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		v, _, err := col.EvalReal(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetFloat64(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
 		i++
 	}
 
-	require.NoError(t, col.VecEvalReal(ctx, chk, result))
-}
-
-func TestVecEvalBool(t *testing.T) {
-	ctx := mock.NewContext()
-	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
-			require.NoError(t, err)
-			it := chunk.NewIterator4Chunk(input)
-			i := 0
-			for row := it.Begin(); row != it.End(); row = it.Next() {
-				ok, null, err := EvalBool(ctx, exprs, row)
-				require.NoError(t, err)
-				require.Equal(t, nulls[i], null)
-				require.Equal(t, selected[i], ok)
-				i++
-			}
-		}
-	}
-}
-
-func TestRowBasedFilterAndVectorizedFilter(t *testing.T) {
-	ctx := mock.NewContext()
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			it := chunk.NewIterator4Chunk(input)
-			isNull := make([]bool, it.Len())
-			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
-			require.NoError(t, err)
-			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
-			require.NoError(t, err2)
-			length := it.Len()
-			for i := 0; i < length; i++ {
-				require.Equal(t, nulls[i], nulls2[i])
-				require.Equal(t, selected[i], selected2[i])
-			}
-		}
-	}
-}
-
-func TestVectorizedFilterConsiderNull(t *testing.T) {
-	ctx := mock.NewContext()
-	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			it := chunk.NewIterator4Chunk(input)
-			isNull := make([]bool, it.Len())
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
-			require.NoError(t, err)
-			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
-			require.NoError(t, err2)
-			length := it.Len()
-			for i := 0; i < length; i++ {
-				require.Equal(t, nulls[i], nulls2[i])
-				require.Equal(t, selected[i], selected2[i])
-			}
-
-			// add test which sel is not nil
-			randomSel := generateRandomSel()
-			input.SetSel(randomSel)
-			it2 := chunk.NewIterator4Chunk(input)
-			isNull = isNull[:0]
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
-			require.NoError(t, err)
-			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
-			require.NoError(t, err2)
-			for i := 0; i < length; i++ {
-				require.Equal(t, nulls[i], nulls2[i])
-				require.Equal(t, selected3[i], selected4[i])
-			}
-
-			unselected := make([]bool, length)
-			// unselected[i] == false means that the i-th row is selected
-			for i := 0; i < length; i++ {
-				unselected[i] = true
-			}
-			for _, idx := range randomSel {
-				unselected[idx] = false
-			}
-			for i := range selected2 {
-				if selected2[i] && unselected[i] {
-					selected2[i] = false
-				}
-			}
-			for i := 0; i < length; i++ {
-				require.Equal(t, selected4[i], selected2[i])
-			}
-		}
-	}
-	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 
 func BenchmarkFloat32ColRow(b *testing.B) {
@@ -927,6 +797,7 @@ func BenchmarkFloat32ColRow(b *testing.B) {
 			if _, _, err := col.EvalReal(ctx, row); err != nil {
 				b.Fatal(err)
 			}
+
 		}
 	}
 }

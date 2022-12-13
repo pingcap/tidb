@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,18 +15,16 @@ package expression
 
 import (
 	"errors"
-	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/testkit/testutil"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func TestCaseWhen(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -45,22 +42,21 @@ func TestCaseWhen(t *testing.T) {
 		{[]interface{}{0.0, 1, 0.1, 2}, 2},
 	}
 	fc := funcs[ast.Case]
-	for _, tt := range tbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg...)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg...)))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
+	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestIf(t *testing.T) {
-	ctx := createContext(t)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestIf(c *C) {
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -91,23 +87,22 @@ func TestIf(t *testing.T) {
 	}
 
 	fc := funcs[ast.If]
-	for _, tt := range tbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
+	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	require.Error(t, err)
-	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
-	require.Error(t, err)
+	c.Assert(err, NotNil)
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, 2)))
+	c.Assert(err, NotNil)
 }
 
-func TestIfNull(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	tbl := []struct {
 		arg1     interface{}
 		arg2     interface{}
@@ -128,25 +123,25 @@ func TestIfNull(t *testing.T) {
 		{errors.New(""), nil, "", true, true},
 	}
 
-	for _, tt := range tbl {
-		f, err := newFunctionForTest(ctx, ast.Ifnull, primitiveValsToConstants(ctx, []interface{}{tt.arg1, tt.arg2})...)
-		require.NoError(t, err)
+	for _, t := range tbl {
+		f, err := newFunctionForTest(s.ctx, ast.Ifnull, s.primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if tt.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if tt.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, tt.expected, d.GetValue())
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
 			}
 		}
 	}
 
-	_, err := funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 
-	_, err = funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero()})
-	require.Error(t, err)
+	_, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, NotNil)
 }

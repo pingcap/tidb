@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,11 +21,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 // AppendDuration appends a duration value into this Column.
-// Fsp is ignored.
 func (c *Column) AppendDuration(dur types.Duration) {
 	c.AppendInt64(int64(dur.Duration))
 }
@@ -46,7 +45,7 @@ func (c *Column) appendNameValue(name string, val uint64) {
 }
 
 // AppendJSON appends a BinaryJSON value into this Column.
-func (c *Column) AppendJSON(j types.BinaryJSON) {
+func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
@@ -61,62 +60,25 @@ func (c *Column) AppendSet(set types.Set) {
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
 	length     int
-	nullBitmap []byte  // bit 0 is null, 1 is not null
-	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
+	nullBitmap []byte // bit 0 is null, 1 is not null
+	offsets    []int64
 	data       []byte
 	elemBuf    []byte
-
-	avoidReusing bool // avoid reusing the Column by allocator
 }
 
-// ColumnAllocator defines an allocator for Column.
-type ColumnAllocator interface {
-	NewColumn(ft *types.FieldType, count int) *Column
+// NewColumn creates a new column with the specific length and capacity.
+func NewColumn(ft *types.FieldType, cap int) *Column {
+	return newColumn(getFixedLen(ft), cap)
 }
 
-// DefaultColumnAllocator is the default implementation of ColumnAllocator.
-type DefaultColumnAllocator struct{}
-
-// NewColumn implements the ColumnAllocator interface.
-func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, capacity int) *Column {
-	return newColumn(getFixedLen(ft), capacity)
-}
-
-// NewColumn creates a new column with the specific type and capacity.
-func NewColumn(ft *types.FieldType, capacity int) *Column {
-	return newColumn(getFixedLen(ft), capacity)
-}
-
-func newColumn(ts, capacity int) *Column {
+func newColumn(typeSize, cap int) *Column {
 	var col *Column
-	if ts == varElemLen {
-		col = newVarLenColumn(capacity)
+	if typeSize == varElemLen {
+		col = newVarLenColumn(cap, nil)
 	} else {
-		col = newFixedLenColumn(ts, capacity)
+		col = newFixedLenColumn(typeSize, cap)
 	}
 	return col
-}
-
-// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, capacity int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, capacity*elemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
-	}
-}
-
-// newVarLenColumn creates a variable length Column with initial data capacity.
-func newVarLenColumn(capacity int) *Column {
-	estimatedElemLen := 8
-	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
-	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
-
-	return &Column{
-		offsets:    make([]int64, 1, capacity+1),
-		data:       make([]byte, 0, capacity*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
-	}
 }
 
 func (c *Column) typeSize() int {
@@ -332,23 +294,12 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal, lastByte byte
+		var nullVal byte
 		if !isNull {
 			nullVal = 0xFF
 		}
-
-		// Fill the null bitmap
 		for i := range c.nullBitmap {
 			c.nullBitmap[i] = nullVal
-		}
-		// Revise the last byte if necessary, when it's not divided by 8.
-		if x := (n % 8); x != 0 {
-			if !isNull {
-				lastByte = byte((1 << x) - 1)
-				if len(c.nullBitmap) > 0 {
-					c.nullBitmap[len(c.nullBitmap)-1] = lastByte
-				}
-			}
 		}
 	}
 
@@ -578,9 +529,9 @@ func (c *Column) GetString(rowID int) string {
 }
 
 // GetJSON returns the JSON in the specific row.
-func (c *Column) GetJSON(rowID int) types.BinaryJSON {
+func (c *Column) GetJSON(rowID int) json.BinaryJSON {
 	start := c.offsets[rowID]
-	return types.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
+	return json.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
 }
 
 // GetBytes returns the byte slice in the specific row.
@@ -608,7 +559,7 @@ func (c *Column) GetTime(rowID int) types.Time {
 // GetDuration returns the Duration in the specific row.
 func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
+	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {

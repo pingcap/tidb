@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,6 +35,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -44,57 +45,49 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
 const (
-	pDBName             = "db"
-	pHexKey             = "hexKey"
-	pIndexName          = "index"
-	pHandle             = "handle"
-	pRegionID           = "regionID"
-	pStartTS            = "startTS"
-	pTableName          = "table"
-	pTableID            = "tableID"
-	pColumnID           = "colID"
-	pColumnTp           = "colTp"
-	pColumnFlag         = "colFlag"
-	pColumnLen          = "colLen"
-	pRowBin             = "rowBin"
-	pSnapshot           = "snapshot"
-	pFileName           = "filename"
-	pDumpPartitionStats = "dumpPartitionStats"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pTableID    = "tableID"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
 const (
 	qTableID   = "table_id"
 	qLimit     = "limit"
-	qJobID     = "start_job_id"
 	qOperation = "op"
 	qSeconds   = "seconds"
 )
@@ -336,11 +329,6 @@ type schemaHandler struct {
 	*tikvHandlerTool
 }
 
-// schemaStorageHandler is the handler for list database or table schemas.
-type schemaStorageHandler struct {
-	*tikvHandlerTool
-}
-
 type dbTableHandler struct {
 	*tikvHandlerTool
 }
@@ -392,9 +380,6 @@ type ddlHookHandler struct {
 // valueHandler is the handler for get value.
 type valueHandler struct {
 }
-
-// labelHandler is the handler for set labels
-type labelHandler struct{}
 
 const (
 	opTableRegions     = "regions"
@@ -469,7 +454,12 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Construct field type.
 	defaultDecimal := 6
-	ft := types.NewFieldTypeBuilder().SetType(byte(colTp)).SetFlag(uint(colFlag)).SetFlen(int(colLen)).SetDecimal(defaultDecimal).BuildP()
+	ft := &types.FieldType{
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
+	}
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
@@ -617,6 +607,7 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 			Peers:       region.Meta.Peers,
 			RegionEpoch: region.Meta.RegionEpoch,
 		}
+
 	}
 	return regions, nil
 }
@@ -659,9 +650,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -681,9 +672,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -706,87 +697,27 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(false)
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
 			case "1":
-				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
 			}
 		}
-		if deadlockHistoryCapacity := req.Form.Get("deadlock_history_capacity"); deadlockHistoryCapacity != "" {
+		if deadlockHistoryCapacity := req.Form.Get("tidb_deadlock_history_capacity"); deadlockHistoryCapacity != "" {
 			capacity, err := strconv.Atoi(deadlockHistoryCapacity)
 			if err != nil {
 				writeError(w, errors.New("illegal argument"))
 				return
 			} else if capacity < 0 || capacity > 10000 {
-				writeError(w, errors.New("deadlock_history_capacity out of range, should be in 0 to 10000"))
+				writeError(w, errors.New("tidb_deadlock_history_capacity out of range, should be in 0 to 10000"))
 				return
 			}
 			cfg := config.GetGlobalConfig()
 			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
 			config.StoreGlobalConfig(cfg)
 			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
-		}
-		if deadlockCollectRetryable := req.Form.Get("deadlock_history_collect_retryable"); deadlockCollectRetryable != "" {
-			collectRetryable, err := strconv.ParseBool(deadlockCollectRetryable)
-			if err != nil {
-				writeError(w, errors.New("illegal argument"))
-				return
-			}
-			cfg := config.GetGlobalConfig()
-			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
-			config.StoreGlobalConfig(cfg)
-		}
-		if mutationChecker := req.Form.Get("tidb_enable_mutation_checker"); mutationChecker != "" {
-			s, err := session.CreateSession(h.Store)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			defer s.Close()
-
-			switch mutationChecker {
-			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
-			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
-			default:
-				writeError(w, errors.New("illegal argument"))
-				return
-			}
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-		}
-		if transactionSummaryCapacity := req.Form.Get("transaction_summary_capacity"); transactionSummaryCapacity != "" {
-			capacity, err := strconv.Atoi(transactionSummaryCapacity)
-			if err != nil {
-				writeError(w, errors.New("illegal argument"))
-				return
-			} else if capacity < 0 || capacity > 5000 {
-				writeError(w, errors.New("transaction_summary_capacity out of range, should be in 0 to 5000"))
-				return
-			}
-			cfg := config.GetGlobalConfig()
-			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
-			config.StoreGlobalConfig(cfg)
-			txninfo.Recorder.ResizeSummaries(uint(capacity))
-		}
-		if transactionIDDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIDDigestMinDuration != "" {
-			duration, err := strconv.Atoi(transactionIDDigestMinDuration)
-			if err != nil {
-				writeError(w, errors.New("illegal argument"))
-				return
-			} else if duration < 0 || duration > 2147483647 {
-				writeError(w, errors.New("transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"))
-				return
-			}
-			cfg := config.GetGlobalConfig()
-			cfg.TrxSummary.TransactionIDDigestMinDuration = uint(duration)
-			config.StoreGlobalConfig(cfg)
-			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
@@ -800,22 +731,14 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		err := binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		binloginfo.DisableSkipBinlogFlag()
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		err = binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		binloginfo.DisableSkipBinlogFlag()
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -929,7 +852,8 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	fn := func(jobs []*model.Job) (bool, error) {
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-	err = ddl.IterAllDDLJobs(s, txn, fn)
+
+	err = admin.IterAllDDLJobs(txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
@@ -980,12 +904,9 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		var tableInfo model.TableInfo
-		tableInfo.ID = status.ID
-		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
+		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
-		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
 	}
 	if err != nil {
 		writeError(w, err)
@@ -995,172 +916,6 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
 		zap.Error(err))
-}
-
-type schemaTableStorage struct {
-	TableSchema   string `json:"table_schema"`
-	TableName     string `json:"table_name"`
-	TableRows     int64  `json:"table_rows"`
-	AvgRowLength  int64  `json:"avg_row_length"`
-	DataLength    int64  `json:"data_length"`
-	MaxDataLength int64  `json:"max_data_length"`
-	IndexLength   int64  `json:"index_length"`
-	DataFree      int64  `json:"data_free"`
-}
-
-func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, table *model.CIStr) (messages []*schemaTableStorage, err error) {
-	var s session.Session
-	if s, err = session.CreateSession(h.Store); err != nil {
-		return
-	}
-	defer s.Close()
-
-	sctx := s.(sessionctx.Context)
-	condition := make([]string, 0)
-	params := make([]interface{}, 0)
-
-	if schema != nil {
-		condition = append(condition, `TABLE_SCHEMA = %?`)
-		params = append(params, schema.O)
-	}
-	if table != nil {
-		condition = append(condition, `TABLE_NAME = %?`)
-		params = append(params, table.O)
-	}
-
-	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
-	if len(condition) > 0 {
-		//nolint: gosec
-		sql += ` WHERE ` + strings.Join(condition, ` AND `)
-	}
-	var results sqlexec.RecordSet
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
-		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
-	} else if results != nil {
-		messages = make([]*schemaTableStorage, 0)
-		defer terror.Call(results.Close)
-		for {
-			req := results.NewChunk(nil)
-			if err = results.Next(ctx, req); err != nil {
-				break
-			}
-
-			if req.NumRows() == 0 {
-				break
-			}
-
-			for i := 0; i < req.NumRows(); i++ {
-				messages = append(messages, &schemaTableStorage{
-					TableSchema:   req.GetRow(i).GetString(0),
-					TableName:     req.GetRow(i).GetString(1),
-					TableRows:     req.GetRow(i).GetInt64(2),
-					AvgRowLength:  req.GetRow(i).GetInt64(3),
-					DataLength:    req.GetRow(i).GetInt64(4),
-					MaxDataLength: req.GetRow(i).GetInt64(5),
-					IndexLength:   req.GetRow(i).GetInt64(6),
-					DataFree:      req.GetRow(i).GetInt64(7),
-				})
-			}
-		}
-	}
-	return
-}
-
-// ServeHTTP handles request of list a database or table's schemas.
-func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	schema, err := h.schema()
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	// parse params
-	params := mux.Vars(req)
-
-	var (
-		dbName    *model.CIStr
-		tableName *model.CIStr
-		isSingle  bool
-	)
-
-	if reqDbName, ok := params[pDBName]; ok {
-		cDBName := model.NewCIStr(reqDbName)
-		// all table schemas in a specified database
-		schemaInfo, exists := schema.SchemaByName(cDBName)
-		if !exists {
-			writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(reqDbName))
-			return
-		}
-		dbName = &schemaInfo.Name
-
-		if reqTableName, ok := params[pTableName]; ok {
-			// table schema of a specified table name
-			cTableName := model.NewCIStr(reqTableName)
-			data, e := schema.TableByName(cDBName, cTableName)
-			if e != nil {
-				writeError(w, e)
-				return
-			}
-			tableName = &data.Meta().Name
-			isSingle = true
-		}
-	}
-
-	if results, e := getSchemaTablesStorageInfo(&h, dbName, tableName); e != nil {
-		writeError(w, e)
-	} else {
-		if isSingle {
-			writeData(w, results[0])
-		} else {
-			writeData(w, results)
-		}
-	}
-}
-
-// writeDBTablesData writes all the table data in a database. The format is the marshal result of []*model.TableInfo, you can
-// unmarshal it to []*model.TableInfo. In this function, we manually construct the marshal result so that the memory
-// can be deallocated quickly.
-// For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
-// Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
-// Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
-func writeDBTablesData(w http.ResponseWriter, tbs []table.Table) {
-	if len(tbs) == 0 {
-		writeData(w, []*model.TableInfo{})
-		return
-	}
-	w.Header().Set(headerContentType, contentTypeJSON)
-	// We assume that marshal is always OK.
-	w.WriteHeader(http.StatusOK)
-	_, err := w.Write(hack.Slice("[\n"))
-	if err != nil {
-		terror.Log(errors.Trace(err))
-		return
-	}
-	init := false
-	for _, tb := range tbs {
-		if init {
-			_, err = w.Write(hack.Slice(",\n"))
-			if err != nil {
-				terror.Log(errors.Trace(err))
-				return
-			}
-		} else {
-			init = true
-		}
-		js, err := json.MarshalIndent(tb.Meta(), "", " ")
-		if err != nil {
-			terror.Log(errors.Trace(err))
-			return
-		}
-		_, err = w.Write(js)
-		if err != nil {
-			terror.Log(errors.Trace(err))
-			return
-		}
-	}
-	_, err = w.Write(hack.Slice("\n]"))
-	terror.Log(errors.Trace(err))
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -1190,7 +945,11 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			tbs := schema.SchemaTables(cDBName)
-			writeDBTablesData(w, tbs)
+			tbsInfo := make([]*model.TableInfo, len(tbs))
+			for i := range tbsInfo {
+				tbsInfo[i] = tbs[i].Meta()
+			}
+			writeData(w, tbsInfo)
 			return
 		}
 		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
@@ -1212,13 +971,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		// The tid maybe a partition ID of the partition-table.
-		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
-		if tbl == nil {
-			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
-		}
-		writeData(w, tbl.Meta())
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
@@ -1273,51 +1026,50 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var jobID, limitID int
-	var err error
-	if jobValue := req.FormValue(qJobID); len(jobValue) > 0 {
-		jobID, err = strconv.Atoi(jobValue)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if jobID < 1 {
-			writeError(w, errors.New("ddl history start_job_id must be greater than 0"))
-			return
-		}
-	}
-	if limitValue := req.FormValue(qLimit); len(limitValue) > 0 {
-		limitID, err = strconv.Atoi(limitValue)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if limitID < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 0"))
-			return
-		}
-	}
+	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
+		lid, err := strconv.Atoi(limitID)
 
-	jobs, err := h.getHistoryDDL(jobID, limitID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+
+		if lid < 1 {
+			writeError(w, errors.New("ddl history limit must be greater than 1"))
+			return
+		}
+
+		jobs, err := h.getAllHistoryDDL()
+		if err != nil {
+			writeError(w, errors.New("ddl history not found"))
+			return
+		}
+
+		jobsLen := len(jobs)
+		if jobsLen > lid {
+			start := jobsLen - lid
+			jobs = jobs[start:]
+		}
+
+		writeData(w, jobs)
+		return
+	}
+	jobs, err := h.getAllHistoryDDL()
 	if err != nil {
-		writeError(w, err)
+		writeError(w, errors.New("ddl history not found"))
 		return
 	}
 	writeData(w, jobs)
 }
 
-func (h ddlHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job, err error) {
+func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	if jobID == 0 && limit == 0 {
-		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
-	} else {
-		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
-	}
+	jobs, err := txnMeta.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1341,7 +1093,7 @@ func (h ddlResignOwnerHandler) resignDDLOwner() error {
 // ServeHTTP handles request of resigning ddl owner.
 func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method"))
+		writeError(w, errors.Errorf("This api only support POST method."))
 		return
 	}
 
@@ -1589,7 +1341,7 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWriter) {
 	tableID := tbl.Meta().ID
 	var stats helper.PDRegionStats
-	err := h.GetPDRegionStats(tableID, &stats, false)
+	err := h.GetPDRegionStats(tableID, &stats)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1844,13 +1596,13 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
 	for _, col := range tb.Meta().Columns {
-		colMap[col.ID] = &(col.FieldType)
+		colMap[col.ID] = &col.FieldType
 	}
 
 	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
-		datas := make(map[string]map[string]string)
+		datas := make(map[string][]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
 				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb.Meta())
@@ -1879,16 +1631,16 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	return result, nil
 }
 
-func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
-	record := make(map[string]string, len(tb.Columns))
+	var record []map[string]string
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
 			data := "nil"
 			if !c.IsNull() {
 				data, err = c.ToString()
 			}
-			record[col.Name.O] = data
+			record = append(record, map[string]string{col.Name.O: data})
 		}
 	}
 	return record, err
@@ -2106,9 +1858,9 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Supported operations:
-//   - resolvelock?safepoint={uint64}&physical={bool}:
-//   - safepoint: resolve all locks whose timestamp is less than the safepoint.
-//   - physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+//   * resolvelock?safepoint={uint64}&physical={bool}:
+//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
+//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
 	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
 		writeError(w, errors.New("GC is running"))
@@ -2156,7 +1908,7 @@ func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 // ServeHTTP handles request of resigning ddl owner.
 func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method"))
+		writeError(w, errors.Errorf("This api only support POST method."))
 		return
 	}
 
@@ -2178,33 +1930,4 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
-}
-
-// ServeHTTP handles request of set server labels.
-func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method"))
-		return
-	}
-
-	labels := make(map[string]string)
-	err := json.NewDecoder(req.Body).Decode(&labels)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	if len(labels) > 0 {
-		cfg := *config.GetGlobalConfig()
-		if cfg.Labels == nil {
-			cfg.Labels = make(map[string]string, len(labels))
-		}
-		for k, v := range labels {
-			cfg.Labels[k] = v
-		}
-		config.StoreGlobalConfig(&cfg)
-		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
-	}
-
-	writeData(w, config.GetGlobalConfig().Labels)
 }

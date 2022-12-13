@@ -8,35 +8,34 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package profile
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.opencensus.io/stats/view"
 )
 
-func TestProfileToDatum(t *testing.T) {
-	defer view.Stop()
+type profileInternalSuite struct{}
+
+var _ = Suite(&profileInternalSuite{})
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 	file, err := os.Open("testdata/test.pprof")
-	require.NoError(t, err)
-	defer func() {
-		err := file.Close()
-		require.NoError(t, err)
-	}()
+	c.Assert(err, IsNil)
+	defer file.Close()
 
 	data, err := (&Collector{}).ProfileReaderToDatums(file)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	datums := [][]types.Datum{
 		types.MakeDatums(`root`, "100%", "100%", 0, 0, `root`),
@@ -83,22 +82,22 @@ func TestProfileToDatum(t *testing.T) {
 	}
 
 	for i, row := range data {
-		comment := fmt.Sprintf("row %2d", i)
+		comment := Commentf("row %2d", i)
 		rowStr, err := types.DatumsToString(row, true)
-		assert.Nil(t, err, comment)
+		c.Assert(err, IsNil, comment)
 		expectStr, err := types.DatumsToString(datums[i], true)
-		assert.Nil(t, err, comment)
+		c.Assert(err, IsNil, comment)
 
-		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
+		comment = Commentf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
 		for j, r := range row {
-			v, err := r.Compare(nil, &datums[i][j], collate.GetBinaryCollator())
+			v, err := r.CompareDatum(nil, &datums[i][j])
 			if v != 0 || err != nil {
 				equal = false
 				break
 			}
 		}
-		assert.Nil(t, err, comment)
-		assert.True(t, equal, comment)
+		c.Assert(err, IsNil, comment)
+		c.Assert(equal, IsTrue, comment)
 	}
 }

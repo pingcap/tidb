@@ -8,24 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package collate
 
 import (
-	"fmt"
+	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -34,8 +32,7 @@ var (
 	newCollationEnabled int32
 
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
-	binCollatorInstance              = &binCollator{}
-	binCollatorInstanceSliceWithLen1 = []Collator{binCollatorInstance}
+	binCollatorInstance = &binCollator{}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
@@ -67,8 +64,6 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
-	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
-	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
@@ -81,10 +76,14 @@ type WildcardPattern interface {
 	DoMatch(str string) bool
 }
 
+// EnableNewCollations enables the new collation.
+func EnableNewCollations() {
+	SetNewCollationEnabledForTest(true)
+}
+
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
-	switchDefaultCollation(flag)
 	if flag {
 		atomic.StoreInt32(&newCollationEnabled, 1)
 		return
@@ -101,7 +100,7 @@ func NewCollationEnabled() bool {
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
-	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
@@ -117,10 +116,11 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id >= 0 {
+		if id < 0 {
+			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		} else {
 			return -id
 		}
-		logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -128,10 +128,11 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id <= 0 {
+		if id > 0 {
+			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		} else {
 			return -id
 		}
-		logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -141,34 +142,15 @@ func GetCollator(collate string) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
-			if collate != "" {
-				logutil.BgLogger().Warn(
-					"Unable to get collator by name, use binCollator instead.",
-					zap.String("name", collate),
-					zap.Stack("stack"))
-			}
-			return newCollatorMap[charset.CollationUTF8MB4]
+			logutil.BgLogger().Warn(
+				"Unable to get collator by name, use binCollator instead.",
+				zap.String("name", collate),
+				zap.Stack("stack"))
+			return newCollatorMap["utf8mb4_bin"]
 		}
 		return ctor
 	}
 	return binCollatorInstance
-}
-
-// GetBinaryCollator gets the binary collator, it is often used when we want to apply binary compare.
-func GetBinaryCollator() Collator {
-	return binCollatorInstance
-}
-
-// GetBinaryCollatorSlice gets the binary collator slice with len n.
-func GetBinaryCollatorSlice(n int) []Collator {
-	if n == 1 {
-		return binCollatorInstanceSliceWithLen1
-	}
-	collators := make([]Collator, n)
-	for i := 0; i < n; i++ {
-		collators[i] = binCollatorInstance
-	}
-	return collators
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
@@ -218,7 +200,7 @@ func SubstituteMissingCollationToDefault(co string) string {
 	if _, err = GetCollationByName(co); err == nil {
 		return co
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("The collation %s specified on connection is not supported when new collation is enabled, switch to the default collation: %s", co, mysql.DefaultCollationName))
+	logutil.BgLogger().Warn(err.Error())
 	var coll *charset.Collation
 	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
 		logutil.BgLogger().Warn(err.Error())
@@ -255,8 +237,8 @@ func GetSupportedCollations() []*charset.Collation {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}
 		}
-		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) bool {
-			return i.Name < j.Name
+		sort.Slice(newSupportedCollations, func(i int, j int) bool {
+			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
 		})
 		return newSupportedCollations
 	}
@@ -286,16 +268,15 @@ func sign(i int) int {
 
 // decode rune by hand
 func decodeRune(s string, si int) (r rune, newIndex int) {
-	b := s[si]
-	switch runeLen(b) {
-	case 1:
+	switch b := s[si]; {
+	case b < 0x80:
 		r = rune(b)
 		newIndex = si + 1
-	case 2:
+	case b < 0xE0:
 		r = rune(b&b2Mask)<<6 |
 			rune(s[1+si]&mbMask)
 		newIndex = si + 2
-	case 3:
+	case b < 0xF0:
 		r = rune(b&b3Mask)<<12 |
 			rune(s[si+1]&mbMask)<<6 |
 			rune(s[si+2]&mbMask)
@@ -310,66 +291,19 @@ func decodeRune(s string, si int) (r rune, newIndex int) {
 	return
 }
 
-func runeLen(b byte) int {
-	if b < 0x80 {
-		return 1
-	} else if b < 0xE0 {
-		return 2
-	} else if b < 0xF0 {
-		return 3
-	}
-	return 4
-}
-
-// IsCICollation returns if the collation is case-insensitive
+// IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
-		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci"
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
-// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
-// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
-// and both xx_bin and collationBin are satisfied.
+// IsBinCollation returns if the collation is 'xx_bin'
 func IsBinCollation(collate string) bool {
-	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
-		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin
-}
-
-// CollationToProto converts collation from string to int32(used by protocol).
-func CollationToProto(c string) int32 {
-	if coll, err := charset.GetCollationByName(c); err == nil {
-		return RewriteNewCollationIDIfNeeded(int32(coll.ID))
-	}
-	v := RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
-	logutil.BgLogger().Warn(
-		"Unable to get collation ID by name, use ID of the default collation instead",
-		zap.String("name", c),
-		zap.Int32("default collation ID", v),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return v
-}
-
-// ProtoToCollation converts collation from int32(used by protocol) to string.
-func ProtoToCollation(c int32) string {
-	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
-	if err == nil {
-		return coll.Name
-	}
-	logutil.BgLogger().Warn(
-		"Unable to get collation name from ID, use name of the default collation instead",
-		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return mysql.DefaultCollationName
+	return collate == "ascii_bin" || collate == "latin1_bin" ||
+		collate == "utf8_bin" || collate == "utf8mb4_bin"
 }
 
 func init() {
-	// Set it to 1 in init() to make sure the tests enable the new collation, it would be covered in bootstrap().
-	newCollationEnabled = 1
-
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
@@ -393,8 +327,4 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCSCollator{}
-	newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
-	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
-	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
-	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,8 +17,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestBasicCtxTypeToString(t *testing.T) {
 	tests := []struct {
@@ -32,6 +35,8 @@ func TestBasicCtxTypeToString(t *testing.T) {
 		{basicCtxType(9), "unknown"},
 	}
 	for _, tt := range tests {
-		require.Equal(t, tt.key.String(), tt.v)
+		if tt.key.String() != tt.v {
+			t.Fatalf("want %s but got %s", tt.v, tt.key.String())
+		}
 	}
 }

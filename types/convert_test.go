@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,16 +17,22 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/testleak"
 )
+
+var _ = Suite(&testTypeConvertSuite{})
+
+type testTypeConvertSuite struct {
+}
 
 type invalidMockType struct {
 }
@@ -44,326 +49,329 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	return ret.GetValue(), nil
 }
 
-func TestConvertType(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertType(c *C) {
+	defer testleak.AfterTest(c)()
 	ft := NewFieldType(mysql.TypeBlob)
-	ft.SetFlen(4)
-	ft.SetCharset("utf8")
+	ft.Flen = 4
+	ft.Charset = "utf8"
 	v, err := Convert("123456", ft)
-	require.True(t, ErrDataTooLong.Equal(err))
-	require.Equal(t, "1234", v)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(v, Equals, "1234")
 	ft = NewFieldType(mysql.TypeString)
-	ft.SetFlen(4)
-	ft.SetCharset(charset.CharsetBin)
+	ft.Flen = 4
+	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	require.True(t, ErrDataTooLong.Equal(err))
-	require.Equal(t, []byte("1234"), v)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(v, DeepEquals, []byte("1234"))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(111.114, ft)
-	require.NoError(t, err)
-	require.Equal(t, float32(111.11), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float32(111.11))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(999.999, ft)
-	require.Error(t, err)
-	require.Equal(t, float32(999.99), v)
+	c.Assert(err, NotNil)
+	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(-999.999, ft)
-	require.Error(t, err)
-	require.Equal(t, float32(-999.99), v)
+	c.Assert(err, NotNil)
+	c.Assert(v, Equals, float32(-999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(1111.11, ft)
-	require.Error(t, err)
-	require.Equal(t, float32(999.99), v)
+	c.Assert(err, NotNil)
+	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(999.916, ft)
-	require.NoError(t, err)
-	require.Equal(t, float32(999.92), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float32(999.92))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(999.914, ft)
-	require.NoError(t, err)
-	require.Equal(t, float32(999.91), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float32(999.91))
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
-	require.NoError(t, err)
-	require.Equal(t, float32(999.92), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float32(999.92))
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
 	_, err = Convert(&invalidMockType{}, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Nil
 	ft = NewFieldType(mysql.TypeBlob)
 	v, err = Convert(nil, ft)
-	require.NoError(t, err)
-	require.Nil(t, v)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
 
 	// TypeDouble
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.SetFlen(5)
-	ft.SetDecimal(2)
+	ft.Flen = 5
+	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
-	require.NoError(t, err)
-	require.Equal(t, float64(999.92), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float64(999.92))
 
 	// For TypeString
 	ft = NewFieldType(mysql.TypeString)
-	ft.SetFlen(3)
+	ft.Flen = 3
 	v, err = Convert("12345", ft)
-	require.True(t, ErrDataTooLong.Equal(err))
-	require.Equal(t, "123", v)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(v, Equals, "123")
 	ft = NewFieldType(mysql.TypeString)
-	ft.SetFlen(3)
-	ft.SetCharset(charset.CharsetBin)
+	ft.Flen = 3
+	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	require.True(t, ErrDataTooLong.Equal(err))
-	require.Equal(t, []byte("123"), v)
+	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(v, DeepEquals, []byte("123"))
 
 	// For TypeDuration
 	ft = NewFieldType(mysql.TypeDuration)
-	ft.SetDecimal(3)
+	ft.Decimal = 3
 	v, err = Convert("10:11:12.123456", ft)
-	require.NoError(t, err)
-	require.Equal(t, "10:11:12.123", v.(Duration).String())
-	ft.SetDecimal(1)
+	c.Assert(err, IsNil)
+	c.Assert(v.(Duration).String(), Equals, "10:11:12.123")
+	ft.Decimal = 1
 	vv, err := Convert(v, ft)
-	require.NoError(t, err)
-	require.Equal(t, "10:11:12.1", vv.(Duration).String())
+	c.Assert(err, IsNil)
+	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
-	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
-	require.NoError(t, err)
+	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
+	c.Assert(err, IsNil)
 	v, err = Convert(vd, ft)
-	require.NoError(t, err)
-	require.Equal(t, "10:11:11.1", v.(Duration).String())
+	c.Assert(err, IsNil)
+	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
 	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
-	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
-	require.NoError(t, err)
+	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
+	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
-	require.NoError(t, err)
-	require.Equal(t, "10:11:11.1", v.(Duration).String())
+	c.Assert(err, IsNil)
+	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
-	ft.SetDecimal(3)
+	ft.Decimal = 3
 	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	require.NoError(t, err)
-	require.Equal(t, "2010-10-10 10:11:11.123", v.(Time).String())
-	ft.SetDecimal(1)
+	c.Assert(err, IsNil)
+	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
+	ft.Decimal = 1
 	vv, err = Convert(v, ft)
-	require.NoError(t, err)
-	require.Equal(t, "2010-10-10 10:11:11.1", vv.(Time).String())
+	c.Assert(err, IsNil)
+	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
 
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert("100", ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(100))
 	// issue 4287.
 	v, err = Convert(math.Pow(2, 63)-1, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(math.MaxInt64), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(math.MaxInt64))
 	ft = NewFieldType(mysql.TypeLonglong)
-	ft.AddFlag(mysql.UnsignedFlag)
+	ft.Flag |= mysql.UnsignedFlag
 	v, err = Convert("100", ft)
-	require.NoError(t, err)
-	require.Equal(t, uint64(100), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(100))
 	// issue 3470
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert(Duration{Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond, Fsp: 3}, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(130000), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(130000))
 	v, err = Convert(NewTime(FromDate(2017, 1, 1, 12, 59, 59, 555000), mysql.TypeDatetime, MaxFsp), ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(20170101130000), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(20170101130000))
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.SetFlen(24) // 3 bytes.
+	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
-	require.NoError(t, err)
-	require.Equal(t, NewBinaryLiteralFromUint(3223600, 3), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(3223600, 3))
 
 	v, err = Convert(NewBinaryLiteralFromUint(100, -1), ft)
-	require.NoError(t, err)
-	require.Equal(t, NewBinaryLiteralFromUint(100, 3), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(100, 3))
 
-	ft.SetFlen(1)
+	ft.Flen = 1
 	v, err = Convert(1, ft)
-	require.NoError(t, err)
-	require.Equal(t, NewBinaryLiteralFromUint(1, 1), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(1, 1))
 
 	_, err = Convert(2, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
-	ft.SetFlen(0)
+	ft.Flen = 0
 	_, err = Convert(2, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
-	ft.SetFlen(8)
-	ft.SetDecimal(4)
+	ft.Flen = 8
+	ft.Decimal = 4
 	v, err = Convert(3.1416, ft)
-	require.NoErrorf(t, err, errors.ErrorStack(err))
-	require.Equal(t, "3.1416", v.(*MyDecimal).String())
+	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
+	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	require.NoError(t, err)
-	require.Equal(t, "3.1416", v.(*MyDecimal).String())
+	c.Assert(err, IsNil)
+	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
-	require.Equal(t, "9999.9999", v.(*MyDecimal).String())
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
 	v, err = Convert("-10000", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
-	require.Equal(t, "-9999.9999", v.(*MyDecimal).String())
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 	v, err = Convert("1,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
-	require.Equal(t, "1.0000", v.(*MyDecimal).String())
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
 	v, err = Convert("1,999,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
-	require.Equal(t, "1.0000", v.(*MyDecimal).String())
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
 	v, err = Convert("199.00 ", ft)
-	require.NoError(t, err)
-	require.Equal(t, "199.0000", v.(*MyDecimal).String())
+	c.Assert(err, IsNil)
+	c.Assert(v.(*MyDecimal).String(), Equals, "199.0000")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	_, err = d.ToDecimal(sc)
-	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
-	require.NoError(t, err)
-	require.Equal(t, "0", v.(*MyDecimal).String())
+	c.Assert(err, IsNil)
+	c.Assert(v.(*MyDecimal).String(), Equals, "0")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
 	v, err = Convert("2015", ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(2015), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(2015, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(2015), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(2015))
 	_, err = Convert(1800, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	dt, err := ParseDate(nil, "2015-11-11")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(2015), v)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(0), v)
-	bj1, err := ParseBinaryJSONFromString("99")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(time.Now().Year()))
+	bj1, err := json.ParseBinaryFromString("99")
+	c.Assert(err, IsNil)
 	v, err = Convert(bj1, ft)
-	require.NoError(t, err)
-	require.Equal(t, int64(1999), v)
-	bj2, err := ParseBinaryJSONFromString("-1")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1999))
+	bj2, err := json.ParseBinaryFromString("-1")
+	c.Assert(err, IsNil)
 	_, err = Convert(bj2, ft)
-	require.Error(t, err)
-	bj3, err := ParseBinaryJSONFromString("{\"key\": 99}")
-	require.NoError(t, err)
+	c.Assert(err, NotNil)
+	bj3, err := json.ParseBinaryFromString("{\"key\": 99}")
+	c.Assert(err, IsNil)
 	_, err = Convert(bj3, ft)
-	require.Error(t, err)
-	bj4, err := ParseBinaryJSONFromString("[99, 0, 1]")
-	require.NoError(t, err)
+	c.Assert(err, NotNil)
+	bj4, err := json.ParseBinaryFromString("[99, 0, 1]")
+	c.Assert(err, IsNil)
 	_, err = Convert(bj4, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
-	ft.SetElems([]string{"a", "b", "c"})
+	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
-	require.NoError(t, err)
-	require.Equal(t, Enum{Name: "a", Value: 1}, v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, Enum{Name: "a", Value: 1})
 	v, err = Convert(2, ft)
-	require.NoError(t, err)
-	require.Equal(t, Enum{Name: "b", Value: 2}, v)
+	c.Log(errors.ErrorStack(err))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
 	_, err = Convert("d", ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	v, err = Convert(4, ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
-	require.Equal(t, Enum{}, v)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
+	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
-	ft.SetElems([]string{"a", "b", "c"})
+	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
-	require.NoError(t, err)
-	require.Equal(t, Set{Name: "a", Value: 1}, v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, Set{Name: "a", Value: 1})
 	v, err = Convert(2, ft)
-	require.NoError(t, err)
-	require.Equal(t, Set{Name: "b", Value: 2}, v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, Set{Name: "b", Value: 2})
 	v, err = Convert(3, ft)
-	require.NoError(t, err)
-	require.Equal(t, Set{Name: "a,b", Value: 3}, v)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, Set{Name: "a,b", Value: 3})
 	_, err = Convert("d", ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	_, err = Convert(9, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func testToString(t *testing.T, val interface{}, expect string) {
+func testToString(c *C, val interface{}, expect string) {
 	b, err := ToString(val)
-	require.NoError(t, err)
-	require.Equal(t, expect, b)
+	c.Assert(err, IsNil)
+	c.Assert(b, Equals, expect)
 }
 
-func TestConvertToString(t *testing.T) {
-	testToString(t, "0", "0")
-	testToString(t, true, "1")
-	testToString(t, "false", "false")
-	testToString(t, 0, "0")
-	testToString(t, int64(0), "0")
-	testToString(t, uint64(0), "0")
-	testToString(t, float32(1.6), "1.6")
-	testToString(t, float64(-0.6), "-0.6")
-	testToString(t, []byte{1}, "\x01")
-	testToString(t, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
-	testToString(t, NewBinaryLiteralFromUint(0x41, -1), "A")
-	testToString(t, Enum{Name: "a", Value: 1}, "a")
-	testToString(t, Set{Name: "a", Value: 1}, "a")
+func (s *testTypeConvertSuite) TestConvertToString(c *C) {
+	defer testleak.AfterTest(c)()
+	testToString(c, "0", "0")
+	testToString(c, true, "1")
+	testToString(c, "false", "false")
+	testToString(c, 0, "0")
+	testToString(c, int64(0), "0")
+	testToString(c, uint64(0), "0")
+	testToString(c, float32(1.6), "1.6")
+	testToString(c, float64(-0.6), "-0.6")
+	testToString(c, []byte{1}, "\x01")
+	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
+	testToString(c, NewBinaryLiteralFromUint(0x41, -1), "A")
+	testToString(c, Enum{Name: "a", Value: 1}, "a")
+	testToString(c, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
+	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
 		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
-	require.NoError(t, err)
-	testToString(t, t1, "2011-11-10 11:11:11.999999")
+	c.Assert(err, IsNil)
+	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
-	require.NoError(t, err)
-	testToString(t, td, "11:11:11.999999")
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	c.Assert(err, IsNil)
+	testToString(c, td, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
-	ft.SetFlen(10)
-	ft.SetDecimal(5)
+	ft.Flen = 10
+	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	require.NoError(t, err)
-	testToString(t, v, "3.14159")
+	c.Assert(err, IsNil)
+	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// test truncate
 	tests := []struct {
@@ -382,181 +390,105 @@ func TestConvertToString(t *testing.T) {
 	}
 	for _, tt := range tests {
 		ft = NewFieldType(mysql.TypeVarchar)
-		ft.SetFlen(tt.flen)
-		ft.SetCharset(tt.charset)
+		ft.Flen = tt.flen
+		ft.Charset = tt.charset
 		inputDatum := NewStringDatum(tt.input)
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
-			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
+			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 		} else {
-			require.NoError(t, err)
+			c.Assert(err, IsNil)
 		}
-		require.Equal(t, tt.output, outputDatum.GetString())
+		c.Assert(outputDatum.GetString(), Equals, tt.output)
 	}
 }
 
-func TestConvertToStringWithCheck(t *testing.T) {
-	nhUTF8 := "你好"
-	nhUTF8MB4 := "你好👋"
-	nhUTF8Invalid := "你好" + string([]byte{0x81})
-	type SC = *stmtctx.StatementContext
-	tests := []struct {
-		input      string
-		outputChs  string
-		setStmtCtx func(ctx *stmtctx.StatementContext)
-		output     string
-	}{
-		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8},
-		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8MB4},
-		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8},
-		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8MB4},
-		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8Invalid},
-		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, ""},
-		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = false }, ""},
-		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = true }, nhUTF8Invalid},
-		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = false }, ""},
-		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = true }, nhUTF8MB4},
-	}
-	for _, tt := range tests {
-		ft := NewFieldType(mysql.TypeVarchar)
-		ft.SetFlen(255)
-		ft.SetCharset(tt.outputChs)
-		inputDatum := NewStringDatum(tt.input)
-		sc := new(stmtctx.StatementContext)
-		tt.setStmtCtx(sc)
-		outputDatum, err := inputDatum.ConvertTo(sc, ft)
-		if len(tt.output) == 0 {
-			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
-		} else {
-			require.NoError(t, err, tt)
-			require.Equal(t, tt.output, outputDatum.GetString(), tt)
-		}
-	}
-}
-
-func TestConvertToBinaryString(t *testing.T) {
-	nhUTF8 := "你好"
-	nhGBK := string([]byte{0xC4, 0xE3, 0xBA, 0xC3}) // "你好" in GBK
-	nhUTF8Invalid := "你好" + string([]byte{0x81})
-	nhGBKInvalid := nhGBK + string([]byte{0x81})
-	tests := []struct {
-		input         string
-		inputCollate  string
-		outputCharset string
-		output        string
-	}{
-		{nhUTF8, "utf8_bin", "utf8", nhUTF8},
-		{nhUTF8, "utf8mb4_bin", "utf8mb4", nhUTF8},
-		{nhUTF8, "gbk_bin", "utf8", nhUTF8},
-		{nhUTF8, "gbk_bin", "gbk", nhUTF8},
-		{nhUTF8, "binary", "utf8mb4", nhUTF8},
-		{nhGBK, "binary", "gbk", nhUTF8},
-		{nhUTF8, "utf8_bin", "binary", nhUTF8},
-		{nhUTF8, "gbk_bin", "binary", nhGBK},
-		{nhUTF8Invalid, "utf8_bin", "utf8", ""},
-		{nhGBKInvalid, "gbk_bin", "gbk", ""},
-	}
-	for _, tt := range tests {
-		ft := NewFieldType(mysql.TypeVarchar)
-		ft.SetFlen(255)
-		ft.SetCharset(tt.outputCharset)
-		inputDatum := NewCollationStringDatum(tt.input, tt.inputCollate)
-		sc := new(stmtctx.StatementContext)
-		outputDatum, err := inputDatum.ConvertTo(sc, ft)
-		if len(tt.output) == 0 {
-			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
-		} else {
-			require.NoError(t, err, tt)
-			require.Equal(t, tt.output, outputDatum.GetString(), tt)
-		}
-	}
-}
-
-func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
+func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
-		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
-		require.NoError(t, err)
-		require.Equal(t, expect, val)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
 	}
 }
 
-func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
+func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
-		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
-		require.NoError(t, err)
-		require.Equal(t, expect, val)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
 	}
 }
 
-func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
+func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
-		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
-		require.NoError(t, err)
-		require.Equal(t, expect, val)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, expect)
 	}
 }
 
-func TestStrToNum(t *testing.T) {
-	testStrToInt(t, "0", 0, true, nil)
-	testStrToInt(t, "-1", -1, true, nil)
-	testStrToInt(t, "100", 100, true, nil)
-	testStrToInt(t, "65.0", 65, false, nil)
-	testStrToInt(t, "65.0", 65, true, nil)
-	testStrToInt(t, "", 0, false, nil)
-	testStrToInt(t, "", 0, true, ErrTruncatedWrongVal)
-	testStrToInt(t, "xx", 0, true, ErrTruncatedWrongVal)
-	testStrToInt(t, "xx", 0, false, nil)
-	testStrToInt(t, "11xx", 11, true, ErrTruncatedWrongVal)
-	testStrToInt(t, "11xx", 11, false, nil)
-	testStrToInt(t, "xx11", 0, false, nil)
+func (s *testTypeConvertSuite) TestStrToNum(c *C) {
+	defer testleak.AfterTest(c)()
+	testStrToInt(c, "0", 0, true, nil)
+	testStrToInt(c, "-1", -1, true, nil)
+	testStrToInt(c, "100", 100, true, nil)
+	testStrToInt(c, "65.0", 65, false, nil)
+	testStrToInt(c, "65.0", 65, true, nil)
+	testStrToInt(c, "", 0, false, nil)
+	testStrToInt(c, "", 0, true, ErrTruncatedWrongVal)
+	testStrToInt(c, "xx", 0, true, ErrTruncatedWrongVal)
+	testStrToInt(c, "xx", 0, false, nil)
+	testStrToInt(c, "11xx", 11, true, ErrTruncatedWrongVal)
+	testStrToInt(c, "11xx", 11, false, nil)
+	testStrToInt(c, "xx11", 0, false, nil)
 
-	testStrToUint(t, "0", 0, true, nil)
-	testStrToUint(t, "", 0, false, nil)
-	testStrToUint(t, "", 0, false, nil)
-	testStrToUint(t, "-1", 0xffffffffffffffff, false, ErrOverflow)
-	testStrToUint(t, "100", 100, true, nil)
-	testStrToUint(t, "+100", 100, true, nil)
-	testStrToUint(t, "65.0", 65, true, nil)
-	testStrToUint(t, "xx", 0, true, ErrTruncatedWrongVal)
-	testStrToUint(t, "11xx", 11, true, ErrTruncatedWrongVal)
-	testStrToUint(t, "xx11", 0, true, ErrTruncatedWrongVal)
+	testStrToUint(c, "0", 0, true, nil)
+	testStrToUint(c, "", 0, false, nil)
+	testStrToUint(c, "", 0, false, nil)
+	testStrToUint(c, "-1", 0xffffffffffffffff, false, ErrOverflow)
+	testStrToUint(c, "100", 100, true, nil)
+	testStrToUint(c, "+100", 100, true, nil)
+	testStrToUint(c, "65.0", 65, true, nil)
+	testStrToUint(c, "xx", 0, true, ErrTruncatedWrongVal)
+	testStrToUint(c, "11xx", 11, true, ErrTruncatedWrongVal)
+	testStrToUint(c, "xx11", 0, true, ErrTruncatedWrongVal)
 
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
-	testStrToFloat(t, "", 0, true, ErrTruncatedWrongVal)
-	testStrToFloat(t, "-1", -1.0, true, nil)
-	testStrToFloat(t, "1.11", 1.11, true, nil)
-	testStrToFloat(t, "1.11.00", 1.11, false, nil)
-	testStrToFloat(t, "1.11.00", 1.11, true, ErrTruncatedWrongVal)
-	testStrToFloat(t, "xx", 0.0, false, nil)
-	testStrToFloat(t, "0x00", 0.0, false, nil)
-	testStrToFloat(t, "11.xx", 11.0, false, nil)
-	testStrToFloat(t, "11.xx", 11.0, true, ErrTruncatedWrongVal)
-	testStrToFloat(t, "xx.11", 0.0, false, nil)
+	testStrToFloat(c, "", 0, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "-1", -1.0, true, nil)
+	testStrToFloat(c, "1.11", 1.11, true, nil)
+	testStrToFloat(c, "1.11.00", 1.11, false, nil)
+	testStrToFloat(c, "1.11.00", 1.11, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "xx", 0.0, false, nil)
+	testStrToFloat(c, "0x00", 0.0, false, nil)
+	testStrToFloat(c, "11.xx", 11.0, false, nil)
+	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "xx.11", 0.0, false, nil)
 
 	// for issue #5111
-	testStrToFloat(t, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
-	testStrToFloat(t, "1e649", math.MaxFloat64, false, nil)
-	testStrToFloat(t, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
-	testStrToFloat(t, "-1e649", -math.MaxFloat64, false, nil)
+	testStrToFloat(c, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
 
 	// for issue #10806, #11179
-	testSelectUpdateDeleteEmptyStringError(t)
+	testSelectUpdateDeleteEmptyStringError(c)
 }
 
-func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
+func testSelectUpdateDeleteEmptyStringError(c *C) {
 	testCases := []struct {
 		inSelect bool
 		inDelete bool
@@ -574,280 +506,280 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 		expect := 0
 
 		val, err := StrToInt(sc, str, false)
-		require.NoError(t, err)
-		require.Equal(t, int64(expect), val)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, int64(expect))
 
 		val1, err := StrToUint(sc, str, false)
-		require.NoError(t, err)
-		require.Equal(t, uint64(expect), val1)
+		c.Assert(err, IsNil)
+		c.Assert(val1, Equals, uint64(expect))
 
 		val2, err := StrToFloat(sc, str, false)
-		require.NoError(t, err)
-		require.Equal(t, float64(expect), val2)
+		c.Assert(err, IsNil)
+		c.Assert(val2, Equals, float64(expect))
 	}
 }
 
-func TestFieldTypeToStr(t *testing.T) {
+func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
+	defer testleak.AfterTest(c)()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
-	require.Equal(t, TypeStr(mysql.TypeUnspecified), v)
+	c.Assert(v, Equals, TypeStr(mysql.TypeUnspecified))
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
-	require.Equal(t, "blob", v)
+	c.Assert(v, Equals, "blob")
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
-	require.Equal(t, "binary", v)
+	c.Assert(v, Equals, "binary")
 }
 
-func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
-		ft.AddFlag(mysql.UnsignedFlag)
+		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
-	require.NoErrorf(t, err, "%v", ft)
+	c.Assert(err, IsNil, Commentf("%v", ft))
 	if casted.IsNull() {
-		require.Equal(t, "<nil>", expected)
+		c.Assert(expected, Equals, "<nil>")
 	} else {
 		str, err := casted.ToString()
-		require.NoError(t, err)
-		require.Equal(t, expected, str)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, expected)
 	}
 }
 
-func unsignedAccept(t *testing.T, tp byte, value interface{}, expected string) {
-	accept(t, tp, value, true, expected)
+func unsignedAccept(c *C, tp byte, value interface{}, expected string) {
+	accept(c, tp, value, true, expected)
 }
 
-func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
-	accept(t, tp, value, false, expected)
+func signedAccept(c *C, tp byte, value interface{}, expected string) {
+	accept(c, tp, value, false, expected)
 }
 
-func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
-		ft.AddFlag(mysql.UnsignedFlag)
+		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
 	casted, err := d.ConvertTo(sc, ft)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	if casted.IsNull() {
-		require.Equal(t, "<nil>", expected)
+		c.Assert(expected, Equals, "<nil>")
 	} else {
 		str, err := casted.ToString()
-		require.NoError(t, err)
-		require.Equal(t, expected, str)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, expected)
 	}
 }
 
-func unsignedDeny(t *testing.T, tp byte, value interface{}, expected string) {
-	deny(t, tp, value, true, expected)
+func unsignedDeny(c *C, tp byte, value interface{}, expected string) {
+	deny(c, tp, value, true, expected)
 }
 
-func signedDeny(t *testing.T, tp byte, value interface{}, expected string) {
-	deny(t, tp, value, false, expected)
+func signedDeny(c *C, tp byte, value interface{}, expected string) {
+	deny(c, tp, value, false, expected)
 }
 
 func strvalue(v interface{}) string {
 	return fmt.Sprintf("%v", v)
 }
 
-func TestConvert(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
 	// integer ranges
-	signedDeny(t, mysql.TypeTiny, -129, "-128")
-	signedAccept(t, mysql.TypeTiny, -128, "-128")
-	signedAccept(t, mysql.TypeTiny, 127, "127")
-	signedDeny(t, mysql.TypeTiny, 128, "127")
-	signedAccept(t, mysql.TypeTiny, NewBinaryLiteralFromUint(127, -1), "127")
-	signedDeny(t, mysql.TypeTiny, NewBinaryLiteralFromUint(128, -1), "127")
-	unsignedDeny(t, mysql.TypeTiny, -1, "255")
-	unsignedAccept(t, mysql.TypeTiny, 0, "0")
-	unsignedAccept(t, mysql.TypeTiny, 255, "255")
-	unsignedDeny(t, mysql.TypeTiny, 256, "255")
-	unsignedAccept(t, mysql.TypeTiny, NewBinaryLiteralFromUint(0, -1), "0")
-	unsignedAccept(t, mysql.TypeTiny, NewBinaryLiteralFromUint(255, -1), "255")
-	unsignedDeny(t, mysql.TypeTiny, NewBinaryLiteralFromUint(256, -1), "255")
+	signedDeny(c, mysql.TypeTiny, -129, "-128")
+	signedAccept(c, mysql.TypeTiny, -128, "-128")
+	signedAccept(c, mysql.TypeTiny, 127, "127")
+	signedDeny(c, mysql.TypeTiny, 128, "127")
+	signedAccept(c, mysql.TypeTiny, NewBinaryLiteralFromUint(127, -1), "127")
+	signedDeny(c, mysql.TypeTiny, NewBinaryLiteralFromUint(128, -1), "127")
+	unsignedDeny(c, mysql.TypeTiny, -1, "255")
+	unsignedAccept(c, mysql.TypeTiny, 0, "0")
+	unsignedAccept(c, mysql.TypeTiny, 255, "255")
+	unsignedDeny(c, mysql.TypeTiny, 256, "255")
+	unsignedAccept(c, mysql.TypeTiny, NewBinaryLiteralFromUint(0, -1), "0")
+	unsignedAccept(c, mysql.TypeTiny, NewBinaryLiteralFromUint(255, -1), "255")
+	unsignedDeny(c, mysql.TypeTiny, NewBinaryLiteralFromUint(256, -1), "255")
 
-	signedDeny(t, mysql.TypeShort, int64(math.MinInt16)-1, strvalue(int64(math.MinInt16)))
-	signedAccept(t, mysql.TypeShort, int64(math.MinInt16), strvalue(int64(math.MinInt16)))
-	signedAccept(t, mysql.TypeShort, int64(math.MaxInt16), strvalue(int64(math.MaxInt16)))
-	signedDeny(t, mysql.TypeShort, int64(math.MaxInt16)+1, strvalue(int64(math.MaxInt16)))
-	signedAccept(t, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16, -1), strvalue(int64(math.MaxInt16)))
-	signedDeny(t, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16+1, -1), strvalue(int64(math.MaxInt16)))
-	unsignedDeny(t, mysql.TypeShort, -1, "65535")
-	unsignedAccept(t, mysql.TypeShort, 0, "0")
-	unsignedAccept(t, mysql.TypeShort, uint64(math.MaxUint16), strvalue(uint64(math.MaxUint16)))
-	unsignedDeny(t, mysql.TypeShort, uint64(math.MaxUint16)+1, strvalue(uint64(math.MaxUint16)))
-	unsignedAccept(t, mysql.TypeShort, NewBinaryLiteralFromUint(0, -1), "0")
-	unsignedAccept(t, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxUint16, -1), strvalue(uint64(math.MaxUint16)))
-	unsignedDeny(t, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxUint16+1, -1), strvalue(uint64(math.MaxUint16)))
+	signedDeny(c, mysql.TypeShort, int64(math.MinInt16)-1, strvalue(int64(math.MinInt16)))
+	signedAccept(c, mysql.TypeShort, int64(math.MinInt16), strvalue(int64(math.MinInt16)))
+	signedAccept(c, mysql.TypeShort, int64(math.MaxInt16), strvalue(int64(math.MaxInt16)))
+	signedDeny(c, mysql.TypeShort, int64(math.MaxInt16)+1, strvalue(int64(math.MaxInt16)))
+	signedAccept(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16, -1), strvalue(int64(math.MaxInt16)))
+	signedDeny(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16+1, -1), strvalue(int64(math.MaxInt16)))
+	unsignedDeny(c, mysql.TypeShort, -1, "65535")
+	unsignedAccept(c, mysql.TypeShort, 0, "0")
+	unsignedAccept(c, mysql.TypeShort, uint64(math.MaxUint16), strvalue(uint64(math.MaxUint16)))
+	unsignedDeny(c, mysql.TypeShort, uint64(math.MaxUint16)+1, strvalue(uint64(math.MaxUint16)))
+	unsignedAccept(c, mysql.TypeShort, NewBinaryLiteralFromUint(0, -1), "0")
+	unsignedAccept(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxUint16, -1), strvalue(uint64(math.MaxUint16)))
+	unsignedDeny(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxUint16+1, -1), strvalue(uint64(math.MaxUint16)))
 
-	signedDeny(t, mysql.TypeInt24, -1<<23-1, strvalue(-1<<23))
-	signedAccept(t, mysql.TypeInt24, -1<<23, strvalue(-1<<23))
-	signedAccept(t, mysql.TypeInt24, 1<<23-1, strvalue(1<<23-1))
-	signedDeny(t, mysql.TypeInt24, 1<<23, strvalue(1<<23-1))
-	signedAccept(t, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23-1, -1), strvalue(1<<23-1))
-	signedDeny(t, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23, -1), strvalue(1<<23-1))
-	unsignedDeny(t, mysql.TypeInt24, -1, "16777215")
-	unsignedAccept(t, mysql.TypeInt24, 0, "0")
-	unsignedAccept(t, mysql.TypeInt24, 1<<24-1, strvalue(1<<24-1))
-	unsignedDeny(t, mysql.TypeInt24, 1<<24, strvalue(1<<24-1))
-	unsignedAccept(t, mysql.TypeInt24, NewBinaryLiteralFromUint(0, -1), "0")
-	unsignedAccept(t, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<24-1, -1), strvalue(1<<24-1))
-	unsignedDeny(t, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<24, -1), strvalue(1<<24-1))
+	signedDeny(c, mysql.TypeInt24, -1<<23-1, strvalue(-1<<23))
+	signedAccept(c, mysql.TypeInt24, -1<<23, strvalue(-1<<23))
+	signedAccept(c, mysql.TypeInt24, 1<<23-1, strvalue(1<<23-1))
+	signedDeny(c, mysql.TypeInt24, 1<<23, strvalue(1<<23-1))
+	signedAccept(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23-1, -1), strvalue(1<<23-1))
+	signedDeny(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23, -1), strvalue(1<<23-1))
+	unsignedDeny(c, mysql.TypeInt24, -1, "16777215")
+	unsignedAccept(c, mysql.TypeInt24, 0, "0")
+	unsignedAccept(c, mysql.TypeInt24, 1<<24-1, strvalue(1<<24-1))
+	unsignedDeny(c, mysql.TypeInt24, 1<<24, strvalue(1<<24-1))
+	unsignedAccept(c, mysql.TypeInt24, NewBinaryLiteralFromUint(0, -1), "0")
+	unsignedAccept(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<24-1, -1), strvalue(1<<24-1))
+	unsignedDeny(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<24, -1), strvalue(1<<24-1))
 
-	signedDeny(t, mysql.TypeLong, int64(math.MinInt32)-1, strvalue(int64(math.MinInt32)))
-	signedAccept(t, mysql.TypeLong, int64(math.MinInt32), strvalue(int64(math.MinInt32)))
-	signedAccept(t, mysql.TypeLong, int64(math.MaxInt32), strvalue(int64(math.MaxInt32)))
-	signedDeny(t, mysql.TypeLong, uint64(math.MaxUint64), strvalue(uint64(math.MaxInt32)))
-	signedDeny(t, mysql.TypeLong, int64(math.MaxInt32)+1, strvalue(int64(math.MaxInt32)))
-	signedDeny(t, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
-	signedAccept(t, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32, -1), strvalue(int64(math.MaxInt32)))
-	signedDeny(t, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(int64(math.MaxInt32)))
-	signedDeny(t, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32)))
-	unsignedDeny(t, mysql.TypeLong, -1, "4294967295")
-	unsignedAccept(t, mysql.TypeLong, 0, "0")
-	unsignedAccept(t, mysql.TypeLong, uint64(math.MaxUint32), strvalue(uint64(math.MaxUint32)))
-	unsignedDeny(t, mysql.TypeLong, uint64(math.MaxUint32)+1, strvalue(uint64(math.MaxUint32)))
-	unsignedAccept(t, mysql.TypeLong, NewBinaryLiteralFromUint(0, -1), "0")
-	unsignedAccept(t, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint32, -1), strvalue(uint64(math.MaxUint32)))
-	unsignedDeny(t, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint32+1, -1), strvalue(uint64(math.MaxUint32)))
+	signedDeny(c, mysql.TypeLong, int64(math.MinInt32)-1, strvalue(int64(math.MinInt32)))
+	signedAccept(c, mysql.TypeLong, int64(math.MinInt32), strvalue(int64(math.MinInt32)))
+	signedAccept(c, mysql.TypeLong, int64(math.MaxInt32), strvalue(int64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, uint64(math.MaxUint64), strvalue(uint64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, int64(math.MaxInt32)+1, strvalue(int64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
+	signedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32, -1), strvalue(int64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(int64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32)))
+	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
+	unsignedAccept(c, mysql.TypeLong, 0, "0")
+	unsignedAccept(c, mysql.TypeLong, uint64(math.MaxUint32), strvalue(uint64(math.MaxUint32)))
+	unsignedDeny(c, mysql.TypeLong, uint64(math.MaxUint32)+1, strvalue(uint64(math.MaxUint32)))
+	unsignedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(0, -1), "0")
+	unsignedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint32, -1), strvalue(uint64(math.MaxUint32)))
+	unsignedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint32+1, -1), strvalue(uint64(math.MaxUint32)))
 
-	signedDeny(t, mysql.TypeLonglong, math.MinInt64*1.1, strvalue(int64(math.MinInt64)))
-	signedAccept(t, mysql.TypeLonglong, int64(math.MinInt64), strvalue(int64(math.MinInt64)))
-	signedAccept(t, mysql.TypeLonglong, int64(math.MaxInt64), strvalue(int64(math.MaxInt64)))
-	signedDeny(t, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
-	signedAccept(t, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64, -1), strvalue(int64(math.MaxInt64)))
-	signedDeny(t, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MaxInt64)))
-	unsignedAccept(t, mysql.TypeLonglong, -1, "18446744073709551615")
-	unsignedAccept(t, mysql.TypeLonglong, 0, "0")
-	unsignedAccept(t, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
-	unsignedDeny(t, mysql.TypeLonglong, math.MaxUint64*1.1, strvalue(uint64(math.MaxUint64)))
-	unsignedAccept(t, mysql.TypeLonglong, NewBinaryLiteralFromUint(0, -1), "0")
-	unsignedAccept(t, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(uint64(math.MaxUint64)))
+	signedDeny(c, mysql.TypeLonglong, math.MinInt64*1.1, strvalue(int64(math.MinInt64)))
+	signedAccept(c, mysql.TypeLonglong, int64(math.MinInt64), strvalue(int64(math.MinInt64)))
+	signedAccept(c, mysql.TypeLonglong, int64(math.MaxInt64), strvalue(int64(math.MaxInt64)))
+	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
+	signedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64, -1), strvalue(int64(math.MaxInt64)))
+	signedDeny(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MaxInt64)))
+	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
+	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
+	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
+	unsignedDeny(c, mysql.TypeLonglong, math.MaxUint64*1.1, strvalue(uint64(math.MaxUint64)))
+	unsignedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(0, -1), "0")
+	unsignedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(uint64(math.MaxUint64)))
 
 	// integer from string
-	signedAccept(t, mysql.TypeLong, "	  234  ", "234")
-	signedAccept(t, mysql.TypeLong, " 2.35e3  ", "2350")
-	signedAccept(t, mysql.TypeLong, " 2.e3  ", "2000")
-	signedAccept(t, mysql.TypeLong, " -2.e3  ", "-2000")
-	signedAccept(t, mysql.TypeLong, " 2e2  ", "200")
-	signedAccept(t, mysql.TypeLong, " 0.002e3  ", "2")
-	signedAccept(t, mysql.TypeLong, " .002e3  ", "2")
-	signedAccept(t, mysql.TypeLong, " 20e-2  ", "0")
-	signedAccept(t, mysql.TypeLong, " -20e-2  ", "0")
-	signedAccept(t, mysql.TypeLong, " +2.51 ", "3")
-	signedAccept(t, mysql.TypeLong, " -9999.5 ", "-10000")
-	signedAccept(t, mysql.TypeLong, " 999.4", "999")
-	signedAccept(t, mysql.TypeLong, " -3.58", "-4")
-	signedDeny(t, mysql.TypeLong, " 1a ", "1")
-	signedDeny(t, mysql.TypeLong, " +1+ ", "1")
+	signedAccept(c, mysql.TypeLong, "	  234  ", "234")
+	signedAccept(c, mysql.TypeLong, " 2.35e3  ", "2350")
+	signedAccept(c, mysql.TypeLong, " 2.e3  ", "2000")
+	signedAccept(c, mysql.TypeLong, " -2.e3  ", "-2000")
+	signedAccept(c, mysql.TypeLong, " 2e2  ", "200")
+	signedAccept(c, mysql.TypeLong, " 0.002e3  ", "2")
+	signedAccept(c, mysql.TypeLong, " .002e3  ", "2")
+	signedAccept(c, mysql.TypeLong, " 20e-2  ", "0")
+	signedAccept(c, mysql.TypeLong, " -20e-2  ", "0")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
+	signedAccept(c, mysql.TypeLong, " -9999.5 ", "-10000")
+	signedAccept(c, mysql.TypeLong, " 999.4", "999")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
+	signedDeny(c, mysql.TypeLong, " 1a ", "1")
+	signedDeny(c, mysql.TypeLong, " +1+ ", "1")
 
 	// integer from float
-	signedAccept(t, mysql.TypeLong, 234.5456, "235")
-	signedAccept(t, mysql.TypeLong, -23.45, "-23")
-	unsignedAccept(t, mysql.TypeLonglong, 234.5456, "235")
-	unsignedDeny(t, mysql.TypeLonglong, -23.45, "18446744073709551593")
+	signedAccept(c, mysql.TypeLong, 234.5456, "235")
+	signedAccept(c, mysql.TypeLong, -23.45, "-23")
+	unsignedAccept(c, mysql.TypeLonglong, 234.5456, "235")
+	unsignedDeny(c, mysql.TypeLonglong, -23.45, "18446744073709551593")
 
 	// float from string
-	signedAccept(t, mysql.TypeFloat, "23.523", "23.523")
-	signedAccept(t, mysql.TypeFloat, int64(123), "123")
-	signedAccept(t, mysql.TypeFloat, uint64(123), "123")
-	signedAccept(t, mysql.TypeFloat, 123, "123")
-	signedAccept(t, mysql.TypeFloat, float32(123), "123")
-	signedAccept(t, mysql.TypeFloat, float64(123), "123")
-	signedAccept(t, mysql.TypeDouble, " -23.54", "-23.54")
-	signedDeny(t, mysql.TypeDouble, "-23.54a", "-23.54")
-	signedDeny(t, mysql.TypeDouble, "-23.54e2e", "-2354")
-	signedDeny(t, mysql.TypeDouble, "+.e", "0")
-	signedAccept(t, mysql.TypeDouble, "1e+1", "10")
+	signedAccept(c, mysql.TypeFloat, "23.523", "23.523")
+	signedAccept(c, mysql.TypeFloat, int64(123), "123")
+	signedAccept(c, mysql.TypeFloat, uint64(123), "123")
+	signedAccept(c, mysql.TypeFloat, 123, "123")
+	signedAccept(c, mysql.TypeFloat, float32(123), "123")
+	signedAccept(c, mysql.TypeFloat, float64(123), "123")
+	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
+	signedDeny(c, mysql.TypeDouble, "-23.54a", "-23.54")
+	signedDeny(c, mysql.TypeDouble, "-23.54e2e", "-2354")
+	signedDeny(c, mysql.TypeDouble, "+.e", "0")
+	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedDeny(t, mysql.TypeYear, 123, "1901")
-	signedDeny(t, mysql.TypeYear, 3000, "2155")
-	signedAccept(t, mysql.TypeYear, "2000", "2000")
-	signedAccept(t, mysql.TypeYear, "abc", "0")
-	signedAccept(t, mysql.TypeYear, "00abc", "2000")
-	signedAccept(t, mysql.TypeYear, "0019", "2019")
-	signedAccept(t, mysql.TypeYear, 2155, "2155")
-	signedAccept(t, mysql.TypeYear, 2155.123, "2155")
-	signedDeny(t, mysql.TypeYear, 2156, "2155")
-	signedDeny(t, mysql.TypeYear, 123.123, "1901")
-	signedDeny(t, mysql.TypeYear, 1900, "1901")
-	signedAccept(t, mysql.TypeYear, 1901, "1901")
-	signedAccept(t, mysql.TypeYear, 1900.567, "1901")
-	signedDeny(t, mysql.TypeYear, 1900.456, "1901")
-	signedAccept(t, mysql.TypeYear, 0, "0")
-	signedAccept(t, mysql.TypeYear, "0", "2000")
-	signedAccept(t, mysql.TypeYear, "00", "2000")
-	signedAccept(t, mysql.TypeYear, " 0", "2000")
-	signedAccept(t, mysql.TypeYear, " 00", "2000")
-	signedAccept(t, mysql.TypeYear, " 000", "0")
-	signedAccept(t, mysql.TypeYear, " 0000 ", "2000")
-	signedAccept(t, mysql.TypeYear, " 0ab", "0")
-	signedAccept(t, mysql.TypeYear, "00bc", "0")
-	signedAccept(t, mysql.TypeYear, "000a", "0")
-	signedAccept(t, mysql.TypeYear, " 000a ", "2000")
-	signedAccept(t, mysql.TypeYear, 1, "2001")
-	signedAccept(t, mysql.TypeYear, "1", "2001")
-	signedAccept(t, mysql.TypeYear, "01", "2001")
-	signedAccept(t, mysql.TypeYear, 69, "2069")
-	signedAccept(t, mysql.TypeYear, "69", "2069")
-	signedAccept(t, mysql.TypeYear, 70, "1970")
-	signedAccept(t, mysql.TypeYear, "70", "1970")
-	signedAccept(t, mysql.TypeYear, 99, "1999")
-	signedAccept(t, mysql.TypeYear, "99", "1999")
-	signedDeny(t, mysql.TypeYear, 100, "1901")
-	signedDeny(t, mysql.TypeYear, "99999999999999999999999999999999999", "0")
+	signedDeny(c, mysql.TypeYear, 123, "1901")
+	signedDeny(c, mysql.TypeYear, 3000, "2155")
+	signedAccept(c, mysql.TypeYear, "2000", "2000")
+	signedAccept(c, mysql.TypeYear, "abc", "0")
+	signedAccept(c, mysql.TypeYear, "00abc", "2000")
+	signedAccept(c, mysql.TypeYear, "0019", "2019")
+	signedAccept(c, mysql.TypeYear, 2155, "2155")
+	signedAccept(c, mysql.TypeYear, 2155.123, "2155")
+	signedDeny(c, mysql.TypeYear, 2156, "2155")
+	signedDeny(c, mysql.TypeYear, 123.123, "1901")
+	signedDeny(c, mysql.TypeYear, 1900, "1901")
+	signedAccept(c, mysql.TypeYear, 1901, "1901")
+	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
+	signedDeny(c, mysql.TypeYear, 1900.456, "1901")
+	signedAccept(c, mysql.TypeYear, 0, "0")
+	signedAccept(c, mysql.TypeYear, "0", "2000")
+	signedAccept(c, mysql.TypeYear, "00", "2000")
+	signedAccept(c, mysql.TypeYear, " 0", "2000")
+	signedAccept(c, mysql.TypeYear, " 00", "2000")
+	signedAccept(c, mysql.TypeYear, " 000", "0")
+	signedAccept(c, mysql.TypeYear, " 0000 ", "2000")
+	signedAccept(c, mysql.TypeYear, " 0ab", "0")
+	signedAccept(c, mysql.TypeYear, "00bc", "0")
+	signedAccept(c, mysql.TypeYear, "000a", "0")
+	signedAccept(c, mysql.TypeYear, " 000a ", "2000")
+	signedAccept(c, mysql.TypeYear, 1, "2001")
+	signedAccept(c, mysql.TypeYear, "1", "2001")
+	signedAccept(c, mysql.TypeYear, "01", "2001")
+	signedAccept(c, mysql.TypeYear, 69, "2069")
+	signedAccept(c, mysql.TypeYear, "69", "2069")
+	signedAccept(c, mysql.TypeYear, 70, "1970")
+	signedAccept(c, mysql.TypeYear, "70", "1970")
+	signedAccept(c, mysql.TypeYear, 99, "1999")
+	signedAccept(c, mysql.TypeYear, "99", "1999")
+	signedDeny(c, mysql.TypeYear, 100, "1901")
+	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
 	// time from string
-	signedAccept(t, mysql.TypeDate, "2012-08-23", "2012-08-23")
-	signedAccept(t, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
-	signedAccept(t, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
-	signedAccept(t, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
-	signedAccept(t, mysql.TypeDatetime, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
-	signedAccept(t, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
-	signedAccept(t, mysql.TypeTimestamp, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
-	signedAccept(t, mysql.TypeDuration, "10:11:12", "10:11:12")
-	signedAccept(t, mysql.TypeDuration, ZeroDatetime, "00:00:00")
-	signedAccept(t, mysql.TypeDuration, ZeroDuration, "00:00:00")
-	signedAccept(t, mysql.TypeDuration, 0, "00:00:00")
+	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
+	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
+	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeTimestamp, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
+	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
+	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, 0, "00:00:00")
 
-	signedDeny(t, mysql.TypeDate, "2012-08-x", "0000-00-00")
-	signedDeny(t, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
-	signedDeny(t, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
-	signedDeny(t, mysql.TypeDuration, "2012-08-x", "00:20:12")
-	signedDeny(t, mysql.TypeDuration, "0000-00-00", "00:00:00")
-	signedDeny(t, mysql.TypeDuration, "1234abc", "00:12:34")
+	signedDeny(c, mysql.TypeDate, "2012-08-x", "0000-00-00")
+	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
+	signedDeny(c, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
+	signedDeny(c, mysql.TypeDuration, "2012-08-x", "00:00:00")
 
 	// string from string
-	signedAccept(t, mysql.TypeString, "abc", "abc")
+	signedAccept(c, mysql.TypeString, "abc", "abc")
 
 	// string from integer
-	signedAccept(t, mysql.TypeString, 5678, "5678")
-	signedAccept(t, mysql.TypeString, ZeroDuration, "00:00:00")
-	signedAccept(t, mysql.TypeString, ZeroDatetime, "0000-00-00 00:00:00")
-	signedAccept(t, mysql.TypeString, []byte("123"), "123")
+	signedAccept(c, mysql.TypeString, 5678, "5678")
+	signedAccept(c, mysql.TypeString, ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeString, ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeString, []byte("123"), "123")
 
 	// TODO add more tests
-	signedAccept(t, mysql.TypeNewDecimal, 123, "123")
-	signedAccept(t, mysql.TypeNewDecimal, int64(123), "123")
-	signedAccept(t, mysql.TypeNewDecimal, uint64(123), "123")
-	signedAccept(t, mysql.TypeNewDecimal, float32(123), "123")
-	signedAccept(t, mysql.TypeNewDecimal, 123.456, "123.456")
-	signedAccept(t, mysql.TypeNewDecimal, "-123.456", "-123.456")
-	signedAccept(t, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
+	signedAccept(c, mysql.TypeNewDecimal, 123, "123")
+	signedAccept(c, mysql.TypeNewDecimal, int64(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, uint64(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, float32(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, 123.456, "123.456")
+	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
+	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
 	dec := NewDecFromInt(-123)
 	err := dec.Shift(-5)
-	require.NoError(t, err)
-	err = dec.Round(dec, 5, ModeHalfUp)
-	require.NoError(t, err)
-	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
+	c.Assert(err, IsNil)
+	err = dec.Round(dec, 5, ModeHalfEven)
+	c.Assert(err, IsNil)
+	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
-func TestRoundIntStr(t *testing.T) {
+func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
 	cases := []struct {
 		a string
 		b byte
@@ -858,11 +790,11 @@ func TestRoundIntStr(t *testing.T) {
 		{"-999", '5', "-1000"},
 	}
 	for _, cc := range cases {
-		require.Equal(t, cc.c, roundIntStr(cc.b, cc.a))
+		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
 	}
 }
 
-func TestGetValidInt(t *testing.T) {
+func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	tests := []struct {
 		origin  string
 		valid   string
@@ -891,21 +823,21 @@ func TestGetValidInt(t *testing.T) {
 	warningCount := 0
 	for i, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin, false)
-		require.NoError(t, err)
-		require.Equal(t, tt.valid, prefix)
+		c.Assert(err, IsNil)
+		c.Assert(prefix, Equals, tt.valid)
 		if tt.signed {
 			_, err = strconv.ParseInt(prefix, 10, 64)
 		} else {
 			_, err = strconv.ParseUint(prefix, 10, 64)
 		}
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		warnings := sc.GetWarnings()
 		if tt.warning {
-			require.Lenf(t, warnings, warningCount+1, "%d", i)
-			require.True(t, terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal))
-			warningCount++
+			c.Assert(warnings, HasLen, warningCount+1, Commentf("%d", i))
+			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
+			warningCount += 1
 		} else {
-			require.Len(t, warnings, warningCount)
+			c.Assert(warnings, HasLen, warningCount)
 		}
 	}
 
@@ -934,15 +866,15 @@ func TestGetValidInt(t *testing.T) {
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		if tt.warning {
-			require.True(t, terror.ErrorEqual(err, ErrTruncatedWrongVal))
+			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
 		} else {
-			require.NoError(t, err)
+			c.Assert(err, IsNil)
 		}
-		require.Equal(t, tt.valid, prefix)
+		c.Assert(prefix, Equals, tt.valid)
 	}
 }
 
-func TestGetValidFloat(t *testing.T) {
+func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string
 		valid  string
@@ -968,9 +900,9 @@ func TestGetValidFloat(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
-		require.Equal(t, tt.valid, prefix)
+		c.Assert(prefix, Equals, tt.valid)
 		_, err := strconv.ParseFloat(prefix, 64)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}
 
 	tests2 := []struct {
@@ -992,17 +924,17 @@ func TestGetValidFloat(t *testing.T) {
 		{"123.456784e5", "12345678"},
 		{"+999.9999e2", "+100000"},
 	}
-	for _, tt := range tests2 {
-		str, err := floatStrToIntStr(sc, tt.origin, tt.origin)
-		require.NoError(t, err)
-		require.Equalf(t, tt.expected, str, "%v, %v", tt.origin, tt.expected)
+	for _, t := range tests2 {
+		str, err := floatStrToIntStr(sc, t.origin, t.origin)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.expected, Commentf("%v, %v", t.origin, t.expected))
 	}
 }
 
 // TestConvertTime tests time related conversion.
 // time conversion is complicated including Date/Datetime/Time/Timestamp etc,
 // Timestamp may involving timezone.
-func TestConvertTime(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	timezones := []*time.Location{
 		time.UTC,
 		time.FixedZone("", 3*3600),
@@ -1013,11 +945,11 @@ func TestConvertTime(t *testing.T) {
 		sc := &stmtctx.StatementContext{
 			TimeZone: timezone,
 		}
-		testConvertTimeTimeZone(t, sc)
+		testConvertTimeTimeZone(c, sc)
 	}
 }
 
-func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
+func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
@@ -1050,108 +982,87 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 		var d Datum
 		d.SetMysqlTime(test.input)
 		nd, err := d.ConvertTo(sc, test.target)
-		require.NoError(t, err)
-		v := nd.GetMysqlTime()
-		require.Equal(t, test.expect.Type(), v.Type())
-		require.Equal(t, test.expect.CoreTime(), v.CoreTime())
+		c.Assert(err, IsNil)
+		t := nd.GetMysqlTime()
+		c.Assert(t.Type(), Equals, test.expect.Type())
+		c.Assert(t.CoreTime(), Equals, test.expect.CoreTime())
 	}
 }
 
-func TestConvertJSONToInt(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 	var tests = []struct {
-		in  string
-		out int64
-		err bool
+		In  string
+		Out int64
 	}{
-		{in: `{}`, err: true},
-		{in: `[]`, err: true},
-		{in: `3`, out: 3},
-		{in: `-3`, out: -3},
-		{in: `4.5`, out: 4},
-		{in: `true`, out: 1},
-		{in: `false`, out: 0},
-		{in: `null`, err: true},
-		{in: `"hello"`, err: true},
-		{in: `"123hello"`, out: 123, err: true},
-		{in: `"1234"`, out: 1234},
+		{`{}`, 0},
+		{`[]`, 0},
+		{`3`, 3},
+		{`-3`, -3},
+		{`4.5`, 4},
+		{`true`, 1},
+		{`false`, 0},
+		{`null`, 0},
+		{`"hello"`, 0},
+		{`"123hello"`, 123},
+		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := ParseBinaryJSONFromString(tt.in)
-		require.NoError(t, err)
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
 
-		casted, err := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
-		if tt.err {
-			require.Error(t, err, tt)
-		} else {
-			require.NoError(t, err, tt)
-		}
-		require.Equal(t, tt.out, casted)
+		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
+		c.Assert(casted, Equals, tt.Out)
 	}
 }
 
-func TestConvertJSONToFloat(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	var tests = []struct {
-		in  interface{}
-		out float64
-		ty  JSONTypeCode
-		err bool
+		In  interface{}
+		Out float64
+		ty  json.TypeCode
 	}{
-		{in: make(map[string]interface{}), ty: JSONTypeCodeObject, err: true},
-		{in: make([]interface{}, 0), ty: JSONTypeCodeArray, err: true},
-		{in: int64(3), out: 3, ty: JSONTypeCodeInt64},
-		{in: int64(-3), out: -3, ty: JSONTypeCodeInt64},
-		{in: uint64(1 << 63), out: 1 << 63, ty: JSONTypeCodeUint64},
-		{in: float64(4.5), out: 4.5, ty: JSONTypeCodeFloat64},
-		{in: true, out: 1, ty: JSONTypeCodeLiteral},
-		{in: false, out: 0, ty: JSONTypeCodeLiteral},
-		{in: nil, ty: JSONTypeCodeLiteral, err: true},
-		{in: "hello", ty: JSONTypeCodeString, err: true},
-		{in: "123.456hello", out: 123.456, ty: JSONTypeCodeString, err: true},
-		{in: "1234", out: 1234, ty: JSONTypeCodeString},
+		{make(map[string]interface{}), 0, json.TypeCodeObject},
+		{make([]interface{}, 0), 0, json.TypeCodeArray},
+		{int64(3), 3, json.TypeCodeInt64},
+		{int64(-3), -3, json.TypeCodeInt64},
+		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
+		{float64(4.5), 4.5, json.TypeCodeFloat64},
+		{true, 1, json.TypeCodeLiteral},
+		{false, 0, json.TypeCodeLiteral},
+		{nil, 0, json.TypeCodeLiteral},
+		{"hello", 0, json.TypeCodeString},
+		{"123.456hello", 123.456, json.TypeCodeString},
+		{"1234", 1234, json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j := CreateBinaryJSON(tt.in)
-		require.Equal(t, tt.ty, j.TypeCode)
-		casted, err := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
-		if tt.err {
-			require.Error(t, err, tt)
-		} else {
-			require.NoError(t, err, tt)
-		}
-		require.Equal(t, tt.out, casted)
+		j := json.CreateBinary(tt.In)
+		c.Assert(j.TypeCode, Equals, tt.ty)
+		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
+		c.Assert(casted, Equals, tt.Out)
 	}
 }
 
-func TestConvertJSONToDecimal(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
 	var tests = []struct {
-		in  string
-		out *MyDecimal
-		err bool
+		In  string
+		Out *MyDecimal
 	}{
-		{in: `3`, out: NewDecFromStringForTest("3")},
-		{in: `-3`, out: NewDecFromStringForTest("-3")},
-		{in: `4.5`, out: NewDecFromStringForTest("4.5")},
-		{in: `"1234"`, out: NewDecFromStringForTest("1234")},
-		{in: `"1234567890123456789012345678901234567890123456789012345"`, out: NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
-		{in: `true`, out: NewDecFromStringForTest("1")},
-		{in: `false`, out: NewDecFromStringForTest("0")},
-		{in: `null`, out: NewDecFromStringForTest("0"), err: true},
+		{`3`, NewDecFromStringForTest("3")},
+		{`-3`, NewDecFromStringForTest("-3")},
+		{`4.5`, NewDecFromStringForTest("4.5")},
+		{`"1234"`, NewDecFromStringForTest("1234")},
+		{`"1234567890123456789012345678901234567890123456789012345"`, NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
 	}
 	for _, tt := range tests {
-		j, err := ParseBinaryJSONFromString(tt.in)
-		require.NoError(t, err)
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
 		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
-		errMsg := fmt.Sprintf("input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
-		if tt.err {
-			require.Error(t, err, errMsg)
-		} else {
-			require.NoError(t, err, errMsg)
-		}
-		require.Equalf(t, 0, casted.Compare(tt.out), "input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
+		c.Assert(err, IsNil, Commentf("input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j))
+		c.Assert(casted.Compare(tt.Out), Equals, 0, Commentf("input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j))
 	}
 }
 
-func TestNumberToDuration(t *testing.T) {
+func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	var testCases = []struct {
 		number int64
 		fsp    int
@@ -1176,15 +1087,15 @@ func TestNumberToDuration(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		dur, err := NumberToDuration(tc.number, tc.fsp)
+		dur, err := NumberToDuration(tc.number, int8(tc.fsp))
 		if tc.hasErr {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 			continue
 		}
-		require.NoError(t, err)
-		require.Equal(t, tc.hour, dur.Hour())
-		require.Equal(t, tc.minute, dur.Minute())
-		require.Equal(t, tc.second, dur.Second())
+		c.Assert(err, IsNil)
+		c.Assert(dur.Hour(), Equals, tc.hour)
+		c.Assert(dur.Minute(), Equals, tc.minute)
+		c.Assert(dur.Second(), Equals, tc.second)
 	}
 
 	var testCases1 = []struct {
@@ -1197,33 +1108,31 @@ func TestNumberToDuration(t *testing.T) {
 
 	for _, tc := range testCases1 {
 		dur, err := NumberToDuration(tc.number, 0)
-		require.NoError(t, err)
-		require.Equal(t, tc.dur, dur.Duration)
+		c.Assert(err, IsNil)
+		c.Assert(dur.Duration, Equals, tc.dur)
 	}
 }
 
-func TestStrToDuration(t *testing.T) {
+func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
 	sc := new(stmtctx.StatementContext)
 	var tests = []struct {
 		str        string
-		fsp        int
+		fsp        int8
 		isDuration bool
 	}{
 		{"20190412120000", 4, false},
 		{"20190101180000", 6, false},
 		{"20190101180000", 1, false},
 		{"20190101181234", 3, false},
-		{"00:00:00.000000", 6, true},
-		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
 		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
-		require.NoError(t, err)
-		require.Equal(t, tt.isDuration, isDuration)
+		c.Assert(err, IsNil)
+		c.Assert(isDuration, Equals, tt.isDuration)
 	}
 }
 
-func TestConvertScientificNotation(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertScientificNotation(c *C) {
 	cases := []struct {
 		input  string
 		output string
@@ -1250,15 +1159,15 @@ func TestConvertScientificNotation(t *testing.T) {
 	for _, ca := range cases {
 		result, err := convertScientificNotation(ca.input)
 		if !ca.succ {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			require.Equal(t, ca.output, result)
+			c.Assert(err, IsNil)
+			c.Assert(ca.output, Equals, result)
 		}
 	}
 }
 
-func TestConvertDecimalStrToUint(t *testing.T) {
+func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
 	cases := []struct {
 		input  string
 		result uint64
@@ -1282,10 +1191,10 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
 		if !ca.succ {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			require.Equal(t, ca.result, result)
+			c.Assert(err, IsNil)
+			c.Assert(result, Equals, ca.result)
 		}
 	}
 }

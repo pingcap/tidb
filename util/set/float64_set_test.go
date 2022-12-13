@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,12 +16,18 @@ package set
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/pingcap/check"
 )
 
-func TestFloat64Set(t *testing.T) {
-	assert := assert.New(t)
+func TestT(t *testing.T) {
+	check.TestingT(t)
+}
 
+var _ = check.Suite(&float64SetTestSuite{})
+
+type float64SetTestSuite struct{}
+
+func (s *float64SetTestSuite) TestFloat64Set(c *check.C) {
 	set := NewFloat64Set()
 	vals := []float64{1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0}
 	for i := range vals {
@@ -32,12 +37,12 @@ func TestFloat64Set(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(len(vals), set.Count())
+	c.Assert(set.Count(), check.Equals, len(vals))
 
-	assert.Equal(len(vals), len(set))
+	c.Assert(len(set), check.Equals, len(vals))
 	for i := range vals {
-		assert.True(set.Exist(vals[i]))
+		c.Assert(set.Exist(vals[i]), check.IsTrue)
 	}
 
-	assert.False(set.Exist(3))
+	c.Assert(set.Exist(3), check.IsFalse)
 }

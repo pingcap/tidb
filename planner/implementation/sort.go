@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -32,7 +31,7 @@ func NewSortImpl(sort *plannercore.PhysicalSort) *SortImpl {
 }
 
 // CalcCost calculates the cost of the sort Implementation.
-func (impl *SortImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
+func (impl *SortImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	cnt := math.Min(children[0].GetPlan().Stats().RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
 	sort := impl.plan.(*plannercore.PhysicalSort)
 	impl.cost = sort.GetCost(cnt, children[0].GetPlan().Schema()) + children[0].GetCost()
@@ -55,7 +54,7 @@ type NominalSortImpl struct {
 }
 
 // AttachChildren implements Implementation AttachChildren interface.
-func (*NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+func (impl *NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	return children[0]
 }
 

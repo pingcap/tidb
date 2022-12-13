@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // Init initializes LogicalAggregation.
@@ -415,23 +413,13 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	return &p
 }
 
-func (p *PhysicalTableReader) adjustReadReqType(ctx sessionctx.Context) {
-	if p.StoreType == kv.TiFlash {
-		_, ok := p.tablePlan.(*PhysicalExchangeSender)
-		if ok {
-			p.ReadReqType = MPP
-			return
-		}
-		tableScans := p.GetTableScans()
-		// When PhysicalTableReader's store type is tiflash, has table scan
-		// and all table scans contained are not keepOrder, try to use batch cop.
-		if len(tableScans) > 0 {
-			for _, tableScan := range tableScans {
-				if tableScan.KeepOrder {
-					return
-				}
-			}
-
+// Init initializes PhysicalTableReader.
+func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
+	if p.tablePlan != nil {
+		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.schema = p.tablePlan.Schema()
+		if p.StoreType == kv.TiFlash && p.GetTableScan() != nil && !p.GetTableScan().KeepOrder {
 			// When allow batch cop is 1, only agg / topN uses batch cop.
 			// When allow batch cop is 2, every query uses batch cop.
 			switch ctx.GetSessionVars().AllowBatchCop {
@@ -439,29 +427,13 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx sessionctx.Context) {
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
 					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
-						p.ReadReqType = BatchCop
-						return
+						p.BatchCop = true
 					}
 				}
 			case 2:
-				p.ReadReqType = BatchCop
+				p.BatchCop = true
 			}
 		}
-	}
-}
-
-// Init initializes PhysicalTableReader.
-func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
-	p.ReadReqType = Cop
-	if p.tablePlan == nil {
-		return &p
-	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.schema = p.tablePlan.Schema()
-	p.adjustReadReqType(ctx)
-	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
-		setMppOrBatchCopForTableScan(p.tablePlan)
 	}
 	return &p
 }
@@ -471,19 +443,6 @@ func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
-}
-
-// MemoryUsage return the memory usage of PhysicalTableSample
-func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
-	if p.TableSampleInfo != nil {
-		sum += p.TableSampleInfo.MemoryUsage()
-	}
-	return
 }
 
 // Init initializes PhysicalIndexReader.
@@ -507,7 +466,6 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 	p.tp = plancodec.TypeIndexMergeJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
-	p.self = &p
 	return &p
 }
 
@@ -517,7 +475,6 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = plancodec.TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
-	p.self = &p
 	return &p
 }
 
@@ -532,7 +489,7 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 }
 
 // Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
@@ -595,19 +552,5 @@ func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETab
 func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.stats = stats
-	return &p
-}
-
-// Init initializes FKCheck.
-func (p FKCheck) Init(ctx sessionctx.Context) *FKCheck {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
-	p.stats = &property.StatsInfo{}
-	return &p
-}
-
-// Init initializes FKCascade
-func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
-	p.stats = &property.StatsInfo{}
 	return &p
 }

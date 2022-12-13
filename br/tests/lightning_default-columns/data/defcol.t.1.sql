@@ -1,1 +1,0 @@
-INSERT INTO t () VALUES (), (), (), (), (), ();

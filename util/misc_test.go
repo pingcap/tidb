@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,66 +16,72 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
-	"fmt"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/stretchr/testify/assert"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestRunWithRetry(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		cnt := 0
-		err := RunWithRetry(3, 1, func() (bool, error) {
-			cnt++
-			if cnt < 2 {
-				return true, errors.New("err")
-			}
-			return true, nil
-		})
-		assert.Nil(t, err)
-		assert.Equal(t, 2, cnt)
-	})
+var _ = Suite(&testMiscSuite{})
 
-	t.Run("retry exceeds", func(t *testing.T) {
-		cnt := 0
-		err := RunWithRetry(3, 1, func() (bool, error) {
-			cnt++
-			if cnt < 4 {
-				return true, errors.New("err")
-			}
-			return true, nil
-		})
-		assert.NotNil(t, err)
-		assert.Equal(t, 3, cnt)
-	})
-
-	t.Run("failed result", func(t *testing.T) {
-		cnt := 0
-		err := RunWithRetry(3, 1, func() (bool, error) {
-			cnt++
-			if cnt < 2 {
-				return false, errors.New("err")
-			}
-			return true, nil
-		})
-		assert.NotNil(t, err)
-		assert.Equal(t, 1, cnt)
-	})
+type testMiscSuite struct {
 }
 
-func TestX509NameParseMatch(t *testing.T) {
-	assert.Equal(t, "", X509NameOnline(pkix.Name{}))
+func (s *testMiscSuite) SetUpSuite(c *C) {
+}
 
+func (s *testMiscSuite) TearDownSuite(c *C) {
+}
+
+func (s *testMiscSuite) TestRunWithRetry(c *C) {
+	defer testleak.AfterTest(c)()
+	// Run succ.
+	cnt := 0
+	err := RunWithRetry(3, 1, func() (bool, error) {
+		cnt++
+		if cnt < 2 {
+			return true, errors.New("err")
+		}
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Equals, 2)
+
+	// Run failed.
+	cnt = 0
+	err = RunWithRetry(3, 1, func() (bool, error) {
+		cnt++
+		if cnt < 4 {
+			return true, errors.New("err")
+		}
+		return true, nil
+	})
+	c.Assert(err, NotNil)
+	c.Assert(cnt, Equals, 3)
+
+	// Run failed.
+	cnt = 0
+	err = RunWithRetry(3, 1, func() (bool, error) {
+		cnt++
+		if cnt < 2 {
+			return false, errors.New("err")
+		}
+		return true, nil
+	})
+	c.Assert(err, NotNil)
+	c.Assert(cnt, Equals, 1)
+}
+
+func (s *testMiscSuite) TestX509NameParseMatch(c *C) {
 	check := pkix.Name{
 		Names: []pkix.AttributeTypeAndValue{
 			MockPkixAttribute(Country, "SE"),
@@ -88,32 +93,35 @@ func TestX509NameParseMatch(t *testing.T) {
 			MockPkixAttribute(Email, "client@example.com"),
 		},
 	}
-	result := "/C=SE/ST=Stockholm2/L=Stockholm/O=MySQL demo client certificate/OU=testUnit/CN=client/emailAddress=client@example.com"
-	assert.Equal(t, result, X509NameOnline(check))
+	c.Assert(X509NameOnline(check), Equals, "/C=SE/ST=Stockholm2/L=Stockholm/O=MySQL demo client certificate/OU=testUnit/CN=client/emailAddress=client@example.com")
+	check = pkix.Name{}
+	c.Assert(X509NameOnline(check), Equals, "")
 }
 
-func TestBasicFuncWithRecovery(t *testing.T) {
-	var recovery interface{}
+func (s *testMiscSuite) TestBasicFunc(c *C) {
+	// Test for GetStack.
+	b := GetStack()
+	c.Assert(len(b) < 4096, IsTrue)
+
+	// Test for WithRecovery.
+	var recover interface{}
 	WithRecovery(func() {
 		panic("test")
 	}, func(r interface{}) {
-		recovery = r
+		recover = r
 	})
-	assert.Equal(t, "test", recovery)
-}
+	c.Assert(recover, Equals, "test")
 
-func TestBasicFuncSyntaxError(t *testing.T) {
-	assert.Nil(t, SyntaxError(nil))
-	assert.True(t, terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse))
-	assert.True(t, terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax))
-}
+	// Test for SyntaxError.
+	c.Assert(SyntaxError(nil), IsNil)
+	c.Assert(terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse), IsTrue)
+	c.Assert(terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax), IsTrue)
 
-func TestBasicFuncSyntaxWarn(t *testing.T) {
-	assert.Nil(t, SyntaxWarn(nil))
-	assert.True(t, terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse))
-}
+	// Test for SyntaxWarn.
+	c.Assert(SyntaxWarn(nil), IsNil)
+	c.Assert(terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse), IsTrue)
 
-func TestBasicFuncProcessInfo(t *testing.T) {
+	// Test for ProcessInfo.
 	pi := ProcessInfo{
 		ID:      1,
 		User:    "test",
@@ -130,30 +138,29 @@ func TestBasicFuncProcessInfo(t *testing.T) {
 	}
 	row := pi.ToRowForShow(false)
 	row2 := pi.ToRowForShow(true)
-	assert.Equal(t, row2, row)
-	assert.Len(t, row, 8)
-	assert.Equal(t, pi.ID, row[0])
-	assert.Equal(t, pi.User, row[1])
-	assert.Equal(t, pi.Host, row[2])
-	assert.Equal(t, pi.DB, row[3])
-	assert.Equal(t, "Sleep", row[4])
-	assert.Equal(t, uint64(0), row[5])
-	assert.Equal(t, "in transaction; autocommit", row[6])
-	assert.Equal(t, "test", row[7])
+	c.Assert(row, DeepEquals, row2)
+	c.Assert(len(row), Equals, 8)
+	c.Assert(row[0], Equals, pi.ID)
+	c.Assert(row[1], Equals, pi.User)
+	c.Assert(row[2], Equals, pi.Host)
+	c.Assert(row[3], Equals, pi.DB)
+	c.Assert(row[4], Equals, "Sleep")
+	c.Assert(row[5], Equals, uint64(0))
+	c.Assert(row[6], Equals, "in transaction; autocommit")
+	c.Assert(row[7], Equals, "test")
 
 	row3 := pi.ToRow(time.UTC)
-	assert.Equal(t, row, row3[:8])
-	assert.Equal(t, int64(0), row3[9])
-}
+	c.Assert(row3[:8], DeepEquals, row)
+	c.Assert(row3[9], Equals, int64(0))
 
-func TestBasicFuncRandomBuf(t *testing.T) {
+	// Test for RandomBuf.
 	buf := fastrand.Buf(5)
-	assert.Len(t, buf, 5)
-	assert.False(t, bytes.Contains(buf, []byte("$")))
-	assert.False(t, bytes.Contains(buf, []byte{0}))
+	c.Assert(len(buf), Equals, 5)
+	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
+	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
 }
 
-func TestToPB(t *testing.T) {
+func (*testMiscSuite) TestToPB(c *C) {
 	column := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("c"),
@@ -162,7 +169,7 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.SetCollate("utf8mb4_general_ci")
+	column.Collate = "utf8mb4_general_ci"
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
@@ -172,44 +179,8 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column2.SetCollate("utf8mb4_bin")
+	column2.Collate = "utf8mb4_bin"
 
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
-}
-
-func TestComposeURL(t *testing.T) {
-	// TODO Setup config for TLS and verify https protocol output
-	assert.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
-	assert.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
-	assert.Equal(t, ComposeURL("http://httpserver.example.com", "/"), "http://httpserver.example.com/")
-	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
-	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
-	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
-}
-
-func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
-	for i, item := range items {
-		assert.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
-	}
-	select {
-	case item, ok := <-ch:
-		assert.False(t, ok, "channel not closed: more item %v", item)
-	default:
-		t.Fatal("channel not closed: blocked")
-	}
-}
-
-func TestChannelMap(t *testing.T) {
-	ch := make(chan int, 4)
-	ch <- 1
-	ch <- 2
-	ch <- 3
-
-	tableCh := ChanMap(ch, func(i int) string {
-		return fmt.Sprintf("table%d", i)
-	})
-	close(ch)
-
-	assertChannel(t, tableCh, "table1", "table2", "table3")
+	c.Assert(ColumnToProto(column).String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
+	c.Assert(ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
 }

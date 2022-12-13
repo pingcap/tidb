@@ -8,79 +8,137 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package ddl
 
 import (
 	"context"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 )
 
-func TestIndexChange(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c1 int primary key, c2 int)")
-	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
+var _ = Suite(&testIndexChangeSuite{})
 
-	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+type testIndexChangeSuite struct {
+	store  kv.Storage
+	dbInfo *model.DBInfo
+}
+
+func (s *testIndexChangeSuite) SetUpSuite(c *C) {
+	s.store = testCreateStore(c, "test_index_change")
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
+	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
+}
+
+func (s *testIndexChangeSuite) TearDownSuite(c *C) {
+	s.store.Close()
+}
+
+func (s *testIndexChangeSuite) TestIndexChange(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	// create table t (c1 int primary key, c2 int);
+	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	tblInfo.PKIsHandle = true
+	ctx := testNewContext(d)
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	// insert t values (1, 1), (2, 2), (3, 3)
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1))
+	c.Assert(err, IsNil)
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2))
+	c.Assert(err, IsNil)
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3))
+	c.Assert(err, IsNil)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	addIndexDone := false
-	var jobID int64
 	var (
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
 		publicTable     table.Table
+		checkErr        error
 	)
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
 		}
-		jobID = job.ID
-		ctx1 := testNewContext(store)
+		ctx1 := testNewContext(d)
 		prevState = job.SchemaState
-		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
-		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			deleteOnlyTable = tbl
+			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
 		case model.StateWriteOnly:
-			writeOnlyTable = tbl
-			err := checkAddWriteOnlyForAddIndex(ctx1, deleteOnlyTable, writeOnlyTable)
-			require.NoError(t, err)
+			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			err = s.checkAddWriteOnly(d, ctx1, deleteOnlyTable, writeOnlyTable)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
 		case model.StatePublic:
-			require.Equalf(t, int64(3), job.GetRowCount(), "job's row count %d != 3", job.GetRowCount())
-			publicTable = tbl
-			err := checkAddPublicForAddIndex(ctx1, writeOnlyTable, publicTable)
-			require.NoError(t, err)
+			if job.GetRowCount() != 3 {
+				checkErr = errors.Errorf("job's row count %d != 3", job.GetRowCount())
+			}
+			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			err = s.checkAddPublic(d, ctx1, writeOnlyTable, publicTable)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
 			if job.State == model.JobStateSynced {
 				addIndexDone = true
 			}
 		}
 	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
-	tk.MustExec("alter table t add index c2(c2)")
+	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	// We need to make sure onJobUpdated is called in the first hook.
 	// After testCreateIndex(), onJobUpdated() may not be called when job.state is Sync.
 	// If we skip this check, prevState may wrongly set to StatePublic.
@@ -90,40 +148,50 @@ func TestIndexChange(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: publicTable.Meta()})
-
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 	prevState = model.StateNone
 	var noneTable table.Table
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
-		jobID = job.ID
+	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
 		}
 		prevState = job.SchemaState
 		var err error
-		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
-		require.True(t, exist)
-		ctx1 := testNewContext(store)
+		ctx1 := testNewContext(d)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
-			writeOnlyTable = tbl
-			err = checkDropWriteOnly(ctx1, publicTable, writeOnlyTable)
-			require.NoError(t, err)
+			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			err = s.checkDropWriteOnly(d, ctx1, publicTable, writeOnlyTable)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
 		case model.StateDeleteOnly:
-			deleteOnlyTable = tbl
-			err = checkDropDeleteOnly(ctx1, writeOnlyTable, deleteOnlyTable)
-			require.NoError(t, err)
+			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			err = s.checkDropDeleteOnly(d, ctx1, writeOnlyTable, deleteOnlyTable)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
 		case model.StateNone:
-			noneTable = tbl
-			require.Equalf(t, 0, len(noneTable.Indices()), "index should have been dropped")
+			noneTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			if len(noneTable.Indices()) != 0 {
+				checkErr = errors.New("index should have been dropped")
+			}
 		}
 	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
-	tk.MustExec("alter table t drop index c2")
-	v = getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: noneTable.Meta()})
+	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
@@ -145,9 +213,9 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	return nil
 }
 
-func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -218,10 +286,9 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	return nil
 }
 
-func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
-	var err1 error
+func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -230,11 +297,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if ddl.IsEnableFastReorg() {
-		// Need check temp index also.
-		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
-	}
-	if err != nil && err1 != nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
@@ -253,18 +316,10 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if ddl.IsEnableFastReorg() {
-		// Need check temp index also.
-		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
-	}
-	if err != nil && err1 != nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddl.IsEnableFastReorg() {
-		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
-	} else {
-		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
-	}
+	err = checkIndexExists(ctx, publicTbl, 7, 7, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,11 +349,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if ddl.IsEnableFastReorg() {
-			// Need check temp index also.
-			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
-		}
-		if err != nil && err1 != nil {
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -309,9 +360,9 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 	return txn.Commit(context.Background())
 }
 
-func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -353,9 +404,9 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	return txn.Commit(context.Background())
 }
 
-func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}

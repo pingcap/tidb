@@ -8,31 +8,44 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package ddl
 
 import (
 	"context"
 	"strings"
 	"sync"
-	"testing"
-	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete model.ReferOptionType, onUpdate model.ReferOptionType) *model.Job {
+var _ = Suite(&testForeignKeySuite{})
+
+type testForeignKeySuite struct {
+	store  kv.Storage
+	dbInfo *model.DBInfo
+	d      *ddl
+	ctx    sessionctx.Context
+}
+
+func (s *testForeignKeySuite) SetUpSuite(c *C) {
+	s.store = testCreateStore(c, "test_foreign")
+}
+
+func (s *testForeignKeySuite) TearDownSuite(c *C) {
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testForeignKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -56,21 +69,20 @@ func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInf
 	}
 
 	job := &model.Job{
-		SchemaID:   dbInfo.ID,
+		SchemaID:   s.dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
+	err := s.ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	err = s.d.doDDLJob(s.ctx, job)
+	c.Assert(err, IsNil)
 	return job
 }
 
-func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -78,11 +90,10 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo 
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -99,41 +110,47 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func TestForeignKey(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+func (s *testForeignKeySuite) TestForeignKey(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	s.d = d
+	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
+	ctx := testNewContext(d)
+	s.ctx = ctx
+	testCreateSchema(c, ctx, d, s.dbInfo)
+	tblInfo := testTableInfo(c, d, "t", 3)
 
-	d := dom.DDL()
-	dbInfo, err := testSchemaInfo(store, "test_foreign")
-	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
-	tblInfo, err := testTableInfo(store, "t", 3)
-	require.NoError(t, err)
-	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
-		ID:    1,
-		Name:  model.NewCIStr("idx_fk"),
-		Table: model.NewCIStr("t"),
-		Columns: []*model.IndexColumn{{
-			Name:   model.NewCIStr("c1"),
-			Offset: 0,
-			Length: types.UnspecifiedLength,
-		}},
-		State: model.StatePublic,
-	})
-	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &ddl.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	tc := &TestDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -145,37 +162,38 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
 
-	ctx := testkit.NewTestKit(t, store).Session()
-	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, model.ReferOptionCascade, model.ReferOptionSetNull)
-	testCheckJobDone(t, store, job.ID, true)
-	require.NoError(t, err)
+	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
+	testCheckJobDone(c, d, job, true)
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	require.NoError(t, hErr)
-	require.True(t, ok)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	tc2 := &ddl.TestDDLCallback{}
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	tc2 := &TestDDLCallback{}
+	tc2.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -187,245 +205,25 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
-	tc2.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(tc2)
 
-	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
-	testCheckJobDone(t, store, job.ID, false)
+	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
+	testCheckJobDone(c, d, job, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
 	mu.Unlock()
-	require.NoError(t, hErr)
-	require.True(t, ok)
-	d.SetHook(originalHook)
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
 
-	tk := testkit.NewTestKit(t, store)
-	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
-	testCheckJobDone(t, store, jobID, false)
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
 
-	require.NoError(t, err)
-}
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
 
-func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk2.MustExec("set @@foreign_key_checks=1;")
-	tk2.MustExec("use test")
-
-	tk.MustExec("create table t1 (id int key, a int);")
-
-	var wg sync.WaitGroup
-	var truncateErr, dropErr error
-	testTruncate := true
-	tc := &ddl.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StateNone {
-			return
-		}
-		if job.Type != model.ActionCreateTable {
-			return
-		}
-		wg.Add(1)
-		if testTruncate {
-			go func() {
-				defer wg.Done()
-				truncateErr = tk2.ExecToErr("truncate table t1")
-			}()
-		} else {
-			go func() {
-				defer wg.Done()
-				dropErr = tk2.ExecToErr("drop table t1")
-			}()
-		}
-		// make sure tk2's ddl job already put into ddl job queue.
-		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
-
-	tk.MustExec("create table t2 (a int, b int, foreign key fk(b) references t1(id));")
-	wg.Wait()
-	require.Error(t, truncateErr)
-	require.Equal(t, "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk`)", truncateErr.Error())
-
-	tk.MustExec("drop table t2")
-	testTruncate = false
-	tk.MustExec("create table t2 (a int, b int, foreign key fk(b) references t1(id));")
-	wg.Wait()
-	require.Error(t, dropErr)
-	require.Equal(t, "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk`)", dropErr.Error())
-}
-
-func TestDropIndexNeededInForeignKey2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk2.MustExec("set @@foreign_key_checks=1;")
-	tk2.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, b int)")
-	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
-
-	var wg sync.WaitGroup
-	var dropErr error
-	tc := &ddl.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
-			return
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
-		}()
-		// make sure tk2's ddl job already put into ddl job queue.
-		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
-
-	tk.MustExec("alter table t2 drop index idx1")
-	wg.Wait()
-	require.Error(t, dropErr)
-	require.Equal(t, "[ddl:1553]Cannot drop index 'idx2': needed in a foreign key constraint", dropErr.Error())
-}
-
-func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk2.MustExec("set @@foreign_key_checks=1;")
-	tk2.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
-	tk.MustExec("create database test2")
-	var wg sync.WaitGroup
-	var dropErr error
-	tc := &ddl.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StateNone {
-			return
-		}
-		if job.Type != model.ActionCreateTable {
-			return
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			dropErr = tk2.ExecToErr("drop database test")
-		}()
-		// make sure tk2's ddl job already put into ddl job queue.
-		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
-
-	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
-	wg.Wait()
-	require.Error(t, dropErr)
-	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
-	tk.MustExec("drop table test2.t3")
-	tk.MustExec("drop database test")
-}
-
-func TestAddForeignKey2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int key, b int, index(b));")
-	var wg sync.WaitGroup
-	var addErr error
-	tc := &ddl.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
-			return
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			addErr = tk2.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
-		}()
-		// make sure tk2's ddl job already put into ddl job queue.
-		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
-
-	tk.MustExec("alter table t2 drop index b")
-	wg.Wait()
-	require.Error(t, addErr)
-	require.Equal(t, "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", addErr.Error())
-}
-
-func TestAddForeignKey3(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int, b int, index(id), index(b));")
-	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
-
-	var insertErrs []error
-	var deleteErrs []error
-	tc := &ddl.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type != model.ActionAddForeignKey {
-			return
-		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
-			err := tk2.ExecToErr("insert into t2 values (10, 10)")
-			insertErrs = append(insertErrs, err)
-			err = tk2.ExecToErr("delete from t1 where id = 1")
-			deleteErrs = append(deleteErrs, err)
-		}
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
-
-	tk.MustExec("alter table t2 add foreign key (id) references t1(id) on delete cascade")
-	require.Equal(t, 2, len(insertErrs))
-	for _, err := range insertErrs {
-		require.Error(t, err)
-		require.Equal(t, "[planner:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE)", err.Error())
-	}
-	for _, err := range deleteErrs {
-		require.Error(t, err)
-		require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE)", err.Error())
-	}
-	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
-	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }

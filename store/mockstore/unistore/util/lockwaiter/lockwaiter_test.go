@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,13 +18,21 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
-	"github.com/stretchr/testify/require"
 )
 
-func TestLockwaiterBasic(t *testing.T) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testLockwaiter{})
+
+type testLockwaiter struct{}
+
+func (t *testLockwaiter) TestLockwaiterBasic(c *C) {
 	mgr := NewManager(&config.DefaultConf)
 
 	keyHash := uint64(100)
@@ -33,29 +40,29 @@ func TestLockwaiterBasic(t *testing.T) {
 
 	// basic check queue and waiter
 	q := mgr.waitingQueues[keyHash]
-	require.NotNil(t, q)
+	c.Assert(q, NotNil)
 	waiter := q.waiters[0]
-	require.Equal(t, uint64(1), waiter.startTS)
-	require.Equal(t, uint64(2), waiter.LockTS)
-	require.Equal(t, uint64(100), waiter.KeyHash)
+	c.Assert(waiter.startTS, Equals, uint64(1))
+	c.Assert(waiter.LockTS, Equals, uint64(2))
+	c.Assert(waiter.KeyHash, Equals, uint64(100))
 
 	// check ready waiters
 	keysHash := make([]uint64, 0, 10)
 	keysHash = append(keysHash, keyHash)
 	rdyWaiter, _ := q.getOldestWaiter()
-	require.Equal(t, uint64(1), rdyWaiter.startTS)
-	require.Equal(t, uint64(2), rdyWaiter.LockTS)
-	require.Equal(t, uint64(100), rdyWaiter.KeyHash)
+	c.Assert(rdyWaiter.startTS, Equals, uint64(1))
+	c.Assert(rdyWaiter.LockTS, Equals, uint64(2))
+	c.Assert(rdyWaiter.KeyHash, Equals, uint64(100))
 
 	// basic wake up test
 	waiter = mgr.NewWaiter(3, 2, keyHash, 10)
 	mgr.WakeUp(2, 222, keysHash)
 	res := <-waiter.ch
-	require.Equal(t, uint64(222), res.CommitTS)
-	require.Len(t, q.waiters, 0)
+	c.Assert(res.CommitTS, Equals, uint64(222))
+	c.Assert(len(q.waiters), Equals, 0)
 	q = mgr.waitingQueues[keyHash]
 	// verify queue deleted from map
-	require.Nil(t, q)
+	c.Assert(q, IsNil)
 
 	// basic wake up for deadlock test
 	waiter = mgr.NewWaiter(3, 4, keyHash, 10)
@@ -66,17 +73,17 @@ func TestLockwaiterBasic(t *testing.T) {
 	resp.DeadlockKeyHash = 30192
 	mgr.WakeUpForDeadlock(resp)
 	res = <-waiter.ch
-	require.NotNil(t, res.DeadlockResp)
-	require.Equal(t, uint64(3), res.DeadlockResp.Entry.Txn)
-	require.Equal(t, uint64(4), res.DeadlockResp.Entry.WaitForTxn)
-	require.Equal(t, keyHash, res.DeadlockResp.Entry.KeyHash)
-	require.Equal(t, uint64(30192), res.DeadlockResp.DeadlockKeyHash)
+	c.Assert(res.DeadlockResp, NotNil)
+	c.Assert(res.DeadlockResp.Entry.Txn, Equals, uint64(3))
+	c.Assert(res.DeadlockResp.Entry.WaitForTxn, Equals, uint64(4))
+	c.Assert(res.DeadlockResp.Entry.KeyHash, Equals, keyHash)
+	c.Assert(res.DeadlockResp.DeadlockKeyHash, Equals, uint64(30192))
 	q = mgr.waitingQueues[4]
 	// verify queue deleted from map
-	require.Nil(t, q)
+	c.Assert(q, IsNil)
 }
 
-func TestLockwaiterConcurrent(t *testing.T) {
+func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 	mgr := NewManager(&config.DefaultConf)
 	wg := &sync.WaitGroup{}
 	endWg := &sync.WaitGroup{}
@@ -96,20 +103,20 @@ func TestLockwaiterConcurrent(t *testing.T) {
 				mgr.CleanUp(waiter)
 				wg.Done()
 				res := waiter.Wait()
-				require.Equal(t, WaitTimeout, res.WakeupSleepTime)
-				require.Equal(t, uint64(0), res.CommitTS)
-				require.Nil(t, res.DeadlockResp)
+				c.Assert(res.WakeupSleepTime, Equals, WaitTimeout)
+				c.Assert(res.CommitTS, Equals, uint64(0))
+				c.Assert(res.DeadlockResp, IsNil)
 			} else {
 				wg.Done()
 				res := waiter.Wait()
 				// even woken up by commit
 				if num%2 == 0 {
-					require.Equal(t, commitTs, res.CommitTS)
+					c.Assert(res.CommitTS, Equals, commitTs)
 				} else {
 					// odd woken up by deadlock
-					require.NotNil(t, res.DeadlockResp)
+					c.Assert(res.DeadlockResp, NotNil)
 					lock.RLock()
-					require.Equal(t, deadlockKeyHash, res.DeadlockResp.DeadlockKeyHash)
+					c.Assert(res.DeadlockResp.DeadlockKeyHash, Equals, deadlockKeyHash)
 					lock.RUnlock()
 				}
 			}

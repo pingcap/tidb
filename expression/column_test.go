@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,101 +15,98 @@ package expression
 
 import (
 	"fmt"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestColumn(t *testing.T) {
-	ctx := mock.NewContext()
+func (s *testEvaluatorSuite) TestColumn(c *C) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
-	require.True(t, col.Equal(nil, col))
-	require.False(t, col.Equal(nil, &Column{}))
-	require.False(t, col.IsCorrelated())
-	require.True(t, col.Equal(nil, col.Decorrelate(nil)))
+	c.Assert(col.Equal(nil, col), IsTrue)
+	c.Assert(col.Equal(nil, &Column{}), IsFalse)
+	c.Assert(col.IsCorrelated(), IsFalse)
+	c.Assert(col.Equal(nil, col.Decorrelate(nil)), IsTrue)
 
 	marshal, err := col.MarshalJSON()
-	require.NoError(t, err)
-	require.EqualValues(t, []byte{0x22, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x22}, marshal)
+	c.Assert(err, IsNil)
+	c.Assert(marshal, DeepEquals, []byte{0x22, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x22})
 
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{}}
 	schema := NewSchema(&Column{UniqueID: 1})
-	require.True(t, corCol.Equal(nil, corCol))
-	require.False(t, corCol.Equal(nil, invalidCorCol))
-	require.True(t, corCol.IsCorrelated())
-	require.False(t, corCol.ConstItem(nil))
-	require.True(t, corCol.Decorrelate(schema).Equal(nil, col))
-	require.True(t, invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol))
+	c.Assert(corCol.Equal(nil, corCol), IsTrue)
+	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
+	c.Assert(corCol.IsCorrelated(), IsTrue)
+	c.Assert(corCol.ConstItem(nil), IsFalse)
+	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
+	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
 	intCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
 		Data: &intDatum}
-	intVal, isNull, err := intCorCol.EvalInt(ctx, chunk.Row{})
-	require.Equal(t, int64(1), intVal)
-	require.False(t, isNull)
-	require.NoError(t, err)
+	intVal, isNull, err := intCorCol.EvalInt(s.ctx, chunk.Row{})
+	c.Assert(intVal, Equals, int64(1))
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 
 	realDatum := types.NewFloat64Datum(1.2)
 	realCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDouble)},
 		Data: &realDatum}
-	realVal, isNull, err := realCorCol.EvalReal(ctx, chunk.Row{})
-	require.Equal(t, float64(1.2), realVal)
-	require.False(t, isNull)
-	require.NoError(t, err)
+	realVal, isNull, err := realCorCol.EvalReal(s.ctx, chunk.Row{})
+	c.Assert(realVal, Equals, float64(1.2))
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 
 	decimalDatum := types.NewDecimalDatum(types.NewDecFromStringForTest("1.2"))
 	decimalCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)},
 		Data: &decimalDatum}
-	decVal, isNull, err := decimalCorCol.EvalDecimal(ctx, chunk.Row{})
-	require.Zero(t, decVal.Compare(types.NewDecFromStringForTest("1.2")))
-	require.False(t, isNull)
-	require.NoError(t, err)
+	decVal, isNull, err := decimalCorCol.EvalDecimal(s.ctx, chunk.Row{})
+	c.Assert(decVal.Compare(types.NewDecFromStringForTest("1.2")), Equals, 0)
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 
 	stringDatum := types.NewStringDatum("abc")
 	stringCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeVarchar)},
 		Data: &stringDatum}
-	strVal, isNull, err := stringCorCol.EvalString(ctx, chunk.Row{})
-	require.Equal(t, "abc", strVal)
-	require.False(t, isNull)
-	require.NoError(t, err)
+	strVal, isNull, err := stringCorCol.EvalString(s.ctx, chunk.Row{})
+	c.Assert(strVal, Equals, "abc")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 
 	durationCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDuration)},
 		Data: &durationDatum}
-	durationVal, isNull, err := durationCorCol.EvalDuration(ctx, chunk.Row{})
-	require.Zero(t, durationVal.Compare(duration))
-	require.False(t, isNull)
-	require.NoError(t, err)
+	durationVal, isNull, err := durationCorCol.EvalDuration(s.ctx, chunk.Row{})
+	c.Assert(durationVal.Compare(duration), Equals, 0)
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 
 	timeDatum := types.NewTimeDatum(tm)
 	timeCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDatetime)},
 		Data: &timeDatum}
-	timeVal, isNull, err := timeCorCol.EvalTime(ctx, chunk.Row{})
-	require.Zero(t, timeVal.Compare(tm))
-	require.False(t, isNull)
-	require.NoError(t, err)
+	timeVal, isNull, err := timeCorCol.EvalTime(s.ctx, chunk.Row{})
+	c.Assert(timeVal.Compare(tm), Equals, 0)
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
 }
 
-func TestColumnHashCode(t *testing.T) {
+func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
 	col1 := &Column{
 		UniqueID: 12,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc}, col1.HashCode(nil))
+	c.Assert(col1.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc})
 
 	col2 := &Column{
 		UniqueID: 2,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, col2.HashCode(nil))
+	c.Assert(col2.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2})
 }
 
-func TestColumn2Expr(t *testing.T) {
+func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
 		cols = append(cols, &Column{UniqueID: int64(i)})
@@ -118,23 +114,23 @@ func TestColumn2Expr(t *testing.T) {
 
 	exprs := Column2Exprs(cols)
 	for i := range exprs {
-		require.True(t, exprs[i].Equal(nil, cols[i]))
+		c.Assert(exprs[i].Equal(nil, cols[i]), IsTrue)
 	}
 }
 
-func TestColInfo2Col(t *testing.T) {
+func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
-	require.True(t, res.Equal(nil, col1))
+	c.Assert(res.Equal(nil, col1), IsTrue)
 
 	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
-	require.Nil(t, res)
+	c.Assert(res, IsNil)
 }
 
-func TestIndexInfo2Cols(t *testing.T) {
+func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
@@ -145,26 +141,26 @@ func TestIndexInfo2Cols(t *testing.T) {
 	cols := []*Column{col0}
 	colInfos := []*model.ColumnInfo{colInfo0}
 	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 1)
-	require.Len(t, lengths, 1)
-	require.True(t, resCols[0].Equal(nil, col0))
+	c.Assert(len(resCols), Equals, 1)
+	c.Assert(len(lengths), Equals, 1)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
 	colInfos = []*model.ColumnInfo{colInfo1}
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 0)
-	require.Len(t, lengths, 0)
+	c.Assert(len(resCols), Equals, 0)
+	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
 	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 2)
-	require.Len(t, lengths, 2)
-	require.True(t, resCols[0].Equal(nil, col0))
-	require.True(t, resCols[1].Equal(nil, col1))
+	c.Assert(len(resCols), Equals, 2)
+	c.Assert(len(lengths), Equals, 2)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
+	c.Assert(resCols[1].Equal(nil, col1), IsTrue)
 }
 
-func TestColHybird(t *testing.T) {
+func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	ctx := mock.NewContext()
 
 	// bit
@@ -173,26 +169,28 @@ func TestColHybird(t *testing.T) {
 	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
 	for i := 0; i < 1024; i++ {
 		num, err := types.ParseBitStr(fmt.Sprintf("0b%b", i))
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		input.AppendBytes(0, num)
 	}
-	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
-	require.Nil(t, col.VecEvalInt(ctx, input, result))
+	result, err := newBuffer(types.ETInt, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 
 	it := chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalInt(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetInt64(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
 	}
 
 	// use a container which has the different field type with bit
-	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
-	require.Nil(t, col.VecEvalInt(ctx, input, result))
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalInt(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetInt64(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
 	}
 
 	// enum
@@ -202,14 +200,15 @@ func TestColHybird(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
-	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
-	require.Nil(t, col.VecEvalString(ctx, input, result))
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalString(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetString(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetString(i))
 	}
 
 	// set
@@ -219,47 +218,14 @@ func TestColHybird(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
-	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
-	require.Nil(t, col.VecEvalString(ctx, input, result))
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalString(ctx, row)
-		require.NoError(t, err)
-		require.Equal(t, result.GetString(i), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetString(i))
 	}
-}
-
-func TestInColumnArray(t *testing.T) {
-	// normal case, col is in column array
-	col0, col1 := &Column{ID: 0, UniqueID: 0}, &Column{ID: 1, UniqueID: 1}
-	cols := []*Column{col0, col1}
-	require.True(t, col0.InColumnArray(cols))
-
-	// abnormal case, col is not in column array
-	require.False(t, col0.InColumnArray([]*Column{col1}))
-
-	// abnormal case, input is nil
-	require.False(t, col0.InColumnArray(nil))
-}
-
-func TestGcColumnExprIsTidbShard(t *testing.T) {
-	ctx := mock.NewContext()
-
-	// abnormal case
-	// nil, not tidb_shard
-	require.False(t, GcColumnExprIsTidbShard(nil))
-
-	// `a = 1`, not tidb_shard
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	col := &Column{RetType: ft, Index: 0}
-	d1 := types.NewDatum(1)
-	con := &Constant{Value: d1, RetType: ft}
-	expr := NewFunctionInternal(ctx, ast.EQ, ft, col, con)
-	require.False(t, GcColumnExprIsTidbShard(expr))
-
-	// normal case
-	// tidb_shard(a) = 1
-	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
-	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }

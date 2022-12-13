@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,14 +20,15 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -223,7 +223,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
 	}
 
 	for _, row := range rowsInGroup {
@@ -248,7 +248,6 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
-		memDelta += int64(len(joinedVal))
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -294,7 +293,6 @@ type topNRows struct {
 	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
 	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
-	collators      []collate.Collator
 }
 
 func (h topNRows) Len() int {
@@ -304,7 +302,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k], h.collators[k])
+		ret, err := h.rows[i].byItems[k].CompareDatum(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -353,17 +351,16 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 
 	for h.currSize > h.limitSize {
 		debt := h.currSize - h.limitSize
-		heapPopRow := heap.Pop(h).(sortRow)
-		if uint64(heapPopRow.buffer.Len()) > debt {
+		if uint64(h.rows[0].buffer.Len()) > debt {
 			h.currSize -= debt
-			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
-			heap.Push(h, heapPopRow)
+			h.rows[0].buffer.Truncate(h.rows[0].buffer.Len() - int(debt))
 		} else {
-			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
-			memDelta -= int64(heapPopRow.buffer.Cap())
-			for _, dt := range heapPopRow.byItems {
+			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
+			memDelta -= int64(h.rows[0].buffer.Cap())
+			for _, dt := range h.rows[0].byItems {
 				memDelta -= GetDatumMemSize(dt)
 			}
+			heap.Pop(h)
 			h.isSepTruncated = true
 		}
 	}
@@ -414,10 +411,8 @@ func (e *groupConcatOrder) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 
 func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
-	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
-		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
@@ -426,7 +421,6 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
-			collators:      ctors,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -484,7 +478,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, plannercore.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -519,10 +513,8 @@ func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(sctx sessionctx.Conte
 
 func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
-	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
-		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
 	}
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
@@ -532,7 +524,6 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
-			collators:      ctors,
 		},
 		valSet: valSet,
 	}
@@ -554,7 +545,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
 	}
 
 	for _, row := range rowsInGroup {
@@ -579,7 +570,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
-		memDelta += int64(len(joinedVal))
 		sortRow := sortRow{
 			buffer:  buffer,
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
@@ -608,7 +598,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.

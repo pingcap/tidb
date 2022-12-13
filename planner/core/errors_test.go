@@ -8,25 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
-func TestError(t *testing.T) {
+type testErrorSuite struct{}
+
+var _ = Suite(testErrorSuite{})
+
+func (s testErrorSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedType,
 		ErrAnalyzeMissIndex,
-		ErrAnalyzeMissColumn,
 		ErrWrongParamCount,
 		ErrSchemaChanged,
 		ErrTablenameNotAllowedHere,
@@ -82,10 +82,9 @@ func TestError(t *testing.T) {
 		ErrCartesianProductUnsupported,
 		ErrStmtNotFound,
 		ErrAmbiguous,
-		ErrKeyPart0,
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.Truef(t, code != mysql.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

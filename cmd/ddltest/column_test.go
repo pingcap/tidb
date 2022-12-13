@@ -8,38 +8,38 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddltest
 
 import (
-	goctx "context"
 	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessiontxn"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	goctx "golang.org/x/net/context"
 )
 
 // After add column finished, check the records in the table.
-func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interface{}, updatedVal interface{}) {
+func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{}, updatedVal interface{}) {
 	ctx := s.ctx
-	err := sessiontxn.NewTxn(goctx.Background(), ctx)
-	require.NoError(t, err)
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
 
-	tbl := s.getTable(t, "test_column")
+	tbl := s.getTable(c, "test_column")
 	oldInsertCount := int64(0)
 	newInsertCount := int64(0)
 	oldUpdateCount := int64(0)
@@ -74,24 +74,24 @@ func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interfac
 
 		return true, nil
 	})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	deleteCount := rowID - oldInsertCount - newInsertCount - oldUpdateCount - newUpdateCount
-	require.GreaterOrEqual(t, oldInsertCount, int64(0))
-	require.GreaterOrEqual(t, newInsertCount, int64(0))
-	require.Greater(t, oldUpdateCount, int64(0))
-	require.Greater(t, newUpdateCount, int64(0))
-	require.Greater(t, deleteCount, int64(0))
+	c.Assert(oldInsertCount, GreaterEqual, int64(0))
+	c.Assert(newInsertCount, GreaterEqual, int64(0))
+	c.Assert(oldUpdateCount, Greater, int64(0))
+	c.Assert(newUpdateCount, Greater, int64(0))
+	c.Assert(deleteCount, Greater, int64(0))
 }
 
-func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
+func (s *TestDDLSuite) checkDropColumn(c *C, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
 	ctx := s.ctx
-	err := sessiontxn.NewTxn(goctx.Background(), ctx)
-	require.NoError(t, err)
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
 
-	tbl := s.getTable(t, "test_column")
+	tbl := s.getTable(c, "test_column")
 	for _, col := range tbl.Cols() {
-		require.NotEqual(t, alterColumn.ID, col.ID)
+		c.Assert(col.ID, Not(Equals), alterColumn.ID)
 	}
 	insertCount := int64(0)
 	updateCount := int64(0)
@@ -107,18 +107,15 @@ func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table
 		}
 		return true, nil
 	})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	deleteCount := rowID - insertCount - updateCount
-	require.Greater(t, insertCount, int64(0))
-	require.Greater(t, updateCount, int64(0))
-	require.Greater(t, deleteCount, int64(0))
+	c.Assert(insertCount, Greater, int64(0))
+	c.Assert(updateCount, Greater, int64(0))
+	c.Assert(deleteCount, Greater, int64(0))
 }
 
-func TestColumn(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
+func (s *TestDDLSuite) TestColumn(c *C) {
 	// first add many data
 	workerNum := 10
 	base := *dataNum / workerNum
@@ -130,7 +127,7 @@ func TestColumn(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < base; j++ {
 				k := base*i + j
-				s.execInsert(fmt.Sprintf("insert into test_column values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into test_column values (%d, %d)", k, k))
 			}
 		}(i)
 	}
@@ -150,42 +147,41 @@ func TestColumn(t *testing.T) {
 	updateDefault := int64(-2)
 	var alterColumn *table.Column
 
-	for _, col := range tbl {
-		t.Run(col.Query, func(t *testing.T) {
-			done := s.runDDL(col.Query)
+	for _, t := range tbl {
+		c.Logf("run DDL %s", t.Query)
+		done := s.runDDL(t.Query)
 
-			ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
-			defer ticker.Stop()
-		LOOP:
-			for {
-				select {
-				case err := <-done:
-					require.NoError(t, err)
-					break LOOP
-				case <-ticker.C:
-					count := 10
-					s.execColumnOperations(t, workerNum, count, &rowID, updateDefault)
-				}
+		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
+		defer ticker.Stop()
+	LOOP:
+		for {
+			select {
+			case err := <-done:
+				c.Assert(err, IsNil)
+				break LOOP
+			case <-ticker.C:
+				count := 10
+				s.execColumnOperations(c, workerNum, count, &rowID, updateDefault)
 			}
+		}
 
-			if col.Add {
-				s.checkAddColumn(t, rowID, col.Default, updateDefault)
-			} else {
-				s.checkDropColumn(t, rowID, alterColumn, updateDefault)
-			}
+		if t.Add {
+			s.checkAddColumn(c, rowID, t.Default, updateDefault)
+		} else {
+			s.checkDropColumn(c, rowID, alterColumn, updateDefault)
+		}
 
-			tbl := s.getTable(t, "test_column")
-			alterColumn = table.FindCol(tbl.Cols(), col.ColumnName)
-			if col.Add {
-				require.NotNil(t, alterColumn)
-			} else {
-				require.Nil(t, alterColumn)
-			}
-		})
+		tbl := s.getTable(c, "test_column")
+		alterColumn = table.FindCol(tbl.Cols(), t.ColumnName)
+		if t.Add {
+			c.Assert(alterColumn, NotNil)
+		} else {
+			c.Assert(alterColumn, IsNil)
+		}
 	}
 }
 
-func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowID *int64, updateDefault int64) {
+func (s *TestDDLSuite) execColumnOperations(c *C, workerNum, count int, rowID *int64, updateDefault int64) {
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
@@ -194,16 +190,38 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 			defer wg.Done()
 			for j := 0; j < count; j++ {
 				key := int(atomic.AddInt64(rowID, 2))
-				s.execInsert(fmt.Sprintf("insert into test_column (c1, c2) values (%d, %d)",
+				s.execInsert(c, fmt.Sprintf("insert into test_column (c1, c2) values (%d, %d)",
 					key-1, key-1))
-				_, _ = s.exec(fmt.Sprintf("insert into test_column values (%d, %d, %d)", key, key, key))
-				s.mustExec(fmt.Sprintf("update test_column set c2 = %d where c1 = %d",
+				s.exec(fmt.Sprintf("insert into test_column values (%d, %d, %d)", key, key, key))
+				s.mustExec(c, fmt.Sprintf("update test_column set c2 = %d where c1 = %d",
 					updateDefault, randomNum(key)))
-				_, _ = s.exec(fmt.Sprintf("update test_column set c2 = %d, c3 = %d where c1 = %d",
+				s.exec(fmt.Sprintf("update test_column set c2 = %d, c3 = %d where c1 = %d",
 					updateDefault, updateDefault, randomNum(key)))
-				s.mustExec(fmt.Sprintf("delete from test_column where c1 = %d", randomNum(key)))
+				s.mustExec(c, fmt.Sprintf("delete from test_column where c1 = %d", randomNum(key)))
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
+	s.mustExec(c, "drop table if exists test_commit")
+	s.mustExec(c, "create table test_commit (a int, b int)")
+	s.mustExec(c, "insert into test_commit values (1, 1)")
+	s.mustExec(c, "insert into test_commit values (2, 2)")
+
+	s1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	ctx := goctx.Background()
+	_, err = s1.Execute(ctx, "use test_ddl")
+	c.Assert(err, IsNil)
+	s1.Execute(ctx, "begin")
+	s1.Execute(ctx, "insert into test_commit values (3, 3)")
+
+	s.mustExec(c, "alter table test_commit drop column b")
+
+	// When this transaction commit, it will find schema already changed.
+	s1.Execute(ctx, "insert into test_commit values (4, 4)")
+	_, err = s1.Execute(ctx, "commit")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }

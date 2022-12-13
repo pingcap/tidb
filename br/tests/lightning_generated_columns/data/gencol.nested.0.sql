@@ -1,1 +1,0 @@
-insert into nested (a) values (1), (10), (100), (1000);

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +18,6 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
@@ -36,7 +34,7 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (*TableDualImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
+func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -51,24 +49,22 @@ func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (*MemTableScanImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
+func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	return 0
 }
 
 // TableReaderImpl implementation of PhysicalTableReader.
 type TableReaderImpl struct {
 	baseImpl
-	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statistics.HistColl) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblInfo:     source.TableInfo(),
-		tblColHists: source.TblColHists,
+		tblColHists: hists,
 	}
 	return impl
 }
@@ -80,7 +76,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
 	// Todo add the tableInfo property for the TableReaderImpl.
-	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * width
+	networkCost := outCount * sessVars.GetNetworkFactor(nil) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
@@ -91,7 +87,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *TableReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
+func (impl *TableReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
@@ -120,7 +116,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 }
 
 // CalcCost calculates the cost of the table scan Implementation.
-func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
+func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
@@ -134,12 +130,11 @@ func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) 
 // IndexReaderImpl is the implementation of PhysicalIndexReader.
 type IndexReaderImpl struct {
 	baseImpl
-	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
+func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
@@ -153,18 +148,17 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implement
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
+	networkCost := outCount * sessVars.GetNetworkFactor(nil) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblInfo:     source.TableInfo(),
-		tblColHists: source.TblColHists,
+		tblColHists: tblColHists,
 	}
 }
 
@@ -175,7 +169,7 @@ type IndexScanImpl struct {
 }
 
 // CalcCost implements Implementation interface.
-func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
+func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)

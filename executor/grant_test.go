@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,22 +16,17 @@ package executor_test
 import (
 	"fmt"
 	"strings"
-	"testing"
 
-	"github.com/pingcap/tidb/errno"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestGrantGlobal(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteP1) TestGrantGlobal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobal'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -68,10 +62,8 @@ func TestGrantGlobal(t *testing.T) {
 	}
 }
 
-func TestGrantDBScope(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestGrantDBScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testDB'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -100,16 +92,11 @@ func TestGrantDBScope(t *testing.T) {
 
 	// Grant in wrong scope.
 	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")))
-
-	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
-	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
 }
 
-func TestWithGrantOption(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestWithGrantOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -129,10 +116,8 @@ func TestWithGrantOption(t *testing.T) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
-func TestGrantTableScope(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteP1) TestTableScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -145,11 +130,11 @@ func TestGrantTableScope(t *testing.T) {
 		sql := fmt.Sprintf("GRANT %s ON test.test1 TO 'testTbl'@'localhost';", mysql.Priv2Str[v])
 		tk.MustExec(sql)
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl" and host="localhost" and db="test" and Table_name="test1";`).Rows()
-		require.Len(t, rows, 1)
+		c.Assert(rows, HasLen, 1)
 		row := rows[0]
-		require.Len(t, rows, 1)
+		c.Assert(row, HasLen, 1)
 		p := fmt.Sprintf("%v", row[0])
-		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
 	// Create a new user.
 	createUserSQL = `CREATE USER 'testTbl1'@'localhost' IDENTIFIED BY '123';`
@@ -161,21 +146,16 @@ func TestGrantTableScope(t *testing.T) {
 	// Make sure all the table privs for granted user are in the Table_priv set.
 	for _, v := range mysql.AllTablePrivs {
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl1" and host="localhost" and db="test" and Table_name="test2";`).Rows()
-		require.Len(t, rows, 1)
+		c.Assert(rows, HasLen, 1)
 		row := rows[0]
-		require.Len(t, rows, 1)
+		c.Assert(row, HasLen, 1)
 		p := fmt.Sprintf("%v", row[0])
-		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
-
-	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
-	require.EqualError(t, err, "[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
-func TestGrantColumnScope(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestColumnScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testCol'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -190,11 +170,11 @@ func TestGrantColumnScope(t *testing.T) {
 		sql := fmt.Sprintf("GRANT %s(c1) ON test.test3 TO 'testCol'@'localhost';", mysql.Priv2Str[v])
 		tk.MustExec(sql)
 		rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol" and host="localhost" and db="test" and Table_name="test3" and Column_name="c1";`).Rows()
-		require.Len(t, rows, 1)
+		c.Assert(rows, HasLen, 1)
 		row := rows[0]
-		require.Len(t, rows, 1)
+		c.Assert(row, HasLen, 1)
 		p := fmt.Sprintf("%v", row[0])
-		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
 
 	// Create a new user.
@@ -206,21 +186,16 @@ func TestGrantColumnScope(t *testing.T) {
 	// Make sure all the column privs for granted user are in the Column_priv set.
 	for _, v := range mysql.AllColumnPrivs {
 		rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1" and host="localhost" and db="test" and Table_name="test3" and Column_name="c2";`).Rows()
-		require.Len(t, rows, 1)
+		c.Assert(rows, HasLen, 1)
 		row := rows[0]
-		require.Len(t, rows, 1)
+		c.Assert(row, HasLen, 1)
 		p := fmt.Sprintf("%v", row[0])
-		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
-
-	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
-	require.EqualError(t, err, "[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
-func TestIssue2456(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestIssue2456(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
 	tk.MustExec("CREATE DATABASE `dddb_%`;")
 	tk.MustExec("CREATE table `dddb_%`.`te%` (id int);")
@@ -228,21 +203,17 @@ func TestIssue2456(t *testing.T) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
-func TestNoAutoCreateUser(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestNoAutoCreateUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 }
 
-func TestCreateUserWhenGrant(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestCreateUserWhenGrant(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	// This only applies to sql_mode:NO_AUTO_CREATE_USER off
 	tk.MustExec(`SET SQL_MODE=''`)
@@ -252,35 +223,16 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		testkit.Rows("test"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
-	// Grant without a password.
-	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%'`)
-	// Make sure user is created automatically when grant to a non-exists one.
-	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='test' and host='%'`).Check(
-		testkit.Rows("test mysql_native_password"),
-	)
-	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
-func TestCreateUserWithTooLongName(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	err := tk.ExecToErr("CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
-	err = tk.ExecToErr("CREATE USER 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
-}
-
-func TestGrantPrivilegeAtomic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestGrantPrivilegeAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
 	tk.MustExec(`create role r1, r2, r3;`)
 	tk.MustExec(`create table test.testatomic(x int);`)
 
 	_, err := tk.Exec(`grant update, select, insert, delete on *.* to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"N N N N",
 		"N N N N",
@@ -288,31 +240,31 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	))
 	tk.MustExec(`grant update, select, insert, delete on *.* to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.Error(t, err)
+	c.Check(err, NotNil)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Y Y Y Y",
 		"Y Y Y Y",
 		"Y Y Y Y",
 	))
 
-	err = tk.ExecToErr(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	_, err = tk.Exec(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
-	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.Error(t, err)
+	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	c.Check(err, NotNil)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Y Y Y Y",
 		"Y Y Y Y",
 		"Y Y Y Y",
 	))
 
-	err = tk.ExecToErr(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	_, err = tk.Exec(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
-	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.Error(t, err)
+	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	c.Check(err, NotNil)
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Select,Insert,Update,Delete",
 		"Select,Insert,Update,Delete",
@@ -321,12 +273,11 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
 	tk.MustExec(`drop table test.testatomic;`)
+
 }
 
-func TestIssue2654(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestIssue2654(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	tk.MustExec(`CREATE USER 'test'@'%' IDENTIFIED BY 'test'`)
 	tk.MustExec("GRANT SELECT ON test.* to 'test'")
@@ -334,10 +285,8 @@ func TestIssue2654(t *testing.T) {
 	rows.Check(testkit.Rows(`test %`))
 }
 
-func TestGrantUnderANSIQuotes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
 	// The bug is caused by the improper usage of double quotes like:
 	// INSERT INTO mysql.user ... VALUES ("..", "..", "..")
@@ -347,10 +296,8 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }
 
-func TestMaintainRequire(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestMaintainRequire(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	// test create with require
 	tk.MustExec(`CREATE USER 'ssl_auser'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
@@ -394,99 +341,64 @@ func TestMaintainRequire(t *testing.T) {
 
 	// test show create user
 	tk.MustExec(`CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
-	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFALUT PASSWORD REUSE INTERVAL DEFALUT"))
+	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	// check issuer/subject/cipher value
-	err := tk.ExecToErr(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
-	require.Error(t, err)
-	err = tk.ExecToErr(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
-	require.Error(t, err)
-	err = tk.ExecToErr(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
-	require.Error(t, err)
-	err = tk.ExecToErr(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
-	require.Error(t, err)
-	err = tk.ExecToErr(`CREATE USER 'u8'@'%' require subject '/CN'`)
-	require.Error(t, err)
-	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`, "Duplicate require CIPHER clause")
-	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`, "Duplicate require ISSUER clause")
-	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`, "Duplicate require SUBJECT clause")
-	err = tk.ExecToErr(`CREATE USER 'u9'@'%' require ssl ssl`)
-	require.Error(t, err)
-	err = tk.ExecToErr(`CREATE USER 'u9'@'%' require x509 x509`)
-	require.Error(t, err)
+	_, err := tk.Exec(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u8'@'%' require subject '/CN'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`)
+	c.Assert(err.Error(), Equals, "Duplicate require CIPHER clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`)
+	c.Assert(err.Error(), Equals, "Duplicate require ISSUER clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`)
+	c.Assert(err.Error(), Equals, "Duplicate require SUBJECT clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require ssl ssl`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
+	c.Assert(err, NotNil)
 }
 
-func TestMaintainAuthString(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestMaintainAuthString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo'`)
 	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
 	tk.MustExec(`ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL`)
 	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
 }
 
-func TestGrantOnNonExistTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user genius")
 	tk.MustExec("use test")
-	err := tk.ExecToErr("select * from nonexist")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("grant Select,Insert on nonexist to 'genius'")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	_, err := tk.Exec("select * from nonexist")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 
 	tk.MustExec("create table if not exists xx (id int)")
-	// Case insensitive, differ from MySQL default behaviour.
-	// In TiDB, system variable lower_case_table_names = 2, which means compare table name using lower case.
-	tk.MustExec("grant Select,Insert on XX to 'genius'")
-	tk.MustExec("grant Select,Insert on xx to 'genius'")
-	tk.MustExec("grant Select,Update on test.xx to 'genius'")
+	// Case sensitive
+	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// The database name should also case sensitive match.
+	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 
-	// issue #29268
-	tk.MustExec("CREATE DATABASE d29268")
-	defer tk.MustExec("DROP DATABASE IF EXISTS d29268")
-	tk.MustExec("USE d29268")
-	tk.MustExec("CREATE USER u29268")
-	defer tk.MustExec("DROP USER u29268")
-
-	// without create privilege
-	err = tk.ExecToErr("GRANT SELECT ON t29268 TO u29268")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT DROP, INSERT ON t29268 TO u29268")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT UPDATE, CREATE VIEW, SHOW VIEW ON t29268 TO u29268")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT DELETE, REFERENCES, ALTER ON t29268 TO u29268")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-
-	// with create privilege
-	tk.MustExec("GRANT CREATE ON t29268 TO u29268")
-	tk.MustExec("GRANT CREATE, SELECT ON t29268 TO u29268")
-	tk.MustExec("GRANT CREATE, DROP, INSERT ON t29268 TO u29268")
-
-	// check privilege
-	tk.Session().Auth(&auth.UserIdentity{Username: "u29268", Hostname: "localhost"}, nil, nil)
-	tk.MustExec("USE d29268")
-	tk.MustExec("CREATE TABLE t29268 (c1 int)")
-	tk.MustExec("INSERT INTO t29268 VALUES (1), (2)")
-	tk.MustQuery("SELECT c1 FROM t29268").Check(testkit.Rows("1", "2"))
-	tk.MustExec("DROP TABLE t29268")
-
-	// check grant all
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
-	tk.MustExec("GRANT ALL ON t29268 TO u29268")
+	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
+	c.Assert(err, IsNil)
 }
 
-func TestIssue22721(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestIssue22721(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists xx (id int)")
 	tk.MustExec("CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
@@ -496,45 +408,14 @@ func TestIssue22721(t *testing.T) {
 	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
 }
 
-func TestPerformanceSchemaPrivGrant(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create user issue27867;")
-	defer func() {
-		tk.MustExec("drop user issue27867;")
-	}()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
-	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	// Check case insensitivity
-	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
-	// Check other database privileges
-	tk.MustExec("grant select on performance_schema.* to issue27867;")
-	tk.MustGetErrCode("grant insert on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant update on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant delete on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant drop on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant lock tables on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant create on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant references on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant alter on PERFormAnCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant execute on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant index on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant create view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-	tk.MustGetErrCode("grant show view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
-}
-
-func TestGrantDynamicPrivs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user dyn")
 
-	err := tk.ExecToErr("GRANT BACKUP_ADMIN ON test.* TO dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
-	err = tk.ExecToErr("GRANT BOGUS_GRANT ON *.* TO dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered))
+	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
+	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered), IsTrue)
 
 	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
@@ -556,48 +437,4 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
-}
-
-func TestNonExistTableIllegalGrant(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user u29302")
-	defer tk.MustExec("drop user u29302")
-	// Table level, not existing table, illegal privilege
-	tk.MustGetErrCode("grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
-	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
-	// Column level, not existing table, illegal privilege
-	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
-}
-
-func TestIssue34610(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("DROP DATABASE IF EXISTS d1;")
-	tk.MustExec("CREATE DATABASE d1;")
-	tk.MustExec("USE d1;")
-	tk.MustExec("CREATE USER user_1@localhost;")
-	defer func() {
-		tk.MustExec("DROP DATABASE d1;")
-		tk.MustExec("DROP USER user_1@localhost;")
-	}()
-
-	tk.MustExec("CREATE TABLE T1(f1 INT);")
-	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
-	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
-	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
-}
-
-func TestIssue38293(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
-	tk.MustExec("DROP USER IF EXISTS test")
-	tk.MustExec("CREATE USER test")
-	defer func() {
-		tk.MustExec("DROP USER test")
-	}()
-	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
-	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
 }

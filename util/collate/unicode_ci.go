@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +27,7 @@ type unicodeCICollator struct {
 }
 
 // Compare implements Collator interface.
-func (*unicodeCICollator) Compare(a, b string) int {
+func (uc *unicodeCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	// weight of a, b. weight in unicode_ci may has 8 uint16s. xn indicate first 4 u16s, xs indicate last 4 u16s
@@ -73,22 +72,19 @@ func (*unicodeCICollator) Compare(a, b string) int {
 		}
 
 		for an != 0 && bn != 0 {
-			if (an^bn)&0xFFFF != 0 {
+			if (an^bn)&0xFFFF == 0 {
+				an >>= 16
+				bn >>= 16
+			} else {
 				return sign(int(an&0xFFFF) - int(bn&0xFFFF))
 			}
-			an >>= 16
-			bn >>= 16
 		}
 	}
 }
 
 // Key implements Collator interface.
 func (uc *unicodeCICollator) Key(str string) []byte {
-	return uc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
-}
-
-// KeyWithoutTrimRightSpace implements Collator interface.
-func (*unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
 	r := rune(0)
 	si := 0                        // decode index of s
@@ -123,7 +119,7 @@ func convertRuneUnicodeCI(r rune) (first, second uint64) {
 }
 
 // Pattern implements Collator interface.
-func (*unicodeCICollator) Pattern() WildcardPattern {
+func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return &unicodePattern{}
 }
 

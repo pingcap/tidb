@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,21 +15,18 @@ package expression
 
 import (
 	"fmt"
+	"sort"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/size"
-	"golang.org/x/exp/slices"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -142,9 +138,9 @@ func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row)
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
-		return types.BinaryJSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
 }
@@ -184,40 +180,6 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 	return nil
 }
 
-// ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
-	return col, true
-}
-
-func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
-	return true
-}
-
-// MemoryUsage return the memory usage of CorrelatedColumn
-func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
-	if col == nil {
-		return
-	}
-
-	sum = col.Column.MemoryUsage() + size.SizeOfPointer
-	if col.Data != nil {
-		sum += col.Data.MemUsage()
-	}
-	return sum
-}
-
-// RemapColumn remaps columns with provided mapping and returns new expression
-func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error) {
-	mapped := m[(&col.Column).UniqueID]
-	if mapped == nil {
-		return nil, errors.Errorf("Can't remap column for %s", col)
-	}
-	return &CorrelatedColumn{
-		Column: *mapped,
-		Data:   col.Data,
-	}, nil
-}
-
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType
@@ -250,24 +212,12 @@ type Column struct {
 	InOperand bool
 
 	collationInfo
-
-	CorrelatedColUniqueID int64
 }
 
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
-	}
-	return false
-}
-
-// EqualByExprAndID extends Equal by comparing virual expression
-func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
-	if newCol, ok := expr.(*Column); ok {
-		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
-		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
 }
@@ -298,7 +248,7 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType().Tp == mysql.TypeFloat {
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
@@ -376,10 +326,6 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	if col.IsHidden {
-		// A hidden column must be a virtual generated column, we should output its expression.
-		return col.VirtualExpr.String()
-	}
 	if col.OrigName != "" {
 		return col.OrigName
 	}
@@ -428,7 +374,7 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, boo
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType().Tp == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
 	}
 	return row.GetFloat64(col.Index), false, nil
@@ -472,14 +418,14 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	duration := row.GetDuration(col.Index, col.RetType.GetDecimal())
+	duration := row.GetDuration(col.Index, col.RetType.Decimal)
 	return duration, false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
-		return types.BinaryJSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
 	return row.GetJSON(col.Index), false, nil
 }
@@ -516,11 +462,6 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	return col.hashcode
 }
 
-// CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
-func (col *Column) CleanHashCode() {
-	col.hashcode = make([]byte, 0, 9)
-}
-
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
 	newCol := col.Clone()
@@ -534,32 +475,6 @@ func (col *Column) resolveIndices(schema *Schema) error {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
 	return nil
-}
-
-// ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
-	newCol := col.Clone()
-	isOk := newCol.resolveIndicesByVirtualExpr(schema)
-	return newCol, isOk
-}
-
-func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
-	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(nil, col) {
-			col.Index = i
-			return true
-		}
-	}
-	return false
-}
-
-// RemapColumn remaps columns with provided mapping and returns new expression
-func (col *Column) RemapColumn(m map[int64]*Column) (Expression, error) {
-	mapped := m[col.UniqueID]
-	if mapped == nil {
-		return nil, errors.Errorf("Can't remap column for %s", col)
-	}
-	return mapped, nil
 }
 
 // Vectorized returns if this expression supports vectorized evaluation.
@@ -595,11 +510,11 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+// indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
+func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
+			if col.Length > 0 && info.FieldType.Flen > col.Length {
 				c := *cols[i]
 				c.IsPrefix = true
 				return &c
@@ -619,12 +534,12 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
 			lengths = append(lengths, types.UnspecifiedLength)
 		} else {
 			lengths = append(lengths, c.Length)
@@ -641,14 +556,14 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
 			continue
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
 			lens = append(lens, types.UnspecifiedLength)
 		} else {
 			lens = append(lens, c.Length)
@@ -682,7 +597,7 @@ func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (col *Column) SupportReverseEval() bool {
-	switch col.RetType.GetType() {
+	switch col.RetType.Tp {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return true
@@ -697,83 +612,19 @@ func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (col *Column) Coercibility() Coercibility {
-	if !col.HasCoercibility() {
-		col.SetCoercibility(deriveCoercibilityForColumn(col))
+	if col.HasCoercibility() {
+		return col.collationInfo.Coercibility()
 	}
+	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
-}
-
-// Repertoire returns the repertoire value which is used to check collations.
-func (col *Column) Repertoire() Repertoire {
-	if col.repertoire != 0 {
-		return col.repertoire
-	}
-	switch col.RetType.EvalType() {
-	case types.ETJson:
-		return UNICODE
-	case types.ETString:
-		if col.RetType.GetCharset() == charset.CharsetASCII {
-			return ASCII
-		}
-		return UNICODE
-	default:
-		return ASCII
-	}
 }
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
 	sorted := make([]*Column, len(cols))
 	copy(sorted, cols)
-	slices.SortFunc(sorted, func(i, j *Column) bool {
-		return i.UniqueID < j.UniqueID
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].UniqueID < sorted[j].UniqueID
 	})
 	return sorted
-}
-
-// InColumnArray check whether the col is in the cols array
-func (col *Column) InColumnArray(cols []*Column) bool {
-	for _, c := range cols {
-		if col.Equal(nil, c) {
-			return true
-		}
-	}
-	return false
-}
-
-// GcColumnExprIsTidbShard check whether the expression is tidb_shard()
-func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
-	if virtualExpr == nil {
-		return false
-	}
-
-	f, ok := virtualExpr.(*ScalarFunction)
-	if !ok {
-		return false
-	}
-
-	if f.FuncName.L != ast.TiDBShard {
-		return false
-	}
-
-	return true
-}
-
-const emptyColumnSize = int64(unsafe.Sizeof(Column{}))
-
-// MemoryUsage return the memory usage of Column
-func (col *Column) MemoryUsage() (sum int64) {
-	if col == nil {
-		return
-	}
-
-	sum = emptyColumnSize + int64(cap(col.hashcode)) + int64(len(col.OrigName)+len(col.charset)+len(col.collation))
-
-	if col.RetType != nil {
-		sum += col.RetType.MemoryUsage()
-	}
-	if col.VirtualExpr != nil {
-		sum += col.VirtualExpr.MemoryUsage()
-	}
-	return
 }

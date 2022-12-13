@@ -8,11 +8,9 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build ignore
 // +build ignore
 
 package main
@@ -38,7 +36,6 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -54,7 +51,7 @@ import (
 )
 
 // NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
-// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches
+// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches 
 // meet errors or warnings, the vectorization falls back the scalar execution.
 
 `
@@ -115,7 +112,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j+=2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -131,7 +128,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 		if err != nil {
 			return err
 		}
@@ -153,7 +150,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2==1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 		if err != nil {
 			return err
 		}
@@ -171,13 +168,13 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 		eLseSlice = bufElse.{{ .TypeNameInColumn }}s()
 		{{- end }}
 	}
-
+	
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
 	resultSlice := result.{{ .TypeNameInColumn }}s()
 	{{- else }}
 	result.Reserve{{ .TypeNameInColumn }}(n)
-	{{- end }}
+	{{- end }}		
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
@@ -205,7 +202,7 @@ ROW:
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(eLse.Get{{ .TypeNameInColumn }}(i))
-			}
+			}	
 			{{- end }}
 		} else {
 			{{- if .Fixed }}
@@ -272,7 +269,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
 	}
@@ -296,7 +293,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 		}
 	}
 	{{ else }}
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
 	}
@@ -304,7 +301,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
 	}
@@ -384,7 +381,7 @@ func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(input *chunk.C
 
 func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -397,7 +394,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 {{- if .Fixed }}
 	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, result)
 {{- else }}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
 	}
@@ -411,8 +408,8 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 		}
       	return b.fallbackEval{{ .TypeName }}(input, result)
    	}
-
-	buf2, err := b.bufAllocator.get()
+	
+	buf2, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
 	}
@@ -483,7 +480,6 @@ var testFile = template.Must(template.New("testFile").Parse(`// Copyright 2019 P
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -495,7 +491,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -543,12 +540,12 @@ var vecBuiltin{{.Category}}Cases = map[string][]vecExprBenchCase{
 {{ end }}
 }
 
-func TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(t *testing.T) {
-	testVectorizedEvalOneVec(t, vecBuiltinControlCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinControlCases)
 }
 
-func TestVectorizedBuiltin{{.Category}}FuncGenerated(t *testing.T) {
-	testVectorizedBuiltinFunc(t, vecBuiltinControlCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinControlCases)
 }
 
 func BenchmarkVectorizedBuiltin{{.Category}}EvalOneVecGenerated(b *testing.B) {

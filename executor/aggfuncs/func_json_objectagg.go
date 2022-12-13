@@ -8,28 +8,28 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs
 
 import (
-	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 const (
 	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
 	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
+	// DefMapStringInterfaceBucketSize = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(interface{}))+2*ptrSize
+	DefMapStringInterfaceBucketSize = 8*(1+16+16) + 16
 )
 
 type jsonObjectAgg struct {
@@ -45,7 +45,7 @@ func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) 
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	p.bInMap = 0
-	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*DefMapStringInterfaceBucketSize
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -61,29 +61,34 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 		return nil
 	}
 
-	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
-	if err != nil {
-		return errors.Trace(err)
+	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
+	for key, val := range p.entries {
+		switch x := val.(type) {
+		case *types.MyDecimal:
+			float64Val, err := x.ToFloat64()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			p.entries[key] = float64Val
+		case []uint8, types.Time, types.Duration:
+			strVal, err := types.ToString(x)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			p.entries[key] = strVal
+		}
 	}
-	chk.AppendJSON(e.ordinal, bj)
+
+	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
 	return nil
 }
 
 func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
-		key, keyIsNull, err := e.args[0].EvalString(sctx, row)
+		key, err := e.args[0].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
-		}
-		key = strings.Clone(key)
-
-		if keyIsNull {
-			return 0, types.ErrJSONDocumentNULLKey
-		}
-
-		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
-			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
 		}
 
 		value, err := e.args[1].Eval(row)
@@ -91,73 +96,33 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, errors.Trace(err)
 		}
 
-		realVal, err := getRealJSONValue(value, e.args[1].GetType())
+		if key.IsNull() {
+			return 0, json.ErrJSONDocumentNULLKey
+		}
+
+		// the result json's key is string, so it needs to convert the first arg to string
+		keyString, err := key.ToString()
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		keyString = stringutil.Copy(keyString)
 
+		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
-			if _, ok := p.entries[key]; !ok {
-				memDelta += int64(len(key)) + getValMemDelta(realVal)
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					memDelta += (1 << p.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
+					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
 					p.bInMap++
 				}
 			}
-			p.entries[key] = realVal
-
+			p.entries[keyString] = realVal
 		default:
-			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
 	return memDelta, nil
-}
-
-func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
-	realVal := value.Clone().GetValue()
-	switch value.Kind() {
-	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
-		buf := value.GetBytes()
-		realVal = types.Opaque{
-			TypeCode: ft.GetType(),
-			Buf:      buf,
-		}
-	case types.KindString:
-		if ft.GetCharset() == charset.CharsetBin {
-			buf := value.GetBytes()
-			resultBuf := buf
-			if ft.GetType() == mysql.TypeString {
-				// the tailing zero should also be in the opaque json
-				resultBuf = make([]byte, ft.GetFlen())
-				copy(resultBuf, buf)
-			}
-			realVal = types.Opaque{
-				TypeCode: ft.GetType(),
-				Buf:      resultBuf,
-			}
-		}
-	}
-
-	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
-	switch x := realVal.(type) {
-	case float32:
-		realVal = float64(x)
-	case *types.MyDecimal:
-		float64Val, err := x.ToFloat64()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		realVal = float64Val
-	case []uint8:
-		strVal, err := types.ToString(x)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		realVal = strVal
-	}
-
-	return realVal, nil
 }
 
 func getValMemDelta(val interface{}) (memDelta int64) {
@@ -173,12 +138,9 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 		memDelta += DefFloat64Size
 	case string:
 		memDelta += int64(len(v))
-	case types.BinaryJSON:
-		// +1 for the memory usage of the JSONTypeCode of json
+	case json.BinaryJSON:
+		// +1 for the memory usage of the TypeCode of json
 		memDelta += int64(len(v.Value) + 1)
-	case types.Opaque:
-		// +1 for the memory usage of the JSONTypeCode of opaque value
-		memDelta += int64(len(v.Buf) + 1)
 	case *types.MyDecimal:
 		memDelta += DefMyDecimalSize
 	case []uint8:
@@ -199,7 +161,7 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		p2.entries[k] = v
 		memDelta += int64(len(k)) + getValMemDelta(v)
 		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			memDelta += (1 << p2.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
+			memDelta += (1 << p2.bInMap) * DefMapStringInterfaceBucketSize
 			p2.bInMap++
 		}
 	}

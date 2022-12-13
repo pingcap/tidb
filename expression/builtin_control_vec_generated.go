@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -60,7 +59,7 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -76,7 +75,7 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -96,7 +95,7 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -171,7 +170,7 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -187,7 +186,7 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETReal, n)
 		if err != nil {
 			return err
 		}
@@ -207,7 +206,7 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETReal, n)
 		if err != nil {
 			return err
 		}
@@ -282,7 +281,7 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -298,7 +297,7 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETDecimal, n)
 		if err != nil {
 			return err
 		}
@@ -318,7 +317,7 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETDecimal, n)
 		if err != nil {
 			return err
 		}
@@ -388,7 +387,7 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -404,7 +403,7 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETString, n)
 		if err != nil {
 			return err
 		}
@@ -423,7 +422,7 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETString, n)
 		if err != nil {
 			return err
 		}
@@ -502,7 +501,7 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -518,7 +517,7 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETDatetime, n)
 		if err != nil {
 			return err
 		}
@@ -538,7 +537,7 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETDatetime, n)
 		if err != nil {
 			return err
 		}
@@ -613,7 +612,7 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -629,7 +628,7 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETDuration, n)
 		if err != nil {
 			return err
 		}
@@ -649,7 +648,7 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETDuration, n)
 		if err != nil {
 			return err
 		}
@@ -719,7 +718,7 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j += 2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -735,7 +734,7 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := b.bufAllocator.get(types.ETJson, n)
 		if err != nil {
 			return err
 		}
@@ -754,7 +753,7 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := b.bufAllocator.get(types.ETJson, n)
 		if err != nil {
 			return err
 		}
@@ -825,7 +824,7 @@ func (b *builtinIfNullIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -880,7 +879,7 @@ func (b *builtinIfNullRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
 		return err
 	}
@@ -935,7 +934,7 @@ func (b *builtinIfNullDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
@@ -984,7 +983,7 @@ func (b *builtinIfNullStringSig) fallbackEvalString(input *chunk.Chunk, result *
 
 func (b *builtinIfNullStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -992,7 +991,7 @@ func (b *builtinIfNullStringSig) vecEvalString(input *chunk.Chunk, result *chunk
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1049,7 @@ func (b *builtinIfNullTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
@@ -1105,7 +1104,7 @@ func (b *builtinIfNullDurationSig) vecEvalDuration(input *chunk.Chunk, result *c
 	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
@@ -1154,7 +1153,7 @@ func (b *builtinIfNullJSONSig) fallbackEvalJSON(input *chunk.Chunk, result *chun
 
 func (b *builtinIfNullJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETJson, n)
 	if err != nil {
 		return err
 	}
@@ -1162,7 +1161,7 @@ func (b *builtinIfNullJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETJson, n)
 	if err != nil {
 		return err
 	}
@@ -1217,7 +1216,7 @@ func (b *builtinIfIntSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 func (b *builtinIfIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1236,7 +1235,7 @@ func (b *builtinIfIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return b.fallbackEvalInt(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1296,7 +1295,7 @@ func (b *builtinIfRealSig) fallbackEvalReal(input *chunk.Chunk, result *chunk.Co
 
 func (b *builtinIfRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1315,7 +1314,7 @@ func (b *builtinIfRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column)
 		return b.fallbackEvalReal(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
 		return err
 	}
@@ -1375,7 +1374,7 @@ func (b *builtinIfDecimalSig) fallbackEvalDecimal(input *chunk.Chunk, result *ch
 
 func (b *builtinIfDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1394,7 +1393,7 @@ func (b *builtinIfDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.C
 		return b.fallbackEvalDecimal(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
@@ -1451,7 +1450,7 @@ func (b *builtinIfStringSig) fallbackEvalString(input *chunk.Chunk, result *chun
 
 func (b *builtinIfStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1461,7 +1460,7 @@ func (b *builtinIfStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -1475,7 +1474,7 @@ func (b *builtinIfStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		return b.fallbackEvalString(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -1538,7 +1537,7 @@ func (b *builtinIfTimeSig) fallbackEvalTime(input *chunk.Chunk, result *chunk.Co
 
 func (b *builtinIfTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1557,7 +1556,7 @@ func (b *builtinIfTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column)
 		return b.fallbackEvalTime(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
@@ -1617,7 +1616,7 @@ func (b *builtinIfDurationSig) fallbackEvalDuration(input *chunk.Chunk, result *
 
 func (b *builtinIfDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1636,7 +1635,7 @@ func (b *builtinIfDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk
 		return b.fallbackEvalDuration(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
@@ -1693,7 +1692,7 @@ func (b *builtinIfJSONSig) fallbackEvalJSON(input *chunk.Chunk, result *chunk.Co
 
 func (b *builtinIfJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1703,7 +1702,7 @@ func (b *builtinIfJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETJson, n)
 	if err != nil {
 		return err
 	}
@@ -1717,7 +1716,7 @@ func (b *builtinIfJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column)
 		return b.fallbackEvalJSON(input, result)
 	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := b.bufAllocator.get(types.ETJson, n)
 	if err != nil {
 		return err
 	}

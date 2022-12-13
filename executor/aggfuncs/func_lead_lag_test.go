@@ -8,23 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
-func TestLeadLag(t *testing.T) {
+func (s *testSuite) TestLeadLag(c *C) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -112,11 +110,12 @@ func TestLeadLag(t *testing.T) {
 			[]expression.Expression{million, defaultArg}, 0, numRows, 0, 1, 2),
 	}
 	for _, test := range tests {
-		testWindowFunc(t, test)
+		s.testWindowFunc(c, test)
 	}
+
 }
 
-func TestMemLeadLag(t *testing.T) {
+func (s *testSuite) TestMemLeadLag(c *C) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -160,6 +159,7 @@ func TestMemLeadLag(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		testWindowAggMemFunc(t, test)
+		s.testWindowAggMemFunc(c, test)
 	}
+
 }

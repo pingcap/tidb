@@ -8,17 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddl
 
 import (
-	"encoding/hex"
+	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -48,14 +49,16 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *Info
+	var ddlInfo *admin.DDLInfo
 
-	s, err := d.sessPool.get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer d.sessPool.put(s)
-	ddlInfo, err = GetDDLInfoWithNewTxn(s)
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		var err1 error
+		ddlInfo, err1 = admin.GetDDLInfo(txn)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return errors.Trace(err1)
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -81,7 +84,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[ddlJobSchemaID] = job.SchemaID
 	m[ddlJobTableID] = job.TableID
 	m[ddlJobSnapshotVer] = job.SnapshotVer
-	m[ddlJobReorgHandle] = hex.EncodeToString(ddlInfo.ReorgHandle)
+	m[ddlJobReorgHandle] = tryDecodeToHandleString(ddlInfo.ReorgHandle)
 	m[ddlJobArgs] = job.Args
 	return m, nil
 }

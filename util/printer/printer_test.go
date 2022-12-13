@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,15 +16,27 @@ package printer
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestPrintResult(t *testing.T) {
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+var _ = Suite(&testPrinterSuite{})
+
+type testPrinterSuite struct {
+}
+
+func (s *testPrinterSuite) TestPrintResult(c *C) {
+	defer testleak.AfterTest(c)()
 	cols := []string{"col1", "col2", "col3"}
 	datas := [][]string{{"11"}, {"21", "22", "23"}}
 	result, ok := GetPrintResult(cols, datas)
-	require.False(t, ok)
-	require.Equal(t, "", result)
+	c.Assert(ok, IsFalse)
+	c.Assert(result, Equals, "")
 
 	datas = [][]string{{"11", "12", "13"}, {"21", "22", "23"}}
 	expect := `
@@ -37,16 +48,16 @@ func TestPrintResult(t *testing.T) {
 +------+------+------+
 `
 	result, ok = GetPrintResult(cols, datas)
-	require.True(t, ok)
-	require.Equal(t, expect[1:], result)
+	c.Assert(ok, IsTrue)
+	c.Assert(result, Equals, expect[1:])
 
 	datas = nil
 	result, ok = GetPrintResult(cols, datas)
-	require.False(t, ok)
-	require.Equal(t, "", result)
+	c.Assert(ok, IsFalse)
+	c.Assert(result, Equals, "")
 
 	cols = nil
 	result, ok = GetPrintResult(cols, datas)
-	require.False(t, ok)
-	require.Equal(t, "", result)
+	c.Assert(ok, IsFalse)
+	c.Assert(result, Equals, "")
 }

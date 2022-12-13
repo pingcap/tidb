@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,33 +18,37 @@ import (
 	"context"
 	"math"
 	"strconv"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
-func TestClusterSplit(t *testing.T) {
-	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	testutils.BootstrapWithSingleStore(cluster)
-	mvccStore := rpcClient.MvccStore
+var _ = Suite(&testClusterSuite{})
 
+type testClusterSuite struct {
+	store tikv.Storage
+}
+
+func (s *testClusterSuite) TestClusterSplit(c *C) {
+	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
+	c.Assert(err, IsNil)
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := rpcClient.MvccStore
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
-	require.NoError(t, err)
-	defer store.Close()
+	c.Assert(err, IsNil)
+	s.store = store
 
 	txn, err := store.Begin()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// Mock inserting many rows in a table.
 	tblID := int64(1)
@@ -59,17 +62,17 @@ func TestClusterSplit(t *testing.T) {
 		// TODO: Should use session's TimeZone instead of UTC.
 		rd := rowcodec.Encoder{Enable: true}
 		rowValue, err1 := tablecodec.EncodeRow(sc, []types.Datum{colValue}, []int64{colID}, nil, nil, &rd)
-		require.NoError(t, err1)
+		c.Assert(err1, IsNil)
 		txn.Set(rowKey, rowValue)
 
 		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
-		require.NoError(t, err1)
+		c.Assert(err1, IsNil)
 		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}
 	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
@@ -77,25 +80,25 @@ func TestClusterSplit(t *testing.T) {
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
-	require.Len(t, regions, 12)
+	c.Assert(regions, HasLen, 12)
 
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
 	for _, region := range regions {
-		startKey := toRawKey(region.Meta.StartKey)
-		endKey := toRawKey(region.Meta.EndKey)
+		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
+		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
 		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
-			require.Len(t, pairs, 100)
+			c.Assert(pairs, HasLen, 100)
 		}
 		for _, pair := range pairs {
 			allKeysMap[string(pair.Key)] = true
 		}
 	}
-	require.Len(t, allKeysMap, 1000)
+	c.Assert(allKeysMap, HasLen, 1000)
 
 	indexStart := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
 	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
@@ -104,29 +107,18 @@ func TestClusterSplit(t *testing.T) {
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
 	regions = cluster.GetAllRegions()
 	for _, region := range regions {
-		startKey := toRawKey(region.Meta.StartKey)
-		endKey := toRawKey(region.Meta.EndKey)
+		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
+		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
 		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
-			require.Len(t, pairs, 100)
+			c.Assert(pairs, HasLen, 100)
 		}
 		for _, pair := range pairs {
 			allIndexMap[string(pair.Key)] = true
 		}
 	}
-	require.Len(t, allIndexMap, 1000)
-}
-
-func toRawKey(k []byte) []byte {
-	if len(k) == 0 {
-		return nil
-	}
-	_, k, err := codec.DecodeBytes(k, nil)
-	if err != nil {
-		panic(err)
-	}
-	return k
+	c.Assert(allIndexMap, HasLen, 1000)
 }

@@ -1,4 +1,0 @@
-CREATE TABLE `json` (
-    `pk` MEDIUMINT(4) NOT NULL PRIMARY KEY,
-    `js` JSON NOT NULL
-);

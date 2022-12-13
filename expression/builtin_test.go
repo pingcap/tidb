@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,33 +16,33 @@ package expression
 import (
 	"reflect"
 	"sync"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
-	var wg util.WaitGroupWrapper
+	wg := sync.WaitGroup{}
 	concurrency := 10
+	wg.Add(concurrency)
 	var lock sync.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
-		wg.Run(func() {
+		go func() {
+			defer wg.Done()
 			di, erri := evalBuiltinFunc(f, chunk.Row{})
 			lock.Lock()
 			if err == nil {
 				d, err = di, erri
 			}
 			lock.Unlock()
-		})
+		}()
 	}
 	wg.Wait()
 	return
@@ -58,7 +57,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = f.evalInt(row)
-		if mysql.HasUnsignedFlag(f.getRetTp().GetFlag()) {
+		if mysql.HasUnsignedFlag(f.getRetTp().Flag) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
@@ -85,7 +84,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	return
 }
 
-// tblToDtbl is a utility function for test.
+// tblToDtbl is a util function for test.
 func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
 	tbl := make([]map[string][]types.Datum, l)
@@ -120,45 +119,35 @@ func makeDatums(i interface{}) []types.Datum {
 	return types.MakeDatums(i)
 }
 
-func TestIsNullFunc(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
+	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(0), v.GetInt64())
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.NoError(t, err)
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), v.GetInt64())
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
 }
 
-func TestLock(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestLock(c *C) {
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
-	require.NoError(t, err)
+	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
+	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), v.GetInt64())
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
-	require.NoError(t, err)
+	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
+	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), v.GetInt64())
-}
-
-func TestDisplayName(t *testing.T) {
-	require.Equal(t, "=", GetDisplayName(ast.EQ))
-	require.Equal(t, "<=>", GetDisplayName(ast.NullEQ))
-	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
-	require.Equal(t, "abs", GetDisplayName("abs"))
-	require.Equal(t, "other_unknown_func", GetDisplayName("other_unknown_func"))
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
@@ -183,15 +172,7 @@ func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Express
 
 var (
 	// MySQL int8.
-	int8Con = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()}
+	int8Con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
 	// MySQL varchar.
-	varcharCon = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8).BuildP()}
+	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
 )
-
-func getInt8Con() Expression {
-	return int8Con.Clone()
-}
-
-func getVarcharCon() Expression {
-	return varcharCon.Clone()
-}

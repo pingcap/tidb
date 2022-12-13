@@ -1,3 +1,0 @@
-CREATE TABLE `bigint`(
-    `id` BIGINT NOT NULL PRIMARY KEY
-);

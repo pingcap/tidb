@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,10 +33,14 @@ type clusterInfoItem struct {
 	UpTime         string `json:"upTime,omitempty"`
 }
 
-func getClusterInfo(ctx context.Context, sctx sessionctx.Context) ([]*clusterInfoItem, error) {
+func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {
 	// Explicitly list all field names instead of using `*` to avoid potential leaking sensitive info when adding new fields in future.
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

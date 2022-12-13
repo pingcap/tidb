@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,8 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -107,7 +106,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.hasMatch = make([]bool, e.concurrency)
 	e.hasNull = make([]bool, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.innerChunk[i] = tryNewCacheChunk(e.innerExecs[i])
+		e.innerChunk[i] = newFirstChunk(e.innerExecs[i])
 		e.innerList[i] = chunk.NewList(retTypes(e.innerExecs[i]), e.initCap, e.maxChunkSize)
 		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
 		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
@@ -176,6 +175,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -186,7 +186,6 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 			runtimeStats.setCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return err
 }
@@ -206,7 +205,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var err error
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
-		chk := tryNewCacheChunk(e.outerExec)
+		chk := newFirstChunk(e.outerExec)
 		if err := Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
 			return

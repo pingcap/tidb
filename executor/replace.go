@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,14 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -43,9 +41,6 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
-	if e.runtimeStats != nil && e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -102,7 +97,11 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 		return false, nil
 	}
 	for i, ai := range a {
-		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
+		collation := ai.Collation()
+		// We should use binary collation to compare datum, otherwise the result will be incorrect
+		ai.SetCollation(charset.CollationBin)
+		v, err := ai.CompareDatum(sc, &b[i])
+		ai.SetCollation(collation)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -166,10 +165,10 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 // removeIndexRow removes the row which has a duplicated key.
 // the return values:
-//  1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
-//  2. bool: true when found the duplicated key. This only means that duplicated key was found,
-//     and the row was removed.
-//  3. error: the error.
+//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//              and the row was removed.
+//     3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
 		val, err := txn.Get(ctx, uk.newKey)
@@ -225,14 +224,13 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}
@@ -250,10 +248,6 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if e.collectRuntimeStatsEnabled() {
-		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
-	}
-
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}

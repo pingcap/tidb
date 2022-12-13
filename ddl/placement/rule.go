@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,10 +15,9 @@ package placement
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v2"
+	"github.com/go-yaml/yaml"
 )
 
 // PeerRoleType is the expected peer type of the placement rule.
@@ -36,28 +34,8 @@ const (
 	Learner PeerRoleType = "learner"
 )
 
-// RuleGroupConfig defines basic config of rule group
-type RuleGroupConfig struct {
-	ID       string `json:"id"`
-	Index    int    `json:"index"`
-	Override bool   `json:"override"`
-}
-
 // Rule is the core placement rule struct. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID     string       `json:"group_id"`
-	ID          string       `json:"id"`
-	Index       int          `json:"index,omitempty"`
-	Override    bool         `json:"override,omitempty"`
-	StartKeyHex string       `json:"start_key"`
-	EndKeyHex   string       `json:"end_key"`
-	Role        PeerRoleType `json:"role"`
-	Count       int          `json:"count"`
-	Constraints Constraints  `json:"label_constraints,omitempty"`
-}
-
-// TiFlashRule extends Rule with other necessary fields.
-type TiFlashRule struct {
 	GroupID        string       `json:"group_id"`
 	ID             string       `json:"id"`
 	Index          int          `json:"index,omitempty"`
@@ -71,56 +49,52 @@ type TiFlashRule struct {
 	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
-// NewRule constructs *Rule from role, count, and constraints. It is here to
-// consistent the behavior of creating new rules.
-func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
-	return &Rule{
-		Role:        role,
-		Count:       int(replicas),
-		Constraints: cnst,
-	}
-}
-
-var wrongSeparatorRegexp = regexp.MustCompile(`[^"':]+:\d`)
-
-func getYamlMapFormatError(str string) error {
-	if !strings.Contains(str, ":") {
-		return ErrInvalidConstraintsMappingNoColonFound
-	}
-	if wrongSeparatorRegexp.MatchString(str) {
-		return ErrInvalidConstraintsMappingWrongSeparator
-	}
-	return nil
-}
-
 // NewRules constructs []*Rule from a yaml-compatible representation of
-// 'array' or 'dict' constraints.
-// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error) {
+// array or map of constraints. It converts 'CONSTRAINTS' field in RFC
+// https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md to structs.
+func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 
 	cnstbytes := []byte(cnstr)
 
-	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
+	constraints1 := []string{}
+	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
 	if err1 == nil {
-		rules = append(rules, NewRule(role, replicas, constraints1))
+		// can not emit REPLICAS with an array or empty label
+		if replicas == 0 {
+			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
+		}
+
+		labelConstraints, err := NewConstraints(constraints1)
+		if err != nil {
+			return rules, err
+		}
+
+		rules = append(rules, &Rule{
+			Count:       int(replicas),
+			Constraints: labelConstraints,
+		})
+
 		return rules, nil
 	}
 
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
 	if err2 == nil {
-		if replicas != 0 {
-			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
-		}
-
+		ruleCnt := 0
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
-				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
-					return rules, err
-				}
 				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
 			}
+			ruleCnt += cnt
+		}
+
+		if replicas == 0 {
+			replicas = uint64(ruleCnt)
+		}
+
+		if int(replicas) < ruleCnt {
+			return rules, fmt.Errorf("%w: should be larger or equal to the number of total replicas, but REPLICAS=%d < total=%d", ErrInvalidConstraintsRelicas, replicas, ruleCnt)
 		}
 
 		for labels, cnt := range constraints2 {
@@ -129,8 +103,19 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 				return rules, err
 			}
 
-			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
+			rules = append(rules, &Rule{
+				Count:       cnt,
+				Constraints: labelConstraints,
+			})
 		}
+
+		remain := int(replicas) - ruleCnt
+		if remain > 0 {
+			rules = append(rules, &Rule{
+				Count: remain,
+			})
+		}
+
 		return rules, nil
 	}
 
@@ -138,13 +123,10 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.
-// Note that it is a shallow copy: Constraints is not cloned.
+// Note that it is a shallow copy: LocationLabels and Constraints
+// is not cloned.
 func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
 	return n
-}
-
-func (r *Rule) String() string {
-	return fmt.Sprintf("%+v", *r)
 }

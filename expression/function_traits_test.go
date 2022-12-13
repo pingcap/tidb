@@ -8,20 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 )
 
-func TestUnfoldableFuncs(t *testing.T) {
+func (s *testEvaluatorSuite) TestUnfoldableFuncs(c *C) {
 	_, ok := unFoldableFunctions[ast.Sysdate]
-	require.True(t, ok)
+	c.Assert(ok, IsTrue)
 }

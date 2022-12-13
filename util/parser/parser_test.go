@@ -8,20 +8,27 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser_test
+package parser
 
 import (
 	"testing"
 
-	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
 
-func TestSpace(t *testing.T) {
+var _ = Suite(&testParserSuite{})
+
+type testParserSuite struct {
+}
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func (s *testParserSuite) TestSpace(c *C) {
 	okTable := []struct {
 		Times    int
 		Input    string
@@ -33,9 +40,9 @@ func TestSpace(t *testing.T) {
 		{2, "  1", "1"},
 	}
 	for _, test := range okTable {
-		rest, err := utilparser.Space(test.Input, test.Times)
-		require.NoError(t, err)
-		require.Equal(t, test.Expected, rest)
+		rest, err := Space(test.Input, test.Times)
+		c.Assert(rest, Equals, test.Expected)
+		c.Assert(err, IsNil)
 	}
 
 	errTable := []struct {
@@ -47,14 +54,13 @@ func TestSpace(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		rest, err := utilparser.Space(test.Input, test.Times)
-
-		require.NotNil(t, err)
-		require.Equal(t, test.Input, rest)
+		rest, err := Space(test.Input, test.Times)
+		c.Assert(rest, Equals, test.Input)
+		c.Assert(err, NotNil)
 	}
 }
 
-func TestDigit(t *testing.T) {
+func (s *testParserSuite) TestDigit(c *C) {
 	okTable := []struct {
 		Times          int
 		Input          string
@@ -68,11 +74,10 @@ func TestDigit(t *testing.T) {
 	}
 
 	for _, test := range okTable {
-		digits, rest, err := utilparser.Digit(test.Input, test.Times)
-
-		require.NoError(t, err)
-		require.Equal(t, test.ExpectedDigits, digits)
-		require.Equal(t, test.ExpectedRest, rest)
+		digits, rest, err := Digit(test.Input, test.Times)
+		c.Assert(digits, Equals, test.ExpectedDigits)
+		c.Assert(rest, Equals, test.ExpectedRest)
+		c.Assert(err, IsNil)
 	}
 
 	errTable := []struct {
@@ -85,15 +90,14 @@ func TestDigit(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		digits, rest, err := utilparser.Digit(test.Input, test.Times)
-
-		require.NotNil(t, err)
-		require.Equal(t, "", digits)
-		require.Equal(t, test.Input, rest)
+		digits, rest, err := Digit(test.Input, test.Times)
+		c.Assert(digits, Equals, "")
+		c.Assert(rest, Equals, test.Input)
+		c.Assert(err, NotNil)
 	}
 }
 
-func TestNumber(t *testing.T) {
+func (s *testParserSuite) TestNumber(c *C) {
 	okTable := []struct {
 		Input        string
 		ExpectedNum  int
@@ -105,11 +109,10 @@ func TestNumber(t *testing.T) {
 		{"456 121", 456, " 121"},
 	}
 	for _, test := range okTable {
-		digits, rest, err := utilparser.Number(test.Input)
-
-		require.NoError(t, err)
-		require.Equal(t, test.ExpectedNum, digits)
-		require.Equal(t, test.ExpectedRest, rest)
+		digits, rest, err := Number(test.Input)
+		c.Assert(digits, Equals, test.ExpectedNum)
+		c.Assert(rest, Equals, test.ExpectedRest)
+		c.Assert(err, IsNil)
 	}
 
 	errTable := []struct {
@@ -121,15 +124,14 @@ func TestNumber(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		digits, rest, err := utilparser.Number(test.Input)
-
-		require.NotNil(t, err)
-		require.Equal(t, 0, digits)
-		require.Equal(t, test.Input, rest)
+		digits, rest, err := Number(test.Input)
+		c.Assert(digits, Equals, 0)
+		c.Assert(rest, Equals, test.Input)
+		c.Assert(err, NotNil)
 	}
 }
 
-func TestCharAndAnyChar(t *testing.T) {
+func (s *testParserSuite) TestCharAndAnyChar(c *C) {
 	okTable := []struct {
 		Char     byte
 		Input    string
@@ -141,15 +143,13 @@ func TestCharAndAnyChar(t *testing.T) {
 	}
 
 	for _, test := range okTable {
-		rest, err := utilparser.Char(test.Input, test.Char)
+		rest, err := Char(test.Input, test.Char)
+		c.Assert(rest, Equals, test.Expected)
+		c.Assert(err, IsNil)
 
-		require.NoError(t, err)
-		require.Equal(t, test.Expected, rest)
-
-		rest, err = utilparser.AnyChar(test.Input)
-
-		require.NoError(t, err)
-		require.Equal(t, test.Expected, rest)
+		rest, err = AnyChar(test.Input)
+		c.Assert(rest, Equals, test.Expected)
+		c.Assert(err, IsNil)
 	}
 
 	errTable := []struct {
@@ -162,9 +162,8 @@ func TestCharAndAnyChar(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		rest, err := utilparser.Char(test.Input, test.Char)
-
-		require.NotNil(t, err)
-		require.Equal(t, test.Input, rest)
+		rest, err := Char(test.Input, test.Char)
+		c.Assert(rest, Equals, test.Input)
+		c.Assert(err, NotNil)
 	}
 }

@@ -8,33 +8,35 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package copr
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/require"
 )
 
-func TestCopRanges(t *testing.T) {
+type testKeyRangesSuite struct {
+}
+
+var _ = Suite(&testKeyRangesSuite{})
+
+func (s *testKeyRangesSuite) TestCopRanges(c *C) {
 	ranges := []kv.KeyRange{
 		{StartKey: []byte("a"), EndKey: []byte("b")},
 		{StartKey: []byte("c"), EndKey: []byte("d")},
 		{StartKey: []byte("e"), EndKey: []byte("f")},
 	}
 
-	checkEqual(t, &KeyRanges{mid: ranges}, ranges, true)
-	checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
-	checkEqual(t, &KeyRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
-	checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
+	s.checkEqual(c, &KeyRanges{mid: ranges}, ranges, true)
+	s.checkEqual(c, &KeyRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
+	s.checkEqual(c, &KeyRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
+	s.checkEqual(c, &KeyRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
 }
 
-func TestCopRangeSplit(t *testing.T) {
+func (s *testKeyRangesSuite) TestCopRangeSplit(c *C) {
 	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
 	mid := []kv.KeyRange{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
@@ -42,12 +44,12 @@ func TestCopRangeSplit(t *testing.T) {
 		{StartKey: []byte("l"), EndKey: []byte("o")},
 	}
 	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
-	const left = true
-	const right = false
+	left := true
+	right := false
 
 	// input range:  [c-d) [e-g) [l-o)
 	ranges := &KeyRanges{mid: mid}
-	testSplit(t, ranges, right,
+	s.testSplit(c, ranges, right,
 		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
 		splitCase{"d", buildCopRanges("e", "g", "l", "o")},
 		splitCase{"f", buildCopRanges("f", "g", "l", "o")},
@@ -55,7 +57,7 @@ func TestCopRangeSplit(t *testing.T) {
 
 	// input range:  [a-b) [c-d) [e-g) [l-o)
 	ranges = &KeyRanges{first: first, mid: mid}
-	testSplit(t, ranges, right,
+	s.testSplit(c, ranges, right,
 		splitCase{"a", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
 		splitCase{"m", buildCopRanges("m", "o")},
@@ -63,7 +65,7 @@ func TestCopRangeSplit(t *testing.T) {
 
 	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
 	ranges = &KeyRanges{first: first, mid: mid, last: last}
-	testSplit(t, ranges, right,
+	s.testSplit(c, ranges, right,
 		splitCase{"f", buildCopRanges("f", "g", "l", "o", "q", "t")},
 		splitCase{"h", buildCopRanges("l", "o", "q", "t")},
 		splitCase{"r", buildCopRanges("r", "t")},
@@ -71,7 +73,7 @@ func TestCopRangeSplit(t *testing.T) {
 
 	// input range:  [c-d) [e-g) [l-o)
 	ranges = &KeyRanges{mid: mid}
-	testSplit(t, ranges, left,
+	s.testSplit(c, ranges, left,
 		splitCase{"m", buildCopRanges("c", "d", "e", "g", "l", "m")},
 		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
 		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
@@ -79,7 +81,7 @@ func TestCopRangeSplit(t *testing.T) {
 
 	// input range:  [a-b) [c-d) [e-g) [l-o)
 	ranges = &KeyRanges{first: first, mid: mid}
-	testSplit(t, ranges, left,
+	s.testSplit(c, ranges, left,
 		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
 		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
 		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
@@ -87,22 +89,22 @@ func TestCopRangeSplit(t *testing.T) {
 
 	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
 	ranges = &KeyRanges{first: first, mid: mid, last: last}
-	testSplit(t, ranges, left,
+	s.testSplit(c, ranges, left,
 		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
 	)
 }
 
-func checkEqual(t *testing.T, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
-	require.Equal(t, copRanges.Len(), len(ranges))
+func (s *testKeyRangesSuite) checkEqual(c *C, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
+	c.Assert(copRanges.Len(), Equals, len(ranges))
 	for i := range ranges {
-		require.EqualValues(t, copRanges.At(i), ranges[i])
+		c.Assert(copRanges.At(i), DeepEquals, ranges[i])
 	}
 	if slice {
 		for i := 0; i <= copRanges.Len(); i++ {
 			for j := i; j <= copRanges.Len(); j++ {
-				checkEqual(t, copRanges.Slice(i, j), ranges[i:j], false)
+				s.checkEqual(c, copRanges.Slice(i, j), ranges[i:j], false)
 			}
 		}
 	}
@@ -113,14 +115,14 @@ type splitCase struct {
 	*KeyRanges
 }
 
-func testSplit(t *testing.T, ranges *KeyRanges, checkLeft bool, cases ...splitCase) {
-	for _, tt := range cases {
-		left, right := ranges.Split([]byte(tt.key))
-		expect := tt.KeyRanges
+func (s *testKeyRangesSuite) testSplit(c *C, ranges *KeyRanges, checkLeft bool, cases ...splitCase) {
+	for _, t := range cases {
+		left, right := ranges.Split([]byte(t.key))
+		expect := t.KeyRanges
 		if checkLeft {
-			checkEqual(t, left, expect.mid, false)
+			s.checkEqual(c, left, expect.mid, false)
 		} else {
-			checkEqual(t, right, expect.mid, false)
+			s.checkEqual(c, right, expect.mid, false)
 		}
 	}
 }

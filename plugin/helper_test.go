@@ -8,42 +8,47 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package plugin
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
-)
+import "testing"
 
 func TestPluginDeclare(t *testing.T) {
 	auditRaw := &AuditManifest{Manifest: Manifest{}}
 	auditExport := ExportManifest(auditRaw)
 	audit2 := DeclareAuditManifest(auditExport)
-	require.Equal(t, auditRaw, audit2)
+	if audit2 != auditRaw {
+		t.Errorf("declare audit fail")
+	}
 
 	authRaw := &AuthenticationManifest{Manifest: Manifest{}}
 	authExport := ExportManifest(authRaw)
 	auth2 := DeclareAuthenticationManifest(authExport)
-	require.Equal(t, authRaw, auth2)
+	if auth2 != authRaw {
+		t.Errorf("declare auth fail")
+	}
 
 	schemaRaw := &SchemaManifest{Manifest: Manifest{}}
 	schemaExport := ExportManifest(schemaRaw)
 	schema2 := DeclareSchemaManifest(schemaExport)
-	require.Equal(t, schemaRaw, schema2)
+	if schema2 != schemaRaw {
+		t.Errorf("declare schema fail")
+	}
 
 	daemonRaw := &DaemonManifest{Manifest: Manifest{}}
 	daemonExport := ExportManifest(daemonRaw)
 	daemon2 := DeclareDaemonManifest(daemonExport)
-	require.Equal(t, daemonRaw, daemon2)
+	if daemon2 != daemonRaw {
+		t.Errorf("declare daemon fail")
+	}
 }
 
 func TestDecode(t *testing.T) {
 	failID := ID("fail")
 	_, _, err := failID.Decode()
-	require.Error(t, err)
+	if err == nil {
+		t.Errorf("'fail' should not decode success")
+	}
 }

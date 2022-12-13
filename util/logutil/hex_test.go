@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,9 +20,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestHex(t *testing.T) {
@@ -32,7 +32,7 @@ func TestHex(t *testing.T) {
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	expected := "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil> IsInFlashback:false}"
+	expected := "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}"
 	require.Equal(t, expected, logutil.Hex(&region).String())
 }
 

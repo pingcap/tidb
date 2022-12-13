@@ -8,23 +8,26 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package copr
 
 import (
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 )
 
-func TestBuildCacheKey(t *testing.T) {
+type testCoprocessorCacheSuite struct {
+}
+
+var _ = Suite(&testCoprocessorCacheSuite{})
+
+func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 	req := coprocessor.Request{
 		Tp:      0xAB,
 		StartTs: 0xAABBCC,
@@ -42,7 +45,7 @@ func TestBuildCacheKey(t *testing.T) {
 	}
 
 	key, err := coprCacheBuildKey(&req)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	expectKey := ""
 	expectKey += "\xab"                             // 1 byte Tp
 	expectKey += "\x08\x00\x00\x00"                 // 4 bytes Data len
@@ -55,7 +58,7 @@ func TestBuildCacheKey(t *testing.T) {
 	expectKey += "\x01\x01\x02"                     // StartKey
 	expectKey += "\x03\x00"                         // 2 bytes EndKey len
 	expectKey += "\x01\x01\x03"                     // EndKey
-	require.EqualValues(t, []byte(expectKey), key)
+	c.Assert(key, DeepEquals, []byte(expectKey))
 
 	req = coprocessor.Request{
 		Tp:      0xABCC, // Tp too big
@@ -65,104 +68,95 @@ func TestBuildCacheKey(t *testing.T) {
 	}
 
 	_, err = coprCacheBuildKey(&req)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestDisable(t *testing.T) {
+func (s *testCoprocessorSuite) TestDisable(c *C) {
 	cache, err := newCoprCache(&config.CoprocessorCache{CapacityMB: 0})
-	require.NoError(t, err)
-	require.Nil(t, cache)
+	c.Assert(err, IsNil)
+	c.Assert(cache, IsNil)
 
 	v := cache.Set([]byte("foo"), &coprCacheValue{})
-	require.False(t, v)
+	c.Assert(v, Equals, false)
 
 	v2 := cache.Get([]byte("foo"))
-	require.Nil(t, v2)
+	c.Assert(v2, IsNil)
 
-	v = cache.CheckResponseAdmission(1024, time.Second*5, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(1024, time.Second*5)
+	c.Assert(v, Equals, false)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
-	require.Error(t, err)
-	require.Nil(t, cache)
+	c.Assert(err, NotNil)
+	c.Assert(cache, IsNil)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001, AdmissionMaxResultMB: 1})
-	require.NoError(t, err)
-	require.NotNil(t, cache)
-	defer cache.cache.Close()
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
 }
 
-func TestAdmission(t *testing.T) {
+func (s *testCoprocessorSuite) TestAdmission(c *C) {
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
-	require.NoError(t, err)
-	require.NotNil(t, cache)
-	defer cache.cache.Close()
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
 
 	v := cache.CheckRequestAdmission(0)
-	require.True(t, v)
+	c.Assert(v, Equals, true)
 
 	v = cache.CheckRequestAdmission(1000)
-	require.True(t, v)
+	c.Assert(v, Equals, true)
 
-	v = cache.CheckResponseAdmission(0, 0, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(0, 0)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(0, 4*time.Millisecond, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(0, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(0, 5*time.Millisecond, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(0, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(1, 0, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(1, 0)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(1, 4*time.Millisecond, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(1, 5*time.Millisecond, 0)
-	require.True(t, v)
+	v = cache.CheckResponseAdmission(1, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
 
-	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond, 0)
-	require.True(t, v)
+	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
 
-	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond, 0)
-	require.True(t, v)
+	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond, 0)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond, 0)
-	require.False(t, v)
-
-	v = cache.CheckResponseAdmission(1024, 4*time.Millisecond, 1)
-	require.True(t, v)
-
-	v = cache.CheckResponseAdmission(1024, 4*time.Millisecond, 51)
-	require.False(t, v)
+	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
-	require.NoError(t, err)
-	require.NotNil(t, cache)
-	defer cache.cache.Close()
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
 
 	v = cache.CheckRequestAdmission(0)
-	require.True(t, v)
+	c.Assert(v, Equals, true)
 
 	v = cache.CheckRequestAdmission(5)
-	require.True(t, v)
+	c.Assert(v, Equals, true)
 
 	v = cache.CheckRequestAdmission(6)
-	require.False(t, v)
+	c.Assert(v, Equals, false)
 }
 
-func TestCacheValueLen(t *testing.T) {
+func (s *testCoprocessorSuite) TestCacheValueLen(c *C) {
 	v := coprCacheValue{
 		TimeStamp:         0x123,
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	// 120 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 4 + 8 byte * 3
-	require.Equal(t, 120, v.Len())
+	// 72 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 2 + 8 byte * 3
+	c.Assert(v.Len(), Equals, 72)
 
 	v = coprCacheValue{
 		Key:               []byte("foobar"),
@@ -171,27 +165,16 @@ func TestCacheValueLen(t *testing.T) {
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	require.Equal(t, 120+len(v.Key)+len(v.Data), v.Len())
-
-	v = coprCacheValue{
-		Key:               []byte("foobar"),
-		Data:              []byte("12345678"),
-		TimeStamp:         0x123,
-		RegionID:          0x1,
-		RegionDataVersion: 0x3,
-		PageEnd:           []byte("3235"),
-	}
-	require.Equal(t, 120+len(v.Key)+len(v.Data)+len(v.PageEnd), v.Len())
+	c.Assert(v.Len(), Equals, 72+6+8)
 }
 
-func TestGetSet(t *testing.T) {
+func (s *testCoprocessorSuite) TestGetSet(c *C) {
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
-	require.NoError(t, err)
-	require.NotNil(t, cache)
-	defer cache.cache.Close()
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
 
 	v := cache.Get([]byte("foo"))
-	require.Nil(t, v)
+	c.Assert(v, IsNil)
 
 	v2 := cache.Set([]byte("foo"), &coprCacheValue{
 		Data:              []byte("bar"),
@@ -199,18 +182,18 @@ func TestGetSet(t *testing.T) {
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	})
-	require.True(t, v2)
+	c.Assert(v2, Equals, true)
 
 	// See https://github.com/dgraph-io/ristretto/blob/83508260cb49a2c3261c2774c991870fd18b5a1b/cache_test.go#L13
 	// Changed from 10ms to 50ms to resist from unstable CI environment.
 	time.Sleep(time.Millisecond * 50)
 
 	v = cache.Get([]byte("foo"))
-	require.NotNil(t, v)
-	require.EqualValues(t, []byte("bar"), v.Data)
+	c.Assert(v, NotNil)
+	c.Assert(v.Data, DeepEquals, []byte("bar"))
 }
 
-func TestIssue24118(t *testing.T) {
+func (s *testCoprocessorSuite) TestIssue24118(c *C) {
 	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
-	require.EqualError(t, err, "Capacity must be > 0 to enable the cache")
+	c.Assert(err.Error(), Equals, "Capacity must be > 0 to enable the cache")
 }

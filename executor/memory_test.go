@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,72 +17,125 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"runtime/debug"
-	"testing"
 
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestPBMemoryLeak(t *testing.T) {
-	debug.SetGCPercent(1000)
-	defer debug.SetGCPercent(100)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_mem")
-	tk.MustExec("use test_mem")
+var _ = SerialSuites(&testMemoryLeak{})
+
+type testMemoryLeak struct {
+	store  kv.Storage
+	domain *domain.Domain
+}
+
+func (s *testMemoryLeak) SetUpSuite(c *C) {
+	var err error
+	s.store, err = mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	s.domain, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testMemoryLeak) TearDownSuite(c *C) {
+	s.domain.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
+func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
+	c.Skip("too slow")
+
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create database test_mem")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_mem")
+	c.Assert(err, IsNil)
 
 	// prepare data
 	totalSize := uint64(256 << 20) // 256MB
 	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
-	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
+	c.Assert(err, IsNil)
+	defer func() {
+		_, err = se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
 	for i := uint64(0); i < numRows; i++ {
-		tk.MustExec(sql)
+		_, err = se.Execute(context.Background(), sql)
+		c.Assert(err, IsNil)
 	}
 
 	// read data
 	runtime.GC()
-	allocatedBegin, inUseBegin := readMem()
-	records, err := tk.Session().Execute(context.Background(), "select * from t")
-	require.NoError(t, err)
+	allocatedBegin, inUseBegin := s.readMem()
+	records, err := se.Execute(context.Background(), "select * from t")
+	c.Assert(err, IsNil)
 	record := records[0]
 	rowCnt := 0
-	chk := record.NewChunk(nil)
+	chk := record.NewChunk()
 	for {
-		require.NoError(t, record.Next(context.Background(), chk))
+		c.Assert(record.Next(context.Background(), chk), IsNil)
 		rowCnt += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
-	require.Equal(t, int(numRows), rowCnt)
+	c.Assert(rowCnt, Equals, int(numRows))
 
 	// check memory before close
 	runtime.GC()
-	allocatedAfter, inUseAfter := readMem()
-	require.GreaterOrEqual(t, allocatedAfter-allocatedBegin, totalSize)
-	require.Less(t, memDiff(inUseAfter, inUseBegin), delta)
+	allocatedAfter, inUseAfter := s.readMem()
+	c.Assert(allocatedAfter-allocatedBegin, GreaterEqual, totalSize)
+	c.Assert(s.memDiff(inUseAfter, inUseBegin), Less, delta)
 
+	se.Close()
 	runtime.GC()
-	allocatedFinal, inUseFinal := readMem()
-	require.Less(t, allocatedFinal-allocatedAfter, delta)
-	require.Less(t, memDiff(inUseFinal, inUseAfter), delta)
+	allocatedFinal, inUseFinal := s.readMem()
+	c.Assert(allocatedFinal-allocatedAfter, Less, delta)
+	c.Assert(s.memDiff(inUseFinal, inUseAfter), Less, delta)
 }
 
-// nolint:unused
-func readMem() (allocated, heapInUse uint64) {
+func (s *testMemoryLeak) readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
 }
 
-// nolint:unused
-func memDiff(m1, m2 uint64) uint64 {
+func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 	if m1 > m2 {
 		return m1 - m2
 	}
 	return m2 - m1
+}
+
+func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+	// TODO: assert the memory consume has happened in another way
+	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	// assert insert
+	tk.MustExec("insert t (id) values (1)")
+	tk.MustExec("insert t (id) values (2)")
+	tk.MustExec("insert t (id) values (3)")
+	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert update
+	tk.MustExec("update t set id = 4 where id = 1")
+	tk.MustExec("update t set id = 5 where id = 2")
+	tk.MustExec("update t set id = 6 where id = 3")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
 }

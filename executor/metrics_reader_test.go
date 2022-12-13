@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,19 +16,17 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"testing"
 
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestStmtLabel(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite7) TestStmtLabel(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
 	for i := 0; i < 10; i++ {
@@ -62,12 +59,13 @@ func TestStmtLabel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
-		require.NoError(t, err)
+		c.Check(err, IsNil)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
-		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
-		require.NoError(t, err)
-		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
+		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		c.Check(err, IsNil)
+		c.Assert(err, IsNil)
+		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, preprocessorReturn.InfoSchema)
+		c.Assert(err, IsNil)
+		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
 }

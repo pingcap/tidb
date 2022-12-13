@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,9 +19,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -418,7 +416,6 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}
@@ -462,7 +459,11 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					util.MetricSchemaName.L, name, cond)
 			}
 			exec := sctx.(sqlexec.RestrictedSQLExecutor)
-			rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+			stmt, err := exec.ParseWithParams(ctx, sql)
+			if err != nil {
+				return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
+			}
+			rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 			}

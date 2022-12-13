@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,58 +17,53 @@ import (
 	"bufio"
 	"bytes"
 	"net"
-	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 )
 
-func BenchmarkPacketIOWrite(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		var outBuffer bytes.Buffer
-		pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
-		_ = pkt.writePacket([]byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe})
-	}
+type PacketIOTestSuite struct {
 }
 
-func TestPacketIOWrite(t *testing.T) {
+var _ = Suite(new(PacketIOTestSuite))
+
+func (s *PacketIOTestSuite) TestWrite(c *C) {
 	// Test write one packet
 	var outBuffer bytes.Buffer
 	pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
 	err := pkt.writePacket([]byte{0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = pkt.flush()
-	require.NoError(t, err)
-	require.Equal(t, []byte{0x03, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03}, outBuffer.Bytes())
+	c.Assert(err, IsNil)
+	c.Assert(outBuffer.Bytes(), DeepEquals, []byte{0x03, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03})
 
 	// Test write more than one packet
 	outBuffer.Reset()
 	largeInput := make([]byte, mysql.MaxPayloadLen+4)
 	pkt = &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
 	err = pkt.writePacket(largeInput)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = pkt.flush()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	res := outBuffer.Bytes()
-	require.Equal(t, byte(0xff), res[0])
-	require.Equal(t, byte(0xff), res[1])
-	require.Equal(t, byte(0xff), res[2])
-	require.Equal(t, byte(0), res[3])
+	c.Assert(res[0], Equals, byte(0xff))
+	c.Assert(res[1], Equals, byte(0xff))
+	c.Assert(res[2], Equals, byte(0xff))
+	c.Assert(res[3], Equals, byte(0))
 }
 
-func TestPacketIORead(t *testing.T) {
+func (s *PacketIOTestSuite) TestRead(c *C) {
 	var inBuffer bytes.Buffer
 	_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	readBytes, err := pkt.readPacket()
-	require.NoError(t, err)
-	require.Equal(t, uint8(1), pkt.sequence)
-	require.Equal(t, []byte{0x01}, readBytes)
+	bytes, err := pkt.readPacket()
+	c.Assert(err, IsNil)
+	c.Assert(pkt.sequence, Equals, uint8(1))
+	c.Assert(bytes, DeepEquals, []byte{0x01})
 
 	inBuffer.Reset()
 	buf := make([]byte, mysql.MaxPayloadLen+9)
@@ -84,15 +78,15 @@ func TestPacketIORead(t *testing.T) {
 	buf[8+mysql.MaxPayloadLen] = 0x0a
 
 	_, err = inBuffer.Write(buf)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	readBytes, err = pkt.readPacket()
-	require.NoError(t, err)
-	require.Equal(t, uint8(2), pkt.sequence)
-	require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
-	require.Equal(t, byte(0x0a), readBytes[mysql.MaxPayloadLen])
+	bytes, err = pkt.readPacket()
+	c.Assert(err, IsNil)
+	c.Assert(pkt.sequence, Equals, uint8(2))
+	c.Assert(len(bytes), Equals, mysql.MaxPayloadLen+1)
+	c.Assert(bytes[mysql.MaxPayloadLen], DeepEquals, byte(0x0a))
 }
 
 type bytesConn struct {

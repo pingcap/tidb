@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +17,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -29,7 +28,7 @@ func (b *builtinTimeIsNullSig) vectorized() bool {
 
 func (b *builtinTimeIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDatetime, numRows)
 	if err != nil {
 		return err
 	}
@@ -79,7 +78,7 @@ func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -131,7 +130,7 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
 		return err
 	}
@@ -155,7 +154,7 @@ func (b *builtinDecimalIsFalseSig) vectorized() bool {
 func (b *builtinDecimalIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDecimal, numRows)
 	if err != nil {
 		return err
 	}
@@ -291,7 +290,7 @@ func (b *builtinRealIsNullSig) vectorized() bool {
 
 func (b *builtinRealIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
 	if err != nil {
 		return err
 	}
@@ -319,7 +318,7 @@ func (b *builtinUnaryNotRealSig) vectorized() bool {
 
 func (b *builtinUnaryNotRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
 		return err
 	}
@@ -374,7 +373,7 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -428,7 +427,7 @@ func (b *builtinBitXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
 		return err
 	}
@@ -455,7 +454,7 @@ func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -493,7 +492,7 @@ func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
 		return err
 	}
@@ -516,7 +515,7 @@ func (b *builtinRealIsFalseSig) vectorized() bool {
 
 func (b *builtinRealIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
 	if err != nil {
 		return err
 	}
@@ -553,7 +552,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
@@ -583,7 +582,7 @@ func (b *builtinUnaryNotDecimalSig) vectorized() bool {
 
 func (b *builtinUnaryNotDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
@@ -639,7 +638,7 @@ func (b *builtinDecimalIsNullSig) vectorized() bool {
 
 func (b *builtinDecimalIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDecimal, numRows)
 	if err != nil {
 		return err
 	}
@@ -670,7 +669,7 @@ func (b *builtinLeftShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
 		return err
 	}
@@ -696,7 +695,7 @@ func (b *builtinRightShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
 		return err
 	}
@@ -719,7 +718,7 @@ func (b *builtinRealIsTrueSig) vectorized() bool {
 
 func (b *builtinRealIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
 	if err != nil {
 		return err
 	}
@@ -752,7 +751,7 @@ func (b *builtinDecimalIsTrueSig) vectorized() bool {
 
 func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDecimal, numRows)
 	if err != nil {
 		return err
 	}
@@ -811,7 +810,7 @@ func (b *builtinDurationIsNullSig) vectorized() bool {
 
 func (b *builtinDurationIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDuration, numRows)
 	if err != nil {
 		return err
 	}

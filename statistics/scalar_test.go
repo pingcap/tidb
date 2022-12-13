@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,11 +15,10 @@ package statistics
 
 import (
 	"math"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 )
 
 const eps = 1e-9
@@ -35,7 +33,7 @@ func getDecimal(value float64) *types.MyDecimal {
 }
 
 func getDuration(value string) types.Duration {
-	dur, _, _ := types.ParseDuration(nil, value, 0)
+	dur, _ := types.ParseDuration(nil, value, 0)
 	return dur
 }
 
@@ -56,11 +54,11 @@ func getBinaryLiteral(value string) types.BinaryLiteral {
 
 func getUnsignedFieldType() *types.FieldType {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.AddFlag(mysql.UnsignedFlag)
+	tp.Flag |= mysql.UnsignedFlag
 	return tp
 }
 
-func TestCalcFraction(t *testing.T) {
+func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 	tests := []struct {
 		lower    types.Datum
 		upper    types.Datum
@@ -79,14 +77,14 @@ func TestCalcFraction(t *testing.T) {
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(4),
-			fraction: 1.0,
+			fraction: 1,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(-1),
-			fraction: 0.0,
+			fraction: 0,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
@@ -172,11 +170,11 @@ func TestCalcFraction(t *testing.T) {
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)
-		require.InDelta(t, test.fraction, fraction, eps)
+		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
 	}
 }
 
-func TestEnumRangeValues(t *testing.T) {
+func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 	tests := []struct {
 		low         types.Datum
 		high        types.Datum
@@ -256,10 +254,10 @@ func TestEnumRangeValues(t *testing.T) {
 			res:         "",
 		},
 	}
-	for _, test := range tests {
-		vals := enumRangeValues(test.low, test.high, test.lowExclude, test.highExclude)
+	for _, t := range tests {
+		vals := enumRangeValues(t.low, t.high, t.lowExclude, t.highExclude)
 		str, err := types.DatumsToString(vals, true)
-		require.NoError(t, err)
-		require.Equal(t, test.res, str)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.res)
 	}
 }

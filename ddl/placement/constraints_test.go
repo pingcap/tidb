@@ -8,34 +8,36 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package placement
 
 import (
-	"fmt"
-	"testing"
+	"errors"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
 
-func TestNewConstraints(t *testing.T) {
+var _ = Suite(&testConstraintsSuite{})
+
+type testConstraintsSuite struct{}
+
+func (t *testConstraintsSuite) TestNew(c *C) {
 	_, err := NewConstraints(nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	_, err = NewConstraints([]string{})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	_, err = NewConstraints([]string{"+zonesh"})
-	require.ErrorIs(t, err, ErrInvalidConstraintFormat)
+	c.Assert(errors.Is(err, ErrInvalidConstraintFormat), IsTrue)
 
 	_, err = NewConstraints([]string{"+zone=sh", "-zone=sh"})
-	require.ErrorIs(t, err, ErrConflictingConstraints)
+	c.Assert(errors.Is(err, ErrConflictingConstraints), IsTrue)
 }
 
-func TestAdd(t *testing.T) {
+func (t *testConstraintsSuite) TestAdd(c *C) {
 	type TestCase struct {
 		name   string
 		labels Constraints
@@ -45,9 +47,9 @@ func TestAdd(t *testing.T) {
 	var tests []TestCase
 
 	labels, err := NewConstraints([]string{"+zone=sh"})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	label, err := NewConstraint("-zone=sh")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		"always false match",
 		labels, label,
@@ -55,9 +57,9 @@ func TestAdd(t *testing.T) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	label, err = NewConstraint("+zone=sh")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		"duplicated constraints, skip",
 		labels, label,
@@ -75,7 +77,7 @@ func TestAdd(t *testing.T) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		"invalid label in operand",
 		labels, Constraint{Op: "["},
@@ -95,28 +97,28 @@ func TestAdd(t *testing.T) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	label, err = NewConstraint("-zone=bj")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		"normal",
 		labels, label,
 		nil,
 	})
 
-	for _, test := range tests {
-		err := test.labels.Add(test.label)
-		comment := fmt.Sprintf("%s: %v", test.name, err)
-		if test.err == nil {
-			require.NoError(t, err, comment)
-			require.Equal(t, test.label, test.labels[len(test.labels)-1], comment)
+	for _, t := range tests {
+		err := t.labels.Add(t.label)
+		comment := Commentf("%s: %v", t.name, err)
+		if t.err == nil {
+			c.Assert(err, IsNil, comment)
+			c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, comment)
 		} else {
-			require.ErrorIs(t, err, test.err, comment)
+			c.Assert(errors.Is(err, t.err), IsTrue, comment)
 		}
 	}
 }
 
-func TestRestoreConstraints(t *testing.T) {
+func (t *testConstraintsSuite) TestRestore(c *C) {
 	type TestCase struct {
 		name   string
 		input  Constraints
@@ -133,9 +135,9 @@ func TestRestoreConstraints(t *testing.T) {
 	})
 
 	input1, err := NewConstraint("+zone=bj")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	input2, err := NewConstraint("-zone=sh")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		"normal2",
 		Constraints{input1, input2},
@@ -154,14 +156,14 @@ func TestRestoreConstraints(t *testing.T) {
 		ErrInvalidConstraintFormat,
 	})
 
-	for _, test := range tests {
-		res, err := test.input.Restore()
-		comment := fmt.Sprintf("%s: %v", test.name, err)
-		if test.err == nil {
-			require.NoError(t, err, comment)
-			require.Equal(t, test.output, res, comment)
+	for _, t := range tests {
+		res, err := t.input.Restore()
+		comment := Commentf("%s: %v", t.name, err)
+		if t.err == nil {
+			c.Assert(err, IsNil, comment)
+			c.Assert(res, Equals, t.output, comment)
 		} else {
-			require.ErrorIs(t, err, test.err, comment)
+			c.Assert(errors.Is(err, t.err), IsTrue, comment)
 		}
 	}
 }

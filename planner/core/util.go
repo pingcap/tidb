@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,16 +15,16 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/size"
-	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -39,7 +38,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -49,7 +48,6 @@ func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		if _, ok := a.skipAggMap[v]; !ok {
@@ -67,7 +65,7 @@ type WindowFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -77,7 +75,6 @@ func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
@@ -130,16 +127,13 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 }
 
 // inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
-	prunedColumns := make([]*expression.Column, 0)
+func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column) {
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
-	appendColumnPruneTraceStep(s.self, prunedColumns, opt)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
@@ -178,16 +172,6 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
-// MemoryUsage return the memory usage of physicalSchemaProducer
-func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
-	return
-}
-
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
@@ -220,22 +204,6 @@ func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
 	s.schema = schema
 	s.names = names
-}
-
-// MemoryUsage return the memory usage of baseSchemaProducer
-func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
-	if s.schema != nil {
-		sum += s.schema.MemoryUsage()
-	}
-	for _, name := range s.names {
-		sum += name.MemoryUsage()
-	}
-	return
 }
 
 // Schema implements the Plan.Schema interface.
@@ -284,26 +252,7 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
-// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
-func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
-	res := make(map[string]uint64)
-	for _, op := range flat.Main {
-		switch p := op.Origin.(type) {
-		case *PhysicalIndexScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
-			}
-		case *PhysicalTableScan:
-			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
-				res[p.Table.Name.O] = p.stats.StatsVersion
-			}
-		}
-	}
-	return res
-}
-
 // GetStatsInfo gets the statistics info from a physical plan tree.
-// Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
 func GetStatsInfo(i interface{}) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
@@ -332,7 +281,7 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	return statsInfos
 }
 
-// extractStringFromStringSet helps extract string info from set.StringSet.
+// extractStringFromStringSet helps extract string info from set.StringSet
 func extractStringFromStringSet(set set.StringSet) string {
 	if len(set) < 1 {
 		return ""
@@ -341,42 +290,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 	for k := range set {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
-	slices.Sort(l)
-	return strings.Join(l, ",")
-}
-
-// extractStringFromStringSlice helps extract string info from []string.
-func extractStringFromStringSlice(ss []string) string {
-	if len(ss) < 1 {
-		return ""
-	}
-	slices.Sort(ss)
-	return strings.Join(ss, ",")
-}
-
-// extractStringFromUint64Slice helps extract string info from uint64 slice.
-func extractStringFromUint64Slice(slice []uint64) string {
-	if len(slice) < 1 {
-		return ""
-	}
-	l := make([]string, 0, len(slice))
-	for _, k := range slice {
-		l = append(l, fmt.Sprintf(`%d`, k))
-	}
-	slices.Sort(l)
-	return strings.Join(l, ",")
-}
-
-// extractStringFromBoolSlice helps extract string info from bool slice.
-func extractStringFromBoolSlice(slice []bool) string {
-	if len(slice) < 1 {
-		return ""
-	}
-	l := make([]string, 0, len(slice))
-	for _, k := range slice {
-		l = append(l, fmt.Sprintf(`%t`, k))
-	}
-	slices.Sort(l)
+	sort.Strings(l)
 	return strings.Join(l, ",")
 }
 
@@ -393,6 +307,38 @@ func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bo
 		}
 	}
 	return false
+}
+
+func cloneExprs(exprs []expression.Expression) []expression.Expression {
+	cloned := make([]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, e.Clone())
+	}
+	return cloned
+}
+
+func cloneCols(cols []*expression.Column) []*expression.Column {
+	cloned := make([]*expression.Column, 0, len(cols))
+	for _, c := range cols {
+		cloned = append(cloned, c.Clone().(*expression.Column))
+	}
+	return cloned
+}
+
+func cloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
+	cloned := make([]*model.ColumnInfo, 0, len(cols))
+	for _, c := range cols {
+		cloned = append(cloned, c.Clone())
+	}
+	return cloned
+}
+
+func cloneRanges(ranges []*ranger.Range) []*ranger.Range {
+	cloned := make([]*ranger.Range, 0, len(ranges))
+	for _, r := range ranges {
+		cloned = append(cloned, r.Clone())
+	}
+	return cloned
 }
 
 func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {

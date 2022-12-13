@@ -8,24 +8,26 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package handle
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/stretchr/testify/require"
 )
 
-func TestInsertAndDelete(t *testing.T) {
+var _ = Suite(&testUpdateListSuite{})
+
+type testUpdateListSuite struct {
+}
+
+func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		feedback: statistics.NewQueryFeedbackMap(),
 	}
-	h.feedback.data = statistics.NewQueryFeedbackMap()
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())
@@ -35,13 +37,13 @@ func TestInsertAndDelete(t *testing.T) {
 	items[4].Delete() // delete head
 	h.sweepList()
 
-	require.Equal(t, items[3], h.listHead.next)
-	require.Equal(t, items[1], items[3].next)
-	require.Nil(t, items[1].next)
+	c.Assert(h.listHead.next, Equals, items[3])
+	c.Assert(items[3].next, Equals, items[1])
+	c.Assert(items[1].next, IsNil)
 
 	// delete rest
 	items[1].Delete()
 	items[3].Delete()
 	h.sweepList()
-	require.Nil(t, h.listHead.next)
+	c.Assert(h.listHead.next, IsNil)
 }

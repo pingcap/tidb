@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,28 +15,24 @@ package tables_test
 
 import (
 	"context"
-	"testing"
 
-	"github.com/pingcap/failpoint"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestPartitionBasic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestPartitionBasic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
+	ctx := tk.Se
+	ctx.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1'")
 	tk.MustExec(`CREATE TABLE partition_basic (id int(11), unique index(id))
 PARTITION BY RANGE COLUMNS ( id ) (
@@ -52,16 +47,18 @@ PARTITION BY RANGE COLUMNS ( id ) (
 
 	tk.MustQuery("select * from partition_basic where id = 7").Check(testkit.Rows("7"))
 	tk.MustQuery("select * from partition_basic partition (p1)").Check(testkit.Rows("7"))
-	tk.MustExecToErr("select * from partition_basic partition (p5)")
+	_, err := tk.Exec("select * from partition_basic partition (p5)")
+	c.Assert(err, NotNil)
 
-	tk.MustExecToErr("update partition_basic set id = 666 where id = 7")
+	_, err = tk.Exec("update partition_basic set id = 666 where id = 7")
+	c.Assert(err, NotNil)
 	tk.MustExec("update partition_basic set id = 9 where id = 7")
 	tk.MustExec("delete from partition_basic where id = 7")
 	tk.MustExec("delete from partition_basic where id = 9")
 	tk.MustExec("drop table partition_basic")
 }
 
-func TestPartitionAddRecord(t *testing.T) {
+func (ts *testSuite) TestPartitionAddRecord(c *C) {
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -70,167 +67,164 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 	ctx := context.Background()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	_, err := tk.Session().Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(ctx, "drop table if exists t1, t2;")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(ctx, createTable1)
-	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
+	_, err := ts.se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(ctx, "drop table if exists t1, t2;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(ctx, createTable1)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	require.Equal(t, model.NewCIStr("p0"), p0.Name)
-	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1))
-	require.NoError(t, err)
+	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1))
+	c.Assert(err, IsNil)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
-	require.NoError(t, err)
-	require.Greater(t, len(val), 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(val), Greater, 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(7))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(12))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(16))
-	require.NoError(t, err)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(7))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(12))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(16))
+	c.Assert(err, IsNil)
 
 	// Make the changes visible.
-	_, err = tk.Session().Execute(context.Background(), "commit")
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), "commit")
+	c.Assert(err, IsNil)
 
 	// Check index count equals to data count.
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
 
 	// Value must locates in one partition.
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(22))
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tk.Session().Execute(context.Background(), "rollback")
-	require.NoError(t, err)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = ts.se.Execute(context.Background(), "rollback")
+	c.Assert(err, IsNil)
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p3 VALUES LESS THAN MAXVALUE
 )`
-	_, err = tk.Session().Execute(context.Background(), createTable2)
-	require.NoError(t, err)
-	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(22))
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), createTable2)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
+	c.Assert(err, IsNil) // Insert into maxvalue partition.
 
 	createTable3 := `create table test.t3 (id int) partition by range (id)
 	(
        partition p0 values less than (10)
 	)`
-	_, err = tk.Session().Execute(context.Background(), createTable3)
-	require.NoError(t, err)
-	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(11))
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(10))
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(0))
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), createTable3)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(11))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(10))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(0))
+	c.Assert(err, IsNil)
 
 	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
 	(
 	partition p0 values less than (10)
 	);`
-	_, err = tk.Session().Execute(context.Background(), createTable4)
-	require.NoError(t, err)
-	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(1, 11))
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
+	_, err = ts.se.Execute(context.Background(), createTable4)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(1, 11))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
-func TestHashPartitionAddRecord(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	_, err := tk.Session().Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1;")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
-	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
+func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(8))
-	require.NoError(t, err)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(8))
+	c.Assert(err, IsNil)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
-	require.NoError(t, err)
-	require.Greater(t, len(val), 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(val), Greater, 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(-1))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(3))
-	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(6))
-	require.NoError(t, err)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(-1))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(3))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(6))
+	c.Assert(err, IsNil)
 
 	// Make the changes visible.
-	_, err = tk.Session().Execute(context.Background(), "commit")
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), "commit")
+	c.Assert(err, IsNil)
 
 	// Check index count equals to data count.
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 2").Check(testkit.Rows("3"))
 
 	// Test for partition expression is negative number.
-	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
-	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
+	c.Assert(err, IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
-		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-		rid, err = tb.AddRecord(tk.Session(), types.MakeDatums(-i))
-		require.NoError(t, err)
-		txn, err = tk.Session().Txn(true)
-		require.NoError(t, err)
+		c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+		rid, err = tb.AddRecord(ts.se, types.MakeDatums(-i))
+		c.Assert(err, IsNil)
+		txn, err = ts.se.Txn(true)
+		c.Assert(err, IsNil)
 		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
-		require.NoError(t, err)
-		require.Greater(t, len(val), 0)
+		c.Assert(err, IsNil)
+		c.Assert(len(val), Greater, 0)
 		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-		require.True(t, kv.ErrNotExist.Equal(err))
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
-	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1, t2;")
-	require.NoError(t, err)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
+	c.Assert(err, IsNil)
 }
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().
-func TestPartitionGetPhysicalID(t *testing.T) {
+func (ts *testSuite) TestPartitionGetPhysicalID(c *C) {
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -238,45 +232,43 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	_, err := tk.Session().Execute(context.Background(), "Drop table if exists test.t1;")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), createTable1)
-	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
+
+	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), createTable1)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
-	require.NotNil(t, ps)
+	c.Assert(ps, NotNil)
 	for _, pd := range ps.Definitions {
 		p := tb.(table.PartitionedTable).GetPartition(pd.ID)
-		require.NotNil(t, p)
-		require.Equal(t, p.GetPhysicalID(), pd.ID)
+		c.Assert(p, NotNil)
+		c.Assert(pd.ID, Equals, p.GetPhysicalID())
 	}
 }
 
-func TestGeneratePartitionExpr(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	_, err := tk.Session().Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1;")
-	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), `create table t1 (id int)
+func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
 							partition by range (id) (
 							partition p0 values less than (4),
 							partition p1 values less than (7),
 							partition p3 values less than maxvalue)`)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
+	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	type partitionExpr interface {
 		PartitionExpr() (*tables.PartitionExpr, error)
 	}
 	pe, err := tbl.(partitionExpr).PartitionExpr()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	upperBounds := []string{
 		"lt(t1.id, 4)",
@@ -284,13 +276,12 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.String())
+		c.Assert(expr.String(), Equals, upperBounds[i])
 	}
 }
 
-func TestLocateRangeColumnPartitionErr(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestLocateRangeColumnPartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_month_data_monitor (
 		id int(20) NOT NULL AUTO_INCREMENT,
@@ -302,12 +293,11 @@ func TestLocateRangeColumnPartitionErr(t *testing.T) {
 	)`)
 
 	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
-func TestLocateRangePartitionErr(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_range_locate (
 		id int(20) NOT NULL AUTO_INCREMENT,
@@ -319,12 +309,11 @@ func TestLocateRangePartitionErr(t *testing.T) {
 	)`)
 
 	_, err := tk.Exec("INSERT INTO t_range_locate VALUES (5000, '2019-04-04')")
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
-func TestLocatePartitionWithExtraHandle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestLocatePartitionWithExtraHandle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_extra (
 		id int(20) NOT NULL AUTO_INCREMENT,
@@ -340,9 +329,8 @@ func TestLocatePartitionWithExtraHandle(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestMultiTableUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestMultiTableUpdate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_a (
 		id int(20),
@@ -362,9 +350,8 @@ func TestMultiTableUpdate(t *testing.T) {
 	tk.MustQuery("select id from t_a order by id").Check(testkit.Rows("2", "4", "6", "8", "10"))
 }
 
-func TestLocatePartitionSingleColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_hash_locate (
 		id int(20),
@@ -388,54 +375,11 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p1)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p2)").Check(testkit.Rows("2"))
 	_, err := tk.Exec("INSERT INTO t_range VALUES (4, NULL)")
-	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
-func TestLocatePartition(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("drop table if exists t;")
-
-	tk.MustExec(`CREATE TABLE t (
-    	id bigint(20) DEFAULT NULL,
-    	type varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL
-    	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    	PARTITION BY LIST COLUMNS(type)
-    	(PARTITION push_event VALUES IN ("PushEvent"),
-    	PARTITION watch_event VALUES IN ("WatchEvent")
-    );`)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk3 := testkit.NewTestKit(t, store)
-	tks := []*testkit.TestKit{tk1, tk2, tk3}
-
-	wg := util.WaitGroupWrapper{}
-	exec := func(tk0 *testkit.TestKit) {
-		tk0.MustExec("use test")
-		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	}
-
-	run := func(num int) {
-		tk := tks[num]
-		wg.Run(func() {
-			exec(tk)
-		})
-	}
-	for i := 0; i < len(tks); i++ {
-		run(i)
-	}
-	wg.Wait()
-}
-
-func TestTimeZoneChange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestTimeZoneChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
 	id int(11) NOT NULL,
@@ -451,12 +395,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
-		"(PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
-		" PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
-		" PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
-		" PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
-		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 	tk.MustExec("DROP TABLE timezone_test")
 
 	// Note that the result of "show create table" varies with time_zone.
@@ -466,12 +410,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
-		"(PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
-		" PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
-		" PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
-		" PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
-		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
@@ -491,34 +435,26 @@ func TestTimeZoneChange(t *testing.T) {
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p9)").Check(testkit.Rows())
 }
 
-func TestCreatePartitionTableNotSupport(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
-	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
-	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
-	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
-	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 }
 
-func TestRangePartitionUnderNoUnsigned(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestRangePartitionUnderNoUnsigned(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("drop table if exists tu;")
 	defer tk.MustExec("drop table if exists t2;")
 	defer tk.MustExec("drop table if exists tu;")
-	tk.MustGetErrCode(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
-							PARTITION p0 VALUES LESS THAN (-5),
-							PARTITION p1 VALUES LESS THAN (0),
-							PARTITION p2 VALUES LESS THAN (5),
-							PARTITION p3 VALUES LESS THAN (10),
-							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
 	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustExec(`create table t2 (a bigint unsigned) partition by range (a) (
   						  partition p1 values less than (0),
@@ -535,9 +471,8 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
 }
 
-func TestIntUint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestIntUint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t_uint (id bigint unsigned) partition by range (id) (
 partition p0 values less than (4294967293),
@@ -570,9 +505,8 @@ partition p4 values less than (9223372036854775806))`)
 	tk.MustQuery("select * from t_int where id < -12345 order by id desc").Check(testkit.Rows("-429496729312", "-9223372036854775803"))
 }
 
-func TestHashPartitionAndConditionConflict(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3;")
 	tk.MustExec("create table t1 (a int, b tinyint)  partition by range (a) (" +
@@ -594,9 +528,8 @@ func TestHashPartitionAndConditionConflict(t *testing.T) {
 	tk.MustQuery("select * from t2 partition (p1) where t2.a = 6;").Check(testkit.Rows())
 }
 
-func TestHashPartitionInsertValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t4")
 	tk.MustExec(`CREATE TABLE t4(
@@ -611,9 +544,8 @@ func TestHashPartitionInsertValue(t *testing.T) {
 	result.Check(testkit.Rows("\x01 1"))
 }
 
-func TestIssue21574(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestIssue21574(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
@@ -623,107 +555,18 @@ func TestIssue21574(t *testing.T) {
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
 }
 
-func TestIssue24746(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (ts *testSuite) TestIssue24746(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_24746")
 	tk.MustExec("create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)")
 	defer tk.MustExec("drop table t_24746")
 	err := tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4)")
-	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
 	tk.MustExec("insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4)")
 	err = tk.ExecToErr("insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1'")
-	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
 	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
 	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
-	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
-}
-
-func TestIssue31629(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
-	tk.MustExec("create database Issue31629")
-	defer tk.MustExec("drop database Issue31629")
-	tk.MustExec("use Issue31629")
-	// Test following partition types:
-	// HASH, RANGE, LIST:
-	// - directly on a single int column
-	// - with expression on multiple columns
-	// RANGE/LIST COLUMNS single column
-	// RANGE/LIST COLUMNS -- Verify that only single column is allowed and no expression
-	tests := []struct {
-		create string
-		fail   bool
-		cols   []string
-	}{
-		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by range(col1) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"col1"}},
-		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by range(Col1+col3) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"Col1", "col3"}},
-		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by hash(col1) partitions 3", false, []string{"col1"}},
-		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by hash(Col1+col3) partitions 3", false, []string{"Col1", "col3"}},
-		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by list(col1) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"col1"}},
-		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by list(Col1+col3) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"Col1", "col3"}},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, false, []string{"col2"}},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2,col3) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col1+1) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, false, []string{"col2"}},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2,col3) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
-		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col1+1) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
-	}
-
-	for i, tt := range tests {
-		createTable := "create table t1 " + tt.create
-		res, err := tk.Exec(createTable)
-		if res != nil {
-			res.Close()
-		}
-		if err != nil {
-			if tt.fail {
-				continue
-			}
-		}
-		require.Falsef(t, tt.fail, "test %d succeeded but was expected to fail! %s", i, createTable)
-		require.NoError(t, err)
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		tb, err := dom.InfoSchema().TableByName(model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
-		require.NoError(t, err)
-		tbp, ok := tb.(table.PartitionedTable)
-		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
-		colNames := tbp.GetPartitionColumnNames()
-		checkNames := []model.CIStr{model.NewCIStr(tt.cols[0])}
-		for i := 1; i < len(tt.cols); i++ {
-			checkNames = append(checkNames, model.NewCIStr(tt.cols[i]))
-		}
-		require.ElementsMatchf(t, colNames, checkNames, "test %d %s", i, createTable)
-		tk.MustExec("drop table t1")
-	}
-}
-
-func TestIssue31721(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_list_partition=on;")
-	tk.MustExec("drop tables if exists t_31721")
-	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
-		"(PARTITION `P0` VALUES IN ('1')," +
-		"PARTITION `P1` VALUES IN ('2')," +
-		"PARTITION `P2` VALUES IN ('3'));")
-	tk.MustExec("insert into t_31721 values ('1')")
-	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
-}
-
-func TestPruneModeWarningInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
-		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
-	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
 }

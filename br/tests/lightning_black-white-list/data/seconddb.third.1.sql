@@ -1,1 +1,0 @@
-insert into `third` values (6339);

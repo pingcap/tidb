@@ -8,18 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -33,12 +31,6 @@ import (
 // 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
 // TiDB, we need to inject extra projections for the plan tree as well.
 func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
-	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(plan)
-		}
-	})
-
 	return NewProjInjector().inject(plan)
 }
 
@@ -89,7 +81,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
 			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.GetFlag()) == mysql.HasNotNullFlag(srcType.GetFlag())) {
+			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
 				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
 				needChange = true
 			} else {

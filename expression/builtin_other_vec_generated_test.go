@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,13 +18,14 @@ package expression
 import (
 	"fmt"
 	"math/rand"
-	"strconv"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 type inGener struct {
@@ -62,14 +62,14 @@ func (g inGener) gen() interface{} {
 	case types.ETDuration:
 		return types.Duration{Duration: time.Duration(randNum)}
 	case types.ETJson:
-		j := new(types.BinaryJSON)
+		j := new(json.BinaryJSON)
 		jsonStr := fmt.Sprintf("{\"key\":%v}", randNum)
 		if err := j.UnmarshalJSON([]byte(jsonStr)); err != nil {
 			panic(err)
 		}
 		return *j
 	case types.ETString:
-		return strconv.FormatInt(randNum, 10)
+		return fmt.Sprint(randNum)
 	}
 	return randNum
 }
@@ -275,19 +275,19 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewJSONDatum(types.CreateBinaryJSON("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-				{Value: types.NewJSONDatum(types.CreateBinaryJSON("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 			},
 		},
 	},
 }
 
-func TestVectorizedBuiltinOtherEvalOneVecGenerated(t *testing.T) {
-	testVectorizedEvalOneVec(t, vecBuiltinOtherGeneratedCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherEvalOneVecGenerated(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinOtherGeneratedCases)
 }
 
-func TestVectorizedBuiltinOtherFuncGenerated(t *testing.T) {
-	testVectorizedBuiltinFunc(t, vecBuiltinOtherGeneratedCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFuncGenerated(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinOtherGeneratedCases)
 }
 
 func BenchmarkVectorizedBuiltinOtherEvalOneVecGenerated(b *testing.B) {

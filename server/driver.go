@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,15 +17,14 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation, dbname and optionally the tls state.
-	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error)
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -35,7 +33,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, []expression.Expression) (ResultSet, error)
+	Execute(context.Context, []types.Datum) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -68,13 +66,11 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() []*ColumnInfo
-	NewChunk(chunk.Allocator) *chunk.Chunk
+	NewChunk() *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
-	// IsClosed checks whether the result set is closed.
-	IsClosed() bool
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.

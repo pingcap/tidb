@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +17,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in
@@ -28,6 +29,6 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
-func (c *Client) Send(_ context.Context, _ *kv.Request, _ interface{}, _ *kv.ClientSendOption) kv.Response {
+func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, sessionMemTracker *memory.Tracker, enabledRateLimit bool, eventCb trxevents.EventCallback) kv.Response {
 	return c.MockResponse
 }

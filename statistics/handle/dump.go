@@ -8,26 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package handle
 
 import (
-	"bytes"
-	"compress/gzip"
-	"encoding/json"
-	"io/ioutil"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -120,21 +114,17 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 }
 
 // DumpStatsToJSON dumps statistic to json.
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
-	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	var snapshot uint64
 	if historyStatsExec != nil {
 		sctx := historyStatsExec.(sessionctx.Context)
 		snapshot = sctx.GetSessionVars().SnapshotTS
 	}
-	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
+	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot)
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
-func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
-	h.mu.Lock()
-	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	h.mu.Unlock()
+func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -144,18 +134,15 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 		TableName:    tableInfo.Name.L,
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
-	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
-	if !isDynamicMode || dumpPartitionStats {
-		for _, def := range pi.Definitions {
-			tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if tbl == nil {
-				continue
-			}
-			jsonTbl.Partitions[def.Name.L] = tbl
+	for _, def := range pi.Definitions {
+		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		if tbl == nil {
+			continue
+		}
+		jsonTbl.Partitions[def.Name.L] = tbl
 	}
 	// dump its global-stats if existed
 	tbl, err := h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -168,8 +155,15 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 	return jsonTbl, nil
 }
 
-// GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*JSONTable, error) {
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	if err != nil || tbl == nil {
+		return nil, err
+	}
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
@@ -178,6 +172,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
 	}
+
 	for _, col := range tbl.Columns {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
@@ -191,22 +186,6 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
-	return jsonTbl, nil
-}
-
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
-	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
-	if err != nil || tbl == nil {
-		return nil, err
-	}
-	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
-	if err != nil {
-		return nil, err
-	}
-	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
-	if err != nil {
-		return nil, err
-	}
 	return jsonTbl, nil
 }
 
@@ -252,18 +231,14 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 	for _, col := range tbl.Columns {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, nil, int(idx.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -303,13 +278,11 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				statsVer = *jsonIdx.StatsVer
 			}
 			idx := &statistics.Index{
-				Histogram:         *hist,
-				CMSketch:          cm,
-				TopN:              topN,
-				Info:              idxInfo,
-				StatsVer:          statsVer,
-				PhysicalID:        physicalID,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+				Histogram: *hist,
+				CMSketch:  cm,
+				TopN:      topN,
+				Info:      idxInfo,
+				StatsVer:  statsVer,
 			}
 			tbl.Indices[idx.ID] = idx
 		}
@@ -322,18 +295,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			tmpFT := colInfo.FieldType
-			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-			// original value.
-			// But there's additional conversion logic for new collation data, and the collate key might be longer than
-			// the FieldType.flen.
-			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-			// or "Data too long".
-			// So we change it to TypeBlob to bypass those logics here.
-			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
-				tmpFT = *types.NewFieldType(mysql.TypeBlob)
-			}
-			hist, err := hist.ConvertTo(sc, &tmpFT)
+			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -347,15 +309,14 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				statsVer = *jsonCol.StatsVer
 			}
 			col := &statistics.Column{
-				PhysicalID:        physicalID,
-				Histogram:         *hist,
-				CMSketch:          cm,
-				TopN:              topN,
-				FMSketch:          fms,
-				Info:              colInfo,
-				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:          statsVer,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+				PhysicalID: physicalID,
+				Histogram:  *hist,
+				CMSketch:   cm,
+				TopN:       topN,
+				FMSketch:   fms,
+				Info:       colInfo,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				StatsVer:   statsVer,
 			}
 			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
@@ -363,59 +324,4 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
 	return tbl, nil
-}
-
-// JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
-func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
-	data, err := json.Marshal(jsTable)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var gzippedData bytes.Buffer
-	gzipWriter := gzip.NewWriter(&gzippedData)
-	if _, err := gzipWriter.Write(data); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	blocksNum := gzippedData.Len() / blockSize
-	if gzippedData.Len()%blockSize != 0 {
-		blocksNum = blocksNum + 1
-	}
-	blocks := make([][]byte, blocksNum)
-	for i := 0; i < blocksNum-1; i++ {
-		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
-	}
-	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
-	return blocks, nil
-}
-
-// BlocksToJSONTable convert gzip-compressed blocks to JSONTable
-func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
-	if len(blocks) == 0 {
-		return nil, errors.New("Block empty error")
-	}
-	data := blocks[0]
-	for i := 1; i < len(blocks); i++ {
-		data = append(data, blocks[i]...)
-	}
-	gzippedData := bytes.NewReader(data)
-	gzipReader, err := gzip.NewReader(gzippedData)
-	if err != nil {
-		return nil, err
-	}
-	if err := gzipReader.Close(); err != nil {
-		return nil, err
-	}
-	jsonStr, err := ioutil.ReadAll(gzipReader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jsonTbl := JSONTable{}
-	err = json.Unmarshal(jsonStr, &jsonTbl)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &jsonTbl, nil
 }

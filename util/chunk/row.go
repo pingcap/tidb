@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +16,9 @@ package chunk
 import (
 	"strconv"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // Row represents a row of data, can be used to access values.
@@ -107,7 +107,7 @@ func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 }
 
 // GetJSON returns the JSON value with the colIdx.
-func (r Row) GetJSON(colIdx int) types.BinaryJSON {
+func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 	return r.c.columns[colIdx].GetJSON(r.idx)
 }
 
@@ -115,14 +115,10 @@ func (r Row) GetJSON(colIdx int) types.BinaryJSON {
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
 func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
-	datumRow := make([]types.Datum, r.c.NumCols())
-	return r.GetDatumRowWithBuffer(fields, datumRow)
-}
-
-// GetDatumRowWithBuffer gets datum using the buffer datumRow.
-func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
-	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
-		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
+	datumRow := make([]types.Datum, 0, r.c.NumCols())
+	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
+		datum := r.GetDatum(colIdx, fields[colIdx])
+		datumRow = append(datumRow, datum)
 	}
 	return datumRow
 }
@@ -130,16 +126,10 @@ func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.D
 // GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
-	r.GetDatumWithBuffer(colIdx, tp, &d)
-	return d
-}
-
-// GetDatumWithBuffer gets datum using the buffer d.
-func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) types.Datum {
-	switch tp.GetType() {
+	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
-			if mysql.HasUnsignedFlag(tp.GetFlag()) {
+			if mysql.HasUnsignedFlag(tp.Flag) {
 				d.SetUint64(r.GetUint64(colIdx))
 			} else {
 				d.SetInt64(r.GetInt64(colIdx))
@@ -160,7 +150,7 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		if !r.IsNull(colIdx) {
-			d.SetString(r.GetString(colIdx), tp.GetCollate())
+			d.SetString(r.GetString(colIdx), tp.Collate)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if !r.IsNull(colIdx) {
@@ -168,30 +158,30 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 		}
 	case mysql.TypeDuration:
 		if !r.IsNull(colIdx) {
-			duration := r.GetDuration(colIdx, tp.GetDecimal())
+			duration := r.GetDuration(colIdx, tp.Decimal)
 			d.SetMysqlDuration(duration)
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
-			d.SetLength(tp.GetFlen())
-			// If tp.decimal is unspecified(-1), we should set it to the real
+			d.SetLength(tp.Flen)
+			// If tp.Decimal is unspecified(-1), we should set it to the real
 			// fraction length of the decimal value, if not, the d.Frac will
 			// be set to MAX_UINT16 which will cause unexpected BadNumber error
 			// when encoding.
-			if tp.GetDecimal() == types.UnspecifiedLength {
+			if tp.Decimal == types.UnspecifiedLength {
 				d.SetFrac(d.Frac())
 			} else {
-				d.SetFrac(tp.GetDecimal())
+				d.SetFrac(tp.Decimal)
 			}
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx), tp.GetCollate())
+			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate)
 		}
 	case mysql.TypeSet:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx), tp.GetCollate())
+			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate)
 		}
 	case mysql.TypeBit:
 		if !r.IsNull(colIdx) {
@@ -202,10 +192,7 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 			d.SetMysqlJSON(r.GetJSON(colIdx))
 		}
 	}
-	if r.IsNull(colIdx) {
-		d.SetNull()
-	}
-	return *d
+	return d
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.
@@ -230,35 +217,35 @@ func (r Row) ToString(ft []*types.FieldType) string {
 	var buf []byte
 	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
 		if r.IsNull(colIdx) {
-			buf = append(buf, "NULL"...)
-		} else {
-			switch ft[colIdx].EvalType() {
-			case types.ETInt:
-				buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
-			case types.ETString:
-				switch ft[colIdx].GetType() {
-				case mysql.TypeEnum:
-					buf = append(buf, r.GetEnum(colIdx).String()...)
-				case mysql.TypeSet:
-					buf = append(buf, r.GetSet(colIdx).String()...)
-				default:
-					buf = append(buf, r.GetString(colIdx)...)
-				}
-			case types.ETDatetime, types.ETTimestamp:
-				buf = append(buf, r.GetTime(colIdx).String()...)
-			case types.ETDecimal:
-				buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
-			case types.ETDuration:
-				buf = append(buf, r.GetDuration(colIdx, ft[colIdx].GetDecimal()).String()...)
-			case types.ETJson:
-				buf = append(buf, r.GetJSON(colIdx).String()...)
-			case types.ETReal:
-				switch ft[colIdx].GetType() {
-				case mysql.TypeFloat:
-					buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
-				case mysql.TypeDouble:
-					buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
-				}
+			buf = append(buf, "nil, "...)
+			continue
+		}
+		switch ft[colIdx].EvalType() {
+		case types.ETInt:
+			buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
+		case types.ETString:
+			switch ft[colIdx].Tp {
+			case mysql.TypeEnum:
+				buf = append(buf, r.GetEnum(colIdx).String()...)
+			case mysql.TypeSet:
+				buf = append(buf, r.GetSet(colIdx).String()...)
+			default:
+				buf = append(buf, r.GetString(colIdx)...)
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			buf = append(buf, r.GetTime(colIdx).String()...)
+		case types.ETDecimal:
+			buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
+		case types.ETDuration:
+			buf = append(buf, r.GetDuration(colIdx, ft[colIdx].Decimal).String()...)
+		case types.ETJson:
+			buf = append(buf, r.GetJSON(colIdx).String()...)
+		case types.ETReal:
+			switch ft[colIdx].Tp {
+			case mysql.TypeFloat:
+				buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
+			case mysql.TypeDouble:
+				buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
 			}
 		}
 		if colIdx != r.Chunk().NumCols()-1 {

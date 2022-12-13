@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,12 +16,10 @@ package encrypt
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
-	"math"
-	"math/big"
+	"math/rand"
 )
 
 var errInvalidBlockSize = errors.New("invalid encrypt block size")
@@ -32,8 +29,8 @@ const defaultEncryptBlockSize = 1024
 
 // CtrCipher encrypting data using AES in counter mode
 type CtrCipher struct {
-	block cipher.Block
 	nonce uint64
+	block cipher.Block
 	// encryptBlockSize indicates the encrypt block size in bytes.
 	encryptBlockSize int64
 	// aesBlockCount indicates the total aes blocks in one encrypt block
@@ -48,10 +45,7 @@ func NewCtrCipher() (ctr *CtrCipher, err error) {
 // NewCtrCipherWithBlockSize return a CtrCipher with the encrypt block size
 func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err error) {
 	key := make([]byte, aes.BlockSize)
-	_, err = rand.Read(key)
-	if err != nil {
-		return nil, err
-	}
+	rand.Read(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -61,11 +55,7 @@ func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err erro
 	}
 	ctr = new(CtrCipher)
 	ctr.block = block
-	nonce, err := rand.Int(rand.Reader, big.NewInt(int64(math.MaxInt64)))
-	if err != nil {
-		return nil, err
-	}
-	ctr.nonce = nonce.Uint64()
+	ctr.nonce = rand.Uint64()
 	ctr.encryptBlockSize = encryptBlockSize
 	ctr.aesBlockCount = encryptBlockSize / aes.BlockSize
 	return
@@ -83,10 +73,10 @@ func (ctr *CtrCipher) stream(counter uint64) cipher.Stream {
 type Writer struct {
 	err                error
 	w                  io.WriteCloser
-	cipherStream       cipher.Stream
-	buf                []byte
-	flushedUserDataCnt int64
 	n                  int
+	buf                []byte
+	cipherStream       cipher.Stream
+	flushedUserDataCnt int64
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.

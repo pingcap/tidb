@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,7 +26,6 @@ import (
 
 // LoadFromFile load a meta from a file.
 func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
-	//nolint: gosec
 	f, err := os.Open(fileName)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -65,7 +63,7 @@ func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
 
 var endian = binary.LittleEndian
 
-func (*MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
+func (ls *MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
 	lenBuf := make([]byte, 4)
 	_, err := io.ReadFull(reader, lenBuf)
 	if err != nil {
@@ -83,7 +81,7 @@ func (*MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-func (*MemStore) writeItem(writer *bufio.Writer, data []byte) error {
+func (ls *MemStore) writeItem(writer *bufio.Writer, data []byte) error {
 	lenBuf := make([]byte, 4)
 	endian.PutUint32(lenBuf, uint32(len(data)))
 	_, err := writer.Write(lenBuf)
@@ -97,7 +95,7 @@ func (*MemStore) writeItem(writer *bufio.Writer, data []byte) error {
 // DumpToFile dumps the meta to a file
 func (ls *MemStore) DumpToFile(fileName string, meta []byte) error {
 	tmpFileName := fileName + ".tmp"
-	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
+	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
 	if err != nil {
 		return errors.Trace(err)
 	}

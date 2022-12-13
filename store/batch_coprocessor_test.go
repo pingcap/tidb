@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,23 +16,31 @@ package store
 import (
 	"context"
 	"fmt"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption {
-	return []mockstore.MockTiKVStoreOption{
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+type testBatchCopSuite struct {
+}
+
+var _ = SerialSuites(&testBatchCopSuite{})
+
+func newStoreWithBootstrap(tiflashNum int) (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
@@ -47,70 +54,98 @@ func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption 
 			}
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
+
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dom.SetStatsUpdating(true)
+	return store, dom, errors.Trace(err)
 }
 
-func TestStoreErr(t *testing.T) {
-	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
+}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+func (s *testBatchCopSuite) TestStoreErr(c *C) {
+	store, dom, err := newStoreWithBootstrap(1)
+	c.Assert(err, IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+		dom.Close()
+		store.Close()
 	}()
 
-	tk := testkit.NewTestKit(t, store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
-
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"), IsNil)
 
 	err = tk.QueryToErr("select count(*) from t")
-	require.Equal(t, context.Canceled, errors.Cause(err))
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"), IsNil)
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	err = tk.QueryToErr("select count(*) from t")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestStoreSwitchPeer(t *testing.T) {
-	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+func (s *testBatchCopSuite) TestStoreSwitchPeer(c *C) {
+	store, dom, err := newStoreWithBootstrap(2)
+	c.Assert(err, IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+		dom.Close()
+		store.Close()
 	}()
 
-	tk := testkit.NewTestKit(t, store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
-
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")"), IsNil)
 	err = tk.QueryToErr("select count(*) from t")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
+
 }

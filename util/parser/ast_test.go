@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,13 +16,22 @@ package parser_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
 	_ "github.com/pingcap/tidb/types/parser_driver"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/stretchr/testify/require"
 )
 
-func TestSimpleCases(t *testing.T) {
+var _ = Suite(&testASTSuite{})
+
+type testASTSuite struct {
+}
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func (s *testASTSuite) TestSimpleCases(c *C) {
 	tests := []struct {
 		sql string
 		db  string
@@ -51,14 +59,12 @@ func TestSimpleCases(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
+	for _, t := range tests {
 		p := parser.New()
-
-		stmt, err := p.ParseOneStmt(test.sql, "", "")
-		require.NoError(t, err)
-
-		ans, ok := utilparser.SimpleCases(stmt, test.db, test.sql)
-		require.True(t, ok)
-		require.Equal(t, test.ans, ans)
+		stmt, err := p.ParseOneStmt(t.sql, "", "")
+		c.Assert(err, IsNil)
+		ans, ok := utilparser.SimpleCases(stmt, t.db, t.sql)
+		c.Assert(ok, IsTrue)
+		c.Assert(t.ans, Equals, ans)
 	}
 }

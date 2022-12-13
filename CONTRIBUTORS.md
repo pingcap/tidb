@@ -1,1 +1,1 @@
-See [TiDB Contributors](https://contributor.tidb.io/people/contributor)
+Contributor list is moved to [Contributors](https://github.com/pingcap/community/blob/master/architecture/contributor-list.md#tidb-contributors)

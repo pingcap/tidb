@@ -8,58 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
-// GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
-func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
-	if len(flat.Main) == 0 {
-		return nil
-	}
-	nodeTp := utilhint.TypeSelect
-	switch flat.Main[0].Origin.(type) {
-	case *Update:
-		nodeTp = utilhint.TypeUpdate
-	case *Delete:
-		nodeTp = utilhint.TypeDelete
-	}
-	var hints []*ast.TableOptimizerHint
-	selectPlan := flat.Main.GetSelectPlan()
-	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
-		return nil
-	}
-	for _, op := range selectPlan {
-		if !op.IsRoot {
-			continue
-		}
-		p := op.Origin.(PhysicalPlan)
-		hints = genHintsFromSingle(p, nodeTp, hints)
-	}
-	for _, cte := range flat.CTEs {
-		for i, op := range cte {
-			if i == 0 || !op.IsRoot {
-				continue
-			}
-			p := op.Origin.(PhysicalPlan)
-			hints = genHintsFromSingle(p, nodeTp, hints)
-		}
-	}
-	return hints
-}
-
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-// Deprecated: FlattenPhysicalPlan() + GenHintsFromFlatPlan() is preferred.
 func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
@@ -86,6 +48,11 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 }
 
 func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
+	_, isProj := p.(*PhysicalProjection)
+	_, isUnionScan := p.(*PhysicalUnionScan)
+	if isProj || isUnionScan {
+		return extractTableAsName(p.Children()[0])
+	}
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -108,8 +75,6 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
-		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil
 }
@@ -159,15 +124,6 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
-	if phCte, ok := p.(*PhysicalCTE); ok {
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
-	}
-
-	return genHintsFromSingle(p, nodeType, res)
-}
-
-func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
@@ -206,24 +162,24 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexMergeReader:
-		indexs := make([]model.CIStr, 0, 2)
+		Indexs := make([]model.CIStr, 0, 2)
 		var tableName model.CIStr
 		var tableAsName *model.CIStr
 		for _, partialPlan := range pp.PartialPlans {
 			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
-				indexs = append(indexs, index.Index.Name)
+				Indexs = append(Indexs, index.Index.Name)
 				tableName = index.Table.Name
 				tableAsName = index.TableAsName
 			} else {
 				indexName := model.NewCIStr("PRIMARY")
-				indexs = append(indexs, indexName)
+				Indexs = append(Indexs, indexName)
 			}
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintIndexMerge),
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
-			Indexes:  indexs,
+			Indexes:  Indexs,
 		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
@@ -238,7 +194,6 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
-		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
 		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)

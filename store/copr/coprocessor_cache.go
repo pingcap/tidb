@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,7 +24,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/tikv/client-go/v2/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 )
 
 type coprCache struct {
@@ -41,10 +40,6 @@ type coprCacheValue struct {
 	TimeStamp         uint64
 	RegionID          uint64
 	RegionDataVersion uint64
-
-	// Used in coprocessor paging protocol
-	PageStart []byte
-	PageEnd   []byte
 }
 
 func (v *coprCacheValue) String() string {
@@ -58,7 +53,7 @@ func (v *coprCacheValue) String() string {
 const coprCacheValueSize = int(unsafe.Sizeof(coprCacheValue{}))
 
 func (v *coprCacheValue) Len() int {
-	return coprCacheValueSize + len(v.Key) + len(v.Data) + len(v.PageStart) + len(v.PageEnd)
+	return coprCacheValueSize + len(v.Key) + len(v.Data)
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
@@ -112,9 +107,6 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		}
 		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
-	if copReq.PagingSize > 0 {
-		totalLength++
-	}
 
 	key := make([]byte, totalLength)
 
@@ -146,11 +138,6 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		// N bytes Key
 		copy(key[dest:], r.End)
 		dest += len(r.End)
-	}
-
-	// 1 byte when use paging protocol
-	if copReq.PagingSize > 0 {
-		key[dest] = 1
 	}
 
 	return key, nil
@@ -185,22 +172,14 @@ func (c *coprCache) CheckRequestAdmission(ranges int) bool {
 }
 
 // CheckResponseAdmission checks whether a response item is worth caching.
-func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration, pagingTaskIdx uint32) bool {
+func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration) bool {
 	if c == nil {
 		return false
 	}
 	if dataSize == 0 || dataSize > c.admissionMaxSize {
 		return false
 	}
-	if pagingTaskIdx > 50 {
-		return false
-	}
-
-	admissionMinProcessTime := c.admissionMinProcessTime
-	if pagingTaskIdx > 0 {
-		admissionMinProcessTime = admissionMinProcessTime / 3
-	}
-	if processTime < admissionMinProcessTime {
+	if processTime < c.admissionMinProcessTime {
 		return false
 	}
 	return true

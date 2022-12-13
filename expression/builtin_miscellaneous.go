@@ -1,14 +1,12 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
+// // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,18 +18,14 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
@@ -59,17 +53,12 @@ var (
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
 	_ functionClass = &vitessHashFunctionClass{}
-	_ functionClass = &uuidToBinFunctionClass{}
-	_ functionClass = &binToUUIDFunctionClass{}
-	_ functionClass = &isUUIDFunctionClass{}
-	_ functionClass = &tidbShardFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
-	_ builtinFunc = &builtinReleaseAllLocksSig{}
 	_ builtinFunc = &builtinDecimalAnyValueSig{}
 	_ builtinFunc = &builtinDurationAnyValueSig{}
 	_ builtinFunc = &builtinIntAnyValueSig{}
@@ -85,11 +74,8 @@ var (
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
-	_ builtinFunc = &builtinIsUUIDSig{}
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
-	_ builtinFunc = &builtinUUIDToBinSig{}
-	_ builtinFunc = &builtinBinToUUIDSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -98,11 +84,6 @@ var (
 	_ builtinFunc = &builtinNameConstDurationSig{}
 	_ builtinFunc = &builtinNameConstStringSig{}
 	_ builtinFunc = &builtinNameConstJSONSig{}
-	_ builtinFunc = &builtinTidbShardSig{}
-)
-
-const (
-	tidbShardBucketCount = 256
 )
 
 type sleepFunctionClass struct {
@@ -117,7 +98,7 @@ func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(21)
+	bf.tp.Flen = 21
 	sig := &builtinSleepSig{bf}
 	return sig, nil
 }
@@ -142,8 +123,7 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	sessVars := b.ctx.GetSessionVars()
 	if isNull || val < 0 {
-		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-		if !sessVars.StmtCtx.BadNullAsWarning {
+		if sessVars.StrictSQLMode {
 			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 		err := errIncorrectArgs.GenWithStackByArgs("sleep")
@@ -175,7 +155,7 @@ func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	sig := &builtinLockSig{bf}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	return sig, nil
 }
 
@@ -191,56 +171,9 @@ func (b *builtinLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
-	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if err != nil {
-		return 0, isNull, err
-	}
-	// Validate that lockName is NOT NULL or empty string
-	if isNull {
-		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
-	}
-	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
-		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
-	}
-	maxTimeout := int64(variable.GetSysVar(variable.InnodbLockWaitTimeout).MaxValue)
-	timeout, isNullTimeout, err := b.args[1].EvalInt(b.ctx, row)
-	if err != nil {
-		return 0, false, err
-	}
-	if isNullTimeout {
-		timeout = 0 // Observed in MySQL, gets converted to 1s in TiDB because of min timeout.
-	}
-	// A timeout less than zero is expected to be treated as unlimited.
-	// Because of our implementation being based on pessimistic locks,
-	// We can't have a timeout greater than innodb_lock_wait_timeout.
-	// So users are aware, we also attach a warning.
-	if timeout < 0 || timeout > maxTimeout {
-		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", strconv.FormatInt(timeout, 10))
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		timeout = maxTimeout
-	}
-
-	// Lock names are case insensitive. Because we can't rely on collations
-	// being enabled on the internal table, we have to lower it.
-	lockName = strings.ToLower(lockName)
-	if utf8.RuneCountInString(lockName) > 64 {
-		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
-	}
-	err = b.ctx.GetAdvisoryLock(lockName, timeout)
-	if err != nil {
-		switch errors.Cause(err).(*terror.Error).Code() {
-		case mysql.ErrLockWaitTimeout:
-			return 0, false, nil // Another user has the lock
-		case mysql.ErrLockDeadlock:
-			// Currently this code is not reachable because each Advisory Lock
-			// Uses a separate session. Deadlock detection does not work across
-			// independent sessions.
-			return 0, false, errUserLockDeadlock
-		default:
-			return 0, false, err
-		}
-	}
+// The lock function will do nothing.
+// Warning: get_lock() function is parsed but ignored.
+func (b *builtinLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	return 1, false, nil
 }
 
@@ -257,7 +190,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	sig := &builtinReleaseLockSig{bf}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	return sig, nil
 }
 
@@ -273,29 +206,10 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
-	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if err != nil {
-		return 0, isNull, err
-	}
-	// Validate that lockName is NOT NULL or empty string
-	if isNull {
-		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
-	}
-	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
-		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
-	}
-	// Lock names are case insensitive. Because we can't rely on collations
-	// being enabled on the internal table, we have to lower it.
-	lockName = strings.ToLower(lockName)
-	if utf8.RuneCountInString(lockName) > 64 {
-		return 0, false, errIncorrectArgs.GenWithStackByArgs("release_lock")
-	}
-	released := int64(0)
-	if b.ctx.ReleaseAdvisoryLock(lockName) {
-		released = 1
-	}
-	return released, false, nil
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
+func (b *builtinReleaseLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
+	return 1, false, nil
 }
 
 type anyValueFunctionClass struct {
@@ -312,7 +226,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	ft := args[0].GetType().Clone()
-	ft.AddFlag(bf.tp.GetFlag())
+	ft.Flag |= bf.tp.Flag
 	*bf.tp = *ft
 	var sig builtinFunc
 	switch argTp {
@@ -323,7 +237,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinDurationAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DurationAnyValue)
 	case types.ETInt:
-		bf.tp.SetDecimal(0)
+		bf.tp.Decimal = 0
 		sig = &builtinIntAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IntAnyValue)
 	case types.ETJson:
@@ -333,13 +247,11 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinRealAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_RealAnyValue)
 	case types.ETString:
-		bf.tp.SetDecimal(types.UnspecifiedLength)
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringAnyValue)
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.SetCharset(mysql.DefaultCharset)
-		bf.tp.SetCollate(mysql.DefaultCollationName)
-		bf.tp.SetFlag(0)
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinTimeAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TimeAnyValue)
 	default:
@@ -408,7 +320,7 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -480,10 +392,9 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(21)
-	bf.tp.AddFlag(mysql.UnsignedFlag)
+	bf.tp.Flen = 21
+	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
 }
 
@@ -506,7 +417,7 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
-		return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+		return 0, true, nil
 	}
 
 	var (
@@ -518,17 +429,17 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, nil
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, nil
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+			return 0, true, nil
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -557,13 +468,10 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(93)
-	bf.tp.SetDecimal(0)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 93
+	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
 }
 
@@ -612,11 +520,10 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(16)
+	bf.tp.Flen = 16
 	types.SetBinChsClnFlag(bf.tp)
-	bf.tp.SetDecimal(0)
+	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
 }
 
@@ -639,12 +546,12 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if len(val) == 0 {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
+		return "", true, nil
 	}
 
 	ip := net.ParseIP(val)
 	if ip == nil {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
+		return "", true, nil
 	}
 
 	var isMappedIpv6 bool
@@ -685,13 +592,10 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(117)
-	bf.tp.SetDecimal(0)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 117
+	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
 }
 
@@ -744,9 +648,8 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
 }
 
@@ -812,9 +715,8 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
 }
 
@@ -861,9 +763,8 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
 }
 
@@ -910,9 +811,8 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
 }
 
@@ -948,47 +848,6 @@ func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
 }
 
-type isUUIDFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *isUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	bf.tp.SetFlen(1)
-	sig := &builtinIsUUIDSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_IsUUID)
-	return sig, nil
-}
-
-type builtinIsUUIDSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinIsUUIDSig) Clone() builtinFunc {
-	newSig := &builtinIsUUIDSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalInt evals a builtinIsUUIDSig.
-// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_is-uuid
-func (b *builtinIsUUIDSig) evalInt(row chunk.Row) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if err != nil || isNull {
-		return 0, isNull, err
-	}
-	if _, err = uuid.Parse(val); err != nil {
-		return 0, false, nil
-	}
-	return 1, false, nil
-}
-
 type masterPosWaitFunctionClass struct {
 	baseFunctionClass
 }
@@ -1018,19 +877,17 @@ func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	case types.ETDuration:
 		sig = &builtinNameConstDurationSig{bf}
 	case types.ETInt:
-		bf.tp.SetDecimal(0)
+		bf.tp.Decimal = 0
 		sig = &builtinNameConstIntSig{bf}
 	case types.ETJson:
 		sig = &builtinNameConstJSONSig{bf}
 	case types.ETReal:
 		sig = &builtinNameConstRealSig{bf}
 	case types.ETString:
-		bf.tp.SetDecimal(types.UnspecifiedLength)
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinNameConstStringSig{bf}
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.SetCharset(mysql.DefaultCharset)
-		bf.tp.SetCollate(mysql.DefaultCollationName)
-		bf.tp.SetFlag(0)
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinNameConstTimeSig{bf}
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
@@ -1104,7 +961,7 @@ func (b *builtinNameConstJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	return b.args[1].EvalJSON(b.ctx, row)
 }
 
@@ -1141,33 +998,7 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
-	if err != nil {
-		return nil, err
-	}
-	sig := &builtinReleaseAllLocksSig{bf}
-	bf.tp.SetFlen(1)
-	return sig, nil
-}
-
-type builtinReleaseAllLocksSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
-	newSig := &builtinReleaseAllLocksSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalInt evals a builtinReleaseAllLocksSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
-func (b *builtinReleaseAllLocksSig) evalInt(_ chunk.Row) (int64, bool, error) {
-	count := b.ctx.ReleaseAllAdvisoryLocks()
-	return int64(count), false, nil
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
 }
 
 type uuidFunctionClass struct {
@@ -1182,10 +1013,8 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(36)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
@@ -1234,8 +1063,8 @@ func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 
-	bf.tp.SetFlen(20) //64 bit unsigned
-	bf.tp.AddFlag(mysql.UnsignedFlag)
+	bf.tp.Flen = 20 //64 bit unsigned
+	bf.tp.Flag |= mysql.UnsignedFlag
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinVitessHashSig{bf}
@@ -1263,206 +1092,5 @@ func (b *builtinVitessHashSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
 		return 0, true, err
 	}
-	return int64(hashed), false, nil
-}
-
-type uuidToBinFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	argTps := []types.EvalType{types.ETString}
-	if len(args) == 2 {
-		argTps = append(argTps, types.ETInt)
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
-	if err != nil {
-		return nil, err
-	}
-
-	bf.tp.SetFlen(16)
-	types.SetBinChsClnFlag(bf.tp)
-	bf.tp.SetDecimal(0)
-	sig := &builtinUUIDToBinSig{bf}
-	return sig, nil
-}
-
-type builtinUUIDToBinSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinUUIDToBinSig) Clone() builtinFunc {
-	newSig := &builtinUUIDToBinSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals UUID_TO_BIN(string_uuid, swap_flag).
-// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
-func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-
-	u, err := uuid.Parse(val)
-	if err != nil {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
-	}
-	bin, err := u.MarshalBinary()
-	if err != nil {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
-	}
-
-	flag := int64(0)
-	if len(b.args) == 2 {
-		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
-		if isNull {
-			flag = 0
-		}
-		if err != nil {
-			return "", false, err
-		}
-	}
-	if flag != 0 {
-		return swapBinaryUUID(bin), false, nil
-	}
-	return string(bin), false, nil
-}
-
-type binToUUIDFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	argTps := []types.EvalType{types.ETString}
-	if len(args) == 2 {
-		argTps = append(argTps, types.ETInt)
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
-	if err != nil {
-		return nil, err
-	}
-
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(32)
-	bf.tp.SetDecimal(0)
-	sig := &builtinBinToUUIDSig{bf}
-	return sig, nil
-}
-
-type builtinBinToUUIDSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinBinToUUIDSig) Clone() builtinFunc {
-	newSig := &builtinBinToUUIDSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
-// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
-func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-
-	var u uuid.UUID
-	err = u.UnmarshalBinary([]byte(val))
-	if err != nil {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
-	}
-
-	str := u.String()
-	flag := int64(0)
-	if len(b.args) == 2 {
-		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
-		if isNull {
-			flag = 0
-		}
-		if err != nil {
-			return "", false, err
-		}
-	}
-	if flag != 0 {
-		return swapStringUUID(str), false, nil
-	}
-	return str, false, nil
-}
-
-func swapBinaryUUID(bin []byte) string {
-	buf := make([]byte, len(bin))
-	copy(buf[0:2], bin[6:8])
-	copy(buf[2:4], bin[4:6])
-	copy(buf[4:8], bin[0:4])
-	copy(buf[8:], bin[8:])
-	return string(buf)
-}
-
-func swapStringUUID(str string) string {
-	buf := make([]byte, len(str))
-	copy(buf[0:4], str[9:13])
-	copy(buf[4:8], str[14:18])
-	copy(buf[8:9], str[8:9])
-	copy(buf[9:13], str[4:8])
-	copy(buf[13:14], str[13:14])
-	copy(buf[14:18], str[0:4])
-	copy(buf[18:], str[18:])
-	return string(buf)
-}
-
-type tidbShardFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
-	if err != nil {
-		return nil, err
-	}
-
-	bf.tp.SetFlen(4) //64 bit unsigned
-	bf.tp.AddFlag(mysql.UnsignedFlag)
-	types.SetBinChsClnFlag(bf.tp)
-
-	sig := &builtinTidbShardSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
-	return sig, nil
-}
-
-type builtinTidbShardSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinTidbShardSig) Clone() builtinFunc {
-	newSig := &builtinTidbShardSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalInt evals tidb_shard(int64).
-func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
-	shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, true, err
-	}
-	var hashed uint64
-	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
-		return 0, true, err
-	}
-	hashed = hashed % tidbShardBucketCount
 	return int64(hashed), false, nil
 }

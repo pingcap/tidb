@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,17 +17,15 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -51,16 +48,12 @@ var (
 	_ builtinFunc = &builtinGreatestRealSig{}
 	_ builtinFunc = &builtinGreatestDecimalSig{}
 	_ builtinFunc = &builtinGreatestStringSig{}
-	_ builtinFunc = &builtinGreatestDurationSig{}
 	_ builtinFunc = &builtinGreatestTimeSig{}
-	_ builtinFunc = &builtinGreatestCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinLeastIntSig{}
 	_ builtinFunc = &builtinLeastRealSig{}
 	_ builtinFunc = &builtinLeastDecimalSig{}
 	_ builtinFunc = &builtinLeastStringSig{}
 	_ builtinFunc = &builtinLeastTimeSig{}
-	_ builtinFunc = &builtinLeastDurationSig{}
-	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 
@@ -125,9 +118,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	// Use the aggregated field type as retType.
 	resultFieldType := types.AggFieldType(fieldTps)
-	var tempType uint
-	resultEvalType := types.AggregateEvalType(fieldTps, &tempType)
-	resultFieldType.SetFlag(tempType)
+	resultEvalType := types.AggregateEvalType(fieldTps, &resultFieldType.Flag)
 	retEvalTp := resultFieldType.EvalType()
 
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
@@ -140,15 +131,12 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	bf.tp.AddFlag(resultFieldType.GetFlag())
-	resultFieldType.SetFlen(0)
-	resultFieldType.SetDecimal(types.UnspecifiedLength)
+	bf.tp.Flag |= resultFieldType.Flag
+	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
 
 	// Set retType to BINARY(0) if all arguments are of type NULL.
-	if resultFieldType.GetType() == mysql.TypeNull {
+	if resultFieldType.Tp == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
-		resultFieldType.SetFlen(0)
-		resultFieldType.SetDecimal(0)
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
@@ -156,42 +144,42 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// Find the max length of field in `maxFlen`,
 		// and max integer-part length in `maxIntLen`.
 		for _, argTp := range fieldTps {
-			if argTp.GetDecimal() > resultFieldType.GetDecimal() {
-				resultFieldType.SetDecimalUnderLimit(argTp.GetDecimal())
+			if argTp.Decimal > resultFieldType.Decimal {
+				resultFieldType.Decimal = argTp.Decimal
 			}
-			argIntLen := argTp.GetFlen()
-			if argTp.GetDecimal() > 0 {
-				argIntLen -= argTp.GetDecimal() + 1
+			argIntLen := argTp.Flen
+			if argTp.Decimal > 0 {
+				argIntLen -= argTp.Decimal + 1
 			}
 
 			// Reduce the sign bit if it is a signed integer/decimal
-			if !mysql.HasUnsignedFlag(argTp.GetFlag()) {
+			if !mysql.HasUnsignedFlag(argTp.Flag) {
 				argIntLen--
 			}
 			if argIntLen > maxIntLen {
 				maxIntLen = argIntLen
 			}
-			if argTp.GetFlen() > maxFlen || argTp.GetFlen() == types.UnspecifiedLength {
-				maxFlen = argTp.GetFlen()
+			if argTp.Flen > maxFlen || argTp.Flen == types.UnspecifiedLength {
+				maxFlen = argTp.Flen
 			}
 		}
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
 		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
-			resultFieldType.SetFlenUnderLimit(maxIntLen + resultFieldType.GetDecimal())
-			if resultFieldType.GetDecimal() > 0 {
-				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
+			resultFieldType.Flen = maxIntLen + resultFieldType.Decimal
+			if resultFieldType.Decimal > 0 {
+				resultFieldType.Flen++
 			}
-			if !mysql.HasUnsignedFlag(resultFieldType.GetFlag()) {
-				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
+			if !mysql.HasUnsignedFlag(resultFieldType.Flag) {
+				resultFieldType.Flen++
 			}
 			bf.tp = resultFieldType
 		} else {
-			bf.tp.SetFlen(maxFlen)
+			bf.tp.Flen = maxFlen
 		}
 		// Set the field length to maxFlen for other types.
-		if bf.tp.GetFlen() > mysql.MaxDecimalWidth {
-			bf.tp.SetFlen(mysql.MaxDecimalWidth)
+		if bf.tp.Flen > mysql.MaxDecimalWidth {
+			bf.tp.Flen = mysql.MaxDecimalWidth
 		}
 	}
 
@@ -209,11 +197,13 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.SetDecimal(resultFieldType.GetDecimal())
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
-		bf.tp.SetDecimal(resultFieldType.GetDecimal())
+		bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	case types.ETJson:
@@ -268,7 +258,7 @@ func (b *builtinCoalesceRealSig) evalReal(row chunk.Row) (res float64, isNull bo
 	return res, isNull, err
 }
 
-// builtinCoalesceDecimalSig is builtin function coalesce signature which return type decimal
+// builtinCoalesceDecimalSig is builtin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -325,10 +315,8 @@ func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	fsp := b.tp.GetDecimal()
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalTime(b.ctx, row)
-		res.SetFsp(fsp)
 		if err != nil || !isNull {
 			break
 		}
@@ -351,7 +339,6 @@ func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
 func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalDuration(b.ctx, row)
-		res.Fsp = b.tp.GetDecimal()
 		if err != nil || !isNull {
 			break
 		}
@@ -371,7 +358,7 @@ func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalJSON(b.ctx, row)
 		if err != nil || !isNull {
@@ -398,11 +385,11 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	hasTemporal := false
 	if cmpTp == types.ETString {
-		if args[0].GetType().GetType() == mysql.TypeDuration {
+		if args[0].GetType().Tp == mysql.TypeDuration {
 			cmpTp = types.ETDuration
 		} else {
 			for _, arg := range args {
-				if types.IsTypeTemporal(arg.GetType().GetType()) {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
 					hasTemporal = true
 					break
 				}
@@ -412,76 +399,38 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 			}
 		}
 	}
-	if (args[0].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[0])) &&
-		(args[1].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[1])) &&
-		(args[2].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[2])) {
-		return types.ETInt
-	}
 
 	return cmpTp
 }
 
-// GLCmpStringMode represents Greatest/Least interal string comparison mode
-type GLCmpStringMode uint8
-
-const (
-	// GLCmpStringDirectly Greatest and Least function compares string directly
-	GLCmpStringDirectly GLCmpStringMode = iota
-	// GLCmpStringAsDate Greatest/Least function compares string as 'yyyy-mm-dd' format
-	GLCmpStringAsDate
-	// GLCmpStringAsDatetime Greatest/Least function compares string as 'yyyy-mm-dd hh:mm:ss' format
-	GLCmpStringAsDatetime
-)
-
-// GLRetTimeType represents Greatest/Least return time type
-type GLRetTimeType uint8
-
-const (
-	// GLRetNoneTemporal Greatest/Least function returns non temporal time
-	GLRetNoneTemporal GLRetTimeType = iota
-	// GLRetDate Greatest/Least function returns date type, 'yyyy-mm-dd'
-	GLRetDate
-	// GLRetDatetime Greatest/Least function returns datetime type, 'yyyy-mm-dd hh:mm:ss'
-	GLRetDatetime
-)
-
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ *types.FieldType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
+func resolveType4Extremum(args []Expression) types.EvalType {
 	aggType := aggregateType(args)
+
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
 			// Find the temporal value in the arguments but prefer DateTime value.
-			if types.IsTypeTemporal(item.GetType()) {
-				if temporalItem == nil || item.GetType() == mysql.TypeDatetime {
+			if types.IsTypeTemporal(item.Tp) {
+				if temporalItem == nil || item.Tp == mysql.TypeDatetime {
 					temporalItem = item
 				}
 			}
 		}
 
-		if !types.IsTypeTemporal(aggType.GetType()) && temporalItem != nil && types.IsTemporalWithDate(temporalItem.GetType()) {
-			if temporalItem.GetType() == mysql.TypeDate {
-				cmpStringMode = GLCmpStringAsDate
-			} else {
-				cmpStringMode = GLCmpStringAsDatetime
-			}
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
+			aggType.Tp = temporalItem.Tp
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	var timeType = GLRetNoneTemporal
-	if aggType.GetType() == mysql.TypeDate {
-		timeType = GLRetDate
-	} else if aggType.GetType() == mysql.TypeDatetime || aggType.GetType() == mysql.TypeTimestamp {
-		timeType = GLRetDatetime
-	}
-	return aggType, timeType, cmpStringMode
+	return aggType.EvalType()
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
 func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
 	for _, arg := range args {
-		tp := arg.GetType().GetType()
+		tp := arg.GetType().Tp
 		if tp == mysql.TypeJSON {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedJSONComparison)
 			break
@@ -497,28 +446,38 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	resTp := resFieldType.EvalType()
-	argTp := resTp
-	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
-		argTp = types.ETString
-	} else if resTp == types.ETJson {
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
+		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
+		tp = types.ETString
+	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
-		argTp = types.ETString
-		resTp = types.ETString
+		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = argTp
+		argTps[i] = tp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	switch argTp {
+	if cmpAsDatetime {
+		tp = types.ETDatetime
+	}
+	switch tp {
 	case types.ETInt:
-		bf.tp.AddFlag(resFieldType.GetFlag())
+		// adjust unsigned flag
+		greastInitUnsignedFlag := false
+		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -528,39 +487,19 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringMode == GLCmpStringAsDate {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf, true}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsDate)
-		} else if cmpStringMode == GLCmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf, false}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
-		} else {
-			sig = &builtinGreatestStringSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-		}
-	case types.ETDuration:
-		sig = &builtinGreatestDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
+		sig = &builtinGreatestStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 	case types.ETDatetime, types.ETTimestamp:
-		if fieldTimeType == GLRetDate {
-			sig = &builtinGreatestTimeSig{bf, true}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestDate)
-		} else {
-			sig = &builtinGreatestTimeSig{bf, false}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
-		}
+		sig = &builtinGreatestTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
-
-	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
-	sig.getRetTp().SetFlenUnderLimit(flen)
-	sig.getRetTp().SetDecimalUnderLimit(decimal)
-
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
 }
 
 func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
 	for _, arg := range args {
-		argFlen, argDecimal := arg.GetType().GetFlen(), arg.GetType().GetDecimal()
+		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
 		if argFlen > flen {
 			flen = argFlen
 		}
@@ -691,30 +630,32 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type builtinGreatestCmpStringAsTimeSig struct {
+type builtinGreatestTimeSig struct {
 	baseBuiltinFunc
-	cmpAsDate bool
 }
 
-func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestCmpStringAsTimeSig{}
+func (b *builtinGreatestTimeSig) Clone() builtinFunc {
+	newSig := &builtinGreatestTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
-// evalString evals a builtinGreatestCmpStringAsTimeSig.
+// evalString evals a builtinGreatestTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
-			return v, true, err
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, err
+			}
+		} else {
+			v = t.String()
 		}
 		// In MySQL, if the compare result is zero, than we will try to use the string comparison result
 		if i == 0 || strings.Compare(v, strRes) > 0 {
@@ -722,84 +663,6 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		}
 	}
 	return strRes, false, nil
-}
-
-func doTimeConversionForGL(cmpAsDate bool, ctx sessionctx.Context, sc *stmtctx.StatementContext, strVal string) (string, error) {
-	var t types.Time
-	var err error
-	if cmpAsDate {
-		t, err = types.ParseDate(sc, strVal)
-		if err == nil {
-			t, err = t.Convert(sc, mysql.TypeDate)
-		}
-	} else {
-		t, err = types.ParseDatetime(sc, strVal)
-		if err == nil {
-			t, err = t.Convert(sc, mysql.TypeDatetime)
-		}
-	}
-	if err != nil {
-		if err = handleInvalidTimeError(ctx, err); err != nil {
-			return "", err
-		}
-	} else {
-		strVal = t.String()
-	}
-	return strVal, nil
-}
-
-type builtinGreatestTimeSig struct {
-	baseBuiltinFunc
-	cmpAsDate bool
-}
-
-func (b *builtinGreatestTimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.cmpAsDate = b.cmpAsDate
-	return newSig
-}
-
-func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
-		if isNull || err != nil {
-			return types.ZeroTime, true, err
-		}
-		if i == 0 || v.Compare(res) > 0 {
-			res = v
-		}
-	}
-	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := b.ctx.GetSessionVars().StmtCtx
-	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc, resTimeTp); err != nil {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
-	}
-	return res, false, nil
-}
-
-type builtinGreatestDurationSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinGreatestDurationSig) Clone() builtinFunc {
-	newSig := &builtinGreatestDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinGreatestDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
-		if isNull || err != nil {
-			return types.Duration{}, true, err
-		}
-		if i == 0 || v.Compare(res) > 0 {
-			res = v
-		}
-	}
-	return res, false, nil
 }
 
 type leastFunctionClass struct {
@@ -810,28 +673,38 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	resTp := resFieldType.EvalType()
-	argTp := resTp
-	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
-		argTp = types.ETString
-	} else if resTp == types.ETJson {
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
+		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
+		tp = types.ETString
+	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
-		argTp = types.ETString
-		resTp = types.ETString
+		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = argTp
+		argTps[i] = tp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	switch argTp {
+	if cmpAsDatetime {
+		tp = types.ETDatetime
+	}
+	switch tp {
 	case types.ETInt:
-		bf.tp.AddFlag(resFieldType.GetFlag())
+		// adjust unsigned flag
+		leastInitUnsignedFlag := true
+		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		}
+
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -841,31 +714,13 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringMode == GLCmpStringAsDate {
-			sig = &builtinLeastCmpStringAsTimeSig{bf, true}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsDate)
-		} else if cmpStringMode == GLCmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsTimeSig{bf, false}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
-		} else {
-			sig = &builtinLeastStringSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastString)
-		}
-	case types.ETDuration:
-		sig = &builtinLeastDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
+		sig = &builtinLeastStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 	case types.ETDatetime, types.ETTimestamp:
-		if fieldTimeType == GLRetDate {
-			sig = &builtinLeastTimeSig{bf, true}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastDate)
-		} else {
-			sig = &builtinLeastTimeSig{bf, false}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
-		}
+		sig = &builtinLeastTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
-	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
-	sig.getRetTp().SetFlenUnderLimit(flen)
-	sig.getRetTp().SetDecimalUnderLimit(decimal)
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
 }
 
@@ -989,30 +844,32 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	return
 }
 
-type builtinLeastCmpStringAsTimeSig struct {
+type builtinLeastTimeSig struct {
 	baseBuiltinFunc
-	cmpAsDate bool
 }
 
-func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastCmpStringAsTimeSig{}
+func (b *builtinLeastTimeSig) Clone() builtinFunc {
+	newSig := &builtinLeastTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
-// evalString evals a builtinLeastCmpStringAsTimeSig.
+// evalString evals a builtinLeastTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinLeastTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
-			return v, true, err
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, err
+			}
+		} else {
+			v = t.String()
 		}
 		if i == 0 || strings.Compare(v, strRes) < 0 {
 			strRes = v
@@ -1020,70 +877,6 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 	}
 
 	return strRes, false, nil
-}
-
-type builtinLeastTimeSig struct {
-	baseBuiltinFunc
-	cmpAsDate bool
-}
-
-func (b *builtinLeastTimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.cmpAsDate = b.cmpAsDate
-	return newSig
-}
-
-func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
-		if isNull || err != nil {
-			return types.ZeroTime, true, err
-		}
-		if i == 0 || v.Compare(res) < 0 {
-			res = v
-		}
-	}
-	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := b.ctx.GetSessionVars().StmtCtx
-	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc, resTimeTp); err != nil {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
-	}
-	return res, false, nil
-}
-
-func getAccurateTimeTypeForGLRet(cmpAsDate bool) byte {
-	var resTimeTp byte
-	if cmpAsDate {
-		resTimeTp = mysql.TypeDate
-	} else {
-		resTimeTp = mysql.TypeDatetime
-	}
-	return resTimeTp
-}
-
-type builtinLeastDurationSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinLeastDurationSig) Clone() builtinFunc {
-	newSig := &builtinLeastDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinLeastDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
-		if isNull || err != nil {
-			return types.Duration{}, true, err
-		}
-		if i == 0 || v.Compare(res) < 0 {
-			res = v
-		}
-	}
-	return res, false, nil
 }
 
 type intervalFunctionClass struct {
@@ -1106,7 +899,7 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if tp.EvalType() != types.ETInt {
 			allInt = false
 		}
-		if !mysql.HasNotNullFlag(tp.GetFlag()) {
+		if !mysql.HasNotNullFlag(tp.Flag) {
 			hasNullable = true
 		}
 	}
@@ -1154,7 +947,7 @@ func (b *builtinIntervalIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return -1, false, nil
 	}
-	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var idx int
 	if b.hasNullable {
 		idx, err = b.linearSearch(arg0, isUint1, b.args[1:], row)
@@ -1168,7 +961,7 @@ func (b *builtinIntervalIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 func (b *builtinIntervalIntSig) linearSearch(target int64, isUint1 bool, args []Expression, row chunk.Row) (i int, err error) {
 	i = 0
 	for ; i < len(args); i++ {
-		isUint2 := mysql.HasUnsignedFlag(args[i].GetType().GetFlag())
+		isUint2 := mysql.HasUnsignedFlag(args[i].GetType().Flag)
 		arg, isNull, err := args[i].EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, err
@@ -1209,7 +1002,7 @@ func (b *builtinIntervalIntSig) binSearch(target int64, isUint1 bool, args []Exp
 		if isNull {
 			v = target
 		}
-		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().GetFlag())
+		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().Flag)
 		switch {
 		case !isUint1 && !isUint2:
 			cmp = target < v
@@ -1300,19 +1093,13 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-func (c *compareFunctionClass) getDisplayName() string {
-	var nameBuilder strings.Builder
-	c.op.Format(&nameBuilder)
-	return nameBuilder.String()
-}
-
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
-	if lft != nil && rft != nil && (lft.GetType() == mysql.TypeUnspecified || rft.GetType() == mysql.TypeUnspecified) {
-		if lft.GetType() == rft.GetType() {
+	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
+		if lft.Tp == rft.Tp {
 			return types.ETString
 		}
-		if lft.GetType() == mysql.TypeUnspecified {
+		if lft.Tp == mysql.TypeUnspecified {
 			lhs = rhs
 		} else {
 			rhs = lhs
@@ -1327,8 +1114,8 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
-	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.GetType()) && rft.GetType() == mysql.TypeYear ||
-		lft.GetType() == mysql.TypeYear && types.IsTemporalWithDate(rft.GetType())) {
+	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.Tp) && rft.Tp == mysql.TypeYear ||
+		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp)) {
 		return types.ETDatetime
 	}
 	return types.ETReal
@@ -1340,18 +1127,19 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
+	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
+		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
 		cmpType = types.ETJson
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
-		if lhsFieldType.GetType() == rhsFieldType.GetType() {
+		if lhsFieldType.Tp == rhsFieldType.Tp {
 			cmpType = lhsFieldType.EvalType()
 		} else {
 			cmpType = types.ETDatetime
 		}
-	} else if lhsFieldType.GetType() == mysql.TypeDuration && rhsFieldType.GetType() == mysql.TypeDuration {
+	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
 		cmpType = types.ETDuration
@@ -1381,7 +1169,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			if !isLHSColumn {
 				col = rhs.(*Column)
 			}
-			if col.GetType().GetType() == mysql.TypeDuration {
+			if col.GetType().Tp == mysql.TypeDuration {
 				cmpType = types.ETDuration
 			}
 		}
@@ -1399,8 +1187,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		coll, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
-		return genCompareString(coll.Collation)
+		_, dstCollation := DeriveCollationFromExprs(ctx, lhs, rhs)
+		return genCompareString(dstCollation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1418,7 +1206,7 @@ func isTemporalColumn(expr Expression) bool {
 	if _, isCol := expr.(*Column); !isCol {
 		return false
 	}
-	if !types.IsTypeTime(ft.GetType()) && ft.GetType() != mysql.TypeDuration {
+	if !types.IsTypeTime(ft.Tp) && ft.Tp != mysql.TypeDuration {
 		return false
 	}
 	return true
@@ -1429,9 +1217,8 @@ func isTemporalColumn(expr Expression) bool {
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-//
-//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1467,9 +1254,8 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-//
-//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
@@ -1477,7 +1263,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
-	if targetFieldType.GetType() == mysql.TypeBit {
+	if targetFieldType.Tp == mysql.TypeBit {
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
@@ -1493,7 +1279,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
+	c, err := intDatum.CompareDatum(sc, &con.Value)
 	if err != nil {
 		return con, false
 	}
@@ -1531,11 +1317,11 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// otherwise, the compare function will be false.
 			// **note**
 			// 1. We compare `doubleDatum` with the `integral part of doubleDatum` rather then intDatum to handle the
-			//    case when `targetFieldType.GetType()` is `TypeYear`.
-			// 2. When `targetFieldType.GetType()` is `TypeYear`, we can not compare `doubleDatum` with `intDatum` directly,
+			//    case when `targetFieldType.Tp` is `TypeYear`.
+			// 2. When `targetFieldType.Tp` is `TypeYear`, we can not compare `doubleDatum` with `intDatum` directly,
 			//    because we'll convert values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges
 			//    2000 to 2069 and 1970 to 1999.
-			// 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
+			// 3. Suppose the value of `con` is 2, when `targetFieldType.Tp` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
@@ -1559,48 +1345,29 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
-// This refine operation depends on the values of these args, but these values can change when using plan-cache.
-// So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
+	if ContainMutableConst(ctx, args) {
+		return args
+	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
-	arg0IsString := arg0Type.EvalType() == types.ETString
-	arg1IsString := arg1Type.EvalType() == types.ETString
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
-	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-		// here and skip this refine operation in all other cases for safety.
-		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-			if arg1IsString {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String()))
-			} else { // arg0IsString
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
-			}
-			RemoveMutableConst(ctx, args)
-		} else {
-			return args
-		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
-		// We should remove the mutable constant for correctness, because its value may be changed.
-		RemoveMutableConst(ctx, args)
-	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
 		// If int_col got null, compare result cannot be true
-		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.GetFlag())) {
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
 			finalArg1 = arg1
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
-		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.GetFlag())
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
@@ -1619,12 +1386,12 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
 			finalArg0 = arg0
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
-		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
@@ -1634,7 +1401,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1642,7 +1409,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
@@ -1695,19 +1462,19 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 			if err != nil || isNull || v > 0 {
 				return args
 			}
-			if mysql.HasUnsignedFlag(con.RetType.GetFlag()) && !mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
 				op := c.op
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
 				if op == opcode.EQ || op == opcode.NullEQ {
-					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.GetType()), col.RetType.GetType()); err != nil {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
 						args[i], args[1-i] = NewOne(), NewZero()
 						return args
 					}
 				}
 			}
-			if mysql.HasUnsignedFlag(col.RetType.GetFlag()) && mysql.HasNotNullFlag(col.RetType.GetFlag()) && !mysql.HasUnsignedFlag(con.RetType.GetFlag()) {
+			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
 				op := c.op
 				if i == 1 {
 					op = symmetricOp[c.op]
@@ -1754,7 +1521,7 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 			DisableParseJSONFlag4Expr(args[i])
 		}
 	}
-	bf.tp.SetFlen(1)
+	bf.tp.Flen = 1
 	switch tp {
 	case types.ETInt:
 		switch c.op {
@@ -2539,27 +2306,27 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	if err != nil {
 		return 0, isNull1, err
 	}
-	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 	var res int64
 	switch {
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
 		res = 1
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 {
-			return res, false, nil
+			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 {
-			return res, false, nil
+			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
@@ -2592,7 +2359,7 @@ func (b *builtinNullEQRealSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case types.CompareFloat64(arg0, arg1) == 0:
 		res = 1
 	}
@@ -2623,7 +2390,7 @@ func (b *builtinNullEQDecimalSig) evalInt(row chunk.Row) (val int64, isNull bool
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2654,7 +2421,7 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case types.CompareString(arg0, arg1, b.collation) == 0:
 		res = 1
 	}
@@ -2685,7 +2452,7 @@ func (b *builtinNullEQDurationSig) evalInt(row chunk.Row) (val int64, isNull boo
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2716,7 +2483,7 @@ func (b *builtinNullEQTimeSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2747,9 +2514,9 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		return res, false, nil
+		break
 	default:
-		cmpRes := types.CompareBinaryJSON(arg0, arg1)
+		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -2863,7 +2630,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 		return compareNull(isNull0, isNull1), true, nil
 	}
 
-	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().GetFlag()), mysql.HasUnsignedFlag(rhsArg.GetType().GetFlag())
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
 	var res int
 	switch {
 	case isUnsigned0 && isUnsigned1:
@@ -2997,5 +2764,17 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareBinaryJSON(arg0, arg1)), false, nil
+	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
+// For greatest, returns unsigned result if there is at least one argument is unsigned.
+// For least, returns signed result if there is at least one argument is signed.
+func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
+	for _, arg := range args {
+		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
+			return false
+		}
+	}
+	return true
 }

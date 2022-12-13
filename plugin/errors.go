@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,5 +24,6 @@ var (
 	errInvalidPluginName       = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
 	errInvalidPluginVersion    = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
 	errDuplicatePlugin         = dbterror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
 	errRequireVersionCheckFail = dbterror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
 )

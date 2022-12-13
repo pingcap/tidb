@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,19 +15,17 @@ package expression
 
 import (
 	"math"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func TestUnary(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestUnary(c *C) {
 	cases := []struct {
 		args     interface{}
 		expected interface{}
@@ -40,36 +37,35 @@ func TestUnary(t *testing.T) {
 		{uint64(9223372036854775808), int64(-9223372036854775808), false, false},
 		{int64(math.MinInt64), "9223372036854775808", true, false}, // --9223372036854775808
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.InSelectStmt
 	sc.InSelectStmt = true
 	defer func() {
 		sc.InSelectStmt = origin
 	}()
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.UnaryMinus, primitiveValsToConstants(ctx, []interface{}{c.args})...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, s.primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if !c.getErr {
-			require.NoError(t, err)
-			if !c.overflow {
-				require.Equal(t, c.expected, d.GetValue())
+		if !t.getErr {
+			c.Assert(err, IsNil)
+			if !t.overflow {
+				c.Assert(d.GetValue(), Equals, t.expected)
 			} else {
-				require.Equal(t, c.expected, d.GetMysqlDecimal().String())
+				c.Assert(d.GetMysqlDecimal().String(), Equals, t.expected)
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 
-	_, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{NewZero()})
-	require.NoError(t, err)
+	_, err := funcs[ast.UnaryMinus].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestLogicAnd(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -106,32 +102,31 @@ func TestLogicAnd(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LogicAnd, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.LogicAnd, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicAnd].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.LogicAnd].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestLeftShift(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -145,25 +140,24 @@ func TestLeftShift(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LeftShift, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LeftShift, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 }
 
-func TestRightShift(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -177,32 +171,31 @@ func TestRightShift(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.RightShift, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.RightShift, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.RightShift, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.RightShift, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.RightShift].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.RightShift].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestBitXor(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -216,33 +209,32 @@ func TestBitXor(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Xor, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Xor, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.Xor, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.Xor, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Xor].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.Xor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestBitOr(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestBitOr(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -262,33 +254,32 @@ func TestBitOr(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Or, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Or, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.Or, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.Or, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Or].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.Or].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestLogicOr(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestLogicOr(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -329,32 +320,31 @@ func TestLogicOr(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LogicOr, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LogicOr, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.LogicOr, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.LogicOr, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicOr].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.LogicOr].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestBitAnd(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	cases := []struct {
 		args     []interface{}
 		expected int64
@@ -368,33 +358,32 @@ func TestBitAnd(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.And, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.And, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.And, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.And, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.And].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.And].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestBitNeg(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestBitNeg(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -414,33 +403,32 @@ func TestBitNeg(t *testing.T) {
 		{[]interface{}{errors.New("must error")}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.BitNeg, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.BitNeg, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.BitNeg, NewZero(), NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.BitNeg, NewZero(), NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.BitNeg].getFunction(ctx, []Expression{NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.BitNeg].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestUnaryNot(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -466,33 +454,32 @@ func TestUnaryNot(t *testing.T) {
 		{[]interface{}{errors.New("must error")}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.UnaryNot, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.UnaryNot, NewZero(), NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, NewZero(), NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.UnaryNot].getFunction(ctx, []Expression{NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.UnaryNot].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestIsTrueOrFalse(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -577,29 +564,28 @@ func TestIsTrueOrFalse(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
-		require.NoError(t, err)
-		require.NotNil(t, isTrueSig)
+		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		c.Assert(err, IsNil)
+		c.Assert(isTrueSig, NotNil)
 
 		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
+		c.Assert(err, IsNil)
+		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
 	}
 
 	for _, tc := range testCases {
-		isFalseSig, err := funcs[ast.IsFalsity].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
-		require.NoError(t, err)
-		require.NotNil(t, isFalseSig)
+		isFalseSig, err := funcs[ast.IsFalsity].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		c.Assert(err, IsNil)
+		c.Assert(isFalseSig, NotNil)
 
 		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
+		c.Assert(err, IsNil)
+		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
 	}
 }
 
-func TestLogicXor(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestLogicXor(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
 		sc.IgnoreTruncate = origin
@@ -637,26 +623,26 @@ func TestLogicXor(t *testing.T) {
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LogicXor, primitiveValsToConstants(ctx, c.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LogicXor, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, t.expected)
 			}
 		}
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(ctx, ast.LogicXor, NewZero())
-	require.Error(t, err)
+	_, err := newFunctionForTest(s.ctx, ast.LogicXor, NewZero())
+	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicXor].getFunction(ctx, []Expression{NewZero(), NewZero()})
-	require.NoError(t, err)
+	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
+	c.Assert(err, IsNil)
 }

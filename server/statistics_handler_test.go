@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,190 +15,171 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/store/mockstore"
 )
 
-func TestDumpStatsAPI(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+type testDumpStatsSuite struct {
+	*testServerClient
+	server *Server
+	sh     *StatsHandler
+	store  kv.Storage
+	domain *domain.Domain
+}
 
-	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+var _ = Suite(&testDumpStatsSuite{
+	testServerClient: newTestServerClient(),
+})
+
+func (ds *testDumpStatsSuite) startServer(c *C) {
+	var err error
+	ds.store, err = mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	session.DisableStats4Test()
+	ds.domain, err = session.BootstrapSession(ds.store)
+	c.Assert(err, IsNil)
+	ds.domain.SetStatsUpdating(true)
+	tidbdrv := NewTiDBDriver(ds.store)
+
 	cfg := newTestConfig()
-	cfg.Port = client.port
-	cfg.Status.StatusPort = client.statusPort
+	cfg.Port = ds.port
+	cfg.Status.StatusPort = ds.statusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	server, err := NewServer(cfg, driver)
-	require.NoError(t, err)
-	defer server.Close()
-
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	server, err := NewServer(cfg, tidbdrv)
+	c.Assert(err, IsNil)
+	ds.port = getPortFromTCPAddr(server.listener.Addr())
+	ds.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	ds.server = server
 	go func() {
 		err := server.Run()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
-	client.waitUntilServerOnline()
+	ds.waitUntilServerOnline()
 
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	statsHandler := &StatsHandler{dom}
+	do, err := session.GetDomain(ds.store)
+	c.Assert(err, IsNil)
+	ds.sh = &StatsHandler{do}
+}
 
-	prepareData(t, client, statsHandler)
+func (ds *testDumpStatsSuite) stopServer(c *C) {
+	if ds.domain != nil {
+		ds.domain.Close()
+	}
+	if ds.store != nil {
+		ds.store.Close()
+	}
+	if ds.server != nil {
+		ds.server.Close()
+	}
+}
+
+func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
+	ds.startServer(c)
+	defer ds.stopServer(c)
+	ds.prepareData(c)
 
 	router := mux.NewRouter()
-	router.Handle("/stats/dump/{db}/{table}", statsHandler)
+	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	resp0, err := client.fetchStatus("/stats/dump/tidb/test")
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp0.Body.Close())
-	}()
+	resp, err := ds.fetchStatus("/stats/dump/tidb/test")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 
 	path := "/tmp/stats.json"
 	fp, err := os.Create(path)
-	require.NoError(t, err)
-	require.NotNil(t, fp)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
 	defer func() {
-		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
+		c.Assert(fp.Close(), IsNil)
+		c.Assert(os.Remove(path), IsNil)
 	}()
 
-	js, err := io.ReadAll(resp0.Body)
-	require.NoError(t, err)
+	js, err := io.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
 	_, err = fp.Write(js)
-	require.NoError(t, err)
-	checkData(t, path, client)
-	checkCorrelation(t, client)
+	c.Assert(err, IsNil)
+	ds.checkData(c, path)
+	ds.checkCorrelation(c)
 
 	// sleep for 1 seconds to ensure the existence of tidb.test
 	time.Sleep(time.Second)
 	timeBeforeDropStats := time.Now()
 	snapshot := timeBeforeDropStats.Format("20060102150405")
-	prepare4DumpHistoryStats(t, client)
+	ds.prepare4DumpHistoryStats(c)
 
 	// test dump history stats
-	resp1, err := client.fetchStatus("/stats/dump/tidb/test")
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp1.Body.Close())
-	}()
+	resp1, err := ds.fetchStatus("/stats/dump/tidb/test")
+	c.Assert(err, IsNil)
+	defer resp1.Body.Close()
 	js, err = io.ReadAll(resp1.Body)
-	require.NoError(t, err)
-	require.Equal(t, "null", string(js))
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "null")
 
 	path1 := "/tmp/stats_history.json"
 	fp1, err := os.Create(path1)
-	require.NoError(t, err)
-	require.NotNil(t, fp1)
+	c.Assert(err, IsNil)
+	c.Assert(fp1, NotNil)
 	defer func() {
-		require.NoError(t, fp1.Close())
-		require.NoError(t, os.Remove(path1))
+		c.Assert(fp1.Close(), IsNil)
+		c.Assert(os.Remove(path1), IsNil)
 	}()
 
-	resp2, err := client.fetchStatus("/stats/dump/tidb/test/" + snapshot)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp2.Body.Close())
-	}()
-	js, err = io.ReadAll(resp2.Body)
-	require.NoError(t, err)
+	resp1, err = ds.fetchStatus("/stats/dump/tidb/test/" + snapshot)
+	c.Assert(err, IsNil)
+
+	js, err = io.ReadAll(resp1.Body)
+	c.Assert(err, IsNil)
 	_, err = fp1.Write(js)
-	require.NoError(t, err)
-	checkData(t, path1, client)
-
-	testDumpPartitionTableStats(t, client, statsHandler)
+	c.Assert(err, IsNil)
+	ds.checkData(c, path1)
 }
 
-func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler *StatsHandler) {
-	preparePartitionData(t, client, handler)
-	check := func(dumpStats bool) {
-		expectedLen := 1
-		if dumpStats {
-			expectedLen = 2
-		}
-		url := fmt.Sprintf("/stats/dump/test/test2?dumpPartitionStats=%v", dumpStats)
-		resp0, err := client.fetchStatus(url)
-		require.NoError(t, err)
-		defer func() {
-			resp0.Body.Close()
-		}()
-		b, err := io.ReadAll(resp0.Body)
-		require.NoError(t, err)
-		jsonTable := &handle.JSONTable{}
-		err = json.Unmarshal(b, jsonTable)
-		require.NoError(t, err)
-		require.NotNil(t, jsonTable.Partitions["global"])
-		require.Len(t, jsonTable.Partitions, expectedLen)
-	}
-	check(false)
-	check(true)
-}
-
-func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
-	require.NoError(t, err, "Error connecting")
+func (ds *testDumpStatsSuite) prepareData(c *C) {
+	db, err := sql.Open("mysql", ds.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer func() {
 		err := db.Close()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
-	tk := testkit.NewDBTestKit(t, db)
+	dbt := &DBTest{c, db}
 
-	h := statHandle.do.StatsHandle()
-	tk.MustExec("create database tidb")
-	tk.MustExec("use tidb")
-	tk.MustExec("create table test (a int, b varchar(20))")
+	h := ds.sh.do.StatsHandle()
+	dbt.mustExec("create database tidb")
+	dbt.mustExec("use tidb")
+	dbt.mustExec("create table test (a int, b varchar(20))")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	tk.MustExec("create index c on test (a, b)")
-	tk.MustExec("insert test values (1, 's')")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table test")
-	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
-	is := statHandle.do.InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
+	c.Assert(err, IsNil)
+	dbt.mustExec("create index c on test (a, b)")
+	dbt.mustExec("insert test values (1, 's')")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	dbt.mustExec("analyze table test")
+	dbt.mustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
+	is := ds.sh.do.InfoSchema()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 }
 
-func preparePartitionData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
-	require.NoError(t, err, "Error connecting")
+func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
+	db, err := sql.Open("mysql", ds.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer func() {
 		err := db.Close()
-		require.NoError(t, err)
-	}()
-	h := statHandle.do.StatsHandle()
-	tk := testkit.NewDBTestKit(t, db)
-	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
-	tk.MustExec("insert into test2 (a) values (1)")
-	tk.MustExec("analyze table test2")
-	is := statHandle.do.InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
-}
-
-func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
-	require.NoError(t, err, "Error connecting")
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
 
-	tk := testkit.NewDBTestKit(t, db)
+	dbt := &DBTest{c, db}
 
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20060102-15:04:05 -0700"
@@ -207,71 +187,71 @@ func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-	tk.MustExec(updateSafePoint)
+	dbt.mustExec(updateSafePoint)
 
-	tk.MustExec("drop table tidb.test")
-	tk.MustExec("create table tidb.test (a int, b varchar(20))")
+	dbt.mustExec("drop table tidb.test")
+	dbt.mustExec("create table tidb.test (a int, b varchar(20))")
 }
 
-func checkCorrelation(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
-	require.NoError(t, err, "Error connecting")
-	tk := testkit.NewDBTestKit(t, db)
+func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
+	db, err := sql.Open("mysql", ds.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	dbt := &DBTest{c, db}
 	defer func() {
 		err := db.Close()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
 
-	tk.MustExec("use tidb")
-	rows := tk.MustQuery("SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'test' AND table_schema = 'tidb'")
+	dbt.mustExec("use tidb")
+	rows := dbt.mustQuery("SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'test' AND table_schema = 'tidb'")
 	var tableID int64
 	if rows.Next() {
 		err = rows.Scan(&tableID)
-		require.NoError(t, err)
-		require.False(t, rows.Next(), "unexpected data")
+		c.Assert(err, IsNil)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 	} else {
-		require.FailNow(t, "no data")
+		dbt.Error("no data")
 	}
-	require.NoError(t, rows.Close())
-	rows = tk.MustQuery("select correlation from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index = 0", tableID)
+	rows.Close()
+	rows = dbt.mustQuery("select correlation from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index = 0", tableID)
 	if rows.Next() {
 		var corr float64
 		err = rows.Scan(&corr)
-		require.NoError(t, err)
-		require.Equal(t, float64(1), corr)
-		require.False(t, rows.Next(), "unexpected data")
+		c.Assert(err, IsNil)
+		dbt.Check(corr, Equals, float64(1))
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 	} else {
-		require.FailNow(t, "no data")
+		dbt.Error("no data")
 	}
-	require.NoError(t, rows.Close())
+	rows.Close()
 }
 
-func checkData(t *testing.T, path string, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+func (ds *testDumpStatsSuite) checkData(c *C, path string) {
+	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}))
-	require.NoError(t, err, "Error connecting")
-	tk := testkit.NewDBTestKit(t, db)
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	dbt := &DBTest{c, db}
 	defer func() {
 		err := db.Close()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
 
-	tk.MustExec("use tidb")
-	tk.MustExec("drop stats test")
-	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
+	dbt.mustExec("use tidb")
+	dbt.mustExec("drop stats test")
+	_, err = dbt.db.Exec(fmt.Sprintf("load stats '%s'", path))
+	c.Assert(err, IsNil)
 
-	rows := tk.MustQuery("show stats_meta")
-	require.True(t, rows.Next(), "unexpected data")
+	rows := dbt.mustQuery("show stats_meta")
+	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 	var dbName, tableName string
 	var modifyCount, count int64
 	var other interface{}
 	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
-	require.NoError(t, err)
-	require.Equal(t, "tidb", dbName)
-	require.Equal(t, "test", tableName)
-	require.Equal(t, int64(3), modifyCount)
-	require.Equal(t, int64(4), count)
-	require.NoError(t, rows.Close())
+	dbt.Check(err, IsNil)
+	dbt.Check(dbName, Equals, "tidb")
+	dbt.Check(tableName, Equals, "test")
+	dbt.Check(modifyCount, Equals, int64(3))
+	dbt.Check(count, Equals, int64(4))
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,178 +17,72 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"path/filepath"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/extension"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
-	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-type Issue33699CheckType struct {
-	name              string
-	defVal            string
-	setVal            string
-	isSessionVariable bool
+type ConnTestSuite struct {
+	dom   *domain.Domain
+	store kv.Storage
 }
 
-func (c *Issue33699CheckType) toSetSessionVar() string {
-	if c.isSessionVariable {
-		return fmt.Sprintf("set session %s=%s", c.name, c.setVal)
-	}
-	return fmt.Sprintf("set @%s=%s", c.name, c.setVal)
+var _ = SerialSuites(&ConnTestSuite{})
+
+func (ts *ConnTestSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	var err error
+	ts.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
 }
 
-func (c *Issue33699CheckType) toGetSessionVar() string {
-	if c.isSessionVariable {
-		return fmt.Sprintf("select @@session.%s", c.name)
-	}
-	return fmt.Sprintf("select @%s", c.name)
+func (ts *ConnTestSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	ts.store.Close()
+	testleak.AfterTest(c)()
 }
 
-func TestIssue33699(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
-	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, tidbdrv)
-	require.NoError(t, err)
-	defer server.Close()
-
-	cc := &clientConn{
-		connectionID: 1,
-		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server:       server,
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(&outBuffer),
-		},
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41,
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	ctx := &TiDBContext{Session: tk.Session()}
-	cc.setCtx(ctx)
-
-	// change user.
-	doChangeUser := func() {
-		userData := append([]byte("root"), 0x0, 0x0)
-		userData = append(userData, []byte("test")...)
-		userData = append(userData, 0x0)
-		changeUserReq := dispatchInput{
-			com: mysql.ComChangeUser,
-			in:  userData,
-			err: nil,
-			out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
-		}
-		inBytes := append([]byte{changeUserReq.com}, changeUserReq.in...)
-		err = cc.dispatch(context.Background(), inBytes)
-		require.Equal(t, changeUserReq.err, err)
-		if err == nil {
-			err = cc.flush(context.TODO())
-			require.NoError(t, err)
-			require.Equal(t, changeUserReq.out, outBuffer.Bytes())
-		} else {
-			_ = cc.flush(context.TODO())
-		}
-		outBuffer.Reset()
-	}
-	// check variable.
-	checks := []Issue33699CheckType{
-		{ // self define.
-			"a",
-			"<nil>",
-			"1",
-			false,
-		},
-		{ // session variable
-			"net_read_timeout",
-			"30",
-			"1234",
-			true,
-		},
-		{
-			"net_write_timeout",
-			"60",
-			"1234",
-			true,
-		},
-	}
-
-	// default;
-	for _, ck := range checks {
-		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
-	}
-	// set;
-	for _, ck := range checks {
-		tk.MustExec(ck.toSetSessionVar())
-	}
-	// check after set.
-	for _, ck := range checks {
-		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.setVal))
-	}
-	// check for issue-33892: maybe trigger panic when ChangeUser before fix.
-	var stop uint32
-	go func(stop *uint32) {
-		for {
-			if atomic.LoadUint32(stop) == 1 {
-				break
-			}
-			cc.getCtx().ShowProcess()
-		}
-	}(&stop)
-	time.Sleep(time.Millisecond)
-	doChangeUser()
-	atomic.StoreUint32(&stop, 1)
-	time.Sleep(time.Millisecond)
-	require.NotEqual(t, ctx, cc.getCtx())
-	require.NotEqual(t, ctx.Session, cc.ctx.Session)
-	// new session,so values is defaults;
-	tk.SetSession(cc.ctx.Session) // set new session.
-	for _, ck := range checks {
-		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
-	}
-}
-
-func TestMalformHandshakeHeader(t *testing.T) {
+func (ts *ConnTestSuite) TestMalformHandshakeHeader(c *C) {
+	c.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
 	_, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestParseHandshakeResponse(t *testing.T) {
+func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
+	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	data := []byte{
 		0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x40, 0x08, 0x00, 0x00, 0x00,
@@ -207,10 +100,10 @@ func TestParseHandshakeResponse(t *testing.T) {
 	}
 	var p handshakeResponse41
 	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	require.NoError(t, err)
-	require.Equal(t, mysql.ClientConnectAtts, p.Capability&mysql.ClientConnectAtts)
+	c.Assert(err, IsNil)
+	c.Assert(p.Capability&mysql.ClientConnectAtts, Equals, mysql.ClientConnectAtts)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
 		"_platform":       "x86_64",
@@ -218,7 +111,7 @@ func TestParseHandshakeResponse(t *testing.T) {
 		"_os":             "debian6.0",
 		"_client_name":    "libmysql",
 		"_pid":            "22344"})
-	require.True(t, eq)
+	c.Assert(eq, IsTrue)
 
 	data = []byte{
 		0x8d, 0xa6, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00,
@@ -230,19 +123,34 @@ func TestParseHandshakeResponse(t *testing.T) {
 	}
 	p = handshakeResponse41{}
 	offset, err = parseHandshakeResponseHeader(context.Background(), &p, data)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
-	require.Equal(t, capability, p.Capability&capability)
+	c.Assert(p.Capability&capability, Equals, capability)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	require.NoError(t, err)
-	require.Equal(t, "pam", p.User)
-	require.Equal(t, "test", p.DBName)
+	c.Assert(err, IsNil)
+	c.Assert(p.User, Equals, "pam")
+	c.Assert(p.DBName, Equals, "test")
+
+	// Test for compatibility of Protocol::HandshakeResponse320
+	data = []byte{
+		0x00, 0x80, 0x00, 0x00, 0x01, 0x72, 0x6f, 0x6f, 0x74, 0x00, 0x00,
+	}
+	p = handshakeResponse41{}
+	offset, err = parseOldHandshakeResponseHeader(context.Background(), &p, data)
+	c.Assert(err, IsNil)
+	capability = mysql.ClientProtocol41 |
+		mysql.ClientSecureConnection
+	c.Assert(p.Capability&capability, Equals, capability)
+	err = parseOldHandshakeResponseBody(context.Background(), &p, data, offset)
+	c.Assert(err, IsNil)
+	c.Assert(p.User, Equals, "root")
 }
 
-func TestIssue1768(t *testing.T) {
+func (ts *ConnTestSuite) TestIssue1768(c *C) {
+	c.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
 	// the ClientPluginAuthLenencClientData capability.
@@ -261,14 +169,15 @@ func TestIssue1768(t *testing.T) {
 	}
 	p := handshakeResponse41{}
 	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	require.NoError(t, err)
-	require.Equal(t, mysql.ClientPluginAuthLenencClientData, p.Capability&mysql.ClientPluginAuthLenencClientData)
+	c.Assert(err, IsNil)
+	c.Assert(p.Capability&mysql.ClientPluginAuthLenencClientData, Equals, mysql.ClientPluginAuthLenencClientData)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	require.NoError(t, err)
-	require.NotEmpty(t, p.Auth)
+	c.Assert(err, IsNil)
+	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 
-func TestAuthSwitchRequest(t *testing.T) {
+func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
+	c.Parallel()
 	// this data is from a MySQL 8.0 client
 	data := []byte{
 		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -287,54 +196,48 @@ func TestAuthSwitchRequest(t *testing.T) {
 
 	var resp handshakeResponse41
 	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
-	require.NoError(t, err)
-	require.Equal(t, "caching_sha2_password", resp.AuthPlugin)
+	c.Assert(err, IsNil)
+	c.Assert(resp.AuthPlugin == "caching_sha2_password", IsTrue)
 }
 
-func TestInitialHandshake(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
+	c.Parallel()
 	var outBuffer bytes.Buffer
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server:       srv,
+		server: &Server{
+			capability: defaultCapability,
+		},
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-
-	err = cc.writeInitialHandshake(context.TODO())
-	require.NoError(t, err)
+	err := cc.writeInitialHandshake(context.TODO())
+	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
 	expected.WriteByte(0x0a)                                     // Protocol
 	expected.WriteString(mysql.ServerVersion)                    // Version
 	expected.WriteByte(0x00)                                     // NULL
 	err = binary.Write(expected, binary.LittleEndian, uint32(1)) // Connection ID
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
 	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	expected.WriteByte(uint8(mysql.DefaultCollationID))                             // Server Language
 	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
 	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
-	require.Equal(t, expected.Bytes(), outBuffer.Bytes()[4:])
+	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
 type dispatchInput struct {
@@ -344,7 +247,7 @@ type dispatchInput struct {
 	out []byte
 }
 
-func TestDispatch(t *testing.T) {
+func (ts *ConnTestSuite) TestDispatch(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -353,7 +256,7 @@ func TestDispatch(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
+			err: nil,
 			out: nil,
 		},
 		{
@@ -460,10 +363,10 @@ func TestDispatch(t *testing.T) {
 		},
 	}
 
-	testDispatch(t, inputs, 0)
+	ts.testDispatch(c, inputs, 0)
 }
 
-func TestDispatchClientProtocol41(t *testing.T) {
+func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -472,7 +375,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
+			err: nil,
 			out: nil,
 		},
 		{
@@ -581,57 +484,39 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		},
 	}
 
-	testDispatch(t, inputs, mysql.ClientProtocol41)
+	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
 }
 
-func TestQueryEndWithZero(t *testing.T) {
-	inputs := []dispatchInput{
-		{
-			com: mysql.ComStmtPrepare,
-			in:  append([]byte("select 1"), 0x0),
-			err: nil,
-			out: []byte{
-				0xc, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
-				0x0, 0x0, 0x1, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
-				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x2, 0xfe,
-			},
-		},
-		{
-			com: mysql.ComQuery,
-			in:  append([]byte("select 1"), 0x0),
-			err: nil,
-			out: []byte{
-				0x1, 0x0, 0x0, 0x3, 0x1, 0x18, 0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
-				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
-				0x0, 0x1, 0x0, 0x0, 0x5, 0xfe, 0x2, 0x0, 0x0, 0x6, 0x1, 0x31, 0x1, 0x0, 0x0, 0x7, 0xfe,
-			},
-		},
-	}
-
-	testDispatch(t, inputs, 0)
-}
-
-func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
-	store := testkit.CreateMockStore(t)
+func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	_, err = se.Execute(context.Background(), "create table test.t(a int)")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "insert into test.t values (1)")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
+	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
-	require.NoError(t, err)
+
+	c.Assert(err, IsNil)
 	defer server.Close()
 
 	cc := &clientConn{
@@ -644,18 +529,17 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
+		ctx:        tc,
 		capability: capability,
 	}
-	cc.setCtx(tc)
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
-		require.Equal(t, cs.err, err)
+		c.Assert(err, Equals, cs.err)
 		if err == nil {
 			err = cc.flush(context.TODO())
-			require.NoError(t, err)
-			require.Equal(t, cs.out, outBuffer.Bytes())
+			c.Assert(err, IsNil)
+			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
 			_ = cc.flush(context.TODO())
 		}
@@ -663,11 +547,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	}
 }
 
-func TestGetSessionVarsWaitTimeout(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
+func (ts *ConnTestSuite) TestGetSessionVarsWaitTimeout(c *C) {
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
@@ -677,9 +560,9 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
+		ctx: tc,
 	}
-	cc.setCtx(tc)
-	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
+	c.Assert(cc.getSessionVarsWaitTimeout(context.Background()), Equals, uint64(0))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -696,20 +579,18 @@ func mapBelong(m1, m2 map[string]string) bool {
 	return true
 }
 
-func TestConnExecutionTimeout(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	// There is no underlying netCon, use failpoint to avoid panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"))
-	}()
-	tk := testkit.NewTestKit(t, store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
+
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
 
 	connID := uint64(1)
-	tk.Session().SetConnectionID(connID)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		Session: tk.Session(),
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -717,71 +598,75 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		alloc:      arena.NewAllocator(32 * 1024),
-		chunkAlloc: chunk.NewAllocator(),
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
 	}
-	cc.setCtx(tc)
 	srv := &Server{
 		clients: map[uint64]*clientConn{
 			connID: cc,
 		},
-		dom: dom,
 	}
-	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
-	tk.MustExec("use test;")
-	tk.MustExec("CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	_, err = se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	c.Assert(err, IsNil)
 	for i := 0; i < 10; i++ {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
-		tk.MustExec(str)
+		_, err = se.Execute(context.Background(), str)
+		c.Assert(err, IsNil)
 	}
 
-	tk.MustExec("select SLEEP(1);")
-	tk.MustExec("set @@max_execution_time = 500;")
-	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(1);")
-	tk.MustExec("set @@max_execution_time = 1500;")
-	tk.MustExec("set @@tidb_expensive_query_time_threshold = 1;")
+	_, err = se.Execute(context.Background(), "select SLEEP(1);")
+	c.Assert(err, IsNil)
 
-	records, err := tk.Exec("select SLEEP(2);")
-	require.NoError(t, err)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.ResultSetToResult(records, fmt.Sprintf("%v", records)).Check(testkit.Rows("1"))
-	require.NoError(t, records.Close())
-
-	tk.MustExec("set @@max_execution_time = 0;")
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
+	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
+	c.Assert(err, IsNil)
+
+	records, err := se.Execute(context.Background(), "select SLEEP(2);")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
-	tk.MustExec("set @@max_execution_time = 500;")
-
-	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
-	require.NoError(t, err)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }
 
-func TestShutDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+func (ts *ConnTestSuite) TestShutDown(c *C) {
 	cc := &clientConn{}
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tc := &TiDBContext{Session: se}
-	cc.setCtx(tc)
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	cc.ctx = &TiDBContext{Session: se}
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 }
 
-func TestShutdownOrNotify(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
+func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
@@ -792,36 +677,32 @@ func TestShutdownOrNotify(t *testing.T) {
 			capability: defaultCapability,
 		},
 		status: connStatusWaitShutdown,
+		ctx:    tc,
 	}
-	cc.setCtx(tc)
-	require.False(t, cc.ShutdownOrNotify())
+	c.Assert(cc.ShutdownOrNotify(), IsFalse)
 	cc.status = connStatusReading
-	require.True(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusShutdown, cc.status)
+	c.Assert(cc.ShutdownOrNotify(), IsTrue)
+	c.Assert(cc.status, Equals, connStatusShutdown)
 	cc.status = connStatusDispatching
-	require.False(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusWaitShutdown, cc.status)
+	c.Assert(cc.ShutdownOrNotify(), IsFalse)
+	c.Assert(cc.status, Equals, connStatusWaitShutdown)
 }
 
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }
 
-func TestPrefetchPointKeys(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
-		chunkAlloc: chunk.NewAllocator(),
+		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
-	tk := testkit.NewTestKit(t, store)
-	cc.setCtx(&TiDBContext{Session: tk.Session()})
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
@@ -835,62 +716,54 @@ func TestPrefetchPointKeys(t *testing.T) {
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
 	err := cc.handleQuery(ctx, query)
-	require.NoError(t, err)
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
+	c.Assert(err, IsNil)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	//nolint:forcetypeassert
-	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	c.Assert(snap.(snapshotCache).SnapCacheHitCount(), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
-	require.Equal(t, 2, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 1)
 	err = cc.handleQuery(ctx, query)
-	require.NoError(t, err)
-	txn, err = tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
-	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	c.Assert(err, IsNil)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
 
-func TestTiFlashFallback(t *testing.T) {
-	store := testkit.CreateMockStore(t,
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			//nolint:forcetypeassert
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			store := c.AllocID()
-			peer := c.AllocID()
-			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-			mockCluster.AddPeer(region1, store, peer)
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
+}
 
+func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
-		chunkAlloc: chunk.NewAllocator(),
+		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
 
 	dml := "insert into t values"
 	for i := 0; i < 50; i++ {
@@ -902,900 +775,78 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec(dml)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"), IsNil)
 	}()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	tk.MustExec("set @@tidb_allow_mpp=OFF")
-	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(a) from t"))
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
 	// test COM_STMT_FETCH (cursor mode)
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
-	require.Error(t, cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
-	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"firstNext\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"firstNext\")"), IsNil)
 	// test COM_STMT_EXECUTE (cursor mode)
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"))
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
 
 	// test that TiDB would not retry if the first execution already sends data to client
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNext\")"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNext\")"), IsNil)
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
-	require.Error(t, cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"))
+	c.Assert(cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
 
 	// simple TiFlash query (unary + non-streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"))
-	testFallbackWork(t, tk, cc, "select sum(a) from t")
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	// TiFlash query based on batch cop (batch + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
-	testFallbackWork(t, tk, cc, "select count(*) from t")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
+	testFallbackWork(c, tk, cc, "select count(*) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"))
-	testFallbackWork(t, tk, cc, "select count(*) from t")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select count(*) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
 	// TiFlash MPP query (MPP + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=1;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"))
-	testFallbackWork(t, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"))
-	testFallbackWork(t, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"))
-	testFallbackWork(t, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"))
-
-	// When fallback is not set, TiFlash mpp will return the original error message
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"))
-	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
-	tk.MustExec("set @@tidb_allow_mpp=ON")
-	tk.MustExec("set @@tidb_enforce_mpp=ON")
-	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
-	err = cc.handleQuery(ctx, "select count(*) from t")
-	require.Error(t, err)
-	require.NotEqual(t, err.Error(), tikverr.ErrTiFlashServerTimeout.Error())
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"), IsNil)
 }
 
-func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql string) {
+func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
-	require.Error(t, tk.QueryToErr(sql))
+	c.Assert(tk.QueryToErr(sql), NotNil)
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 
-	require.NoError(t, cc.handleQuery(ctx, sql))
+	c.Assert(cc.handleQuery(ctx, sql), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
-}
-
-// For issue https://github.com/pingcap/tidb/issues/25069
-func TestShowErrors(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
-		chunkAlloc: chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-	}
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, store)
-	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
-
-	err := cc.handleQuery(ctx, "create database if not exists test;")
-	require.NoError(t, err)
-	err = cc.handleQuery(ctx, "use test;")
-	require.NoError(t, err)
-
-	stmts, err := cc.ctx.Parse(ctx, "drop table idontexist")
-	require.NoError(t, err)
-	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
-	require.Error(t, err)
-	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
-}
-
-func TestHandleAuthPlugin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER unativepassword")
-	defer func() {
-		tk.MustExec("DROP USER unativepassword")
-	}()
-
-	// 5.7 or newer client trying to authenticate with mysql_native_password
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-
-	// 8.0 or newer client trying to authenticate with caching_sha2_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthCachingSha2Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// client trying to authenticate with tidb_sm3_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthTiDBSM3Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// MySQL 5.1 or older client, without authplugin support
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-
-	// === Target account has mysql_native_password ===
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"mysql_native_password\")"))
-
-	// 5.7 or newer client trying to authenticate with mysql_native_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// 8.0 or newer client trying to authenticate with caching_sha2_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthCachingSha2Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// client trying to authenticate with tidb_sm3_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthTiDBSM3Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// MySQL 5.1 or older client, without authplugin support
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
-
-	// === Target account has caching_sha2_password ===
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"caching_sha2_password\")"))
-
-	// 5.7 or newer client trying to authenticate with mysql_native_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// 8.0 or newer client trying to authenticate with caching_sha2_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthCachingSha2Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// client trying to authenticate with tidb_sm3_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthTiDBSM3Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// MySQL 5.1 or older client, without authplugin support
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
-
-	// === Target account has tidb_sm3_password ===
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"tidb_sm3_password\")"))
-
-	// 5.7 or newer client trying to authenticate with mysql_native_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// 8.0 or newer client trying to authenticate with caching_sha2_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthCachingSha2Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// client trying to authenticate with tidb_sm3_password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthTiDBSM3Password,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-
-	// MySQL 5.1 or older client, without authplugin support
-	cc = &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "unativepassword",
-	}
-	resp = handshakeResponse41{
-		Capability: mysql.ClientProtocol41,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
-}
-
-func TestChangeUserAuth(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user user1")
-
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		peerHost:     "localhost",
-		collation:    mysql.DefaultCollationID,
-		capability:   defaultCapability,
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "root",
-	}
-	ctx := context.Background()
-	se, _ := session.CreateSession4Test(store)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc.setCtx(tc)
-
-	data := []byte{}
-	data = append(data, "user1"...)
-	data = append(data, 0)
-	data = append(data, 1)
-	data = append(data, 0)
-	data = append(data, "test"...)
-	data = append(data, 0)
-	data = append(data, 0, 0)
-	data = append(data, "unknown"...)
-	data = append(data, 0)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch", fmt.Sprintf("return(\"%s\")", t.Name())))
-	err = cc.handleChangeUser(ctx, data)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/ChangeUserAuthSwitch"))
-	require.EqualError(t, err, t.Name())
-}
-
-func TestAuthPlugin2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "root",
-	}
-	ctx := context.Background()
-	se, _ := session.CreateSession4Test(store)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc.setCtx(tc)
-
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-	}
-
-	cc.isUnixSocket = true
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-	require.Equal(t, []byte(mysql.AuthNativePassword), respAuthSwitch)
-	require.NoError(t, err)
-}
-
-func TestAuthTokenPlugin(t *testing.T) {
-	// create the cert
-	tempDir := t.TempDir()
-	certPath := filepath.Join(tempDir, "test1_cert.pem")
-	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateCertificates(certPath, keyPath, 1024, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
-
-	cfg := config.GetGlobalConfig()
-	cfg.Security.SessionTokenSigningCert = certPath
-	cfg.Security.SessionTokenSigningKey = keyPath
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-
-	// The global config is read during creating the store.
-	store := testkit.CreateMockStore(t)
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER auth_session_token")
-	tk.MustExec("CREATE USER another_user")
-
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
-	require.NoError(t, err)
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		collation:    mysql.DefaultCollationID,
-		peerHost:     "localhost",
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "auth_session_token",
-	}
-	cc.setCtx(tc)
-	// create a token without TLS
-	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
-	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
-	tk1.MustQuery("show session_states")
-
-	// create a token with TLS
-	cc.tlsConn = &tls.Conn{}
-	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
-	tk1.MustQuery("show session_states")
-
-	// create a token with UnixSocket
-	cc.tlsConn = nil
-	cc.isUnixSocket = true
-	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	rows := tk1.MustQuery("show session_states").Rows()
-	//nolint:forcetypeassert
-	tokenBytes := []byte(rows[0][1].(string))
-
-	// auth with the token
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthTiDBSessionToken,
-		Auth:       tokenBytes,
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
-	require.NoError(t, err)
-
-	// wrong token should fail
-	tokenBytes[0] ^= 0xff
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
-	require.ErrorContains(t, err, "Access denied")
-	tokenBytes[0] ^= 0xff
-
-	// using the token to auth with another user should fail
-	cc.user = "another_user"
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
-	require.ErrorContains(t, err, "Access denied")
-}
-
-func TestMaxAllowedPacket(t *testing.T) {
-	// Test cases from issue 31422: https://github.com/pingcap/tidb/issues/31422
-	// The string "SELECT length('') as len;" has 25 chars,
-	// so if the string inside '' has a length of 999, the total query reaches the max allowed packet size.
-
-	const maxAllowedPacket = 1024
-	var (
-		inBuffer  bytes.Buffer
-		readBytes []byte
-	)
-
-	// The length of total payload is (25 + 999 = 1024).
-	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
-	_, err := inBuffer.Write(bytes)
-	require.NoError(t, err)
-	brc := newBufferedReadConn(&bytesConn{inBuffer})
-	pkt := newPacketIO(brc)
-	pkt.setMaxAllowedPacket(maxAllowedPacket)
-	readBytes, err = pkt.readPacket()
-	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)), string(readBytes))
-	require.Equal(t, uint8(1), pkt.sequence)
-
-	// The length of total payload is (25 + 1000 = 1025).
-	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
-	_, err = inBuffer.Write(bytes)
-	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
-	pkt = newPacketIO(brc)
-	pkt.setMaxAllowedPacket(maxAllowedPacket)
-	_, err = pkt.readPacket()
-	require.Error(t, err)
-
-	// The length of total payload is (25 + 488 = 513).
-	// Two separate packets would NOT exceed the limitation of maxAllowedPacket.
-	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
-	_, err = inBuffer.Write(bytes)
-	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
-	pkt = newPacketIO(brc)
-	pkt.setMaxAllowedPacket(maxAllowedPacket)
-	readBytes, err = pkt.readPacket()
-	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)), string(readBytes))
-	require.Equal(t, uint8(1), pkt.sequence)
-	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
-	_, err = inBuffer.Write(bytes)
-	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
-	pkt.setBufferedReadConn(brc)
-	readBytes, err = pkt.readPacket()
-	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
-	require.Equal(t, uint8(2), pkt.sequence)
-}
-
-func TestOkEof(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
-	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, tidbdrv)
-	require.NoError(t, err)
-	defer server.Close()
-
-	cc := &clientConn{
-		connectionID: 1,
-		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server:       server,
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(&outBuffer),
-		},
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41 | mysql.ClientDeprecateEOF,
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	ctx := &TiDBContext{Session: tk.Session()}
-	cc.setCtx(ctx)
-
-	err = cc.writeOK(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
-
-	outBuffer.Reset()
-	err = cc.writeEOF(context.Background(), cc.ctx.Status())
-	require.NoError(t, err)
-	err = cc.flush(context.TODO())
-	require.NoError(t, err)
-	require.Equal(t, mysql.EOFHeader, outBuffer.Bytes()[4])
-	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x1, 0xfe, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
-}
-
-func TestExtensionChangeUser(t *testing.T) {
-	defer extension.Reset()
-	extension.Reset()
-
-	logged := false
-	var logTp extension.ConnEventTp
-	var logInfo *extension.ConnEventInfo
-	require.NoError(t, extension.Register("test", extension.WithSessionHandlerFactory(func() *extension.SessionHandler {
-		return &extension.SessionHandler{
-			OnConnectionEvent: func(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
-				require.False(t, logged)
-				logTp = tp
-				logInfo = info
-				logged = true
-			},
-		}
-	})))
-
-	extensions, err := extension.GetExtensions()
-	require.NoError(t, err)
-
-	store := testkit.CreateMockStore(t)
-
-	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
-	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, tidbdrv)
-	require.NoError(t, err)
-	defer server.Close()
-
-	cc := &clientConn{
-		connectionID: 1,
-		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server:       server,
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(&outBuffer),
-		},
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41,
-		extensions: extensions.NewSessionExtensions(),
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	ctx := &TiDBContext{Session: tk.Session()}
-	cc.setCtx(ctx)
-	tk.MustExec("create user user1")
-	tk.MustExec("create user user2")
-	tk.MustExec("create database db1")
-	tk.MustExec("create database db2")
-	tk.MustExec("grant select on db1.* to user1@'%'")
-	tk.MustExec("grant select on db2.* to user2@'%'")
-
-	// change user.
-	doDispatch := func(req dispatchInput) {
-		inBytes := append([]byte{req.com}, req.in...)
-		err = cc.dispatch(context.Background(), inBytes)
-		require.Equal(t, req.err, err)
-		if err == nil {
-			err = cc.flush(context.TODO())
-			require.NoError(t, err)
-			require.Equal(t, req.out, outBuffer.Bytes())
-		} else {
-			_ = cc.flush(context.TODO())
-		}
-		outBuffer.Reset()
-	}
-
-	expectedConnInfo := extension.ConnEventInfo{
-		ConnectionInfo: cc.connectInfo(),
-		ActiveRoles:    []*auth.RoleIdentity{},
-	}
-	expectedConnInfo.User = "user1"
-	expectedConnInfo.DB = "db1"
-
-	require.False(t, logged)
-	userData := append([]byte("user1"), 0x0, 0x0)
-	userData = append(userData, []byte("db1")...)
-	userData = append(userData, 0x0)
-	doDispatch(dispatchInput{
-		com: mysql.ComChangeUser,
-		in:  userData,
-		err: nil,
-		out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
-	})
-	require.True(t, logged)
-	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
-	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
-	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
-
-	logged = false
-	logTp = 0
-	logInfo = nil
-	expectedConnInfo.User = "user2"
-	expectedConnInfo.DB = "db2"
-	userData = append([]byte("user2"), 0x0, 0x0)
-	userData = append(userData, []byte("db2")...)
-	userData = append(userData, 0x0)
-	doDispatch(dispatchInput{
-		com: mysql.ComChangeUser,
-		in:  userData,
-		err: nil,
-		out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
-	})
-	require.True(t, logged)
-	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
-	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
-	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
-
-	logged = false
-	logTp = 0
-	logInfo = nil
-	doDispatch(dispatchInput{
-		com: mysql.ComResetConnection,
-		in:  nil,
-		err: nil,
-		out: []byte{0x7, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
-	})
-	require.True(t, logged)
-	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
-	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
-	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,15 +17,13 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -41,7 +38,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddColumn, model.ActionModifyColumn:
+	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
@@ -61,8 +58,6 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionFlashbackCluster:
-		return h.updateStatsVersion()
 	}
 	return nil
 }
@@ -75,49 +70,11 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:    20,
 }
 
-// updateStatsVersion will set statistics version to the newest TS,
-// then tidb-server will reload automatic.
-func (h *Handle) updateStatsVersion() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	txn, err := h.mu.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	startTS := txn.StartTS()
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // updateGlobalStats will trigger the merge of global-stats when we drop table partition
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
 	tableID := tblInfo.ID
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	sctx := se.(sessionctx.Context)
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	h.pool.Put(se)
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err
@@ -149,14 +106,14 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
-	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil, nil)
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, 0)
 	if err != nil {
 		return err
 	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
-		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
 		// fms for global stats doesn't need to dump to kv.
-		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, newColGlobalStats.ModifyCount, 0, hg, cms, topN, 2, 1, false)
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1, false)
 		if err != nil {
 			return err
 		}
@@ -164,12 +121,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 
 	// Generate the new index global-stats
 	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
-	for _, idx := range tblInfo.Indices {
-		globalIdxStatsTopN := globalStats.Indices[idx.ID].TopN
+	for idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
 		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
 			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
 		}
-		globalIdxStats := globalStats.Indices[idx.ID]
+		globalIdxStats := globalStats.Indices[int64(idx)]
 		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
 			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
 		}
@@ -179,14 +136,14 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
-		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID}, nil)
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
 		if err != nil {
 			return err
 		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
-			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
 			// fms for global stats doesn't need to dump to kv.
-			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false)
+			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1, false)
 			if err != nil {
 				return err
 			}
@@ -218,15 +175,9 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // insertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
-		}
-	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -243,7 +194,6 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
 		return err
 	}
-	statsVer = startTS
 	for _, col := range info.Columns {
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
 			return err
@@ -260,16 +210,10 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
-		}
-	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -288,7 +232,6 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if err != nil {
 		return
 	}
-	statsVer = startTS
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
@@ -298,7 +241,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			return
 		}
 		defer terror.Call(rs.Close)
-		req := rs.NewChunk(nil)
+		req := rs.NewChunk()
 		err = rs.Next(ctx, req)
 		if err != nil {
 			return

@@ -8,32 +8,30 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 )
 
-func TestMergePartialResult4BitFuncs(t *testing.T) {
+func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
 		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
 		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
-		testMergePartialResult(t, test)
+		s.testMergePartialResult(c, test)
 	}
 }
 
-func TestMemBitFunc(t *testing.T) {
+func (s *testSuite) TestMemBitFunc(c *C) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
@@ -43,6 +41,6 @@ func TestMemBitFunc(t *testing.T) {
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		testAggMemFunc(t, test)
+		s.testAggMemFunc(c, test)
 	}
 }

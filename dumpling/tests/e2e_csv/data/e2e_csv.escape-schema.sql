@@ -1,1 +1,0 @@
-../../naughty_strings/data/naughty_strings.escape-schema.sql

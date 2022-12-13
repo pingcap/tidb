@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,8 +20,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 type delayKey struct {
@@ -30,18 +29,18 @@ type delayKey struct {
 	regionID uint64
 }
 
-var _ testutils.Cluster = new(Cluster)
+var _ cluster.Cluster = new(Cluster)
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
 // meta data. A Cluster mainly includes following 3 kinds of meta data:
-//  1. Region: A Region is a fragment of TiKV's data whose range is [start, end).
-//     The data of a Region is duplicated to multiple Peers and distributed in
-//     multiple Stores.
-//  2. Peer: A Peer is a replica of a Region's data. All peers of a Region form
-//     a group, each group elects a Leader to provide services.
-//  3. Store: A Store is a storage/service node. Try to think it as a TiKV server
-//     process. Only the store with request's Region's leader Peer could respond
-//     to client's request.
+// 1) Region: A Region is a fragment of TiKV's data whose range is [start, end).
+//    The data of a Region is duplicated to multiple Peers and distributed in
+//    multiple Stores.
+// 2) Peer: A Peer is a replica of a Region's data. All peers of a Region form
+//    a group, each group elects a Leader to provide services.
+// 3) Store: A Store is a storage/service node. Try to think it as a TiKV server
+//    process. Only the store with request's Region's leader Peer could respond
+//    to client's request.
 type Cluster struct {
 	*us.MockRegionManager
 

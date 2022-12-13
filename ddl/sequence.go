@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,14 +17,14 @@ import (
 	"math"
 	"reflect"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/mathutil"
+	math2 "github.com/pingcap/tidb/util/math"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -46,7 +45,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -65,7 +64,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateSequence, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}
 }
 
@@ -105,9 +104,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 			maxSetFlag = true
 		case ast.SequenceCache:
 			sequenceInfo.CacheValue = op.IntValue
-			sequenceInfo.Cache = true
 		case ast.SequenceNoCache:
-			sequenceInfo.CacheValue = 0
 			sequenceInfo.Cache = false
 		case ast.SequenceCycle:
 			sequenceInfo.Cycle = true
@@ -122,7 +119,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.Max(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
+				sequenceInfo.Start = mathutil.MaxInt64(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
 			}
 			if !maxSetFlag {
 				sequenceInfo.MaxValue = model.DefaultPositiveSequenceMaxValue
@@ -132,7 +129,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMaxValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.Min(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
+				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
 				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue
@@ -142,17 +139,17 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 }
 
 func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
-	// To ensure that cache * increment will never overflow.
+	// To ensure that cache * increment will never overflows.
 	var maxIncrement int64
 	if seqInfo.Increment == 0 {
 		// Increment shouldn't be set as 0.
 		return false
 	}
-	if seqInfo.Cache && seqInfo.CacheValue <= 0 {
+	if seqInfo.CacheValue <= 0 {
 		// Cache value should be bigger than 0.
 		return false
 	}
-	maxIncrement = mathutil.Abs(seqInfo.Increment)
+	maxIncrement = math2.Abs(seqInfo.Increment)
 
 	return seqInfo.MaxValue >= seqInfo.Start &&
 		seqInfo.MaxValue > seqInfo.MinValue &&
@@ -178,12 +175,12 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		case ast.TableOptionEngine:
 			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
 		default:
-			return nil, dbterror.ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
+			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
 	if !validateSequenceOptions(sequenceInfo) {
-		return nil, dbterror.ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
+		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	return sequenceInfo, nil
 }
@@ -207,9 +204,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			oldSequence.MaxValue = op.IntValue
 		case ast.SequenceCache:
 			oldSequence.CacheValue = op.IntValue
-			oldSequence.Cache = true
 		case ast.SequenceNoCache:
-			oldSequence.CacheValue = 0
 			oldSequence.Cache = false
 		case ast.SequenceCycle:
 			oldSequence.Cycle = true
@@ -223,7 +218,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 		}
 	}
 	if !validateSequenceOptions(oldSequence) {
-		return false, 0, dbterror.ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
+		return false, 0, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	if restartWithFlag {
 		return true, restartValue, nil
@@ -234,7 +229,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		sequenceOpts []*ast.SequenceOption
@@ -282,7 +277,7 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	// Store the sequence info into kv.
 	// Set shouldUpdateVer always to be true even altering doesn't take effect, since some tools like drainer won't take
 	// care of SchemaVersion=0.
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

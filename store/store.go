@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +16,6 @@ package store
 import (
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -27,13 +25,9 @@ import (
 )
 
 var stores = make(map[string]kv.Driver)
-var storesLock sync.RWMutex
 
 // Register registers a kv storage with unique name and its associated Driver.
 func Register(name string, driver kv.Driver) error {
-	storesLock.Lock()
-	defer storesLock.Unlock()
-
 	name = strings.ToLower(name)
 
 	if _, ok := stores[name]; ok {
@@ -49,9 +43,8 @@ func Register(name string, driver kv.Driver) error {
 // The path must be a URL format 'engine://path?params' like the one for
 // session.Open() but with the dbname cut off.
 // Examples:
-//
-//	goleveldb://relative/path
-//	boltdb:///absolute/path
+//    goleveldb://relative/path
+//    boltdb:///absolute/path
 //
 // The engine should be registered before creating storage.
 func New(path string) (kv.Storage, error) {
@@ -65,7 +58,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
-	d, ok := loadDriver(name)
+	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
@@ -83,11 +76,4 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		logutil.BgLogger().Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
-}
-
-func loadDriver(name string) (kv.Driver, bool) {
-	storesLock.RLock()
-	defer storesLock.RUnlock()
-	d, ok := stores[name]
-	return d, ok
 }

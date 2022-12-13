@@ -8,22 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package rowcodec
 
 import (
-	"encoding/binary"
 	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -100,9 +99,9 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, row map[int64]t
 
 func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (types.Datum, error) {
 	var d types.Datum
-	switch col.Ft.GetType() {
+	switch col.Ft.Tp {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
-		if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
+		if mysql.HasUnsignedFlag(col.Ft.Flag) {
 			d.SetUint64(decodeUint(colData))
 		} else {
 			d.SetInt64(decodeInt(colData))
@@ -122,7 +121,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		}
 		d.SetFloat64(fVal)
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		d.SetString(string(colData), col.Ft.GetCollate())
+		d.SetString(string(colData), col.Ft.Collate)
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {
@@ -133,13 +132,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		d.SetFrac(frac)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.SetType(col.Ft.GetType())
-		t.SetFsp(col.Ft.GetDecimal())
+		t.SetType(col.Ft.Tp)
+		t.SetFsp(int8(col.Ft.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		if col.Ft.GetType() == mysql.TypeTimestamp && !t.IsZero() {
+		if col.Ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, decoder.loc)
 			if err != nil {
 				return d, err
@@ -149,31 +148,31 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = col.Ft.GetDecimal()
+		dur.Fsp = int8(col.Ft.Decimal)
 		d.SetMysqlDuration(dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(col.Ft.GetElems(), decodeUint(colData))
+		enum, err := types.ParseEnumValue(col.Ft.Elems, decodeUint(colData))
 		if err != nil {
 			enum = types.Enum{}
 		}
-		d.SetMysqlEnum(enum, col.Ft.GetCollate())
+		d.SetMysqlEnum(enum, col.Ft.Collate)
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(col.Ft.GetElems(), decodeUint(colData))
+		set, err := types.ParseSetValue(col.Ft.Elems, decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		d.SetMysqlSet(set, col.Ft.GetCollate())
+		d.SetMysqlSet(set, col.Ft.Collate)
 	case mysql.TypeBit:
-		byteSize := (col.Ft.GetFlen() + 7) >> 3
+		byteSize := (col.Ft.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	case mysql.TypeJSON:
-		var j types.BinaryJSON
+		var j json.BinaryJSON
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		d.SetMysqlJSON(j)
 	default:
-		return d, errors.Errorf("unknown type %d", col.Ft.GetType())
+		return d, errors.Errorf("unknown type %d", col.Ft.Tp)
 	}
 	return d, nil
 }
@@ -268,9 +267,9 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 }
 
 func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
-	switch col.Ft.GetType() {
+	switch col.Ft.Tp {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
-		if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
+		if mysql.HasUnsignedFlag(col.Ft.Flag) {
 			chk.AppendUint64(colIdx, decodeUint(colData))
 		} else {
 			chk.AppendInt64(colIdx, decodeInt(colData))
@@ -297,9 +296,9 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		if err != nil {
 			return err
 		}
-		if col.Ft.GetDecimal() != types.UnspecifiedLength && frac > col.Ft.GetDecimal() {
+		if col.Ft.Decimal != types.UnspecifiedLength && frac > col.Ft.Decimal {
 			to := new(types.MyDecimal)
-			err := dec.Round(to, col.Ft.GetDecimal(), types.ModeHalfUp)
+			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfEven)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -308,13 +307,13 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		chk.AppendMyDecimal(colIdx, dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.SetType(col.Ft.GetType())
-		t.SetFsp(col.Ft.GetDecimal())
+		t.SetType(col.Ft.Tp)
+		t.SetFsp(int8(col.Ft.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return err
 		}
-		if col.Ft.GetType() == mysql.TypeTimestamp && decoder.loc != nil && !t.IsZero() {
+		if col.Ft.Tp == mysql.TypeTimestamp && decoder.loc != nil && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, decoder.loc)
 			if err != nil {
 				return err
@@ -324,31 +323,31 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = col.Ft.GetDecimal()
+		dur.Fsp = int8(col.Ft.Decimal)
 		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(col.Ft.GetElems(), decodeUint(colData))
+		enum, err := types.ParseEnumValue(col.Ft.Elems, decodeUint(colData))
 		if err != nil {
 			enum = types.Enum{}
 		}
 		chk.AppendEnum(colIdx, enum)
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(col.Ft.GetElems(), decodeUint(colData))
+		set, err := types.ParseSetValue(col.Ft.Elems, decodeUint(colData))
 		if err != nil {
 			return err
 		}
 		chk.AppendSet(colIdx, set)
 	case mysql.TypeBit:
-		byteSize := (col.Ft.GetFlen() + 7) >> 3
+		byteSize := (col.Ft.Flen + 7) >> 3
 		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	case mysql.TypeJSON:
-		var j types.BinaryJSON
+		var j json.BinaryJSON
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		chk.AppendJSON(colIdx, j)
 	default:
-		return errors.Errorf("unknown type %d", col.Ft.GetType())
+		return errors.Errorf("unknown type %d", col.Ft.Tp)
 	}
 	return nil
 }
@@ -381,7 +380,7 @@ func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, h
 	values := make([][]byte, len(outputOffset))
 	for i := range decoder.columns {
 		col := &decoder.columns[i]
-		tp := fieldType2Flag(col.Ft.GetType(), col.Ft.GetFlag()&mysql.UnsignedFlag == 0)
+		tp := fieldType2Flag(col.Ft.Tp, col.Ft.Flag&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
 		idx, isNil, notFound := r.findColID(colID)
@@ -429,7 +428,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	}
 	if col.IsPKHandle || col.ID == model.ExtraHandleID {
 		handleData := cacheBytes
-		if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
+		if mysql.HasUnsignedFlag(col.Ft.Flag) {
 			handleData = append(handleData, UintFlag)
 			handleData = codec.EncodeUint(handleData, uint64(handle.IntValue()))
 		} else {
@@ -452,7 +451,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	return false
 }
 
-// DecodeToBytesNoHandle decodes raw byte slice to row data without handle.
+// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
 func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
 	return decoder.decodeToBytesInternal(outputOffset, nil, value, nil)
 }
@@ -462,8 +461,8 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 	return decoder.decodeToBytesInternal(outputOffset, handle, value, cacheBytes)
 }
 
-func (*BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
-	buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
+func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
+	var buf []byte
 	switch tp {
 	case BytesFlag:
 		buf = append(buf, CompactBytesFlag)

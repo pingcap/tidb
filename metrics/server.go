@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +15,7 @@ package metrics
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -27,12 +26,13 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	PacketIOHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "packet_io_bytes",
-			Help:      "Counters of packet IO bytes.",
+			Help:      "Bucketed histogram of packet IO bytes.",
+			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
 		}, []string{LblType})
 
 	QueryDurationHistogram = prometheus.NewHistogramVec(
@@ -51,14 +51,6 @@ var (
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
-
-	AffectedRowsCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
 
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -136,39 +128,6 @@ var (
 			Help:      "Counter of query using plan cache.",
 		}, []string{LblType})
 
-	PlanCacheMissCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "plan_cache_miss_total",
-			Help:      "Counter of plan cache miss.",
-		}, []string{LblType})
-
-	PlanCacheInstanceMemoryUsage = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "plan_cache_instance_memory_usage",
-			Help:      "Total plan cache memory usage of all sessions in a instance",
-		}, []string{LblType})
-
-	PlanCacheInstancePlanNumCounter = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "plan_cache_instance_plan_num_total",
-			Help:      "Counter of plan of all prepared plan cache in a instance",
-		}, []string{LblType})
-
-	ReadFromTableCacheCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "read_from_tablecache_total",
-			Help:      "Counter of query read from table cache.",
-		},
-	)
-
 	HandShakeErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -185,15 +144,6 @@ var (
 			Name:      "get_token_duration_seconds",
 			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
-		})
-
-	NumOfMultiQueryHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "multi_query_num",
-			Help:      "The number of queries contained in a multi-query statement.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1 ~ 1048576
 		})
 
 	TotalQueryProcHistogram = prometheus.NewHistogramVec(
@@ -278,48 +228,6 @@ var (
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
-
-	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "pd_api_execution_duration_seconds",
-			Help:      "Bucketed histogram of all pd api execution time (s)",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
-		}, []string{LblType})
-
-	PDAPIRequestCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "pd_api_request_total",
-			Help:      "Counter of the pd http api requests",
-		}, []string{LblType, LblResult})
-
-	CPUProfileCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "cpu_profile_total",
-			Help:      "Counter of cpu profiling",
-		})
-
-	LoadTableCacheDurationHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "load_table_cache_seconds",
-			Help:      "Duration (us) for loading table cache.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
-		})
-
-	RCCheckTSWriteConfilictCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "rc_check_ts_conflict_total",
-			Help:      "Counter of WriteConflict caused by RCCheckTS.",
-		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

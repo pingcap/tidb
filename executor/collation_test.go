@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,25 +8,31 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestVecGroupChecker(t *testing.T) {
-	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()
+var _ = SerialSuites(&testCollationSuite{})
+
+type testCollationSuite struct {
+}
+
+func (s *testCollationSuite) TestVecGroupChecker(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tp := &types.FieldType{Tp: mysql.TypeVarchar}
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,
@@ -43,51 +49,51 @@ func TestVecGroupChecker(t *testing.T) {
 	chk.Column(0).AppendString("À")
 	chk.Column(0).AppendString("A")
 
-	tp.SetCollate("bin")
+	tp.Collate = "bin"
 	groupChecker.reset()
 	_, err := groupChecker.splitIntoGroups(chk)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	for i := 0; i < 6; i++ {
 		b, e := groupChecker.getNextGroup()
-		require.Equal(t, b, i)
-		require.Equal(t, e, i+1)
+		c.Assert(b, Equals, i)
+		c.Assert(e, Equals, i+1)
 	}
-	require.True(t, groupChecker.isExhausted())
+	c.Assert(groupChecker.isExhausted(), IsTrue)
 
-	tp.SetCollate("utf8_general_ci")
+	tp.Collate = "utf8_general_ci"
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	for i := 0; i < 3; i++ {
 		b, e := groupChecker.getNextGroup()
-		require.Equal(t, b, i*2)
-		require.Equal(t, e, i*2+2)
+		c.Assert(b, Equals, i*2)
+		c.Assert(e, Equals, i*2+2)
 	}
-	require.True(t, groupChecker.isExhausted())
+	c.Assert(groupChecker.isExhausted(), IsTrue)
 
-	tp.SetCollate("utf8_unicode_ci")
+	tp.Collate = "utf8_unicode_ci"
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	for i := 0; i < 3; i++ {
 		b, e := groupChecker.getNextGroup()
-		require.Equal(t, b, i*2)
-		require.Equal(t, e, i*2+2)
+		c.Assert(b, Equals, i*2)
+		c.Assert(e, Equals, i*2+2)
 	}
-	require.True(t, groupChecker.isExhausted())
+	c.Assert(groupChecker.isExhausted(), IsTrue)
 
 	// test padding
-	tp.SetCollate("utf8_bin")
-	tp.SetFlen(6)
+	tp.Collate = "utf8_bin"
+	tp.Flen = 6
 	chk.Reset()
 	chk.Column(0).AppendString("a")
 	chk.Column(0).AppendString("a  ")
 	chk.Column(0).AppendString("a    ")
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	b, e := groupChecker.getNextGroup()
-	require.Equal(t, b, 0)
-	require.Equal(t, e, 3)
-	require.True(t, groupChecker.isExhausted())
+	c.Assert(b, Equals, 0)
+	c.Assert(e, Equals, 3)
+	c.Assert(groupChecker.isExhausted(), IsTrue)
 }

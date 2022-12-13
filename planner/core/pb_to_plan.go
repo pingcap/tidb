@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,11 +18,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -79,7 +78,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
-		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
+		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
 	}
 	return p, err
 }
@@ -109,8 +108,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
-	switch strings.ToUpper(p.Table.Name.O) {
-	case infoschema.ClusterTableSlowLog:
+	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
@@ -120,8 +118,6 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
-	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
-		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil
 }
@@ -250,7 +246,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	return columns, nil
 }
 
-func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	node := &ast.KillStmt{
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,

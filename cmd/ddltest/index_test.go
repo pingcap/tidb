@@ -8,26 +8,28 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddltest
 
 import (
-	goctx "context"
 	"fmt"
+	"io"
 	"math"
-	"os"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
-	"github.com/pingcap/log"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 func getIndex(t table.Table, name string) table.Index {
@@ -40,24 +42,94 @@ func getIndex(t table.Table, name string) table.Index {
 	return nil
 }
 
-func (s *ddlSuite) checkDropIndex(t *testing.T, tableName string) {
+func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+	tbl := s.getTable(c, "test_index")
+
+	// read handles form table
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(),
+		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles.Set(h, struct{}{})
+			return true, nil
+		})
+	c.Assert(err, IsNil)
+
+	// read handles from index
+	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
+	err = ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(false)
+	c.Assert(err, IsNil)
+	defer func() {
+		err = txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+
+	it, err := idx.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	defer it.Close()
+
+	for {
+		_, h, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		}
+
+		c.Assert(err, IsNil)
+		_, ok := handles.Get(h)
+		c.Assert(ok, IsTrue)
+		handles.Delete(h)
+	}
+
+	c.Assert(handles.Len(), Equals, 0)
+}
+
+func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
-	require.NoError(t, err)
-	s.mustExec(fmt.Sprintf("admin check table %s", tableName))
+	c.Assert(err, IsNil)
+
+	ctx := s.ctx
+	err = ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+	tbl := s.getTable(c, "test_index")
+
+	// read handles from index
+	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
+	err = ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(false)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+
+	it, err := idx.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	defer it.Close()
+
+	handles := kv.NewHandleMap()
+	for {
+		_, h, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		}
+
+		c.Assert(err, IsNil)
+		handles.Set(h, struct{}{})
+	}
+
+	// TODO: Uncomment this after apply pool is finished
+	// c.Assert(handles.Len(), Equals, 0)
 }
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
-func TestIndex(t *testing.T) {
-	err := os.Setenv("tidb_manager_ttl", fmt.Sprintf("%d", *lease+5))
-	if err != nil {
-		log.Fatal("set tidb_manager_ttl failed")
-	}
-
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
+func (s *TestDDLSuite) TestIndex(c *C) {
 	// first add many data
 	workerNum := 10
 	base := *dataNum / workerNum
@@ -68,7 +140,7 @@ func TestIndex(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < base; j++ {
 				k := base*i + j
-				s.execInsert(
+				s.execInsert(c,
 					fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')",
 						k, randomInt(), randomFloat(), randomString(10)))
 			}
@@ -90,40 +162,42 @@ func TestIndex(t *testing.T) {
 	}
 
 	insertID := int64(*dataNum)
-	for _, col := range tbl {
-		done := s.runDDL(col.Query)
+	var oldIndex table.Index
+	for _, t := range tbl {
+		c.Logf("run DDL sql %s", t.Query)
+		done := s.runDDL(t.Query)
 
 		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
-		//nolint:all_revive,revive
 		defer ticker.Stop()
 	LOOP:
 		for {
 			select {
 			case err := <-done:
-				require.NoError(t, err)
+				c.Assert(err, IsNil)
 				break LOOP
 			case <-ticker.C:
 				// add count new data
 				// delete count old data randomly
 				// update count old data randomly
 				count := 10
-				s.execIndexOperations(t, workerNum, count, &insertID)
+				s.execIndexOperations(c, workerNum, count, &insertID)
 			}
 		}
 
-		tbl := s.getTable(t, "test_index")
-		index := getIndex(tbl, col.IndexName)
-		if col.Add {
-			require.NotNil(t, index)
-			s.mustExec("admin check table test_index")
+		tbl := s.getTable(c, "test_index")
+		index := getIndex(tbl, t.IndexName)
+		if t.Add {
+			c.Assert(index, NotNil)
+			oldIndex = index
+			s.checkAddIndex(c, index.Meta())
 		} else {
-			require.Nil(t, index)
-			s.checkDropIndex(t, "test_index")
+			c.Assert(index, IsNil)
+			s.checkDropIndex(c, oldIndex.Meta())
 		}
 	}
 }
 
-func (s *ddlSuite) execIndexOperations(t *testing.T, workerNum, count int, insertID *int64) {
+func (s *TestDDLSuite) execIndexOperations(c *C, workerNum, count int, insertID *int64) {
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
@@ -133,14 +207,15 @@ func (s *ddlSuite) execIndexOperations(t *testing.T, workerNum, count int, inser
 			for j := 0; j < count; j++ {
 				id := atomic.AddInt64(insertID, 1)
 				sql := fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')", id, randomInt(), randomFloat(), randomString(10))
-				s.execInsert(sql)
-				t.Logf("sql %s", sql)
+				s.execInsert(c, sql)
+				c.Logf("sql %s", sql)
 				sql = fmt.Sprintf("delete from test_index where c = %d", randomIntn(int(id)))
-				s.mustExec(sql)
-				t.Logf("sql %s", sql)
+				s.mustExec(c, sql)
+				c.Logf("sql %s", sql)
 				sql = fmt.Sprintf("update test_index set c1 = %d, c2 = %f, c3 = '%s' where c = %d", randomInt(), randomFloat(), randomString(10), randomIntn(int(id)))
-				s.mustExec(sql)
-				t.Logf("sql %s", sql)
+				s.mustExec(c, sql)
+				c.Logf("sql %s", sql)
+
 			}
 		}()
 	}

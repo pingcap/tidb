@@ -8,28 +8,33 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package domain
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestDomainCtx(t *testing.T) {
+var _ = Suite(&testDomainCtxSuite{})
+
+type testDomainCtxSuite struct {
+}
+
+func (s *testDomainCtxSuite) TestDomain(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	require.NotEqual(t, "", domainKey.String())
+
+	c.Assert(domainKey.String(), Not(Equals), "")
 
 	BindDomain(ctx, nil)
 	v := GetDomain(ctx)
-	require.Nil(t, v)
+	c.Assert(v, IsNil)
 
 	ctx.ClearValue(domainKey)
 	v = GetDomain(ctx)
-	require.Nil(t, v)
+	c.Assert(v, IsNil)
 }

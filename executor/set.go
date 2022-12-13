@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,22 +18,18 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -87,12 +82,15 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
+			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
-				sessionVars.UnsetUserVar(name)
+				delete(sessionVars.Users, name)
+				delete(sessionVars.UserVarTypes, name)
 			} else {
-				sessionVars.SetUserVarVal(name, value)
-				sessionVars.SetUserVarType(name, v.Expr.GetType())
+				sessionVars.Users[name] = value
+				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
+			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -107,46 +105,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		if variable.IsRemovedSysVar(name) {
-			return nil // removed vars permit parse-but-ignore
-		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-
-	if sysVar.RequireDynamicPrivileges != nil {
-		semEnabled := sem.IsEnabled()
-		pm := privilege.GetPrivilegeManager(e.ctx)
-		privs := sysVar.RequireDynamicPrivileges(v.IsGlobal, semEnabled)
-		for _, priv := range privs {
-			if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, priv, false) {
-				msg := priv
-				if !semEnabled {
-					msg = "SUPER or " + msg
-				}
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
-			}
-		}
-	}
-
-	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
-		// The variable is a noop. For compatibility we allow it to still
-		// be changed, but we append a warning since users might be expecting
-		// something that's not going to happen.
-		sessionVars.StmtCtx.AppendWarning(ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
-	}
-	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-		// For backward compatibility we will change the v.IsGlobal to true,
-		// and append a warning saying this will not be supported in future.
-		v.IsGlobal = true
-		sessionVars.StmtCtx.AppendWarning(ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
-	}
-
 	if v.IsGlobal {
-		valStr, err := e.getVarValue(ctx, v, sysVar)
+		valStr, err := e.getVarValue(v, sysVar)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
 		}
@@ -161,7 +127,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Set session variable
-	valStr, err := e.getVarValue(ctx, v, nil)
+	valStr, err := e.getVarValue(v, nil)
 	if err != nil {
 		return err
 	}
@@ -190,7 +156,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}
-	err = sessionVars.SetSystemVar(name, valStr)
+	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
 	if err != nil {
 		return err
 	}
@@ -243,15 +209,15 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	}
 	if isSetName {
 		for _, v := range variable.SetNamesVariables {
-			if err = sessionVars.SetSystemVar(v, cs); err != nil {
+			if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+		return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
 	for _, v := range variable.SetCharsetVariables {
-		if err = sessionVars.SetSystemVar(v, cs); err != nil {
+		if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -263,14 +229,14 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
+	err = variable.SetSessionSystemVar(sessionVars, variable.CharacterSetConnection, csDb)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
+	return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, coDb))
 }
 
-func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
+func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
 	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
@@ -278,7 +244,7 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		if sysVar != nil {
 			return sysVar.Value, nil
 		}
-		return e.ctx.GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
+		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
@@ -304,7 +270,6 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	if err != nil {
 		return err
 	}
-
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
+	vars.SnapshotInfoschema = snapInfo
 	return nil
 }

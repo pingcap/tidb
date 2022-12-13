@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,15 +27,6 @@ func ToString(p Plan) string {
 	return strings.Join(strs, "->")
 }
 
-// FDToString explains fd transfer over a Plan, returns description string.
-func FDToString(p LogicalPlan) string {
-	strs, _ := fdToString(p, []string{}, []int{})
-	for i, j := 0, len(strs)-1; i < j; i, j = i+1, j-1 {
-		strs[i], strs[j] = strs[j], strs[i]
-	}
-	return strings.Join(strs, " >>> ")
-}
-
 func needIncludeChildrenString(plan Plan) bool {
 	switch x := plan.(type) {
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
@@ -50,29 +40,6 @@ func needIncludeChildrenString(plan Plan) bool {
 	default:
 		return false
 	}
-}
-
-func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
-	switch x := in.(type) {
-	case *LogicalProjection:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
-		for _, child := range x.Children() {
-			strs, idxs = fdToString(child, strs, idxs)
-		}
-	case *LogicalAggregation:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
-		for _, child := range x.Children() {
-			strs, idxs = fdToString(child, strs, idxs)
-		}
-	case *DataSource:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
-	case *LogicalApply:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
-	case *LogicalJoin:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
-	default:
-	}
-	return strs, idxs
 }
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
@@ -164,16 +131,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *LogicalShow:
+	case *LogicalShow, *PhysicalShow:
 		str = "Show"
-		if pl := in.(*LogicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
-		}
-	case *PhysicalShow:
-		str = "Show"
-		if pl := in.(*PhysicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
-		}
 	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:

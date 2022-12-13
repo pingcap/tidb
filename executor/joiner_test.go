@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,16 +15,22 @@ package executor
 
 import (
 	"math/rand"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
 )
 
-func TestRequiredRows(t *testing.T) {
+var _ = Suite(&testSuiteJoiner{})
+
+type testSuiteJoiner struct{}
+
+func (s *testSuiteJoiner) SetUpSuite(c *C) {
+}
+
+func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
@@ -54,7 +59,7 @@ func TestRequiredRows(t *testing.T) {
 				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil, false)
+				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)
@@ -68,8 +73,8 @@ func TestRequiredRows(t *testing.T) {
 					it := chunk.NewIterator4Chunk(innerChk)
 					it.Begin()
 					_, _, err := joiner.tryToMatchInners(outerRow, it, result)
-					require.NoError(t, err)
-					require.Equal(t, required, result.NumRows())
+					c.Assert(err, IsNil)
+					c.Assert(result.NumRows(), Equals, required)
 				}
 			}
 		}
@@ -81,7 +86,7 @@ func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chu
 	for numRows > 0 {
 		numRows--
 		for col, field := range fields {
-			switch field.GetType() {
+			switch field.Tp {
 			case mysql.TypeLong:
 				chk.AppendInt64(col, 0)
 			case mysql.TypeFloat:

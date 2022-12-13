@@ -8,19 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package encrypt
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestSQLDecode(t *testing.T) {
+func (s *testEncryptSuite) TestSQLDecode(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		passwd  string
@@ -39,19 +38,20 @@ func TestSQLDecode(t *testing.T) {
 		{"pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3", false},
 	}
 
-	for _, tt := range tests {
-		crypted, err := SQLDecode(tt.str, tt.passwd)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+	for _, t := range tests {
+		crypted, err := SQLDecode(t.str, t.passwd)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
 		result := toHex([]byte(crypted))
-		require.Equalf(t, tt.expect, result, "%v", tt)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestSQLEncode(t *testing.T) {
+func (s *testEncryptSuite) TestSQLEncode(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		passwd  string
@@ -70,15 +70,15 @@ func TestSQLEncode(t *testing.T) {
 		{"pingcap数据库", "数据库passwd12345667", "pingcap数据库", false},
 	}
 
-	for _, tt := range tests {
-		crypted, err := SQLDecode(tt.str, tt.passwd)
-		require.NoError(t, err)
-		uncrypte, err := SQLEncode(crypted, tt.passwd)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+	for _, t := range tests {
+		crypted, err := SQLDecode(t.str, t.passwd)
+		c.Assert(err, IsNil)
+		uncrypte, err := SQLEncode(crypted, t.passwd)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoError(t, err, "%v", tt)
-		require.Equal(t, tt.expect, uncrypte, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(uncrypte, Equals, t.expect, Commentf("%v", t))
 	}
 }

@@ -1,1 +1,0 @@
-insert into t0 values (6.0);

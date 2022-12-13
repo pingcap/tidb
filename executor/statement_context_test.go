@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,13 +15,13 @@ package executor_test
 
 import (
 	"fmt"
-	"testing"
 	"unicode/utf8"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 const (
@@ -30,9 +29,8 @@ const (
 	nonStrictModeSQL = "set sql_mode = ''"
 )
 
-func TestStatementContext(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite1) TestStatementContext(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table sc (a int)")
 	tk.MustExec("insert sc values (1), (2)")
@@ -53,8 +51,10 @@ func TestStatementContext(t *testing.T) {
 	// Handle coprocessor flags, '1x' is an invalid int.
 	// UPDATE and DELETE do select request first which is handled by coprocessor.
 	// In strict mode we expect error.
-	tk.MustExecToErr("update sc set a = 4 where a > '1x'")
-	tk.MustExecToErr("delete from sc where a < '1x'")
+	_, err := tk.Exec("update sc set a = 4 where a > '1x'")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete from sc where a < '1x'")
+	c.Assert(err, NotNil)
 	tk.MustQuery("select * from sc where a > '1x'").Check(testkit.Rows("3"))
 
 	// Non-strict mode never returns error.
@@ -67,13 +67,16 @@ func TestStatementContext(t *testing.T) {
 	tk.MustExec("create table sc2 (a varchar(255))")
 	// Insert an invalid UTF8
 	tk.MustExec("insert sc2 values (unhex('4040ffff'))")
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
 	tk.MustQuery("select * from sc2").Check(testkit.Rows("@@"))
 	tk.MustExec(strictModeSQL)
-	tk.MustGetErrCode("insert sc2 values (unhex('4040ffff'))", errno.ErrTruncatedWrongValueForField)
+	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_skip_utf8_check = '1'")
-	tk.MustExec("insert sc2 values (unhex('4040ffff'))")
+	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
+	c.Assert(err, IsNil)
 	tk.MustQuery("select length(a) from sc2").Check(testkit.Rows("2", "4"))
 
 	tk.MustExec("set @@tidb_skip_utf8_check = '0'")
@@ -85,14 +88,17 @@ func TestStatementContext(t *testing.T) {
 
 	tk.MustExec(nonStrictModeSQL)
 	tk.MustExec("insert sc3 values (unhex('4040ffff'))")
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
 	tk.MustQuery("select * from sc3").Check(testkit.Rows("@@"))
 
 	tk.MustExec(strictModeSQL)
-	tk.MustGetErrCode("insert sc3 values (unhex('4040ffff'))", errno.ErrTruncatedWrongValueForField)
+	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_skip_ascii_check = '1'")
-	tk.MustExec("insert sc3 values (unhex('4040ffff'))")
+	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
+	c.Assert(err, IsNil)
 	tk.MustQuery("select length(a) from sc3").Check(testkit.Rows("2", "4"))
 
 	// no placeholder in ASCII, so just insert '@@'...
@@ -105,21 +111,26 @@ func TestStatementContext(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(100) charset utf8);")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
 	tk.MustQuery("select * from t1").Check(testkit.Rows(""))
 	tk.MustExec("insert t1 values (unhex('4040f09f8c80'))")
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
 	tk.MustQuery("select * from t1").Check(testkit.Rows("", "@@"))
 	tk.MustQuery("select length(a) from t1").Check(testkit.Rows("0", "2"))
 	tk.MustExec(strictModeSQL)
-	tk.MustGetErrCode("insert t1 values (unhex('f09f8c80'))", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert t1 values (unhex('F0A48BAE'))", errno.ErrTruncatedWrongValueForField)
+	_, err = tk.Exec("insert t1 values (unhex('f09f8c80'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.CheckMb4ValueInUTF8.Store(false)
+		conf.CheckMb4ValueInUTF8 = false
 	})
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.CheckMb4ValueInUTF8.Store(true)
+		conf.CheckMb4ValueInUTF8 = true
 	})
-	tk.MustExecToErr("insert t1 values (unhex('F0A48BAE'))")
+	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
 }

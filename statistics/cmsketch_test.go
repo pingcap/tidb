@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,16 +17,15 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/stretchr/testify/require"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -106,7 +104,7 @@ func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint6
 	return total / uint64(len(mp)), nil
 }
 
-func TestCMSketch(t *testing.T) {
+func (s *testStatisticsSuite) TestCMSketch(c *C) {
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -126,31 +124,31 @@ func TestCMSketch(t *testing.T) {
 	}
 	d, w := int32(5), int32(2048)
 	total, imax := uint64(100000), uint64(1000000)
-	for _, tt := range tests {
-		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, tt.zipfFactor)
-		require.NoError(t, err)
+	for _, t := range tests {
+		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
+		c.Check(err, IsNil)
 		avg, err := averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 
-		rSketch, rMap, err := buildCMSketchAndMap(d, w, 1, total, imax, tt.zipfFactor)
-		require.NoError(t, err)
+		rSketch, rMap, err := buildCMSketchAndMap(d, w, 1, total, imax, t.zipfFactor)
+		c.Check(err, IsNil)
 		avg, err = averageAbsoluteError(rSketch, nil, rMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 
 		err = lSketch.MergeCMSketch(rSketch)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		for val, count := range rMap {
 			lMap[val] += count
 		}
 		avg, err = averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.Less(t, avg, tt.avgError*2)
+		c.Assert(err, IsNil)
+		c.Check(avg, Less, t.avgError*2)
 	}
 }
 
-func TestCMSketchCoding(t *testing.T) {
+func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 	lSketch := NewCMSketch(5, 2048)
 	lSketch.count = 2048 * math.MaxUint32
 	for i := range lSketch.table {
@@ -159,14 +157,14 @@ func TestCMSketchCoding(t *testing.T) {
 		}
 	}
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
-	require.NoError(t, err)
-	require.Len(t, bytes, 61457)
+	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 61457)
 	rSketch, _, err := DecodeCMSketchAndTopN(bytes, nil)
-	require.NoError(t, err)
-	require.True(t, lSketch.Equal(rSketch))
+	c.Assert(err, IsNil)
+	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
 
-func TestCMSketchTopN(t *testing.T) {
+func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -194,17 +192,17 @@ func TestCMSketchTopN(t *testing.T) {
 	}
 	d, w := int32(5), int32(2048)
 	total, imax := uint64(1000000), uint64(1000000)
-	for _, tt := range tests {
-		lSketch, topN, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, tt.zipfFactor)
-		require.NoError(t, err)
-		require.LessOrEqual(t, len(topN.TopN), 40)
+	for _, t := range tests {
+		lSketch, topN, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
+		c.Check(err, IsNil)
+		c.Assert(len(topN.TopN), LessEqual, 40)
 		avg, err := averageAbsoluteError(lSketch, topN, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 	}
 }
 
-func TestMergeCMSketch4IncrementalAnalyze(t *testing.T) {
+func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -228,33 +226,33 @@ func TestMergeCMSketch4IncrementalAnalyze(t *testing.T) {
 	}
 	d, w := int32(5), int32(2048)
 	total, imax := uint64(100000), uint64(1000000)
-	for _, tt := range tests {
-		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, tt.zipfFactor)
-		require.NoError(t, err)
+	for _, t := range tests {
+		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
+		c.Check(err, IsNil)
 		avg, err := averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 
-		rSketch, rMap, err := buildCMSketchAndMapWithOffset(d, w, 1, total, imax, tt.zipfFactor, int64(imax))
-		require.NoError(t, err)
+		rSketch, rMap, err := buildCMSketchAndMapWithOffset(d, w, 1, total, imax, t.zipfFactor, int64(imax))
+		c.Check(err, IsNil)
 		avg, err = averageAbsoluteError(rSketch, nil, rMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 
 		for key, val := range rMap {
 			lMap[key] += val
 		}
-		require.NoError(t, lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0))
+		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0), IsNil)
 		avg, err = averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
 		width, depth := lSketch.GetWidthAndDepth()
-		require.Equal(t, int32(2048), width)
-		require.Equal(t, int32(5), depth)
+		c.Assert(width, Equals, int32(2048))
+		c.Assert(depth, Equals, int32(5))
 	}
 }
 
-func TestCMSketchTopNUniqueData(t *testing.T) {
+func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)
 	mp := make(map[int64]uint32)
@@ -267,15 +265,15 @@ func TestCMSketchTopNUniqueData(t *testing.T) {
 		}
 	}
 	cms, topN, err := prepareCMSAndTopN(d, w, vals, uint32(20), total)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	avg, err := averageAbsoluteError(cms, topN, mp)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), cms.defaultValue)
-	require.Equal(t, uint64(0), avg)
-	require.Nil(t, topN)
+	c.Assert(err, IsNil)
+	c.Check(cms.defaultValue, Equals, uint64(1))
+	c.Check(avg, Equals, uint64(0))
+	c.Check(topN, IsNil)
 }
 
-func TestCMSketchCodingTopN(t *testing.T) {
+func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	lSketch := NewCMSketch(5, 2048)
 	lSketch.count = 2048 * (math.MaxUint32)
 	for i := range lSketch.table {
@@ -285,7 +283,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	}
 	topN := make([]TopNMeta, 20)
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
-	unsignedLong.AddFlag(mysql.UnsignedFlag)
+	unsignedLong.Flag |= mysql.UnsignedFlag
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
 	var rows []chunk.Row
 	for i := 0; i < 20; i++ {
@@ -297,12 +295,12 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	}
 
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
-	require.NoError(t, err)
-	require.Len(t, bytes, 61457)
+	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 61457)
 	rSketch, _, err := DecodeCMSketchAndTopN(bytes, rows)
-	require.NoError(t, err)
-	require.True(t, lSketch.Equal(rSketch))
+	c.Assert(err, IsNil)
+	c.Assert(lSketch.Equal(rSketch), IsTrue)
 	// do not panic
 	_, _, err = DecodeCMSketchAndTopN([]byte{}, rows)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }

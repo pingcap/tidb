@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +18,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -92,7 +91,7 @@ func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {
 	e.StmtNodes = make([][]ast.StmtNode, len(sqls))
 	sqlParser := parser.New()
 	for i, sql := range sqls {
-		stmtNodes, warns, err := sqlParser.ParseSQL(sql)
+		stmtNodes, warns, err := sqlParser.Parse(sql, "", "")
 		if err != nil {
 			return err
 		}

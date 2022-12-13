@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,10 +16,22 @@ package stringutil
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestUnquote(t *testing.T) {
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+var _ = Suite(&testStringUtilSuite{})
+
+type testStringUtilSuite struct {
+}
+
+func (s *testStringUtilSuite) TestUnquote(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		str    string
 		expect string
@@ -54,18 +65,20 @@ func TestUnquote(t *testing.T) {
 		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
-	for _, v := range table {
-		x, err := Unquote(v.str)
-		require.Equal(t, v.expect, x)
-		if v.ok {
-			require.Nilf(t, err, "source %v", v)
+	for _, t := range table {
+		x, err := Unquote(t.str)
+		c.Assert(x, Equals, t.expect)
+		comment := Commentf("source %v", t.str)
+		if t.ok {
+			c.Assert(err, IsNil, comment)
 		} else {
-			require.NotNilf(t, err, "source %v", v)
+			c.Assert(err, NotNil, comment)
 		}
 	}
 }
 
-func TestPatternMatch(t *testing.T) {
+func (s *testStringUtilSuite) TestPatternMatch(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -89,26 +102,32 @@ func TestPatternMatch(t *testing.T) {
 		{`\_a`, `_a`, '\\', true},
 		{`\_a`, `aa`, '\\', false},
 		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', false},
-		{`\a\b`, `ab`, '\\', true},
+		{`\a\b`, `\a\b`, '\\', true},
 		{`%%_`, `abc`, '\\', true},
 		{`%_%_aA`, "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
-		{`+a`, `a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
 		{`___Հ`, `䇇Հ`, '\\', false},
+		// We may reopen these test when like function go back to case insensitive.
+		/*
+			{"_ab", "AAB", '\\', true},
+			{"%a%", "BAB", '\\', true},
+			{"%a", "AAA", '\\', true},
+			{"b%", "BBB", '\\', true},
+		*/
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
-		require.Equalf(t, v.match, match, "source %v", v)
+		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
 }
 
-func TestCompileLike2Regexp(t *testing.T) {
+func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		regexp  string
@@ -125,17 +144,18 @@ func TestCompileLike2Regexp(t *testing.T) {
 		{`\%a`, `%a`},
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
-		{`\a\b`, `ab`},
+		{`\a\b`, `\a\b`},
 		{`%%_`, `..*`},
 		{`%_%_aA`, "...*aA"},
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
-		require.Equalf(t, v.regexp, result, "source %v", v)
+		c.Assert(result, Equals, v.regexp, Commentf("%v", v))
 	}
 }
 
-func TestIsExactMatch(t *testing.T) {
+func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern    string
 		escape     byte
@@ -158,12 +178,13 @@ func TestIsExactMatch(t *testing.T) {
 	}
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
-		require.Equalf(t, v.exactMatch, IsExactMatch(patTypes), "source %v", v)
+		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
 	}
 }
 
-func TestBuildStringFromLabels(t *testing.T) {
-	tbl := []struct {
+func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
+	defer testleak.AfterTest(c)()
+	testcases := []struct {
 		name     string
 		labels   map[string]string
 		expected string
@@ -189,8 +210,9 @@ func TestBuildStringFromLabels(t *testing.T) {
 			expected: "aaa=bbb,ccc=ddd",
 		},
 	}
-	for _, v := range tbl {
-		require.Equalf(t, v.expected, BuildStringFromLabels(v.labels), "source %v", v)
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		c.Assert(BuildStringFromLabels(testcase.labels), Equals, testcase.expected)
 	}
 }
 
@@ -244,8 +266,8 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 
 func BenchmarkBuildStringFromLabels(b *testing.B) {
 	cases := []struct {
-		labels map[string]string
 		name   string
+		labels map[string]string
 	}{
 		{
 			name: "normal case",

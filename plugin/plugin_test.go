@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,9 +19,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/stretchr/testify/require"
 )
+
+func TestT(t *testing.T) {
+	check.TestingT(t)
+}
 
 func TestLoadPluginSuccess(t *testing.T) {
 	ctx := context.Background()
@@ -32,19 +35,21 @@ func TestLoadPluginSuccess(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:    []string{pluginSign},
-		PluginDir:  "",
-		EnvVersion: map[string]uint16{"go": 1112},
+		Plugins:        []string{pluginSign},
+		PluginDir:      "",
+		PluginVarNames: &variable.PluginVarNames,
+		EnvVersion:     map[string]uint16{"go": 1112},
 	}
 
 	// setup load test hook.
-	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
 					Kind:    Authentication,
 					Name:    pluginName,
 					Version: pluginVersion,
+					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return nil
 					},
@@ -60,40 +65,55 @@ func TestLoadPluginSuccess(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	})
+	}}
 	defer func() {
 		testHook = nil
 	}()
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("load plugin [%s] fail", pluginSign)
+	}
 
 	err = Init(ctx, cfg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("init plugin [%s] fail", pluginSign)
+	}
 
 	// load all.
 	ps := GetAll()
-	require.Len(t, ps, 1)
-	require.True(t, IsEnable(Authentication))
+	if len(ps) != 1 {
+		t.Errorf("loaded plugins is empty")
+	}
 
 	// find plugin by type and name
 	p := Get(Authentication, "tplugin")
-	require.NotNil(t, p)
+	if p == nil {
+		t.Errorf("tplugin can not be load")
+	}
 	p = Get(Authentication, "tplugin2")
-	require.Nil(t, p)
+	if p != nil {
+		t.Errorf("found miss plugin")
+	}
 	p = getByName("tplugin")
-	require.NotNil(t, p)
+	if p == nil {
+		t.Errorf("can not find miss plugin")
+	}
 
 	// foreach plugin
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return nil
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("foreach error %v", err)
+	}
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return io.EOF
 	})
-	require.Equal(t, io.EOF, err)
+	if err != io.EOF {
+		t.Errorf("foreach should return EOF error")
+	}
 
 	Shutdown(ctx)
 }
@@ -106,20 +126,22 @@ func TestLoadPluginSkipError(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:      []string{pluginSign, pluginSign, "notExists-2"},
-		PluginDir:    "",
-		EnvVersion:   map[string]uint16{"go": 1112},
-		SkipWhenFail: true,
+		Plugins:        []string{pluginSign, pluginSign, "notExists-2"},
+		PluginDir:      "",
+		PluginVarNames: &variable.PluginVarNames,
+		EnvVersion:     map[string]uint16{"go": 1112},
+		SkipWhenFail:   true,
 	}
 
 	// setup load test hook.
-	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
 					Kind:    Audit,
 					Name:    pluginName,
 					Version: pluginVersion,
+					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return io.EOF
 					},
@@ -135,41 +157,58 @@ func TestLoadPluginSkipError(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	})
+	}}
 	defer func() {
 		testHook = nil
 	}()
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("load plugin [%s] fail %v", pluginSign, err)
+	}
 
 	err = Init(ctx, cfg)
-	require.NoError(t, err)
-	require.False(t, IsEnable(Audit))
+	if err != nil {
+		t.Errorf("init plugin [%s] fail", pluginSign)
+	}
 
 	// load all.
 	ps := GetAll()
-	require.Len(t, ps, 1)
+	if len(ps) != 1 {
+		t.Errorf("loaded plugins is empty")
+	}
 
 	// find plugin by type and name
 	p := Get(Audit, "tplugin")
-	require.NotNil(t, p)
+	if p == nil {
+		t.Errorf("tplugin can not be load")
+	}
 	p = Get(Audit, "tplugin2")
-	require.Nil(t, p)
+	if p != nil {
+		t.Errorf("found miss plugin")
+	}
 	p = getByName("tplugin")
-	require.NotNil(t, p)
+	if p == nil {
+		t.Errorf("can not find miss plugin")
+	}
 	p = getByName("not exists")
-	require.Nil(t, p)
+	if p != nil {
+		t.Errorf("got not exists plugin")
+	}
 
 	// foreach plugin
 	readyCount := 0
-	err = ForeachPlugin(Audit, func(plugin *Plugin) error {
+	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		readyCount++
 		return nil
 	})
-	require.NoError(t, err)
-	require.Equal(t, 0, readyCount)
+	if err != nil {
+		t.Errorf("foreach meet error %v", err)
+	}
+	if readyCount != 0 {
+		t.Errorf("validate fail can be load but no ready")
+	}
 
 	Shutdown(ctx)
 }
@@ -182,20 +221,22 @@ func TestLoadFail(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:      []string{pluginSign, pluginSign, "notExists-2"},
-		PluginDir:    "",
-		EnvVersion:   map[string]uint16{"go": 1112},
-		SkipWhenFail: false,
+		Plugins:        []string{pluginSign, pluginSign, "notExists-2"},
+		PluginDir:      "",
+		PluginVarNames: &variable.PluginVarNames,
+		EnvVersion:     map[string]uint16{"go": 1112},
+		SkipWhenFail:   false,
 	}
 
 	// setup load test hook.
-	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
 					Kind:    Audit,
 					Name:    pluginName,
 					Version: pluginVersion,
+					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return io.EOF
 					},
@@ -211,13 +252,15 @@ func TestLoadFail(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	})
+	}}
 	defer func() {
 		testHook = nil
 	}()
 
 	err := Load(ctx, cfg)
-	require.Error(t, err)
+	if err == nil {
+		t.Errorf("load plugin should fail")
+	}
 }
 
 func TestPluginsClone(t *testing.T) {
@@ -236,9 +279,7 @@ func TestPluginsClone(t *testing.T) {
 	as := ps.plugins[Audit]
 	ps.plugins[Audit] = append(as, Plugin{})
 
-	require.Len(t, cps.plugins, 1)
-	require.Len(t, cps.plugins[Audit], 1)
-	require.Len(t, cps.versions, 1)
-	require.Equal(t, uint16(1), cps.versions["whitelist"])
-	require.Len(t, cps.dyingPlugins, 1)
+	if len(cps.plugins) != 1 || len(cps.plugins[Audit]) != 1 || len(cps.versions) != 1 || len(cps.dyingPlugins) != 1 {
+		t.Errorf("clone plugins failure")
+	}
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,25 +19,29 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/checksum"
-	"github.com/stretchr/testify/require"
 )
 
+var _ = check.Suite(&testAesLayerSuite{})
+
+type testAesLayerSuite struct{}
+
 type readAtTestCase struct {
+	name      string
 	newWriter func(f *os.File) io.WriteCloser
 	newReader func(f *os.File) io.ReaderAt
-	name      string
 }
 
-func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
+func testReadAtWithCase(c *check.C, testCase readAtTestCase) {
 	path := "ase"
 	f, err := os.Create(path)
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	defer func() {
 		err = f.Close()
-		require.NoError(t, err)
+		c.Assert(err, check.IsNil)
 		err = os.Remove(path)
-		require.NoError(t, err)
+		c.Assert(err, check.IsNil)
 	}()
 
 	writeString := "0123456789"
@@ -49,22 +52,22 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 
 	w := testCase.newWriter(f)
 	n1, err := w.Write(buf.Bytes())
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	n2, err := w.Write(buf.Bytes())
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	err = w.Close()
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 
 	f, err = os.Open(path)
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
 		r := testCase.newReader(f)
 		buf := make([]byte, 10)
 		n, err := r.ReadAt(buf, off)
-		require.Equal(t, assertErr, err)
-		require.Equal(t, assertN, n)
-		require.Equal(t, assertString, string(buf))
+		c.Assert(err, check.Equals, assertErr)
+		c.Assert(n, check.Equals, assertN)
+		c.Assert(string(buf), check.Equals, assertString)
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -72,11 +75,11 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
 }
 
-func TestReadAt(t *testing.T) {
+func (s *testAesLayerSuite) TestReadAt(c *check.C) {
 	ctrCipher1, err := NewCtrCipher()
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	ctrCipher2, err := NewCtrCipher()
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 
 	readAtTestCases := []readAtTestCase{
 		{
@@ -98,7 +101,7 @@ func TestReadAt(t *testing.T) {
 	}
 
 	for _, tCase := range readAtTestCases {
-		testReadAtWithCase(t, tCase)
+		testReadAtWithCase(c, tCase)
 	}
 }
 

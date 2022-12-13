@@ -1,1 +1,0 @@
-create table `mixed` (`唯一键` int not null unique key comment 'ע��');

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,138 +15,127 @@ package expression
 
 import (
 	"math"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/testutil"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func TestDatabase(t *testing.T) {
+func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.KindNull, d.Kind())
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
 	d, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "test", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 
 	// Test case for schema().
 	fc = funcs[ast.Schema]
-	require.NotNil(t, fc)
+	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
-	require.NoError(t, err)
-	require.Equal(t, "test", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestFoundRows(t *testing.T) {
+func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, uint64(2), d.GetUint64())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
 
-func TestUser(t *testing.T) {
+func (s *testEvaluatorSuite) TestUser(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "root@localhost", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestCurrentUser(t *testing.T) {
+func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "root@localhost", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestCurrentRole(t *testing.T) {
+func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
 	ctx := mock.NewContext()
-	fc := funcs[ast.CurrentRole]
-	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
-
-	// empty roles
-	var d types.Datum
-	d, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "NONE", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
-
-	// add roles
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
 
-	d, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "`r_1`@`%`,`r_2`@`localhost`", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	fc := funcs[ast.CurrentRole]
+	f, err := fc.getFunction(ctx, nil)
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "`r_1`@`%`,`r_2`@`localhost`")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestConnectionID(t *testing.T) {
+func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), d.GetUint64())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetUint64(), Equals, uint64(1))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestVersion(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestVersion(c *C) {
 	fc := funcs[ast.Version]
-	f, err := fc.getFunction(ctx, nil)
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, nil)
+	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, mysql.ServerVersion, v.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
-func TestBenchMark(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	cases := []struct {
 		LoopCount  int
 		Expression interface{}
@@ -163,86 +151,80 @@ func TestBenchMark(t *testing.T) {
 		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
 		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
 		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
-		{3, types.CreateBinaryJSON("[1]"), 0, false},
+		{3, json.CreateBinary("[1]"), 0, false},
 	}
 
-	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Benchmark, primitiveValsToConstants(ctx, []interface{}{
-			c.LoopCount,
-			c.Expression,
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+			t.LoopCount,
+			t.Expression,
 		})...)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
-		require.NoError(t, err)
-		if c.IsNil {
-			require.True(t, d.IsNull())
+		c.Assert(err, IsNil)
+		if t.IsNil {
+			c.Assert(d.IsNull(), IsTrue)
 		} else {
-			require.Equal(t, c.Expected, d.GetInt64())
+			c.Assert(d.GetInt64(), Equals, t.Expected)
 		}
 
 		// test clone
 		b1 := f.Clone().(*ScalarFunction).Function.(*builtinBenchmarkSig)
-		require.Equal(t, int64(c.LoopCount), b1.constLoopCount)
+		c.Assert(b1.constLoopCount, Equals, int64(t.LoopCount))
 	}
 }
 
-func TestCharset(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestCharset(c *C) {
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.NotNil(t, f)
-	require.NoError(t, err)
-	require.Equal(t, 64, f.getRetTp().GetFlen())
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	c.Assert(f, IsNil)
+	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
 }
 
-func TestCoercibility(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 	fc := funcs[ast.Coercibility]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.NotNil(t, f)
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	c.Assert(f, NotNil)
+	c.Assert(err, IsNil)
 }
 
-func TestCollation(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestCollation(c *C) {
 	fc := funcs[ast.Collation]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.NotNil(t, f)
-	require.NoError(t, err)
-	require.Equal(t, 64, f.getRetTp().GetFlen())
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	c.Assert(f, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(f.getRetTp().Flen, Equals, 64)
 }
 
-func TestRowCount(t *testing.T) {
+func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
-	require.NoError(t, err)
-	require.NotNil(t, f)
+	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
 	sig, ok := f.(*builtinRowCountSig)
-	require.True(t, ok)
-	require.NotNil(t, sig)
+	c.Assert(ok, IsTrue)
+	c.Assert(sig, NotNil)
 	intResult, isNull, err := sig.evalInt(chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(10), intResult)
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(10))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 // TestTiDBVersion for tidb_server().
-func TestTiDBVersion(t *testing.T) {
-	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
-	require.NoError(t, err)
+func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
+	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
+	c.Assert(err, IsNil)
 	v, err := f.Eval(chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, printer.GetTiDBInfo(), v.GetString())
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, printer.GetTiDBInfo())
 }
 
-func TestLastInsertID(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64
@@ -259,46 +241,45 @@ func TestLastInsertID(t *testing.T) {
 		{math.MaxUint64, nil, math.MaxUint64, false, false},
 	}
 
-	for _, c := range cases {
+	for _, t := range cases {
 		var (
 			f   Expression
 			err error
 		)
-		if c.insertID > 0 {
-			ctx.GetSessionVars().StmtCtx.PrevLastInsertID = c.insertID
+		if t.insertID > 0 {
+			s.ctx.GetSessionVars().StmtCtx.PrevLastInsertID = t.insertID
 		}
 
-		if c.args != nil {
-			f, err = newFunctionForTest(ctx, ast.LastInsertId, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		if t.args != nil {
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, s.primitiveValsToConstants([]interface{}{t.args})...)
 		} else {
-			f, err = newFunctionForTest(ctx, ast.LastInsertId)
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId)
 		}
 		tp := f.GetType()
-		require.NoError(t, err)
-		require.Equal(t, mysql.TypeLonglong, tp.GetType())
-		require.Equal(t, charset.CharsetBin, tp.GetCharset())
-		require.Equal(t, charset.CollationBin, tp.GetCollate())
-		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
-		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
+		c.Assert(err, IsNil)
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, mysql.BinaryFlag)
+		c.Assert(tp.Flen, Equals, mysql.MaxIntWidth)
 		d, err := f.Eval(chunk.Row{})
-		if c.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, c.expected, d.GetUint64())
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
 
-	_, err := funcs[ast.LastInsertId].getFunction(ctx, []Expression{NewZero()})
-	require.NoError(t, err)
+	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestFormatBytes(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestFormatBytes(c *C) {
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -316,18 +297,17 @@ func TestFormatBytes(t *testing.T) {
 	}
 	Dtbl := tblToDtbl(tbl)
 
-	for _, tt := range Dtbl {
+	for _, t := range Dtbl {
 		fc := funcs[ast.FormatBytes]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
-		require.NoError(t, err)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Ret"][0], v)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
-func TestFormatNanoTime(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestFormatNanoTime(c *C) {
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -345,12 +325,12 @@ func TestFormatNanoTime(t *testing.T) {
 	}
 	Dtbl := tblToDtbl(tbl)
 
-	for _, tt := range Dtbl {
+	for _, t := range Dtbl {
 		fc := funcs[ast.FormatNanoTime]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
-		require.NoError(t, err)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Ret"][0], v)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }

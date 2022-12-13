@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +16,6 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -32,14 +30,17 @@ type ReloadOptRuleBlacklistExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	return LoadOptRuleBlacklist(internalCtx, e.ctx)
+	return LoadOptRuleBlacklist(e.ctx)
 }
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
-func LoadOptRuleBlacklist(ctx context.Context, sctx sessionctx.Context) (err error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
+func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
+	if err != nil {
+		return err
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return err
 	}

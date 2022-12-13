@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +17,9 @@ import (
 	"context"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -77,7 +76,7 @@ type mergeJoinTable struct {
 
 func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	child := exec.children[t.childIndex]
-	t.childChunk = tryNewCacheChunk(child)
+	t.childChunk = newFirstChunk(child)
 	t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	items := make([]expression.Expression, 0, len(t.joinKeys))
@@ -93,14 +92,14 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
 		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
 		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
-		if variable.EnableTmpStorageOnOOM.Load() {
+		if config.GetGlobalConfig().OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
 			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
 				if val.(bool) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
 			})
-			exec.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
+			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {
@@ -322,7 +321,6 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 	innerIter := e.innerTable.groupRowsIter
 	outerIter := e.outerTable.groupRowsIter
 	for !req.IsFull() {
-		failpoint.Inject("ConsumeRandomPanic", nil)
 		if innerIter.Current() == innerIter.End() {
 			if err := e.innerTable.fetchNextInnerGroup(ctx, e); err != nil {
 				return err

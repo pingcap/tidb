@@ -8,56 +8,56 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv_test
+package kv
 
 import (
 	"bytes"
 	"errors"
-	"strconv"
 	"testing"
 	"time"
-	"unsafe"
 
-	"github.com/pingcap/kvproto/pkg/coprocessor"
-	. "github.com/pingcap/tidb/kv"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestPartialNext(t *testing.T) {
+var _ = Suite(&testKeySuite{})
+
+type testKeySuite struct {
+}
+
+func (s *testKeySuite) TestPartialNext(c *C) {
+	defer testleak.AfterTest(c)()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
-	require.NoError(t, err)
+	c.Check(err, IsNil)
 	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
-	require.NoError(t, err)
+	c.Check(err, IsNil)
 
 	// We only use first column value to seek.
 	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
-	require.NoError(t, err)
+	c.Check(err, IsNil)
 
 	nextKey := Key(seekKey).Next()
 	cmp := bytes.Compare(nextKey, keyA)
-	assert.Equal(t, -1, cmp)
+	c.Assert(cmp, Equals, -1)
 
 	// Use next partial key, we can skip all index keys with first column value equal to "abc".
 	nextPartialKey := Key(seekKey).PrefixNext()
 	cmp = bytes.Compare(nextPartialKey, keyA)
-	assert.Equal(t, 1, cmp)
+	c.Assert(cmp, Equals, 1)
 
 	cmp = bytes.Compare(nextPartialKey, keyB)
-	assert.Equal(t, -1, cmp)
+	c.Assert(cmp, Equals, -1)
 }
 
-func TestIsPoint(t *testing.T) {
+func (s *testKeySuite) TestIsPoint(c *C) {
 	tests := []struct {
 		start   []byte
 		end     []byte
@@ -99,131 +99,111 @@ func TestIsPoint(t *testing.T) {
 			isPoint: false,
 		},
 	}
-
 	for _, tt := range tests {
 		kr := KeyRange{
 			StartKey: tt.start,
 			EndKey:   tt.end,
 		}
-		assert.Equal(t, tt.isPoint, kr.IsPoint())
+		c.Check(kr.IsPoint(), Equals, tt.isPoint)
 	}
 }
 
-func TestBasicFunc(t *testing.T) {
-	assert.False(t, IsTxnRetryableError(nil))
-	assert.True(t, IsTxnRetryableError(ErrTxnRetryable))
-	assert.False(t, IsTxnRetryableError(errors.New("test")))
+func (s *testKeySuite) TestBasicFunc(c *C) {
+	c.Assert(IsTxnRetryableError(nil), IsFalse)
+	c.Assert(IsTxnRetryableError(ErrTxnRetryable), IsTrue)
+	c.Assert(IsTxnRetryableError(errors.New("test")), IsFalse)
 }
 
-func TestHandle(t *testing.T) {
+func (s *testKeySuite) TestHandle(c *C) {
 	ih := IntHandle(100)
-	assert.True(t, ih.IsInt())
-
+	c.Assert(ih.IsInt(), IsTrue)
 	_, iv, _ := codec.DecodeInt(ih.Encoded())
-	assert.Equal(t, ih.IntValue(), iv)
-
+	c.Assert(iv, Equals, ih.IntValue())
 	ih2 := ih.Next()
-	assert.Equal(t, int64(101), ih2.IntValue())
-	assert.False(t, ih.Equal(ih2))
-	assert.Equal(t, -1, ih.Compare(ih2))
-	assert.Equal(t, "100", ih.String())
-
-	ch := testutil.MustNewCommonHandle(t, 100, "abc")
-	assert.False(t, ch.IsInt())
-
+	c.Assert(ih2.IntValue(), Equals, int64(101))
+	c.Assert(ih.Equal(ih2), IsFalse)
+	c.Assert(ih.Compare(ih2), Equals, -1)
+	c.Assert(ih.String(), Equals, "100")
+	ch := mustNewCommonHandle(c, 100, "abc")
+	c.Assert(ch.IsInt(), IsFalse)
 	ch2 := ch.Next()
-	assert.False(t, ch.Equal(ch2))
-	assert.Equal(t, -1, ch.Compare(ch2))
-	assert.Len(t, ch2.Encoded(), len(ch.Encoded()))
-	assert.Equal(t, 2, ch.NumCols())
-
+	c.Assert(ch.Equal(ch2), IsFalse)
+	c.Assert(ch.Compare(ch2), Equals, -1)
+	c.Assert(ch2.Encoded(), HasLen, len(ch.Encoded()))
+	c.Assert(ch.NumCols(), Equals, 2)
 	_, d, err := codec.DecodeOne(ch.EncodedCol(0))
-	assert.Nil(t, err)
-	assert.Equal(t, int64(100), d.GetInt64())
-
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, int64(100))
 	_, d, err = codec.DecodeOne(ch.EncodedCol(1))
-	assert.Nil(t, err)
-	assert.Equal(t, "abc", d.GetString())
-	assert.Equal(t, "{100, abc}", ch.String())
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "abc")
+	c.Assert(ch.String(), Equals, "{100, abc}")
 }
 
-func TestPaddingHandle(t *testing.T) {
+func (s *testKeySuite) TestPaddingHandle(c *C) {
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
-	assert.Nil(t, err)
-	assert.Less(t, len(encoded), 9)
-
+	c.Assert(err, IsNil)
+	c.Assert(len(encoded), Less, 9)
 	handle, err := NewCommonHandle(encoded)
-	assert.Nil(t, err)
-	assert.Len(t, handle.Encoded(), 9)
-	assert.Equal(t, encoded, handle.EncodedCol(0))
-
+	c.Assert(err, IsNil)
+	c.Assert(handle.Encoded(), HasLen, 9)
+	c.Assert(handle.EncodedCol(0), BytesEquals, encoded)
 	newHandle, err := NewCommonHandle(handle.Encoded())
-	assert.Nil(t, err)
-	assert.Equal(t, handle.EncodedCol(0), newHandle.EncodedCol(0))
+	c.Assert(err, IsNil)
+	c.Assert(newHandle.EncodedCol(0), BytesEquals, handle.EncodedCol(0))
 }
 
-func TestHandleMap(t *testing.T) {
+func (s *testKeySuite) TestHandleMap(c *C) {
 	m := NewHandleMap()
 	h := IntHandle(1)
-
 	m.Set(h, 1)
 	v, ok := m.Get(h)
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
-
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, 1)
 	m.Delete(h)
 	v, ok = m.Get(h)
-	assert.False(t, ok)
-	assert.Nil(t, v)
-
-	ch := testutil.MustNewCommonHandle(t, 100, "abc")
+	c.Assert(ok, IsFalse)
+	c.Assert(v, IsNil)
+	ch := mustNewCommonHandle(c, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
-	assert.True(t, ok)
-	assert.Equal(t, "a", v)
-
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "a")
 	m.Delete(ch)
 	v, ok = m.Get(ch)
-	assert.False(t, ok)
-	assert.Nil(t, v)
-
+	c.Assert(ok, IsFalse)
+	c.Assert(v, IsNil)
 	m.Set(ch, "a")
-	ch2 := testutil.MustNewCommonHandle(t, 101, "abc")
+	ch2 := mustNewCommonHandle(c, 101, "abc")
 	m.Set(ch2, "b")
-	ch3 := testutil.MustNewCommonHandle(t, 99, "def")
+	ch3 := mustNewCommonHandle(c, 99, "def")
 	m.Set(ch3, "c")
-	assert.Equal(t, 3, m.Len())
-
+	c.Assert(m.Len(), Equals, 3)
 	cnt := 0
 	m.Range(func(h Handle, val interface{}) bool {
 		cnt++
 		if h.Equal(ch) {
-			assert.Equal(t, "a", val)
+			c.Assert(val, Equals, "a")
 		} else if h.Equal(ch2) {
-			assert.Equal(t, "b", val)
+			c.Assert(val, Equals, "b")
 		} else {
-			assert.Equal(t, "c", val)
+			c.Assert(val, Equals, "c")
 		}
 		if cnt == 2 {
 			return false
 		}
 		return true
 	})
-
-	assert.Equal(t, 2, cnt)
+	c.Assert(cnt, Equals, 2)
 }
 
-func TestKeyRangeDefinition(t *testing.T) {
-	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
-	// This allow us to use unsafe pointer to convert them and reduce allocation.
-	var r1 KeyRange
-	var r2 coprocessor.KeyRange
-	// Same size.
-	require.Equal(t, unsafe.Sizeof(r1), unsafe.Sizeof(r2))
-	// And same default value.
-	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
-	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+func mustNewCommonHandle(c *C, values ...interface{}) *CommonHandle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, IsNil)
+	ch, err := NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	return ch
 }
 
 func BenchmarkIsPoint(b *testing.B) {
@@ -234,85 +214,5 @@ func BenchmarkIsPoint(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		kr.IsPoint()
-	}
-}
-
-var result int
-
-var inputs = []struct {
-	input int
-}{
-	{input: 1},
-	{input: 100},
-	{input: 10000},
-	{input: 1000000},
-}
-
-func memAwareIntMap(size int, handles []Handle) int {
-	var x int
-	m := NewMemAwareHandleMap[int]()
-	for j := 0; j < size; j++ {
-		m.Set(handles[j], j)
-	}
-	for j := 0; j < size; j++ {
-		x, _ = m.Get(handles[j])
-	}
-	return x
-}
-
-func nativeIntMap(size int, handles []Handle) int {
-	var x int
-	m := make(map[Handle]int)
-	for j := 0; j < size; j++ {
-		m[handles[j]] = j
-	}
-
-	for j := 0; j < size; j++ {
-		x = m[handles[j]]
-	}
-	return x
-}
-
-func BenchmarkMemAwareHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
-	for _, s := range inputs {
-		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
-			if i%2 == 0 {
-				handles[i] = IntHandle(i)
-			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
-				handles[i], _ = NewCommonHandle(handleBytes)
-			}
-		}
-		b.Run("MemAwareIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
-			var x int
-			for i := 0; i < b.N; i++ {
-				x = memAwareIntMap(s.input, handles)
-			}
-			result = x
-		})
-	}
-}
-
-func BenchmarkNativeHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
-	for _, s := range inputs {
-		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
-			if i%2 == 0 {
-				handles[i] = IntHandle(i)
-			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
-				handles[i], _ = NewCommonHandle(handleBytes)
-			}
-		}
-		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
-			var x int
-			for i := 0; i < b.N; i++ {
-				x = nativeIntMap(s.input, handles)
-			}
-			result = x
-		})
 	}
 }

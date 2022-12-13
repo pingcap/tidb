@@ -8,18 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package lock
 
 import (
-	"errors"
-
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -31,9 +28,6 @@ type Checker struct {
 	is  infoschema.InfoSchema
 }
 
-// ErrLockedTableDropped returns error when try to drop the table with write lock
-var ErrLockedTableDropped = errors.New("other table can be accessed after locked table dropped")
-
 // NewChecker return new lock Checker.
 func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 	return &Checker{ctx: ctx, is: is}
@@ -41,7 +35,7 @@ func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 
 // CheckTableLock uses to check table lock.
 func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType, alterWriteable bool) error {
-	if db == "" && table == "" || privilege == mysql.LockTablesPriv {
+	if db == "" && table == "" {
 		return nil
 	}
 	// System DB and memory DB are not support table lock.
@@ -52,7 +46,6 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if !alterWriteable && table == "" {
 		return c.CheckLockInDB(db, privilege)
 	}
-
 	switch privilege {
 	case mysql.ShowDBPriv, mysql.AllPrivMask:
 		// AllPrivMask only used in show create table statement now.
@@ -74,23 +67,6 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if err != nil {
 		return err
 	}
-	if tb.Meta().Lock == nil {
-		return nil
-	}
-	if privilege == mysql.DropPriv && tb.Meta().Name.O == table && c.ctx.HasLockedTables() {
-		lockTables := c.ctx.GetAllTableLocks()
-		for _, lockT := range lockTables {
-			if lockT.TableID == tb.Meta().ID {
-				switch tb.Meta().Lock.Tp {
-				case model.TableLockWrite:
-					return ErrLockedTableDropped
-				case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
-					return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
-				}
-			}
-		}
-	}
-
 	if !alterWriteable && c.ctx.HasLockedTables() {
 		if locked, tp := c.ctx.CheckTableLocked(tb.Meta().ID); locked {
 			if checkLockTpMeetPrivilege(tp, privilege) {
@@ -99,6 +75,10 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 			return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
 		}
 		return infoschema.ErrTableNotLocked.GenWithStackByArgs(tb.Meta().Name)
+	}
+
+	if tb.Meta().Lock == nil {
+		return nil
 	}
 
 	if privilege == mysql.SelectPriv {

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,14 +16,14 @@ package executor
 import (
 	"context"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // WindowExec is the executor for window functions.
@@ -151,7 +150,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
-	childResult := tryNewCacheChunk(e.children[0])
+	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -162,7 +161,7 @@ func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 		return true, nil
 	}
 
-	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
+	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err

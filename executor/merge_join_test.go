@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,16 +17,15 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"sort"
 	"strconv"
-	"testing"
+	"strings"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 const plan1 = `[[TableScan_12 {
@@ -222,87 +220,85 @@ const plan3 = `[[TableScan_12 {
     "desc": "false"
 } ]]`
 
-func checkMergeAndRun(tk *testkit.TestKit, t *testing.T, sql string) *testkit.Result {
+func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 	explainedSQL := "explain format = 'brief' " + sql
 	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
-	require.Contains(t, resultStr, "MergeJoin")
+	if !strings.ContainsAny(resultStr, "MergeJoin") {
+		c.Error("Expected MergeJoin in plan.")
+	}
 	return tk.MustQuery(sql)
 }
 
-func checkPlanAndRun(tk *testkit.TestKit, t *testing.T, plan string, sql string) *testkit.Result {
+func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
 	explainedSQL := "explain format = 'brief' " + sql
-	/* result := */ tk.MustQuery(explainedSQL)
+	tk.MustQuery(explainedSQL)
+
 	// TODO: Reopen it after refactoring explain.
 	// resultStr := fmt.Sprintf("%v", result.Rows())
-	// require.Equal(t, resultStr, plan)
+	// if plan != resultStr {
+	//     c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
+	// }
 	return tk.MustQuery(sql)
 }
 
-func TestShuffleMergeJoinInDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
+func (s *testSerialSuite1) TestShuffleMergeJoinInDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"), IsNil)
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	sm := &testkit.MockSessionManager{
+	sm := &mockSessionManager1{
 		PS: make([]*util.ProcessInfo, 0),
 	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_merge_join_concurrency=4;")
-	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3),(4,4)")
-	for i := 1; i <= 1024; i += 4 {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v,%v),(%v,%v),(%v,%v),(%v,%v)", i, i, i+1, i+1, i+2, i+2, i+3, i+3))
-	}
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("insert into t1 values(1,3),(4,4)")
 
-	var expect []string
-	expect = append(expect, "1 1 1 1")
-	for i := 21; i <= 1024; i++ {
-		expect = append(expect, fmt.Sprintf("%v %v <nil> <nil>", i, i))
-	}
-	sort.Strings(expect)
-	result.Sort().Check(testkit.Rows(expect...))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
+	result := checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("1 3 1 1"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
 }
+func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210618")
 
-func TestMergeJoinInDisk(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210618")
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
+		conf.OOMUseTmpStorage = true
 	})
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"), IsNil)
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
+
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	sm := &testkit.MockSessionManager{
+	sm := &mockSessionManager1{
 		PS: make([]*util.ProcessInfo, 0),
 	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("drop table if exists t")
@@ -312,17 +308,16 @@ func TestMergeJoinInDisk(t *testing.T) {
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("insert into t1 values(1,3),(4,4)")
 
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result := checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 3 1 1"))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
 }
 
-func TestMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite2) TestMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -332,15 +327,15 @@ func TestMergeJoin(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result := checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 1 <nil> <nil>"))
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("<nil> <nil> 1 1"))
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows())
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
 	result.Check(testkit.Rows())
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
 
 	tk.MustExec("drop table if exists t1")
@@ -481,9 +476,8 @@ func TestMergeJoin(t *testing.T) {
 		"4", "3", "2", "1"))
 }
 
-func TestShuffleMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite2) TestShuffleMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 
@@ -494,15 +488,15 @@ func TestShuffleMergeJoin(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result := checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 1 <nil> <nil>"))
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("<nil> <nil> 1 1"))
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows())
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
 	result.Check(testkit.Rows())
-	result = checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
+	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
 
 	tk.MustExec("drop table if exists t1")
@@ -643,9 +637,8 @@ func TestShuffleMergeJoin(t *testing.T) {
 		"4", "3", "2", "1"))
 }
 
-func Test3WaysMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite2) Test3WaysMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1")
@@ -657,21 +650,20 @@ func Test3WaysMergeJoin(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,1),(2,2),(3,3)")
 	tk.MustExec("insert into t2 values(2,3),(3,4),(4,5)")
 	tk.MustExec("insert into t3 values(1,2),(2,4),(3,10)")
-	result := checkPlanAndRun(tk, t, plan1, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result := checkPlanAndRun(tk, c, plan1, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
-	result = checkPlanAndRun(tk, t, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result = checkPlanAndRun(tk, c, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
 	// In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
 	// On the other hand, t1 order kept so no final sort appended
-	result = checkPlanAndRun(tk, t, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
+	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
 
-func Test3WaysShuffleMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite2) Test3WaysShuffleMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 
@@ -684,21 +676,20 @@ func Test3WaysShuffleMergeJoin(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,1),(2,2),(3,3)")
 	tk.MustExec("insert into t2 values(2,3),(3,4),(4,5)")
 	tk.MustExec("insert into t3 values(1,2),(2,4),(3,10)")
-	result := checkPlanAndRun(tk, t, plan1, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result := checkPlanAndRun(tk, c, plan1, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
-	result = checkPlanAndRun(tk, t, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result = checkPlanAndRun(tk, c, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
 	// In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
 	// On the other hand, t1 order kept so no final sort appended
-	result = checkPlanAndRun(tk, t, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
+	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
 
-func TestMergeJoinDifferentTypes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -735,11 +726,9 @@ func TestMergeJoinDifferentTypes(t *testing.T) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
-//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
-func TestVectorizedMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
@@ -781,11 +770,11 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			`│ └─TableReader 3320.01 root  data:Selection`,
+			fmt.Sprintf(`│ └─TableReader 3320.01 root  data:Selection`),
 			fmt.Sprintf(`│   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`└─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			`  └─TableReader 3330.00 root  data:Selection`,
+			fmt.Sprintf(`  └─TableReader 3330.00 root  data:Selection`),
 			fmt.Sprintf(`    └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`      └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -793,10 +782,10 @@ func TestVectorizedMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			`├─TableReader(Build) 3320.01 root  data:Selection`,
+			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			`└─TableReader(Probe) 3330.00 root  data:Selection`,
+			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -807,21 +796,21 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		r2 := tk.MustQuery(fmt.Sprintf("select /*+ TIDB_HJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Sort()
-		require.Equal(t, len(r2.Rows()), len(r1.Rows()))
+		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
 
 		i := 0
 		n := len(r1.Rows())
 		for i < n {
-			require.Equal(t, len(r2.Rows()[i]), len(r1.Rows()[i]))
+			c.Assert(len(r1.Rows()[i]), Equals, len(r2.Rows()[i]))
 			for j := range r1.Rows()[i] {
-				require.Equal(t, r2.Rows()[i][j], r1.Rows()[i][j])
+				c.Assert(r1.Rows()[i][j], Equals, r2.Rows()[i][j])
 			}
 			i += rand.Intn((n-i)/5+1) + 1 // just compare parts of results to speed up
 		}
 	}
 
-	tk.Session().GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
-	chunkSize := tk.Session().GetSessionVars().MaxChunkSize
+	tk.Se.GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
+	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
 	cases := []struct {
 		t1 []int
 		t2 []int
@@ -853,12 +842,11 @@ func TestVectorizedMergeJoin(t *testing.T) {
 }
 
 // TestVectorizedShuffleMergeJoin is used to test vectorized shuffle merge join with some corner cases.
-//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
-func TestVectorizedShuffleMergeJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteJoin3) TestVectorizedShuffleMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
+	tk.MustExec("use test")
 	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
@@ -898,14 +886,14 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ TIDB_SMJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
-			`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`,
+			fmt.Sprintf(`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`),
 			fmt.Sprintf(`└─MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`  ├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			`  │ └─TableReader 3320.01 root  data:Selection`,
+			fmt.Sprintf(`  │ └─TableReader 3320.01 root  data:Selection`),
 			fmt.Sprintf(`  │   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`  │     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`  └─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			`    └─TableReader 3330.00 root  data:Selection`,
+			fmt.Sprintf(`    └─TableReader 3330.00 root  data:Selection`),
 			fmt.Sprintf(`      └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`        └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -913,10 +901,10 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			`├─TableReader(Build) 3320.01 root  data:Selection`,
+			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			`└─TableReader(Probe) 3330.00 root  data:Selection`,
+			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -927,21 +915,21 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 		r2 := tk.MustQuery(fmt.Sprintf("select /*+ TIDB_HJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Sort()
-		require.Equal(t, len(r2.Rows()), len(r1.Rows()))
+		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
 
 		i := 0
 		n := len(r1.Rows())
 		for i < n {
-			require.Equal(t, len(r2.Rows()[i]), len(r1.Rows()[i]))
+			c.Assert(len(r1.Rows()[i]), Equals, len(r2.Rows()[i]))
 			for j := range r1.Rows()[i] {
-				require.Equal(t, r2.Rows()[i][j], r1.Rows()[i][j])
+				c.Assert(r1.Rows()[i][j], Equals, r2.Rows()[i][j])
 			}
 			i += rand.Intn((n-i)/5+1) + 1 // just compare parts of results to speed up
 		}
 	}
 
-	tk.Session().GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
-	chunkSize := tk.Session().GetSessionVars().MaxChunkSize
+	tk.Se.GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
+	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
 	cases := []struct {
 		t1 []int
 		t2 []int
@@ -968,10 +956,9 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 	}
 }
 
-func TestMergeJoinWithOtherConditions(t *testing.T) {
+func (s *testSuite2) TestMergeJoinWithOtherConditions(c *C) {
 	// more than one inner tuple should be filtered on other conditions
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists R;`)
 	tk.MustExec(`drop table if exists Y;`)
@@ -986,10 +973,9 @@ func TestMergeJoinWithOtherConditions(t *testing.T) {
 	))
 }
 
-func TestShuffleMergeJoinWithOtherConditions(t *testing.T) {
+func (s *testSuite2) TestShuffleMergeJoinWithOtherConditions(c *C) {
 	// more than one inner tuple should be filtered on other conditions
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec(`drop table if exists R;`)

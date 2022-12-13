@@ -1,6 +1,0 @@
-bin/
-y.go
-*.output
-.idea/
-.vscode/
-coverage.txt

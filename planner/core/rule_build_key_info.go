@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,17 +16,17 @@ package core
 import (
 	"context"
 
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 )
 
 type buildKeySolver struct{}
 
-func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
-	buildKeyInfo(p)
-	return p, nil
+func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+	buildKeyInfo(lp)
+	return lp, nil
 }
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
@@ -48,10 +47,6 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	la.buildSelfKeyInfo(selfSchema)
-}
-
-func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
 		indices := selfSchema.ColumnsIndices(groupByCols)
@@ -70,7 +65,7 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+func (p *LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
 	if len(eqColIDs) == 0 {
 		return false
 	}
@@ -127,10 +122,10 @@ func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	lt.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if lt.Count == 1 {
-		lt.maxOneRow = true
+func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.Count == 1 {
+		p.maxOneRow = true
 	}
 }
 
@@ -241,7 +236,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 				uniqueKey = append(uniqueKey, schema.Columns[i])
 				findUniqueKey = true
 				if newKeyOK {
-					if !mysql.HasNotNullFlag(col.GetFlag()) {
+					if !mysql.HasNotNullFlag(col.Flag) {
 						newKeyOK = false
 						break
 					}
@@ -266,30 +261,13 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	var latestIndexes map[int64]*model.IndexInfo
-	var changed bool
-	var err error
-	check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
-	check = check && ds.ctx.GetSessionVars().ConnectionID > 0
-	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
-	if check {
-		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
-		if err != nil {
-			return
-		}
-	}
-	for _, index := range ds.table.Meta().Indices {
-		if ds.isForUpdateRead && changed {
-			latestIndex, ok := latestIndexes[index.ID]
-			if !ok || latestIndex.State != model.StatePublic {
-				continue
-			}
-		} else if index.State != model.StatePublic {
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsIntHandlePath {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
@@ -297,7 +275,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	}
 	if ds.tableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
+			if mysql.HasPriKeyFlag(col.Flag) {
 				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
 				break
 			}
@@ -311,7 +289,7 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.possibleAccessPaths {
 		if path.IsTablePath() {
@@ -330,7 +308,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (tg *TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }
 

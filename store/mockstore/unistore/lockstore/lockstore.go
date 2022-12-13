@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -233,7 +232,7 @@ func (ls *MemStore) findLess(key []byte, allowEqual bool) (entry, bool) {
 // findSpliceForLevel returns (outBefore, outAfter) with outBefore.key < key <= outAfter.key.
 // The input "before" tells us where to start looking.
 // If we found a node with the same key, then we return true.
-func (*MemStore) findSpliceForLevel(arena *arena, key []byte, before *node, level int) (*node, *node, bool) {
+func (ls *MemStore) findSpliceForLevel(arena *arena, key []byte, before *node, level int) (*node, *node, bool) {
 	for {
 		// Assume before.key < key.
 		nextAddr := before.getNextAddr(level)
@@ -274,7 +273,7 @@ func (ls *MemStore) findLast() entry {
 	}
 }
 
-func (*MemStore) getNode(arena *arena, addr arenaAddr) *node {
+func (ls *MemStore) getNode(arena *arena, addr arenaAddr) *node {
 	data := arena.get(addr, nodeHeaderSize)
 	return (*node)(unsafe.Pointer(&data[0]))
 }

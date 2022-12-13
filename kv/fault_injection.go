@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +17,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -58,8 +57,17 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 }
 
 // Begin creates an injected Transaction.
-func (s *InjectedStore) Begin(opts ...tikv.TxnOption) (Transaction, error) {
-	txn, err := s.Storage.Begin(opts...)
+func (s *InjectedStore) Begin() (Transaction, error) {
+	txn, err := s.Storage.Begin()
+	return &InjectedTransaction{
+		Transaction: txn,
+		cfg:         s.cfg,
+	}, err
+}
+
+// BeginWithOption creates an injected Transaction with given option.
+func (s *InjectedStore) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
+	txn, err := s.Storage.BeginWithOption(option)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

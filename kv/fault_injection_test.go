@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,16 +15,18 @@ package kv
 
 import (
 	"context"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
-func TestFaultInjectionBasic(t *testing.T) {
+type testFaultInjectionSuite struct{}
+
+var _ = Suite(testFaultInjectionSuite{})
+
+func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	var cfg InjectionConfig
 	err1 := errors.New("foo")
 	cfg.SetGetError(err1)
@@ -33,62 +34,54 @@ func TestFaultInjectionBasic(t *testing.T) {
 
 	storage := NewInjectedStore(newMockStorage(), &cfg)
 	txn, err := storage.Begin()
-	require.NoError(t, err)
-
-	_, err = storage.Begin(tikv.WithTxnScope(GlobalTxnScope), tikv.WithStartTS(0))
-	require.NoError(t, err)
-
+	c.Assert(err, IsNil)
+	_, err = storage.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(GlobalTxnScope).SetStartTS(0))
+	c.Assert(err, IsNil)
 	ver := Version{Ver: 1}
 	snap := storage.GetSnapshot(ver)
 	b, err := txn.Get(context.TODO(), []byte{'a'})
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, b)
-
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(b, IsNil)
 	b, err = snap.Get(context.TODO(), []byte{'a'})
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, b)
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(b, IsNil)
 
 	bs, err := snap.BatchGet(context.Background(), nil)
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, bs)
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(bs, IsNil)
 
 	bs, err = txn.BatchGet(context.Background(), nil)
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, bs)
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(bs, IsNil)
 
 	err = txn.Commit(context.Background())
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
+	c.Assert(err.Error(), Equals, err1.Error())
 
 	cfg.SetGetError(nil)
 	cfg.SetCommitError(nil)
 
 	storage = NewInjectedStore(newMockStorage(), &cfg)
 	txn, err = storage.Begin()
-	assert.Nil(t, err)
-
+	c.Assert(err, IsNil)
 	snap = storage.GetSnapshot(ver)
+
 	b, err = txn.Get(context.TODO(), []byte{'a'})
-	assert.Nil(t, err)
-	assert.Nil(t, b)
+	c.Assert(err, IsNil)
+	c.Assert(b, IsNil)
 
 	bs, err = txn.BatchGet(context.Background(), nil)
-	assert.Nil(t, err)
-	assert.Nil(t, bs)
+	c.Assert(err, IsNil)
+	c.Assert(bs, IsNil)
 
 	b, err = snap.Get(context.TODO(), []byte{'a'})
-	assert.True(t, terror.ErrorEqual(ErrNotExist, err))
-	assert.Nil(t, b)
+	c.Assert(terror.ErrorEqual(ErrNotExist, err), IsTrue)
+	c.Assert(b, IsNil)
 
 	bs, err = snap.BatchGet(context.Background(), []Key{[]byte("a")})
-	assert.Nil(t, err)
-	assert.Len(t, bs, 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(bs), Equals, 0)
 
 	err = txn.Commit(context.Background())
-	assert.NotNil(t, err)
-	assert.True(t, terror.ErrorEqual(err, ErrTxnRetryable))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ErrTxnRetryable), IsTrue)
 }

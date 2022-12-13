@@ -8,25 +8,27 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestWrapCastForAggFuncs(t *testing.T) {
+var _ = Suite(&testInjectProjSuite{})
+
+type testInjectProjSuite struct {
+}
+
+func (s *testInjectProjSuite) TestWrapCastForAggFuncs(c *C) {
 	aggNames := []string{ast.AggFuncSum}
 	modes := []aggregation.AggFunctionMode{aggregation.CompleteMode,
 		aggregation.FinalMode, aggregation.Partial1Mode, aggregation.Partial1Mode}
@@ -42,7 +44,7 @@ func TestWrapCastForAggFuncs(t *testing.T) {
 					aggFunc, err := aggregation.NewAggFuncDesc(sctx, name,
 						[]expression.Expression{&expression.Constant{Value: types.Datum{}, RetType: types.NewFieldType(retType)}},
 						hasDistinct)
-					require.NoError(t, err)
+					c.Assert(err, IsNil)
 					aggFunc.Mode = mode
 					aggFuncs = append(aggFuncs, aggFunc)
 				}
@@ -58,9 +60,9 @@ func TestWrapCastForAggFuncs(t *testing.T) {
 	wrapCastForAggFuncs(mock.NewContext(), aggFuncs)
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
-			require.Equal(t, aggFuncs[i].Args[0].GetType().GetType(), aggFuncs[i].RetTp.GetType())
+			c.Assert(aggFuncs[i].RetTp.Tp, Equals, aggFuncs[i].Args[0].GetType().Tp)
 		} else {
-			require.Equal(t, orgAggFuncs[i].Args[0].GetType().GetType(), aggFuncs[i].Args[0].GetType().GetType())
+			c.Assert(aggFuncs[i].Args[0].GetType().Tp, Equals, orgAggFuncs[i].Args[0].GetType().Tp)
 		}
 	}
 }

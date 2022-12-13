@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,30 +15,30 @@ package kv
 
 import (
 	"context"
-	"testing"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/pingcap/check"
 )
 
-func TestInterface(t *testing.T) {
+var _ = Suite(testMockSuite{})
+
+type testMockSuite struct {
+}
+
+func (s testMockSuite) TestInterface(c *C) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
 	version, err := storage.CurrentVersion(GlobalTxnScope)
-	assert.Nil(t, err)
-
+	c.Check(err, IsNil)
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
-	assert.Nil(t, err)
-
+	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)
+
 	transaction, err := storage.Begin()
-	assert.Nil(t, err)
-	assert.NotNil(t, transaction)
-
+	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
-	assert.Nil(t, err)
-
+	c.Check(err, IsNil)
 	transaction.SetOption(23, struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
 		mock.GetOption(23)
@@ -47,42 +46,59 @@ func TestInterface(t *testing.T) {
 	transaction.StartTS()
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
-		assert.Nil(t, err)
+		c.Check(err, IsNil)
 		err = transaction.Set(Key("lock"), []byte{})
-		assert.Nil(t, err)
+		c.Check(err, IsNil)
 		_, err = transaction.Iter(Key("lock"), nil)
-		assert.Nil(t, err)
+		c.Check(err, IsNil)
 		_, err = transaction.IterReverse(Key("lock"))
-		assert.Nil(t, err)
+		c.Check(err, IsNil)
 	}
-	_ = transaction.Commit(context.Background())
+	transaction.Commit(context.Background())
 
 	transaction, err = storage.Begin()
-	assert.Nil(t, err)
+	c.Check(err, IsNil)
 
 	// Test for mockTxn interface.
-	assert.Equal(t, "", transaction.String())
-	assert.True(t, transaction.Valid())
-	assert.Equal(t, 0, transaction.Len())
-	assert.Equal(t, 0, transaction.Size())
-	assert.Nil(t, transaction.GetMemBuffer())
-
+	c.Assert(transaction.String(), Equals, "")
+	c.Assert(transaction.Valid(), Equals, true)
+	c.Assert(transaction.Len(), Equals, 0)
+	c.Assert(transaction.Size(), Equals, 0)
+	c.Assert(transaction.GetMemBuffer(), IsNil)
 	transaction.Reset()
 	err = transaction.Rollback()
-	assert.Nil(t, err)
-	assert.False(t, transaction.Valid())
-	assert.False(t, transaction.IsPessimistic())
-	assert.Nil(t, transaction.Delete(nil))
+	c.Check(err, IsNil)
+	c.Assert(transaction.Valid(), Equals, false)
+	c.Assert(transaction.IsPessimistic(), Equals, false)
+	c.Assert(transaction.Delete(nil), IsNil)
 
-	assert.Nil(t, storage.GetOracle())
-	assert.Equal(t, "KVMockStorage", storage.Name())
-	assert.Equal(t, "KVMockStorage is a mock Store implementation, only for unittests in KV package", storage.Describe())
-	assert.False(t, storage.SupportDeleteRange())
+	// Test for mockStorage interface.
+	c.Assert(storage.GetOracle(), IsNil)
+	c.Assert(storage.Name(), Equals, "KVMockStorage")
+	c.Assert(storage.Describe(), Equals, "KVMockStorage is a mock Store implementation, only for unittests in KV package")
+	c.Assert(storage.SupportDeleteRange(), IsFalse)
 
 	status, err := storage.ShowStatus(context.Background(), "")
-	assert.Nil(t, status)
-	assert.Nil(t, err)
+	c.Assert(status, IsNil)
+	c.Assert(err, IsNil)
 
 	err = storage.Close()
-	assert.Nil(t, err)
+	c.Check(err, IsNil)
+}
+
+func (s testMockSuite) TestIsPoint(c *C) {
+	kr := KeyRange{
+		StartKey: Key("rowkey1"),
+		EndKey:   Key("rowkey2"),
+	}
+	c.Check(kr.IsPoint(), IsTrue)
+
+	kr.EndKey = Key("rowkey3")
+	c.Check(kr.IsPoint(), IsFalse)
+
+	kr = KeyRange{
+		StartKey: Key(""),
+		EndKey:   []byte{0},
+	}
+	c.Check(kr.IsPoint(), IsTrue)
 }

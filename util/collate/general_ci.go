@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,7 +21,7 @@ type generalCICollator struct {
 }
 
 // Compare implements Collator interface.
-func (*generalCICollator) Compare(a, b string) int {
+func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	r1, r2 := rune(0), rune(0)
@@ -41,11 +40,7 @@ func (*generalCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (gc *generalCICollator) Key(str string) []byte {
-	return gc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
-}
-
-// KeyWithoutTrimRightSpace implements Collator interface.
-func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
 	r := rune(0)
@@ -58,7 +53,7 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (*generalCICollator) Pattern() WildcardPattern {
+func (gc *generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
 }
 

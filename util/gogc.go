@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,14 +33,13 @@ func init() {
 }
 
 // SetGOGC update GOGC and related metrics.
-func SetGOGC(val int) int {
+func SetGOGC(val int) {
 	if val <= 0 {
 		val = 100
 	}
-	result := debug.SetGCPercent(val)
+	debug.SetGCPercent(val)
 	metrics.GOGC.Set(float64(val))
 	atomic.StoreInt64(&gogcValue, int64(val))
-	return result
 }
 
 // GetGOGC returns the current value of GOGC.

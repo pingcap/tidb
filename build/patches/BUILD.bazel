@@ -1,5 +1,0 @@
-filegroup(
-    name = "all_patches",
-    srcs = glob(["*.patch"]),
-    visibility = ["//visibility:public"],
-)

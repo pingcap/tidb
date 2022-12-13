@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -52,8 +51,6 @@ func introselect(data Interface, left, right, k int, depth int) int {
 	}
 }
 
-// quickselect is used in test for comparison.
-// nolint: unused
 func quickselect(data Interface, left, right, k int) int {
 	if left == right {
 		return left
@@ -84,8 +81,8 @@ func medianOfMedians(data Interface, left, right, k int) int {
 	}
 }
 
-func randomPivot(_ Interface, left, right int) int {
-	return left + (rand.Int() % (right - left + 1)) // #nosec G404
+func randomPivot(data Interface, left, right int) int {
+	return left + (rand.Int() % (right - left + 1))
 }
 
 func medianOfMediansPivot(data Interface, left, right int) int {

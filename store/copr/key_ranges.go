@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
-	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
@@ -104,8 +102,8 @@ func (r *KeyRanges) Do(f func(ran *kv.KeyRange)) {
 	if r.first != nil {
 		f(r.first)
 	}
-	for i := range r.mid {
-		f(&r.mid[i])
+	for _, ran := range r.mid {
+		f(&ran)
 	}
 	if r.last != nil {
 		f(r.last)
@@ -136,9 +134,10 @@ func (r *KeyRanges) Split(key []byte) (*KeyRanges, *KeyRanges) {
 func (r *KeyRanges) ToPBRanges() []*coprocessor.KeyRange {
 	ranges := make([]*coprocessor.KeyRange, 0, r.Len())
 	r.Do(func(ran *kv.KeyRange) {
-		// kv.KeyRange and coprocessor.KeyRange are the same,
-		// so use unsafe.Pointer to avoid allocation here.
-		ranges = append(ranges, (*coprocessor.KeyRange)(unsafe.Pointer(ran)))
+		ranges = append(ranges, &coprocessor.KeyRange{
+			Start: ran.StartKey,
+			End:   ran.EndKey,
+		})
 	})
 	return ranges
 }

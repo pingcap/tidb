@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,96 +19,112 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
+
+var _ = Suite(&testEncryptSuite{})
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+type testEncryptSuite struct {
+}
 
 func toHex(buf []byte) string {
 	return strings.ToUpper(hex.EncodeToString(buf))
 }
 
-func TestPad(t *testing.T) {
+func (s *testEncryptSuite) TestPad(c *C) {
+	defer testleak.AfterTest(c)()
+
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D}
 	p, err := PKCS7Pad(p, 8)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D04040404", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D04040404")
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D}
 	p, err = PKCS7Pad(p, 8)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D0A0B0C0D0808080808080808", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D0A0B0C0D0808080808080808")
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D}
 	p, err = PKCS7Pad(p, 16)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D0C0C0C0C0C0C0C0C0C0C0C0C", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D0C0C0C0C0C0C0C0C0C0C0C0C")
 }
 
-func TestUnpad(t *testing.T) {
+func (s *testEncryptSuite) TestUnpad(c *C) {
+	defer testleak.AfterTest(c)()
+
 	// Valid paddings.
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x04, 0x04}
 	p, err := PKCS7Unpad(p, 8)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D")
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	p, err = PKCS7Unpad(p, 8)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D0A0B0C0D", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D0A0B0C0D")
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C}
 	p, err = PKCS7Unpad(p, 16)
-	require.NoError(t, err)
-	require.Equal(t, "0A0B0C0D", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "0A0B0C0D")
 
 	p = []byte{0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	p, err = PKCS7Unpad(p, 8)
-	require.NoError(t, err)
-	require.Equal(t, "", toHex(p))
+	c.Assert(err, IsNil)
+	c.Assert(toHex(p), Equals, "")
 
 	// Invalid padding: incorrect block size
 	p = []byte{0x0A, 0x0B, 0x0C, 0x04, 0x04, 0x04, 0x04}
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x02, 0x03, 0x04, 0x04, 0x04, 0x04}
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	p = []byte{}
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Invalid padding: padding length > block length
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09}
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Invalid padding: padding length == 0
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x00}
 	//                                                   ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//                                                         ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x03, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//         ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x03, 0x04}
 	//                                             ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestAESECB(t *testing.T) {
+func (s *testEncryptSuite) TestAESECB(c *C) {
+	defer testleak.AfterTest(c)()
 	var commonInput = []byte{
 		0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
 		0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51,
@@ -171,21 +186,22 @@ func TestAESECB(t *testing.T) {
 		test := tt.name
 
 		cipher, err := aes.NewCipher(tt.key)
-		require.NoErrorf(t, err, "%s: NewCipher(%d bytes) = %s", test, len(tt.key), err)
+		c.Assert(err, IsNil, Commentf("%s: NewCipher(%d bytes) = %s", test, len(tt.key), err))
 
 		encrypter := newECBEncrypter(cipher)
 		d := make([]byte, len(tt.in))
 		encrypter.CryptBlocks(d, tt.in)
-		require.Equalf(t, toHex(tt.out), toHex(d), "%s: ECBEncrypter\nhave %x\nwant %x", test, d, tt.out)
+		c.Assert(toHex(tt.out), Equals, toHex(d), Commentf("%s: ECBEncrypter\nhave %x\nwant %x", test, d, tt.out))
 
 		decrypter := newECBDecrypter(cipher)
 		p := make([]byte, len(d))
 		decrypter.CryptBlocks(p, d)
-		require.Equalf(t, toHex(tt.in), toHex(p), "%s: ECBDecrypter\nhave %x\nwant %x", test, p, tt.in)
+		c.Assert(toHex(tt.in), Equals, toHex(p), Commentf("%s: ECBDecrypter\nhave %x\nwant %x", test, d, tt.in))
 	}
 }
 
-func TestAESEncryptWithECB(t *testing.T) {
+func (s *testEncryptSuite) TestAESEncryptWithECB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -197,27 +213,28 @@ func TestAESEncryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
 	}
 
-	for _, tt := range tests {
-		str := []byte(tt.str)
-		key := []byte(tt.key)
+	for _, t := range tests {
+		str := []byte(t.str)
+		key := []byte(t.key)
 
 		crypted, err := AESEncryptWithECB(str, key)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
 		result := toHex(crypted)
-		require.Equalf(t, tt.expect, result, "%v", tt)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestAESDecryptWithECB(t *testing.T) {
+func (s *testEncryptSuite) TestAESDecryptWithECB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		expect      string
 		key         string
@@ -229,30 +246,31 @@ func TestAESDecryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
-		// negative cases: invalid padding / padding size
+		// negtive cases: invalid padding / padding size
 		{"", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1122334455667711223311223344556611", true},
 	}
 
-	for _, tt := range tests {
-		cryptStr, _ := hex.DecodeString(tt.hexCryptStr)
-		key := []byte(tt.key)
+	for _, t := range tests {
+		cryptStr, _ := hex.DecodeString(t.hexCryptStr)
+		key := []byte(t.key)
 
 		result, err := AESDecryptWithECB(cryptStr, key)
-		if tt.isError {
-			require.Error(t, err)
+		if t.isError {
+			c.Assert(err, NotNil)
 			continue
 		}
-		require.NoError(t, err)
-		require.Equal(t, tt.expect, string(result))
+		c.Assert(err, IsNil)
+		c.Assert(string(result), Equals, t.expect)
 	}
 }
 
-func TestAESEncryptWithCBC(t *testing.T) {
+func (s *testEncryptSuite) TestAESEncryptWithCBC(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -265,28 +283,29 @@ func TestAESEncryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, tt := range tests {
-		str := []byte(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		str := []byte(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		crypted, err := AESEncryptWithCBC(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
 		result := toHex(crypted)
-		require.Equalf(t, tt.expect, result, "%v", tt)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestAESEncryptWithOFB(t *testing.T) {
+func (s *testEncryptSuite) TestAESEncryptWithOFB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -299,28 +318,29 @@ func TestAESEncryptWithOFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, tt := range tests {
-		str := []byte(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		str := []byte(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		crypted, err := AESEncryptWithOFB(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
 		result := toHex(crypted)
-		require.Equalf(t, tt.expect, result, "%v", tt)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestAESDecryptWithOFB(t *testing.T) {
+func (s *testEncryptSuite) TestAESDecryptWithOFB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -333,94 +353,28 @@ func TestAESDecryptWithOFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, tt := range tests {
-		str, _ := hex.DecodeString(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		str, _ := hex.DecodeString(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		plainText, err := AESDecryptWithOFB(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
-		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(string(plainText), Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestAESEncryptWithCTR(t *testing.T) {
-	tests := []struct {
-		str     string
-		key     string
-		iv      string
-		expect  string
-		isError bool
-	}{
-		// 128 bits key
-		{"pingcap", "1234567890123456", "1234567890123456", "0515A36BBF3DE0", false},
-		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
-		// 192 bits key
-		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negative cases: invalid key length
-		{"pingcap", "12345678901234567", "1234567890123456", "", true},
-		{"pingcap", "123456789012345", "1234567890123456", "", true},
-	}
-
-	for _, tt := range tests {
-		str := []byte(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
-
-		crypted, err := AESEncryptWithCTR(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
-			continue
-		}
-		require.NoErrorf(t, err, "%v", tt)
-		result := toHex(crypted)
-		require.Equalf(t, tt.expect, result, "%v", tt)
-	}
-}
-
-func TestAESDecryptWithCTR(t *testing.T) {
-	tests := []struct {
-		str     string
-		key     string
-		iv      string
-		expect  string
-		isError bool
-	}{
-		// 128 bits key
-		{"0515A36BBF3DE0", "1234567890123456", "1234567890123456", "pingcap", false},
-		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
-		// 192 bits key
-		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negative cases: invalid key length
-		{"pingcap", "12345678901234567", "1234567890123456", "", true},
-		{"pingcap", "123456789012345", "1234567890123456", "", true},
-	}
-
-	for _, tt := range tests {
-		str, _ := hex.DecodeString(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
-
-		plainText, err := AESDecryptWithCTR(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
-			continue
-		}
-		require.NoErrorf(t, err, "%v", tt)
-		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
-	}
-}
-
-func TestAESDecryptWithCBC(t *testing.T) {
+func (s *testEncryptSuite) TestAESDecryptWithCBC(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		expect      string
 		key         string
@@ -433,31 +387,32 @@ func TestAESDecryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
-		// negative cases: invalid padding / padding size
+		// negtive cases: invalid padding / padding size
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1234567890123456", "1122334455667711223311223344556611", true},
 	}
 
-	for _, tt := range tests {
-		cryptStr, _ := hex.DecodeString(tt.hexCryptStr)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		cryptStr, _ := hex.DecodeString(t.hexCryptStr)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		result, err := AESDecryptWithCBC(cryptStr, key, iv)
-		if tt.isError {
-			require.Error(t, err)
+		if t.isError {
+			c.Assert(err, NotNil)
 			continue
 		}
-		require.NoError(t, err)
-		require.Equal(t, tt.expect, string(result))
+		c.Assert(err, IsNil)
+		c.Assert(string(result), Equals, t.expect)
 	}
 }
 
-func TestAESEncryptWithCFB(t *testing.T) {
+func (s *testEncryptSuite) TestAESEncryptWithCFB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -470,28 +425,29 @@ func TestAESEncryptWithCFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, tt := range tests {
-		str := []byte(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		str := []byte(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		crypted, err := AESEncryptWithCFB(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
 		result := toHex(crypted)
-		require.Equalf(t, tt.expect, result, "%v", tt)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestAESDecryptWithCFB(t *testing.T) {
+func (s *testEncryptSuite) TestAESDecryptWithCFB(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
 		key     string
@@ -504,38 +460,40 @@ func TestAESDecryptWithCFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negative cases: invalid key length
+		// negtive cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, tt := range tests {
-		str, _ := hex.DecodeString(tt.str)
-		key := []byte(tt.key)
-		iv := []byte(tt.iv)
+	for _, t := range tests {
+		str, _ := hex.DecodeString(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
 
 		plainText, err := AESDecryptWithCFB(str, key, iv)
-		if tt.isError {
-			require.Errorf(t, err, "%v", tt)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
 			continue
 		}
-		require.NoErrorf(t, err, "%v", tt)
-		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(string(plainText), Equals, t.expect, Commentf("%v", t))
 	}
 }
 
-func TestDeriveKeyMySQL(t *testing.T) {
+func (s *testEncryptSuite) TestDeriveKeyMySQL(c *C) {
+	defer testleak.AfterTest(c)()
+
 	p := []byte("MySQL=insecure! MySQL=insecure! ")
 	p = DeriveKeyMySQL(p, 16)
-	require.Equal(t, "00000000000000000000000000000000", toHex(p))
+	c.Assert(toHex(p), Equals, "00000000000000000000000000000000")
 
 	// Short password.
 	p = []byte{0xC0, 0x10, 0x44, 0xCC, 0x10, 0xD9}
 	p = DeriveKeyMySQL(p, 16)
-	require.Equal(t, "C01044CC10D900000000000000000000", toHex(p))
+	c.Assert(toHex(p), Equals, "C01044CC10D900000000000000000000")
 
 	// Long password.
 	p = []byte("MySecretVeryLooooongPassword")
 	p = DeriveKeyMySQL(p, 16)
-	require.Equal(t, "22163D0233131607210A001D4C6F6F6F", toHex(p))
+	c.Assert(toHex(p), Equals, "22163D0233131607210A001D4C6F6F6F")
 }

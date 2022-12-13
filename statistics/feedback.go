@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,28 +19,25 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	goatomic "sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -56,14 +52,14 @@ type Feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	Hist       *Histogram
-	Feedback   []Feedback
 	PhysicalID int64
+	Hist       *Histogram
 	Tp         int
-	Expected   int64         // Expected is the Expected scan count of corresponding query.
-	actual     int64         // actual is the actual scan count of corresponding query.
-	Valid      goatomic.Bool // Valid represents the whether this query feedback is still Valid.
-	desc       bool          // desc represents the corresponding query is desc scan.
+	Feedback   []Feedback
+	Expected   int64 // Expected is the Expected scan count of corresponding query.
+	actual     int64 // actual is the actual scan count of corresponding query.
+	Valid      bool  // Valid represents the whether this query feedback is still Valid.
+	desc       bool  // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -75,15 +71,14 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 	if hist != nil && hist.IsIndexHist() {
 		tp = IndexType
 	}
-	rs := &QueryFeedback{
+	return &QueryFeedback{
 		PhysicalID: physicalID,
+		Valid:      true,
 		Tp:         tp,
 		Hist:       hist,
 		Expected:   expected,
 		desc:       desc,
 	}
-	rs.Valid.Store(FeedbackProbability.Load() > 0)
-	return rs
 }
 
 // QueryFeedbackKey is the key for a group of feedbacks on the same index/column.
@@ -126,30 +121,11 @@ func (m *QueryFeedbackMap) append(k QueryFeedbackKey, qs []*QueryFeedback) bool 
 	if !ok || s == nil {
 		s = make([]*QueryFeedback, 0, 8)
 	}
-	l := mathutil.Min(int64(len(qs)), remained)
+	l := mathutil.MinInt64(int64(len(qs)), remained)
 	s = append(s, qs[:l]...)
 	m.Feedbacks[k] = s
 	m.Size = m.Size + int(l)
 	return true
-}
-
-// SiftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
-// feedback accuracy and its overhead.
-func (m *QueryFeedbackMap) SiftFeedbacks() {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	for k, qs := range m.Feedbacks {
-		fbs := make([]Feedback, 0, len(qs)*2)
-		for _, q := range qs {
-			fbs = append(fbs, q.Feedback...)
-		}
-		if len(fbs) == 0 {
-			delete(m.Feedbacks, k)
-			continue
-		}
-		m.Feedbacks[k] = m.Feedbacks[k][:1]
-		m.Feedbacks[k][0].Feedback, _ = NonOverlappedFeedbacks(sc, fbs)
-	}
-	m.Size = len(m.Feedbacks)
 }
 
 // Merge combines 2 collections of feedbacks.
@@ -199,7 +175,6 @@ func CollectFeedback(sc *stmtctx.StatementContext, q *QueryFeedback, numOfRanges
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
-	// #nosec G404
 	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}
@@ -239,7 +214,6 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			LowVal:      lowVal,
 			HighVal:     highVal,
 			HighExclude: true,
-			Collators:   collate.GetBinaryCollatorSlice(len(lowVal)),
 		}))
 	}
 	return ranges, nil
@@ -278,13 +252,13 @@ func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 func (q *QueryFeedback) Invalidate() {
 	q.Feedback = nil
 	q.Hist = nil
-	q.Valid.Store(false)
+	q.Valid = false
 	q.actual = -1
 }
 
 // Actual gets the actual row count.
 func (q *QueryFeedback) Actual() int64 {
-	if !q.Valid.Load() {
+	if !q.Valid {
 		return -1
 	}
 	return q.actual
@@ -307,7 +281,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 	}
 	metrics.DistSQLScanKeysPartialHistogram.Observe(float64(sum))
 	q.actual += sum
-	if !q.Valid.Load() || q.Hist == nil {
+	if !q.Valid || q.Hist == nil {
 		return
 	}
 
@@ -353,15 +327,15 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	slices.SortFunc(fbs, func(i, j Feedback) bool {
-		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
+	sort.Slice(fbs, func(i, j int) bool {
+		res, err := fbs[i].Upper.CompareDatum(sc, fbs[j].Upper)
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
 			return res < 0
 		}
-		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
+		res, err = fbs[i].Lower.CompareDatum(sc, fbs[j].Lower)
 		if err != nil {
 			existsErr = true
 		}
@@ -373,7 +347,7 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	resFBs := make([]Feedback, 0, len(fbs))
 	previousEnd := &types.Datum{}
 	for _, fb := range fbs {
-		res, err := previousEnd.Compare(sc, fb.Lower, collate.GetBinaryCollator())
+		res, err := previousEnd.CompareDatum(sc, fb.Lower)
 		if err != nil {
 			return fbs, false
 		}
@@ -394,14 +368,14 @@ type BucketFeedback struct {
 
 // outOfRange checks if the `val` is between `min` and `max`.
 func outOfRange(sc *stmtctx.StatementContext, min, max, val *types.Datum) (int, error) {
-	result, err := val.Compare(sc, min, collate.GetBinaryCollator())
+	result, err := val.CompareDatum(sc, min)
 	if err != nil {
 		return 0, err
 	}
 	if result < 0 {
 		return result, nil
 	}
-	result, err = val.Compare(sc, max, collate.GetBinaryCollator())
+	result, err = val.CompareDatum(sc, max)
 	if err != nil {
 		return 0, err
 	}
@@ -481,7 +455,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		bkt.feedback = append(bkt.feedback, fb)
 		// Update the bound if necessary.
-		res, err := bkt.lower.Compare(nil, fb.Lower, collate.GetBinaryCollator())
+		res, err := bkt.lower.CompareDatum(nil, fb.Lower)
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
 			continue
@@ -489,7 +463,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if res > 0 {
 			bkt.lower = fb.Lower
 		}
-		res, err = bkt.upper.Compare(nil, fb.Upper, collate.GetBinaryCollator())
+		res, err = bkt.upper.CompareDatum(nil, fb.Upper)
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
 			continue
@@ -525,7 +499,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	total = 1
 	// Erase the repeat values.
 	for i := 1; i < len(vals); i++ {
-		cmp, err := vals[total-1].Compare(nil, &vals[i], collate.GetBinaryCollator())
+		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
 			continue
@@ -663,8 +637,6 @@ func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt buc
 const (
 	defaultSplitCount = 10
 	splitPerFeedback  = 10
-	// defaultBucketCount is the number of buckets a column histogram has.
-	defaultBucketCount = 256
 )
 
 // getSplitCount gets the split count for the histogram. It is based on the intuition that:
@@ -712,8 +684,11 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
-func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCount float64) []bucket {
-	mergeCount := len(bkts) - bucketCount
+// defaultBucketCount is the number of buckets a column histogram has.
+var defaultBucketCount = 256
+
+func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []bucket {
+	mergeCount := len(bkts) - defaultBucketCount
 	if mergeCount <= 0 {
 		return bkts
 	}
@@ -729,7 +704,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 	for i := 0; i < mergeCount; i++ {
 		ids = append(ids, bs[i].id)
 	}
-	slices.Sort(ids)
+	sort.Ints(ids)
 	idCursor, bktCursor := 0, 0
 	for i := range bkts {
 		// Merge this bucket with last one.
@@ -749,11 +724,11 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 }
 
 // splitBuckets split the histogram buckets according to the feedback.
-func splitBuckets(h *Histogram, feedback *QueryFeedback, bucketCount int) ([]bucket, []bool, int64) {
+func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
 	bktID2FB, numTotalFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(numTotalFBs, bucketCount-h.Len())
+	splitCount := getSplitCount(numTotalFBs, defaultBucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -783,26 +758,20 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback, bucketCount int) ([]buc
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
-	return UpdateHistogramWithBucketCount(h, feedback, statsVer, defaultBucketCount)
-}
-
-// UpdateHistogramWithBucketCount updates the histogram according buckets with customized
-// bucketCount for testing.
-func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, statsVer int, bucketCount int) *Histogram {
 	if statsVer < Version2 {
-		// If it's the stats we haven't maintained the bucket NDV yet. Reset the ndv.
+		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
 		for i := range feedback.Feedback {
 			feedback.Feedback[i].Ndv = 0
 		}
 	}
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback, bucketCount)
-	buckets = mergeBuckets(buckets, isNewBuckets, bucketCount, float64(totalCount))
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
+	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
-	} else if feedback.Tp == IndexType && statsVer == 2 {
 		// If we maintained the NDV of bucket. We can also update the total ndv.
+	} else if feedback.Tp == IndexType && statsVer == 2 {
 		totNdv := int64(0)
 		for _, bkt := range buckets {
 			totNdv += bkt.Ndv
@@ -1021,7 +990,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *type
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
 		decodeFeedbackForIndex(q, pb, c, t)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.GetFlag()))
+		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
 		err = decodeFeedbackForColumn(q, pb, ft)
 	}
@@ -1084,7 +1053,7 @@ func setNextValue(d *types.Datum) {
 
 // SupportColumnType checks if the type of the column can be updated by feedback.
 func SupportColumnType(ft *types.FieldType) bool {
-	switch ft.GetType() {
+	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

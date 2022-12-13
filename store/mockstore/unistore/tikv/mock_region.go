@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +15,7 @@ package tikv
 
 import (
 	"bytes"
-	"context"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,9 +35,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/client-go/v2/oracle"
 	pdclient "github.com/tikv/pd/client"
-	"golang.org/x/exp/slices"
+	"golang.org/x/net/context"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
@@ -243,7 +241,7 @@ func (rm *MockRegionManager) GetRegion(id uint64) *metapb.Region {
 }
 
 // GetRegionByKey gets a region by the key.
-func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer, buckets *metapb.Buckets) {
+func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -255,9 +253,9 @@ func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, 
 		return false
 	})
 	if region == nil || !rm.regionContainsKey(region, key) {
-		return nil, nil, nil
+		return nil, nil
 	}
-	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer), nil
+	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer)
 }
 
 // GetRegionByEndKey gets a region by the end key.
@@ -357,11 +355,11 @@ func (rm *MockRegionManager) Split(regionID, newRegionID uint64, key []byte, pee
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
 func (rm *MockRegionManager) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
-	r, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
+	new, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
 	if err != nil {
 		panic(err)
 	}
-	return proto.Clone(r).(*metapb.Region)
+	return proto.Clone(new).(*metapb.Region)
 }
 
 // SplitTable evenly splits the data in table into count regions.
@@ -401,8 +399,8 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	for _, rawKey := range req.SplitKeys {
 		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
 	}
-	slices.SortFunc(splitKeys, func(i, j []byte) bool {
-		return bytes.Compare(i, j) < 0
+	sort.Slice(splitKeys, func(i, j int) bool {
+		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
 	})
 
 	newRegions, err := rm.splitKeys(splitKeys)
@@ -671,8 +669,6 @@ func (rm *MockRegionManager) AddPeer(regionID, storeID, peerID uint64) {
 type MockPD struct {
 	rm          *MockRegionManager
 	gcSafePoint uint64
-
-	externalTimestamp atomic.Uint64
 }
 
 // NewMockPD returns a new MockPD.
@@ -723,13 +719,13 @@ func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, 
 }
 
 // GetRegion implements gRPC PDServer.
-func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
-	r, p, b := pd.rm.GetRegionByKey(key)
-	return &pdclient.Region{Meta: r, Leader: p, Buckets: b}, nil
+func (pd *MockPD) GetRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
+	r, p := pd.rm.GetRegionByKey(key)
+	return &pdclient.Region{Meta: r, Leader: p}, nil
 }
 
 // GetRegionByID implements gRPC PDServer.
-func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64) (*pdclient.Region, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 
@@ -787,30 +783,6 @@ func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint
 // StoreHeartbeat stores the heartbeat.
 func (pd *MockPD) StoreHeartbeat(ctx context.Context, stats *pdpb.StoreStats) error { return nil }
 
-// GetExternalTimestamp returns external timestamp
-func (pd *MockPD) GetExternalTimestamp(ctx context.Context) (uint64, error) {
-	return pd.externalTimestamp.Load(), nil
-}
-
-// SetExternalTimestamp sets external timestamp
-func (pd *MockPD) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
-	p, l := GetTS()
-	currentTSO := oracle.ComposeTS(p, l)
-	if newTimestamp > currentTSO {
-		return errors.New("external timestamp is greater than global tso")
-	}
-	for {
-		externalTimestamp := pd.externalTimestamp.Load()
-		if externalTimestamp > newTimestamp {
-			return errors.New("cannot decrease the external timestamp")
-		}
-
-		if pd.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
-			return nil
-		}
-	}
-}
-
 // Use global variables to prevent pdClients from creating duplicate timestamps.
 var tsMu = struct {
 	sync.Mutex
@@ -829,7 +801,7 @@ func GetTS() (int64, int64) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
-	ts := time.Now().UnixMilli()
+	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	if tsMu.physicalTS >= ts {
 		tsMu.logicalTS++
 	} else {
@@ -840,7 +812,7 @@ func GetTS() (int64, int64) {
 }
 
 // GetPrevRegion gets the previous region and its leader Peer of the region where the key is located.
-func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByEndKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }

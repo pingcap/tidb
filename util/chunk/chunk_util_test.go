@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 )
 
 // getChk generate a chunk of data, isLast3ColTheSame means the last three columns are the same.
@@ -64,17 +62,22 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk2)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	require.Equal(t, dstChk, dstChk2)
+	if !reflect.DeepEqual(dstChk, dstChk2) {
+		t.Fatal()
+	}
 	numSelected := 0
 	for i := range selected {
 		if selected[i] {
 			numSelected++
 		}
 	}
-	require.Equal(t, numSelected, dstChk2.numVirtualRows)
-	require.Equal(t, numSelected, dstChk2.NumRows())
+	if dstChk2.numVirtualRows != numSelected || dstChk2.NumRows() != numSelected {
+		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
+	}
 }
 
 func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
@@ -89,17 +92,22 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 6, 0, 0, selected, dstChk2)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	require.Equal(t, dstChk, dstChk2)
+	if !reflect.DeepEqual(dstChk, dstChk2) {
+		t.Fatal()
+	}
 	numSelected := 0
 	for i := range selected {
 		if selected[i] {
 			numSelected++
 		}
 	}
-	require.Equal(t, numSelected, dstChk2.numVirtualRows)
-	require.Equal(t, numSelected, dstChk2.NumRows())
+	if dstChk2.numVirtualRows != numSelected || dstChk2.NumRows() != numSelected {
+		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
+	}
 }
 
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
@@ -127,8 +135,9 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 			numSelected++
 		}
 	}
-	require.Equal(t, numSelected, dstChk2.numVirtualRows)
-	require.Equal(t, numSelected, dstChk2.NumRows())
+	if dstChk2.numVirtualRows != numSelected || dstChk2.NumRows() != numSelected {
+		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
+	}
 }
 
 func TestCopySelectedVirtualNum(t *testing.T) {
@@ -138,15 +147,21 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	dstChk := newChunk()
 	selected := []bool{true, false, true}
 	ok, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, 2, dstChk.numVirtualRows)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if dstChk.numVirtualRows != 2 {
+		t.Fatal(dstChk.numVirtualRows)
+	}
 
 	dstChk = newChunk()
 	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, 0, 0, selected, dstChk)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, 2, dstChk.numVirtualRows)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if dstChk.numVirtualRows != 2 {
+		t.Fatal(dstChk.numVirtualRows)
+	}
 
 	srcChk = newChunk(8)
 	srcChk.TruncateTo(0)
@@ -155,14 +170,15 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 2)
 	dstChk = newChunkWithInitCap(0, 8)
 	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 1, 1, 0, selected, dstChk)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, 2, dstChk.numVirtualRows)
-	require.Equal(t, 2, dstChk.NumRows())
-
-	row0, row1 := dstChk.GetRow(0).GetInt64(0), dstChk.GetRow(1).GetInt64(0)
-	require.Equal(t, int64(0), row0)
-	require.Equal(t, int64(2), row1)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if dstChk.numVirtualRows != 2 || dstChk.NumRows() != 2 {
+		t.Fatal(dstChk.numVirtualRows, dstChk.NumRows())
+	}
+	if row0, row1 := dstChk.GetRow(0).GetInt64(0), dstChk.GetRow(1).GetInt64(0); row0 != 0 || row1 != 2 {
+		t.Fatal(row0, row1)
+	}
 
 	srcChk = newChunk(8)
 	srcChk.TruncateTo(0)
@@ -171,13 +187,15 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 3)
 	dstChk = newChunkWithInitCap(0, 8)
 	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 1, 0, 0, 1, selected, dstChk)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, 2, dstChk.numVirtualRows)
-	require.Equal(t, 2, dstChk.NumRows())
-	row0, row1 = dstChk.GetRow(0).GetInt64(0), dstChk.GetRow(1).GetInt64(0)
-	require.Equal(t, int64(3), row0)
-	require.Equal(t, int64(3), row1)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if dstChk.numVirtualRows != 2 || dstChk.NumRows() != 2 {
+		t.Fatal(dstChk.numVirtualRows, dstChk.NumRows())
+	}
+	if row0, row1 := dstChk.GetRow(0).GetInt64(0), dstChk.GetRow(1).GetInt64(0); row0 != 3 || row1 != 3 {
+		t.Fatal(row0, row1)
+	}
 }
 
 func BenchmarkCopySelectedJoinRows(b *testing.B) {

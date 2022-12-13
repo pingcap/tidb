@@ -8,50 +8,54 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"context"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestBaseBuiltin(t *testing.T) {
+var _ = check.Suite(&testUtilSuite{})
+
+type testUtilSuite struct{}
+
+func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	_, _, err = bf.evalInt(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalString(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalDecimal(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalTime(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalDuration(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalJSON(chunk.Row{})
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 }
 
-func TestClone(t *testing.T) {
+func (s *testUtilSuite) TestClone(c *check.C) {
 	builtinFuncs := []builtinFunc{
 		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
 		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
@@ -90,7 +94,7 @@ func TestClone(t *testing.T) {
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
 		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpLikeFuncSig{}, &builtinRegexpSubstrFuncSig{}, &builtinRegexpInStrFuncSig{}, &builtinRegexpReplaceFuncSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
@@ -144,42 +148,46 @@ func TestClone(t *testing.T) {
 		&builtinQuarterSig{}, &builtinSecToTimeSig{}, &builtinTimeToSecSig{}, &builtinTimestampAddSig{}, &builtinToDaysSig{},
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
-		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddDateStringStringSig{},
+		&builtinAddDateStringIntSig{}, &builtinAddDateStringRealSig{}, &builtinAddDateStringDecimalSig{}, &builtinAddDateIntStringSig{}, &builtinAddDateIntIntSig{},
+		&builtinAddDateIntRealSig{}, &builtinAddDateIntDecimalSig{}, &builtinAddDateDatetimeStringSig{}, &builtinAddDateDatetimeIntSig{}, &builtinAddDateDatetimeRealSig{},
+		&builtinAddDateDatetimeDecimalSig{}, &builtinSubDateStringStringSig{}, &builtinSubDateStringIntSig{}, &builtinSubDateStringRealSig{}, &builtinSubDateStringDecimalSig{},
+		&builtinSubDateIntStringSig{}, &builtinSubDateIntIntSig{}, &builtinSubDateIntRealSig{}, &builtinSubDateIntDecimalSig{}, &builtinSubDateDatetimeStringSig{},
+		&builtinSubDateDatetimeIntSig{}, &builtinSubDateDatetimeRealSig{}, &builtinSubDateDatetimeDecimalSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
-		require.IsType(t, f, cf)
+		c.Assert(reflect.TypeOf(f) == reflect.TypeOf(cf), check.IsTrue)
 	}
 }
 
-func TestGetUint64FromConstant(t *testing.T) {
+func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
 	_, isNull, ok := GetUint64FromConstant(con)
-	require.True(t, ok)
-	require.True(t, isNull)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsTrue)
 
 	con = &Constant{
 		Value: types.NewIntDatum(-1),
 	}
 	_, _, ok = GetUint64FromConstant(con)
-	require.False(t, ok)
+	c.Assert(ok, check.IsFalse)
 
 	con.Value = types.NewIntDatum(1)
 	num, isNull, ok := GetUint64FromConstant(con)
-	require.True(t, ok)
-	require.False(t, isNull)
-	require.Equal(t, uint64(1), num)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsFalse)
+	c.Assert(num, check.Equals, uint64(1))
 
 	con.Value = types.NewUintDatum(1)
 	num, _, _ = GetUint64FromConstant(con)
-	require.Equal(t, uint64(1), num)
+	c.Assert(num, check.Equals, uint64(1))
 
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
-	require.Equal(t, uint64(1), num)
+	c.Assert(num, check.Equals, uint64(1))
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -187,58 +195,58 @@ func TestGetUint64FromConstant(t *testing.T) {
 	}
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
 	num, _, _ = GetUint64FromConstant(con)
-	require.Equal(t, uint64(100), num)
+	c.Assert(num, check.Equals, uint64(100))
 }
 
-func TestSetExprColumnInOperand(t *testing.T) {
+func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
 	col := &Column{RetType: newIntFieldType()}
-	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
+	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	fun := &ScalarFunction{Function: f}
-	SetExprColumnInOperand(fun)
-	require.True(t, f.getArgs()[0].(*Column).InOperand)
+	setExprColumnInOperand(fun)
+	c.Assert(f.getArgs()[0].(*Column).InOperand, check.IsTrue)
 }
 
-func TestPopRowFirstArg(t *testing.T) {
+func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
-	require.NoError(t, err)
-	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
+	c.Assert(err, check.IsNil)
+	c.Assert(len(fun2.(*ScalarFunction).GetArgs()), check.Equals, 2)
 }
 
-func TestGetStrIntFromConstant(t *testing.T) {
+func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 	col := &Column{}
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
-	require.Error(t, err)
+	c.Assert(err, check.NotNil)
 
-	con := &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
+	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
-	require.NoError(t, err)
-	require.True(t, isNull)
+	c.Assert(err, check.IsNil)
+	c.Assert(isNull, check.IsTrue)
 
 	con = &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(1)}
 	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
-	require.Equal(t, "1", ret)
+	c.Assert(ret, check.Equals, "1")
 
-	con = &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
+	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
-	require.True(t, isNull)
+	c.Assert(isNull, check.IsTrue)
 
 	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("abc")}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
-	require.True(t, isNull)
+	c.Assert(isNull, check.IsTrue)
 
 	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("123")}
 	num, _, _ := GetIntFromConstant(mock.NewContext(), con)
-	require.Equal(t, 123, num)
+	c.Assert(num, check.Equals, 123)
 }
 
-func TestSubstituteCorCol2Constant(t *testing.T) {
+func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -249,21 +257,21 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
-	require.NoError(t, err)
-	require.True(t, ret.Equal(ctx, ans1))
+	c.Assert(err, check.IsNil)
+	c.Assert(ret.Equal(ctx, ans1), check.IsTrue)
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	ans2 := col1
-	require.True(t, ret.Equal(ctx, ans2))
+	c.Assert(ret.Equal(ctx, ans2), check.IsTrue)
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
-	require.NoError(t, err)
+	c.Assert(err, check.IsNil)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	require.True(t, ret.Equal(ctx, ans3))
+	c.Assert(ret.Equal(ctx, ans3), check.IsTrue)
 }
 
-func TestPushDownNot(t *testing.T) {
+func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
@@ -277,38 +285,40 @@ func TestPushDownNot(t *testing.T) {
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, orFunc2))
-	require.True(t, notFunc.Equal(ctx, notFuncCopy))
+	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
+	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 
 	// issue 15725
 	// (not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunction(ast.Plus, col, NewOne())
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)))
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
+
 	// (not not not a) should be optimized to (not (a is true))
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))))
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
+
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 }
 
-func TestFilter(t *testing.T) {
+func (s *testUtilSuite) TestFilter(c *check.C) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -316,24 +326,24 @@ func TestFilter(t *testing.T) {
 	}
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
-	require.Len(t, result, 1)
+	c.Assert(result, check.HasLen, 1)
 }
 
-func TestFilterOutInPlace(t *testing.T) {
+func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
 		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
-	require.Equal(t, 2, len(remained))
-	require.Equal(t, "eq", remained[0].(*ScalarFunction).FuncName.L)
-	require.Equal(t, "eq", remained[1].(*ScalarFunction).FuncName.L)
-	require.Equal(t, 1, len(filtered))
-	require.Equal(t, "or", filtered[0].(*ScalarFunction).FuncName.L)
+	c.Assert(len(remained), check.Equals, 2)
+	c.Assert(remained[0].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(len(filtered), check.Equals, 1)
+	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
 }
 
-func TestHashGroupKey(t *testing.T) {
+func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -341,7 +351,7 @@ func TestHashGroupKey(t *testing.T) {
 	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		if eTypes[i] == types.ETDecimal {
-			ft.SetFlen(0)
+			ft.Flen = 0
 		}
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
@@ -353,17 +363,24 @@ func TestHashGroupKey(t *testing.T) {
 		}
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
-		require.NoError(t, err)
-		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
-		require.NoError(t, err)
+		if err != nil {
+			c.Fatal(err)
+		}
+		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
+			c.Fatal(err)
+		}
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
 			d, err := colExpr.Eval(input.GetRow(j))
-			require.NoError(t, err)
+			if err != nil {
+				c.Fatal(err)
+			}
 			buf, err = codec.EncodeValue(sc, buf[:0], d)
-			require.NoError(t, err)
-			require.Equal(t, string(bufs[j]), string(buf))
+			if err != nil {
+				c.Fatal(err)
+			}
+			c.Assert(string(bufs[j]), check.Equals, string(buf))
 		}
 	}
 }
@@ -375,86 +392,25 @@ func isLogicOrFunction(e Expression) bool {
 	return false
 }
 
-func TestDisableParseJSONFlag4Expr(t *testing.T) {
+func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
 	var expr Expression
 	expr = &Column{RetType: newIntFieldType()}
 	ft := expr.GetType()
-	ft.AddFlag(mysql.ParseToJSONFlag)
+	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
 	ft = expr.GetType()
-	ft.AddFlag(mysql.ParseToJSONFlag)
+	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
 	expr = &ScalarFunction{RetType: newIntFieldType()}
 	ft = expr.GetType()
-	ft.AddFlag(mysql.ParseToJSONFlag)
+	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
-}
-
-func TestSQLDigestTextRetriever(t *testing.T) {
-	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
-
-	r := NewSQLDigestTextRetriever()
-	clearResult := func() {
-		r.SQLDigestsMap = map[string]string{
-			"digest1": "",
-			"digest2": "",
-			"digest3": "",
-			"digest4": "",
-			"digest5": "",
-		}
-	}
-	clearResult()
-	r.mockLocalData = map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest6": "text6",
-	}
-	r.mockGlobalData = map[string]string{
-		"digest2": "text2",
-		"digest3": "text3",
-		"digest4": "text4",
-		"digest7": "text7",
-	}
-
-	expectedLocalResult := map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest3": "",
-		"digest4": "",
-		"digest5": "",
-	}
-	expectedGlobalResult := map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest3": "text3",
-		"digest4": "text4",
-		"digest5": "",
-	}
-
-	err := r.RetrieveLocal(context.Background(), nil)
-	require.NoError(t, err)
-	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
-	clearResult()
-
-	err = r.RetrieveGlobal(context.Background(), nil)
-	require.NoError(t, err)
-	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
-	clearResult()
-
-	r.fetchAllLimit = 1
-	err = r.RetrieveLocal(context.Background(), nil)
-	require.NoError(t, err)
-	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
-	clearResult()
-
-	err = r.RetrieveGlobal(context.Background(), nil)
-	require.NoError(t, err)
-	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
@@ -532,7 +488,7 @@ func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, is
 }
 func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
-		return x, false, m.err
+		return float64(x), false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -560,42 +516,33 @@ func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
-	if x, ok := m.i.(types.BinaryJSON); ok {
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(json.BinaryJSON); ok {
 		return x, false, m.err
 	}
-	return types.BinaryJSON{}, m.i == nil, m.err
+	return json.BinaryJSON{}, m.i == nil, m.err
 }
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
-func (m *MockExpr) Clone() Expression                                             { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
-func (m *MockExpr) IsCorrelated() bool                                            { return false }
-func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool                    { return false }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression                         { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)             { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
-func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
-func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
-func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                           { return "" }
-func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
-func (m *MockExpr) Vectorized() bool                                              { return false }
-func (m *MockExpr) SupportReverseEval() bool                                      { return false }
-func (m *MockExpr) HasCoercibility() bool                                         { return false }
-func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
-func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
-func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
-func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ExplainInfo() string                               { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
+func (m *MockExpr) Vectorized() bool                                  { return false }
+func (m *MockExpr) SupportReverseEval() bool                          { return false }
+func (m *MockExpr) HasCoercibility() bool                             { return false }
+func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                      {}
 
-func (m *MockExpr) CharsetAndCollation() (string, string) {
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
-
-func (m *MockExpr) MemoryUsage() (sum int64) {
-	return
-}

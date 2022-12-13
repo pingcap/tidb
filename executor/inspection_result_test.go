@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,28 +16,24 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"net"
-	"path/filepath"
 	"strings"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/sysutil"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestInspectionResult(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+var _ = SerialSuites(&inspectionResultSuite{&testClusterTableBase{}})
+
+type inspectionResultSuite struct{ *testClusterTableBase }
+
+func (s *inspectionResultSuite) TestInspectionResult(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	mockData := map[string]variable.TableSnapshot{}
 	// mock configuration inconsistent
@@ -110,7 +105,7 @@ func TestInspectionResult(t *testing.T) {
 	}
 
 	datetime := func(str string) types.Time {
-		return parseTime(t, tk.Session(), str)
+		return s.parseTime(c, tk.Se, str)
 	}
 	// construct some mock abnormal data
 	mockMetric := map[string][][]types.Datum{
@@ -121,7 +116,8 @@ func TestInspectionResult(t *testing.T) {
 		},
 	}
 
-	ctx := createInspectionContext(t, mockMetric, mockData)
+	ctx := s.setupForInspection(c, mockMetric, mockData)
+	defer s.tearDownForInspection(c)
 
 	cases := []struct {
 		sql  string
@@ -169,22 +165,30 @@ func TestInspectionResult(t *testing.T) {
 	}
 
 	for _, cs := range cases {
-		rs, err := tk.Session().Execute(ctx, cs.sql)
-		require.NoError(t, err)
-		result := tk.ResultSetToResultWithCtx(ctx, rs[0], fmt.Sprintf("SQL: %v", cs.sql))
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Lenf(t, warnings, 0, "expected no warning, got: %+v", warnings)
+		rs, err := tk.Se.Execute(ctx, cs.sql)
+		c.Assert(err, IsNil)
+		result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("SQL: %v", cs.sql))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
 		result.Check(testkit.Rows(cs.rows...))
 	}
 }
 
-func parseTime(t *testing.T, se session.Session, str string) types.Time {
-	time, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp)
-	require.NoError(t, err)
-	return time
+func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) types.Time {
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp)
+	c.Assert(err, IsNil)
+	return t
 }
 
-func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
+func (s *inspectionResultSuite) tearDownForInspection(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Disable(fpName2), IsNil)
+}
+
+func (s *inspectionResultSuite) setupForInspection(c *C, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
 	// mock tikv configuration.
 	if configurations == nil {
 		configurations = map[string]variable.TableSnapshot{}
@@ -223,31 +227,25 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 			},
 		}
 	}
-	fpName0 := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
-	require.NoError(t, failpoint.Enable(fpName0, "return"))
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 
 	// Mock for metric table data.
-	fpName1 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	require.NoError(t, failpoint.Enable(fpName1, "return"))
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
-		return currName == fpName1 || currName == fpName0
-	})
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable(fpName0))
-		require.NoError(t, failpoint.Disable(fpName1))
+		return fpName2 == currName || currName == fpName
 	})
 	return ctx
 }
 
-func TestThresholdCheckInspection(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(str string) types.Time {
-		return parseTime(t, tk.Session(), str)
+		return s.parseTime(c, tk.Se, str)
 	}
 	// construct some mock abnormal data
 	mockData := map[string][][]types.Datum{
@@ -287,12 +285,13 @@ func TestThresholdCheckInspection(t *testing.T) {
 		"pd_region_health":                    {},
 	}
 
-	ctx := createInspectionContext(t, mockData, nil)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"apply-cpu tikv tikv-0 tikv-0s 10.00 < 1.60, config: raftstore.apply-pool-size=2 the 'apply-cpu' max cpu-usage of tikv-0s tikv is too high",
 		"coprocessor-high-cpu tikv tikv-0 tikv-0s 20.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 the 'coprocessor-high-cpu' max cpu-usage of tikv-0s tikv is too high",
@@ -326,21 +325,19 @@ func TestThresholdCheckInspection(t *testing.T) {
 	}
 
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	rs, err = tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
-	require.NoError(t, err)
-	result = tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	rs, err = tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 tikv-0s 7.42 < 7.20, config: server.grpc-concurrency=8"))
 }
 
-func TestThresholdCheckInspection2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
-		require.NoError(t, err)
-		return time
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
 	}
 
 	// construct some mock abnormal data
@@ -392,12 +389,13 @@ func TestThresholdCheckInspection2(t *testing.T) {
 		"pd_region_health":          {},
 	}
 
-	ctx := createInspectionContext(t, mockData, nil)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"data-block-cache-hit tikv tikv-0 tikv-0s 0.790 > 0.800 min data-block-cache-hit rate of tikv-0s tikv is too low",
 		"filter-block-cache-hit tikv tikv-0 tikv-0s 0.930 > 0.950 min filter-block-cache-hit rate of tikv-0s tikv is too low",
@@ -416,14 +414,12 @@ func TestThresholdCheckInspection2(t *testing.T) {
 	))
 }
 
-func TestThresholdCheckInspection3(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
-		require.NoError(t, err)
-		return time
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
 	}
 
 	// construct some mock abnormal data
@@ -453,15 +449,16 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		},
 	}
 
-	ctx := createInspectionContext(t, mockData, nil)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
 		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance','leader-drop')
 		order by item`)
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"leader-drop tikv tikv-2 tikv-2s 10000 <= 50 tikv-2 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 0",
 		"leader-drop tikv tikv-0 tikv-0s 5000 <= 50 tikv-0 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 5000",
@@ -472,42 +469,10 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		"store-available-balance tikv tikv-1 tikv-1s 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
-func createClusterGRPCServer(t testing.TB) map[string]*testServer {
-	// tp => testServer
-	testServers := map[string]*testServer{}
+func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// create gRPC servers
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
-		tmpDir := t.TempDir()
-
-		server := grpc.NewServer()
-		logFile := filepath.Join(tmpDir, fmt.Sprintf("%s.log", typ))
-		diagnosticspb.RegisterDiagnosticsServer(server, sysutil.NewDiagnosticsServer(logFile))
-
-		// Find a available port
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err, "cannot find available port")
-
-		testServers[typ] = &testServer{
-			typ:     typ,
-			server:  server,
-			address: fmt.Sprintf("127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port),
-			tmpDir:  tmpDir,
-			logFile: logFile,
-		}
-		go func() {
-			require.NoError(t, server.Serve(listener))
-		}()
-	}
-	return testServers
-}
-
-func TestCriticalErrorInspection(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	testServers := createClusterGRPCServer(t)
+	testServers := s.setupClusterGRPCServer(c)
 	defer func() {
 		for _, s := range testServers {
 			s.server.Stop()
@@ -520,11 +485,11 @@ func TestCriticalErrorInspection(t *testing.T) {
 	}
 	fpName2 := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
-	require.NoError(t, failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)))
-	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
+	c.Assert(failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
 
 	datetime := func(str string) types.Time {
-		return parseTime(t, tk.Session(), str)
+		return s.parseTime(c, tk.Se, str)
 	}
 
 	// construct some mock data
@@ -590,12 +555,13 @@ func TestCriticalErrorInspection(t *testing.T) {
 		},
 	}
 
-	ctx := createInspectionContext(t, mockData, nil)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"server-down tikv-0 tikv-0s  tikv tikv-0s disconnect with prometheus around time '2020-02-12 10:36:00.000000'",
 		"server-down tidb-1 tidb-1s  tidb tidb-1s disconnect with prometheus around time '2020-02-12 10:37:00.000000'",
@@ -623,14 +589,12 @@ func TestCriticalErrorInspection(t *testing.T) {
 	))
 }
 
-func TestNodeLoadInspection(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
-		require.NoError(t, err)
-		return time
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
 	}
 
 	// construct some mock abnormal data
@@ -679,15 +643,15 @@ func TestNodeLoadInspection(t *testing.T) {
 		},
 	}
 
-	ctx := createInspectionContext(t, mockData, nil)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
 		where rule='node-load' order by item, value`)
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"cpu-load1 node node-0 28.1 < 28.0 cpu-load1 should less than (cpu_logical_cores * 0.7)",
 		"cpu-load15 node node-1 14.1 < 14.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
@@ -699,14 +663,12 @@ func TestNodeLoadInspection(t *testing.T) {
 	))
 }
 
-func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
-		require.NoError(t, err)
-		return time
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
 	}
 
 	configurations := map[string]variable.TableSnapshot{}
@@ -728,12 +690,13 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 		},
 	}
 
-	ctx := createInspectionContext(t, mockData, configurations)
+	ctx := s.setupForInspection(c, mockData, configurations)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Session().Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
-	require.NoError(t, err)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equalf(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"config storage.block-cache.capacity tikv 192.168.3.34  1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
 		"config storage.block-cache.capacity tikv 192.168.3.33  32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,23 +19,33 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestLongestCommonPrefixLen(t *testing.T) {
+var _ = Suite(&testSplitIndex{})
+
+type testSplitIndex struct {
+}
+
+func (s *testSplitIndex) SetUpSuite(c *C) {
+}
+
+func (s *testSplitIndex) TearDownSuite(c *C) {
+}
+
+func (s *testSplitIndex) TestLongestCommonPrefixLen(c *C) {
 	cases := []struct {
 		s1 string
 		s2 string
@@ -54,11 +63,11 @@ func TestLongestCommonPrefixLen(t *testing.T) {
 
 	for _, ca := range cases {
 		re := longestCommonPrefixLen([]byte(ca.s1), []byte(ca.s2))
-		require.Equal(t, ca.l, re)
+		c.Assert(re, Equals, ca.l)
 	}
 }
 
-func TestGetStepValue(t *testing.T) {
+func (s *testSplitIndex) TestgetStepValue(c *C) {
 	cases := []struct {
 		lower []byte
 		upper []byte
@@ -76,13 +85,13 @@ func TestGetStepValue(t *testing.T) {
 
 	for _, ca := range cases {
 		l := longestCommonPrefixLen(ca.lower, ca.upper)
-		require.Equal(t, ca.l, l)
+		c.Assert(l, Equals, ca.l)
 		v0 := getStepValue(ca.lower[l:], ca.upper[l:], 1)
-		require.Equal(t, v0, ca.v)
+		c.Assert(v0, Equals, ca.v)
 	}
 }
 
-func TestSplitIndex(t *testing.T) {
+func (s *testSplitIndex) TestSplitIndex(c *C) {
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
@@ -134,8 +143,8 @@ func TestSplitIndex(t *testing.T) {
 	}
 	valueList, err := e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.NoError(t, err)
-	require.Len(t, valueList, e.num+1)
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases := []struct {
 		value        int
@@ -163,15 +172,15 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
@@ -190,8 +199,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.NoError(t, err)
-	require.Len(t, valueList, e.num+1)
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -211,15 +220,15 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases2 {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 
 	// Test for timestamp index.
@@ -242,8 +251,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.NoError(t, err)
-	require.Len(t, valueList, e.num+1)
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -269,19 +278,19 @@ func TestSplitIndex(t *testing.T) {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 
-func TestSplitTable(t *testing.T) {
+func (s *testSplitIndex) TestSplitTable(c *C) {
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
@@ -322,8 +331,8 @@ func TestSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	require.NoError(t, err)
-	require.Len(t, valueList, e.num-1)
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num-1)
 
 	cases := []struct {
 		value        int
@@ -351,41 +360,13 @@ func TestSplitTable(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, key)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 
-func TestStepShouldLargeThanMinStep(t *testing.T) {
-	ctx := mock.NewContext()
-	tbInfo := &model.TableInfo{
-		Name: model.NewCIStr("t1"),
-		ID:   rand.Int63(),
-		Columns: []*model.ColumnInfo{
-			{
-				Name:         model.NewCIStr("c0"),
-				ID:           1,
-				Offset:       1,
-				DefaultValue: 0,
-				State:        model.StatePublic,
-				FieldType:    *types.NewFieldType(mysql.TypeLong),
-			},
-		},
-	}
-	e1 := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, 0),
-		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
-		lower:        []types.Datum{types.NewDatum(0)},
-		upper:        []types.Datum{types.NewDatum(1000)},
-		num:          10,
-	}
-	_, err := e1.getSplitTableKeys()
-	require.Equal(t, "[executor:8212]Failed to split region ranges: the region size is too small, expected at least 1000, but got 100", err.Error())
-}
-
-func TestClusterIndexSplitTable(t *testing.T) {
+func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	tbInfo := &model.TableInfo{
 		Name:                model.NewCIStr("t"),
 		ID:                  1,
@@ -441,8 +422,8 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	require.NoError(t, err)
-	require.Len(t, valueList, e.num-1)
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num-1)
 
 	cases := []struct {
 		value        []types.Datum
@@ -471,11 +452,11 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	for _, ca := range cases {
 		h, err := e.handleCols.BuildHandleByDatums(ca.value)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, key)
-		require.Equal(t, idx, ca.lessEqualIdx)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 

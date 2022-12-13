@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -95,12 +94,12 @@ type ImplTableDual struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplTableDual) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplTableDual) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
 	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
@@ -113,12 +112,12 @@ type ImplMemTableScan struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplMemTableScan) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplMemTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplMemTableScan) OnImplement(
+func (r *ImplMemTableScan) OnImplement(
 	expr *memo.GroupExpr,
 	reqProp *property.PhysicalProperty,
 ) ([]memo.Implementation, error) {
@@ -139,12 +138,12 @@ type ImplProjection struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplProjection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (matched bool) {
+func (r *ImplProjection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicProj := expr.ExprNode.(*plannercore.LogicalProjection)
 	childProp, ok := logicProj.TryToGetChildProp(reqProp)
@@ -166,20 +165,20 @@ type ImplTiKVSingleReadGather struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplTiKVSingleReadGather) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (matched bool) {
+func (r *ImplTiKVSingleReadGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
 	if sg.IsIndexGather {
 		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
+		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source.TblColHists)}, nil
 	}
 	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source)}, nil
+	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source.TblColHists)}, nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
@@ -187,17 +186,17 @@ type ImplTableScan struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
-	return prop.IsSortItemEmpty() || (len(prop.SortItems) == 1 && ts.HandleCols != nil && prop.SortItems[0].Col.Equal(nil, ts.HandleCols.GetCol(0)))
+	return prop.IsEmpty() || (len(prop.SortItems) == 1 && ts.HandleCols != nil && prop.SortItems[0].Col.Equal(nil, ts.HandleCols.GetCol(0)))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
-	if !reqProp.IsSortItemEmpty() {
+	if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.SortItems[0].Desc
 	}
@@ -210,16 +209,16 @@ type ImplIndexScan struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	is := expr.ExprNode.(*plannercore.LogicalIndexScan)
 	return is.MatchIndexProp(prop)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
 	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
-	if !reqProp.IsSortItemEmpty() {
+	if !reqProp.IsEmpty() {
 		is.KeepOrder = true
 		if reqProp.SortItems[0].Desc {
 			is.Desc = true
@@ -234,22 +233,20 @@ type ImplShow struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplShow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplShow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplShow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	show := expr.ExprNode.(*plannercore.LogicalShow)
+
 	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
 	// struct. So that we don't need to create a new PhysicalShow object, which
 	// can help us to reduce the gc pressure of golang runtime and improve the
 	// overall performance.
-	showPhys := plannercore.PhysicalShow{
-		ShowContents: show.ShowContents,
-		Extractor:    show.Extractor,
-	}.Init(show.SCtx())
+	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewShowImpl(showPhys)}, nil
 }
@@ -260,12 +257,12 @@ type ImplSelection struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplSelection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (matched bool) {
+func (r *ImplSelection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
@@ -286,7 +283,7 @@ type ImplSort struct {
 }
 
 // Match implements ImplementationRule match interface.
-func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ls := expr.ExprNode.(*plannercore.LogicalSort)
 	return plannercore.MatchItems(prop, ls.ByItems)
 }
@@ -294,7 +291,7 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // OnImplement implements ImplementationRule OnImplement interface.
 // If all of the sort items are columns, generate a NominalSort, otherwise
 // generate a PhysicalSort.
-func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*plannercore.LogicalSort)
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
@@ -317,13 +314,13 @@ type ImplHashAgg struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplHashAgg) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	// TODO: deal with the hints when we have implemented StreamAgg.
-	return prop.IsSortItemEmpty()
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*plannercore.LogicalAggregation)
 	hashAgg := plannercore.NewPhysicalHashAgg(
 		la,
@@ -347,12 +344,12 @@ type ImplLimit struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplLimit) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalLimit := expr.ExprNode.(*plannercore.LogicalLimit)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
 	physicalLimit := plannercore.PhysicalLimit{
@@ -368,16 +365,16 @@ type ImplTopN struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
 	if expr.Group.EngineType != memo.EngineTiDB {
-		return prop.IsSortItemEmpty()
+		return prop.IsEmpty()
 	}
 	return plannercore.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	lt := expr.ExprNode.(*plannercore.LogicalTopN)
 	resultProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	topN := plannercore.PhysicalTopN{
@@ -401,14 +398,14 @@ type ImplTopNAsLimit struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
 	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
 	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	lt := expr.ExprNode.(*plannercore.LogicalTopN)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(lt.Count + lt.Offset)}
 	newProp.SortItems = make([]property.SortItem, len(lt.ByItems))
@@ -443,17 +440,17 @@ type ImplHashJoinBuildLeft struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	switch expr.ExprNode.(*plannercore.LogicalJoin).JoinType {
 	case plannercore.InnerJoin, plannercore.LeftOuterJoin, plannercore.RightOuterJoin:
-		return prop.IsSortItemEmpty()
+		return prop.IsEmpty()
 	default:
 		return false
 	}
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	switch join.JoinType {
 	case plannercore.InnerJoin:
@@ -472,12 +469,12 @@ type ImplHashJoinBuildRight struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplHashJoinBuildRight) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	switch join.JoinType {
 	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
@@ -498,12 +495,12 @@ type ImplMergeJoin struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplMergeJoin) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (matched bool) {
+func (r *ImplMergeJoin) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
@@ -519,12 +516,12 @@ type ImplUnionAll struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplUnionAll) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplUnionAll) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalUnion := expr.ExprNode.(*plannercore.LogicalUnionAll)
 	chReqProps := make([]*property.PhysicalProperty, len(expr.Children))
 	for i := range expr.Children {
@@ -545,12 +542,12 @@ type ImplApply struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return prop.AllColsFromSchema(expr.Children[0].Prop.Schema)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface
-func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*plannercore.LogicalApply)
 	join := la.GetHashJoin(reqProp)
 	physicalApply := plannercore.PhysicalApply{
@@ -571,12 +568,12 @@ type ImplMaxOneRow struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplMaxOneRow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsSortItemEmpty()
+func (r *ImplMaxOneRow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface
-func (*ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
 	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
@@ -591,7 +588,7 @@ type ImplWindow struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (*ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	lw := expr.ExprNode.(*plannercore.LogicalWindow)
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
@@ -601,7 +598,7 @@ func (*ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) 
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	lw := expr.ExprNode.(*plannercore.LogicalWindow)
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)

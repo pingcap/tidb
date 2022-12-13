@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,9 +18,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // Codec is used to:
@@ -48,7 +47,7 @@ func (c *Codec) Encode(chk *Chunk) []byte {
 	return buffer
 }
 
-func (*Codec) encodeColumn(buffer []byte, col *Column) []byte {
+func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	var lenBuffer [4]byte
 	// encode length.
 	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.length))
@@ -140,15 +139,12 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 
 	// decode data.
 	col.data = buffer[:numDataBytes:numDataBytes]
-	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
-	// this column. Thus, we set `avoidReusing` to true.
-	col.avoidReusing = true
 	return buffer[numDataBytes:]
 }
 
 var allNotNullBitmap [128]byte
 
-func (*Codec) setAllNotNull(col *Column) {
+func (c *Codec) setAllNotNull(col *Column) {
 	numNullBitmapBytes := (col.length + 7) / 8
 	col.nullBitmap = col.nullBitmap[:0]
 	for i := 0; i < numNullBitmapBytes; {
@@ -173,7 +169,7 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
-	switch colType.GetType() {
+	switch colType.Tp {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
@@ -206,7 +202,7 @@ func EstimateTypeWidth(colType *types.FieldType) int {
 		return colLen
 	}
 
-	colLen = colType.GetFlen()
+	colLen = colType.Flen
 	if colLen > 0 {
 		if colLen <= 32 {
 			return colLen
@@ -233,17 +229,17 @@ func init() {
 
 // Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
 // How Decoder works:
-//  1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
-//     intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
-//     less CPU and memory cost.
-//  2. Decode phase:
-//     2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
-//     `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
-//     destCol.nullBitMap.
-//     2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
-//     offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
-//     2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
-//  3. Go to step 1 when the input byte slice is consumed.
+// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
+//    intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
+//    less CPU and memory cost.
+// 2. Decode phase:
+//    2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
+//        `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
+//        destCol.nullBitMap.
+//    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
+//        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
+//    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
+// 3. Go to step 1 when the input byte slice is consumed.
 type Decoder struct {
 	intermChk    *Chunk
 	codec        *Codec

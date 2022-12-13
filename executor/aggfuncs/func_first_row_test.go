@@ -8,24 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func TestMergePartialResult4FirstRow(t *testing.T) {
+func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnumName(elems, "e", mysql.DefaultCollationName)
@@ -41,16 +42,16 @@ func TestMergePartialResult4FirstRow(t *testing.T) {
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeString, 5, "0", "2", "0"),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5, enumE, enumC, enumE),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 5, setE, setED, setE),
 	}
 	for _, test := range tests {
-		testMergePartialResult(t, test)
+		s.testMergePartialResult(c, test)
 	}
 }
 
-func TestMemFirstRow(t *testing.T) {
+func (s *testSuite) TestMemFirstRow(c *C) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4FirstRowIntSize, defaultUpdateMemDeltaGens, false),
@@ -74,7 +75,7 @@ func TestMemFirstRow(t *testing.T) {
 			aggfuncs.DefPartialResult4FirstRowSetSize, firstRowUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		testAggMemFunc(t, test)
+		s.testAggMemFunc(c, test)
 	}
 }
 
@@ -85,7 +86,7 @@ func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		switch dataType.GetType() {
+		switch dataType.Tp {
 		case mysql.TypeString:
 			val := row.GetString(0)
 			memDeltas = append(memDeltas, int64(len(val)))

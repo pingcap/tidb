@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,14 +16,14 @@ package executor
 import (
 	"context"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type dataInfo struct {
@@ -205,7 +204,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 
 func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 	// TODO: reuse chunks
-	childResult := tryNewCacheChunk(e.children[0])
+	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -217,7 +216,7 @@ func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err err
 	}
 
 	// TODO: reuse chunks
-	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
+	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err
@@ -258,7 +257,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var start uint64
-		for start = mathutil.Max(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
+		for start = mathutil.MaxUint64(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -298,7 +297,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var end uint64
-		for end = mathutil.Max(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
+		for end = mathutil.MaxUint64(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -412,7 +411,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		produced++
 		remained--
 	}
-	extend := mathutil.Min(e.curRowIdx, e.lastEndRow, e.lastStartRow)
+	extend := mathutil.MinUint64Val(e.curRowIdx, e.lastEndRow, e.lastStartRow)
 	if extend > e.rowStart {
 		numDrop := extend - e.rowStart
 		e.dropped += numDrop

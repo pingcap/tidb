@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +16,9 @@ package expression
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/md5" // #nosec G501
+	"crypto/md5"
 	"crypto/rand"
-	"crypto/sha1" // #nosec G505
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -29,21 +28,20 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/hack"
 )
 
-//revive:disable:defer
 func (b *builtinAesDecryptSig) vectorized() bool {
 	return true
 }
 
 func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -52,7 +50,7 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get()
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -111,7 +109,7 @@ func (b *builtinAesEncryptIVSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -120,7 +118,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get()
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -129,7 +127,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	ivBuf, err := b.bufAllocator.get()
+	ivBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -204,7 +202,7 @@ func (b *builtinDecodeSig) vectorized() bool {
 
 func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -212,7 +210,7 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err1 := b.bufAllocator.get()
+	buf1, err1 := b.bufAllocator.get(types.ETString, n)
 	if err1 != nil {
 		return err1
 	}
@@ -243,7 +241,7 @@ func (b *builtinEncodeSig) vectorized() bool {
 
 func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -251,7 +249,7 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err1 := b.bufAllocator.get()
+	buf1, err1 := b.bufAllocator.get(types.ETString, n)
 	if err1 != nil {
 		return err1
 	}
@@ -284,7 +282,7 @@ func (b *builtinAesDecryptIVSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -293,7 +291,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get()
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -302,7 +300,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	ivBuf, err := b.bufAllocator.get()
+	ivBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -377,7 +375,7 @@ func (b *builtinRandomBytesSig) vectorized() bool {
 
 func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -414,7 +412,7 @@ func (b *builtinMD5Sig) vectorized() bool {
 
 func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -423,15 +421,14 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	result.ReserveString(n)
-
-	digest := md5.New() // #nosec G401
+	digest := md5.New()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		cryptBytes := buf.GetBytes(i)
-		_, err = digest.Write(cryptBytes)
+		cryptByte := buf.GetBytes(i)
+		_, err := digest.Write(cryptByte)
 		if err != nil {
 			return err
 		}
@@ -449,7 +446,7 @@ func (b *builtinSHA2Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -457,7 +454,7 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -518,39 +515,6 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
-func (b *builtinSM3Sig) vectorized() bool {
-	return true
-}
-
-// vecEvalString evals Sm3Hash(str).
-func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return errors.Trace(err)
-	}
-	result.ReserveString(n)
-	hasher := auth.NewSM3()
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		str := buf.GetBytes(i)
-		_, err = hasher.Write(str)
-		if err != nil {
-			return err
-		}
-		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
-		hasher.Reset()
-	}
-	return nil
-}
-
 func (b *builtinCompressSig) vectorized() bool {
 	return true
 }
@@ -581,7 +545,7 @@ func deallocateByteSlice(b []byte) {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -597,15 +561,14 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		strBytes := buf.GetBytes(i)
+		str := buf.GetString(i)
 
 		// According to doc: Empty strings are stored as empty strings.
-		if len(strBytes) == 0 {
+		if len(str) == 0 {
 			result.AppendString("")
-			continue
 		}
 
-		compressed, err := deflate(strBytes)
+		compressed, err := deflate(hack.Slice(str))
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -620,11 +583,10 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 
 		buffer := allocByteSlice(resultLength)
-		//nolint: revive
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 
-		binary.LittleEndian.PutUint32(buffer, uint32(len(strBytes)))
+		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
 		copy(buffer[4:], compressed)
 
 		if shouldAppendSuffix {
@@ -644,7 +606,7 @@ func (b *builtinAesEncryptSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -653,7 +615,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get()
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -709,7 +671,7 @@ func (b *builtinPasswordSig) vectorized() bool {
 
 func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -723,18 +685,16 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 			continue
 		}
-
-		passBytes := buf.GetBytes(i)
-		if len(passBytes) == 0 {
+		pass := buf.GetString(i)
+		if len(pass) == 0 {
 			result.AppendString("")
 			continue
 		}
-
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-		result.AppendString(auth.EncodePasswordBytes(passBytes))
+		result.AppendString(auth.EncodePassword(pass))
 	}
 	return nil
 }
@@ -745,7 +705,7 @@ func (b *builtinSHA1Sig) vectorized() bool {
 
 func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -754,7 +714,7 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	result.ReserveString(n)
-	hasher := sha1.New() // #nosec G401
+	hasher := sha1.New()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -779,7 +739,7 @@ func (b *builtinUncompressSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -834,7 +794,7 @@ func (b *builtinUncompressedLengthSig) vectorized() bool {
 func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	nr := input.NumRows()
-	payloadBuf, err := b.bufAllocator.get()
+	payloadBuf, err := b.bufAllocator.get(types.ETString, nr)
 	if err != nil {
 		return err
 	}
@@ -861,48 +821,6 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *ch
 			continue
 		}
 		i64s[i] = int64(binary.LittleEndian.Uint32([]byte(str)[0:4]))
-	}
-	return nil
-}
-
-func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf)
-	i64s := result.Int64s()
-	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
-	enableValidation := false
-	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
-	if err != nil {
-		return err
-	}
-	enableValidation = variable.TiDBOptOn(validation)
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		if !enableValidation {
-			i64s[i] = 0
-		} else if score, isNull, err := b.validateStr(buf.GetString(i), &globalVars); err != nil {
-			return err
-		} else if !isNull {
-			i64s[i] = score
-		} else {
-			result.SetNull(i, true)
-		}
 	}
 	return nil
 }

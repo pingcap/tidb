@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/atomic"
+	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
@@ -49,9 +48,9 @@ var systemTZ atomic.String
 // they suggests that only programmers knows which one is best for their use case.
 // For detail, please refer to: https://github.com/golang/go/issues/26106
 type locCache struct {
+	sync.RWMutex
 	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
-	mu     sync.RWMutex
 }
 
 // inferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
@@ -154,24 +153,23 @@ func GetSystemTZ() (string, error) {
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
-//
-//	if valid Location is not found.
+//  if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	if name == "System" {
 		return time.Local, nil
 	}
-	lm.mu.RLock()
+	lm.RLock()
 	v, ok := lm.locMap[name]
-	lm.mu.RUnlock()
+	lm.RUnlock()
 	if ok {
 		return v, nil
 	}
 
 	if loc, err := time.LoadLocation(name); err == nil {
 		// assign value back to map
-		lm.mu.Lock()
+		lm.Lock()
 		lm.locMap[name] = loc
-		lm.mu.Unlock()
+		lm.Unlock()
 		return loc, nil
 	}
 

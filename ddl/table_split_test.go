@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,32 +16,35 @@ package ddl_test
 import (
 	"context"
 	"sync/atomic"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestTableSplit(t *testing.T) {
+type testDDLTableSplitSuite struct{}
+
+var _ = Suite(&testDDLTableSplitSuite{})
+
+func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := store.Close()
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 	}()
 	session.SetSchemaLease(100 * time.Millisecond)
 	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	// Synced split table region.
 	tk.MustExec("set global tidb_scatter_region = 1")
@@ -53,17 +55,17 @@ func TestTableSplit(t *testing.T) {
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
-	require.NotNil(t, infoSchema)
-	tbl, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
-	require.NoError(t, err)
-	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
+	c.Assert(infoSchema, NotNil)
+	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	c.Assert(err, IsNil)
+	checkRegionStartWithTableID(c, t.Meta().ID, store.(kvStore))
 
-	tbl, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
-	require.NoError(t, err)
-	pi := tbl.Meta().GetPartitionInfo()
-	require.NotNil(t, pi)
+	t, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
+	c.Assert(err, IsNil)
+	pi := t.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
 	for _, def := range pi.Definitions {
-		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
+		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
 	}
 }
 
@@ -71,14 +73,14 @@ type kvStore interface {
 	GetRegionCache() *tikv.RegionCache
 }
 
-func checkRegionStartWithTableID(t *testing.T, id int64, store kvStore) {
+func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	regionStartKey := tablecodec.EncodeTablePrefix(id)
 	var loc *tikv.KeyLocation
 	var err error
 	cache := store.GetRegionCache()
 	loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)
-	require.Equal(t, []byte(regionStartKey), loc.StartKey)
+	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }

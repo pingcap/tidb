@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,11 +15,11 @@ package executor
 
 import (
 	"context"
+	"sort"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/exp/slices"
 )
 
 type inspectionRuleRetriever struct {
@@ -61,7 +60,7 @@ func (e *inspectionRuleRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		for rule := range inspectionSummaryRules {
 			summaryRules = append(summaryRules, rule)
 		}
-		slices.Sort(summaryRules)
+		sort.Strings(summaryRules)
 
 		for _, rule := range summaryRules {
 			finalRows = append(finalRows, types.MakeDatums(

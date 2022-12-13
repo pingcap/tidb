@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,13 +18,12 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -35,8 +33,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := mathutil.Max(h.Lease(), ddlLease)
-	offset := DurationToTS(10 * lease)
+	lease := mathutil.MaxInt64(int64(h.Lease()), int64(ddlLease))
+	offset := DurationToTS(10 * time.Duration(lease))
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
 		return nil
@@ -48,9 +46,6 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	}
 	for _, row := range rows {
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
-			return errors.Trace(err)
-		}
-		if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -141,34 +136,12 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	return nil
 }
 
-func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	sql := "delete from mysql.stats_history where table_id = %?"
-	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sql = "delete from mysql.stats_meta_history where table_id = %?"
-	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
-	return err
-}
-
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -202,12 +175,6 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
 		return err
 	}
-	if isIndex == 0 {
-		// delete the record in mysql.column_stats_usage
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.column_stats_usage where table_id = %? and column_id = %?", physicalID, histID); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -217,18 +184,18 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx := context.Background()
 	startTS := txn.StartTS()
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
@@ -253,12 +220,6 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -267,7 +228,7 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := context.Background()
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)

@@ -8,47 +8,30 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor_test
 
 import (
-	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestQueryTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteP2) TestQueryTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	costTime := time.Since(tk.Session().GetSessionVars().StartTime)
-	require.Less(t, costTime, time.Second)
+	costTime := time.Since(tk.Se.GetSessionVars().StartTime)
+	c.Assert(costTime < 1*time.Second, IsTrue)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1), (1), (1), (1), (1)")
 	tk.MustExec("select * from t t1 join t t2 on t1.a = t2.a")
 
-	costTime = time.Since(tk.Session().GetSessionVars().StartTime)
-	require.Less(t, costTime, time.Second)
-}
-
-func TestFormatSQL(t *testing.T) {
-	val := executor.FormatSQL("aaaa")
-	require.Equal(t, "aaaa", val.String())
-	variable.QueryLogMaxLen.Store(0)
-	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
-	require.Equal(t, "aaaaaaaaaaaaaaaaaaaa", val.String())
-	variable.QueryLogMaxLen.Store(5)
-	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
-	require.Equal(t, "\"aaaaa\"(len:20)", val.String())
+	costTime = time.Since(tk.Se.GetSessionVars().StartTime)
+	c.Assert(costTime < 1*time.Second, IsTrue)
 }

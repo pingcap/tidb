@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,8 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -39,7 +38,7 @@ type Interceptor interface {
 type BaseInterceptor struct{}
 
 // OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
-func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+func (bi *BaseInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	return is
 }
 
@@ -48,17 +47,13 @@ type Callback interface {
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
-	OnSchemaStateChanged(schemaVer int64)
+	OnSchemaStateChanged()
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
 	// OnJobUpdated is called after the running job is updated.
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// OnGetJobBefore is called before getting job.
-	OnGetJobBefore(jobType string)
-	// OnGetJobAfter is called after getting job.
-	OnGetJobAfter(jobType string, job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -66,37 +61,27 @@ type BaseCallback struct {
 }
 
 // OnChanged implements Callback interface.
-func (*BaseCallback) OnChanged(err error) error {
+func (c *BaseCallback) OnChanged(err error) error {
 	return err
 }
 
 // OnSchemaStateChanged implements Callback interface.
-func (*BaseCallback) OnSchemaStateChanged(schemaVer int64) {
+func (c *BaseCallback) OnSchemaStateChanged() {
 	// Nothing to do.
 }
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
-func (*BaseCallback) OnJobRunBefore(_ *model.Job) {
+func (c *BaseCallback) OnJobRunBefore(job *model.Job) {
 	// Nothing to do.
 }
 
 // OnJobUpdated implements Callback.OnJobUpdated interface.
-func (*BaseCallback) OnJobUpdated(job *model.Job) {
+func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 	// Nothing to do.
 }
 
 // OnWatched implements Callback.OnWatched interface.
-func (*BaseCallback) OnWatched(ctx context.Context) {
-	// Nothing to do.
-}
-
-// OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (c *BaseCallback) OnGetJobBefore(jobType string) {
-	// Nothing to do.
-}
-
-// OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (c *BaseCallback) OnGetJobAfter(jobType string, job *model.Job) {
+func (c *BaseCallback) OnWatched(ctx context.Context) {
 	// Nothing to do.
 }
 
@@ -129,7 +114,7 @@ func (c *DefaultCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *DefaultCallback) OnSchemaStateChanged(schemaVer int64) {
+func (c *DefaultCallback) OnSchemaStateChanged() {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
@@ -166,7 +151,7 @@ func (c *ctcCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *ctcCallback) OnSchemaStateChanged(retVer int64) {
+func (c *ctcCallback) OnSchemaStateChanged() {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
@@ -174,7 +159,7 @@ func (c *ctcCallback) OnSchemaStateChanged(retVer int64) {
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
-func (*ctcCallback) OnJobRunBefore(job *model.Job) {
+func (c *ctcCallback) OnJobRunBefore(job *model.Job) {
 	log.Info("on job run before", zap.String("job", job.String()))
 	// Only block the ctc type ddl here.
 	if job.Type != model.ActionModifyColumn {

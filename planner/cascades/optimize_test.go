@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,116 +18,107 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestImplGroupZeroCost(t *testing.T) {
-	p := parser.New()
-	ctx := plannercore.MockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
-	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
-	require.NoError(t, err)
+var _ = Suite(&testCascadesSuite{})
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
-	require.NoError(t, err)
+type testCascadesSuite struct {
+	*parser.Parser
+	is        infoschema.InfoSchema
+	sctx      sessionctx.Context
+	optimizer *Optimizer
+}
 
-	logic, ok := plan.(plannercore.LogicalPlan)
-	require.True(t, ok)
+func (s *testCascadesSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	s.sctx = plannercore.MockContext()
+	s.Parser = parser.New()
+	s.optimizer = NewOptimizer()
+}
 
+func (s *testCascadesSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
+
+func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
+	stmt, err := s.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
 	rootGroup := memo.Convert2Group(logic)
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	impl, err := NewOptimizer().implGroup(rootGroup, prop, 0.0)
-	require.NoError(t, err)
-	require.Nil(t, impl)
+	impl, err := s.optimizer.implGroup(rootGroup, prop, 0.0)
+	c.Assert(impl, IsNil)
+	c.Assert(err, IsNil)
 }
 
-func TestInitGroupSchema(t *testing.T) {
-	p := parser.New()
-	ctx := plannercore.MockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
-
-	stmt, err := p.ParseOneStmt("select a from t", "", "")
-	require.NoError(t, err)
-
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
-	require.NoError(t, err)
-
-	logic, ok := plan.(plannercore.LogicalPlan)
-	require.True(t, ok)
-
+func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
+	stmt, err := s.ParseOneStmt("select a from t", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
 	g := memo.Convert2Group(logic)
-	require.NotNil(t, g)
-	require.NotNil(t, g.Prop)
-	require.Equal(t, 1, g.Prop.Schema.Len())
-	require.Nil(t, g.Prop.Stats)
+	c.Assert(g, NotNil)
+	c.Assert(g.Prop, NotNil)
+	c.Assert(g.Prop.Schema.Len(), Equals, 1)
+	c.Assert(g.Prop.Stats, IsNil)
 }
 
-func TestFillGroupStats(t *testing.T) {
-	p := parser.New()
-	ctx := plannercore.MockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
-
-	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
-	require.NoError(t, err)
-
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
-	require.NoError(t, err)
-
-	logic, ok := plan.(plannercore.LogicalPlan)
-	require.True(t, ok)
-
+func (s *testCascadesSuite) TestFillGroupStats(c *C) {
+	stmt, err := s.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
 	rootGroup := memo.Convert2Group(logic)
-	err = NewOptimizer().fillGroupStats(rootGroup)
-	require.NoError(t, err)
-	require.NotNil(t, rootGroup.Prop.Stats)
+	err = s.optimizer.fillGroupStats(rootGroup)
+	c.Assert(err, IsNil)
+	c.Assert(rootGroup.Prop.Stats, NotNil)
 }
 
-func TestPreparePossibleProperties(t *testing.T) {
-	p := parser.New()
-	ctx := plannercore.MockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
-	optimizer := NewOptimizer()
-
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})
 	defer func() {
-		optimizer.ResetTransformationRules(DefaultRuleBatches...)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
-
-	stmt, err := p.ParseOneStmt("select f, sum(a) from t group by f", "", "")
-	require.NoError(t, err)
-
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
-	require.NoError(t, err)
-
-	logic, ok := plan.(plannercore.LogicalPlan)
-	require.True(t, ok)
-
-	logic, err = optimizer.onPhasePreprocessing(ctx, logic)
-	require.NoError(t, err)
-
+	stmt, err := s.ParseOneStmt("select f, sum(a) from t group by f", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
+	c.Assert(err, IsNil)
 	// collect the target columns: f, a
 	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
-	require.True(t, ok)
-
+	c.Assert(ok, IsTrue)
 	var columnF, columnA *expression.Column
 	for i, col := range ds.Columns {
 		if col.Name.L == "f" {
@@ -137,15 +127,14 @@ func TestPreparePossibleProperties(t *testing.T) {
 			columnA = ds.Schema().Columns[i]
 		}
 	}
-	require.NotNil(t, columnF)
-	require.NotNil(t, columnA)
+	c.Assert(columnF, NotNil)
+	c.Assert(columnA, NotNil)
 
 	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
-	require.True(t, ok)
-
+	c.Assert(ok, IsTrue)
 	group := memo.Convert2Group(agg)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
-
+	err = s.optimizer.onPhaseExploration(s.sctx, group)
+	c.Assert(err, IsNil)
 	// The memo looks like this:
 	// Group#0 Schema:[Column#13,test.t.f]
 	//   Aggregation_2 input:[Group#1], group by:test.t.f, funcs:sum(test.t.a), firstrow(test.t.f)
@@ -162,17 +151,17 @@ func TestPreparePossibleProperties(t *testing.T) {
 	propMap := make(map[*memo.Group][][]*expression.Column)
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
-	require.Len(t, aggProp, 1)
-	require.True(t, aggProp[0][0].Equal(nil, columnF))
+	c.Assert(len(aggProp), Equals, 1)
+	c.Assert(aggProp[0][0].Equal(nil, columnF), IsTrue)
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
 	gatherProp, ok := propMap[gatherGroup]
-	require.True(t, ok)
+	c.Assert(ok, IsTrue)
 	// We have 2 props for Group1: [f], [a]
-	require.Len(t, gatherProp, 2)
+	c.Assert(len(gatherProp), Equals, 2)
 	for _, prop := range gatherProp {
-		require.Len(t, prop, 1)
-		require.True(t, prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF))
+		c.Assert(len(prop), Equals, 1)
+		c.Assert(prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF), IsTrue)
 	}
 }
 
@@ -189,34 +178,25 @@ func (rule *fakeTransformation) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	return []*memo.GroupExpr{old.GetExpr()}, true, false, nil
 }
 
-func TestAppliedRuleSet(t *testing.T) {
-	p := parser.New()
-	ctx := plannercore.MockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
-	optimizer := NewOptimizer()
-
+func (s *testCascadesSuite) TestAppliedRuleSet(c *C) {
 	rule := fakeTransformation{}
 	rule.pattern = memo.NewPattern(memo.OperandProjection, memo.EngineAll)
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandProjection: {
 			&rule,
 		},
 	})
 	defer func() {
-		optimizer.ResetTransformationRules(DefaultRuleBatches...)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
-
-	stmt, err := p.ParseOneStmt("select 1", "", "")
-	require.NoError(t, err)
-
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
-	require.NoError(t, err)
-
-	logic, ok := plan.(plannercore.LogicalPlan)
-	require.True(t, ok)
-
+	stmt, err := s.ParseOneStmt("select 1", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
 	group := memo.Convert2Group(logic)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
-	require.Equal(t, 1, rule.appliedTimes)
+	err = s.optimizer.onPhaseExploration(s.sctx, group)
+	c.Assert(err, IsNil)
+	c.Assert(rule.appliedTimes, Equals, 1)
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -37,15 +36,16 @@ type SimpleAllocator struct {
 type stdAllocator struct {
 }
 
-func (*stdAllocator) Alloc(capacity int) []byte {
+func (a *stdAllocator) Alloc(capacity int) []byte {
 	return make([]byte, 0, capacity)
 }
 
-func (*stdAllocator) AllocWithLen(length int, capacity int) []byte {
+func (a *stdAllocator) AllocWithLen(length int, capacity int) []byte {
 	return make([]byte, length, capacity)
 }
 
-func (*stdAllocator) Reset() {}
+func (a *stdAllocator) Reset() {
+}
 
 var _ Allocator = &stdAllocator{}
 

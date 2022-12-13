@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,41 +16,63 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"log"
+	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/testkit"
 	pmodel "github.com/prometheus/common/model"
-	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
-func TestMetricTableData(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+type testMemTableReaderSuite struct{ *testClusterTableBase }
 
+type testClusterTableBase struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testClusterTableBase) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+}
+
+func (s *testClusterTableBase) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
-	require.NoError(t, failpoint.Enable(fpName, "return"))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	// mock prometheus data
 	matrix := pmodel.Matrix{}
 	metric := map[pmodel.LabelName]pmodel.LabelValue{
 		"instance": "127.0.0.1:10080",
 	}
-	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
-	require.NoError(t, err)
+	t, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
+	c.Assert(err, IsNil)
 	v1 := pmodel.SamplePair{
-		Timestamp: pmodel.Time(tt.UnixMilli()),
+		Timestamp: pmodel.Time(t.UnixNano() / int64(time.Millisecond)),
 		Value:     pmodel.SampleValue(0.1),
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
@@ -61,7 +82,7 @@ func TestMetricTableData(t *testing.T) {
 		return fpname == fpName
 	})
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use metrics_schema")
 
 	cases := []struct {
@@ -90,16 +111,14 @@ func TestMetricTableData(t *testing.T) {
 	}
 
 	for _, cas := range cases {
-		rs, err := tk.Session().Execute(ctx, cas.sql)
-		require.NoError(t, err)
-		result := tk.ResultSetToResultWithCtx(ctx, rs[0], fmt.Sprintf("sql: %s", cas.sql))
+		rs, err := tk.Se.Execute(ctx, cas.sql)
+		c.Assert(err, IsNil)
+		result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("sql: %s", cas.sql))
 		result.Check(testkit.Rows(cas.exp...))
 	}
 }
 
-func TestTiDBClusterConfig(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	// mock PD http server
 	router := mux.NewRouter()
 
@@ -139,10 +158,6 @@ func TestTiDBClusterConfig(t *testing.T) {
 				"index-usage-sync-lease": "0s",
 				"INDEX-USAGE-SYNC-LEASE": "0s",
 			},
-			"enable-batch-dml": "false",
-			"prepared-plan-cache": map[string]string{
-				"enabled": "true",
-			},
 		}
 		return configuration, nil
 	}
@@ -153,7 +168,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	router.Handle("/config", fn.Wrap(mockConfig))
 
 	// mock servers
-	var servers []string
+	servers := []string{}
 	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
@@ -162,10 +177,10 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
 	fpExpr := strings.Join(servers, ";")
-	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select type, `key`, value from information_schema.cluster_config").Check(testkit.Rows(
 		"tidb key1 value1",
 		"tidb key2.nest1 n-value1",
@@ -185,15 +200,6 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"tikv key1 value1",
 		"tikv key2.nest1 n-value1",
 		"tikv key2.nest2 n-value2",
-		"tiflash key1 value1",
-		"tiflash key2.nest1 n-value1",
-		"tiflash key2.nest2 n-value2",
-		"tiflash key1 value1",
-		"tiflash key2.nest1 n-value1",
-		"tiflash key2.nest2 n-value2",
-		"tiflash key1 value1",
-		"tiflash key2.nest1 n-value1",
-		"tiflash key2.nest2 n-value2",
 		"pd key1 value1",
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
@@ -204,26 +210,22 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
 	))
-	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
-	require.Equal(t, int32(12), requestCounter)
+	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
+	c.Assert(requestCounter, Equals, int32(9))
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
 	for _, r := range rs {
 		s, ok := r[2].(string)
-		require.True(t, ok)
-		require.NotContains(t, s, "index-usage-sync-lease")
-		require.NotContains(t, s, "INDEX-USAGE-SYNC-LEASE")
-		// Should not contain deprecated items
-		// https://github.com/pingcap/tidb/issues/34867
-		require.NotContains(t, s, "enable-batch-dml")
-		require.NotContains(t, s, "prepared-plan-cache.enabled")
+		c.Assert(ok, IsTrue)
+		c.Assert(strings.Contains(s, "index-usage-sync-lease"), IsFalse)
+		c.Assert(strings.Contains(s, "INDEX-USAGE-SYNC-LEASE"), IsFalse)
 	}
 
 	// type => server index => row
 	rows := map[string][][]string{}
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "pd"} {
 		for _, server := range testServers {
 			rows[typ] = append(rows[typ], []string{
 				fmt.Sprintf("%s %s key1 value1", typ, server.address),
@@ -246,7 +248,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 12,
+			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -254,9 +256,6 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["tikv"][0],
 				rows["tikv"][1],
 				rows["tikv"][2],
-				rows["tiflash"][0],
-				rows["tiflash"][1],
-				rows["tiflash"][2],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
@@ -276,11 +275,10 @@ func TestTiDBClusterConfig(t *testing.T) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 12,
+			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
-				rows["tiflash"][0],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
@@ -356,11 +354,10 @@ func TestTiDBClusterConfig(t *testing.T) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 4,
+			reqCount: 3,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
-				rows["tiflash"][0],
 				rows["pd"][0],
 			),
 		},
@@ -426,15 +423,15 @@ func TestTiDBClusterConfig(t *testing.T) {
 		// reset the request counter
 		requestCounter = 0
 		tk.MustQuery(ca.sql).Check(testkit.Rows(ca.rows...))
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnigns: %+v", warnings))
-		require.Equal(t, ca.reqCount, requestCounter, fmt.Sprintf("SQL: %s", ca.sql))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
+		c.Assert(requestCounter, Equals, ca.reqCount, Commentf("SQL: %s", ca.sql))
 	}
 }
 
-func writeTmpFile(t *testing.T, dir, filename string, lines []string) {
+func (s *testClusterTableBase) writeTmpFile(c *C, dir, filename string, lines []string) {
 	err := os.WriteFile(filepath.Join(dir, filename), []byte(strings.Join(lines, "\n")), os.ModePerm)
-	require.NoError(t, err, fmt.Sprintf("write tmp file %s failed", filename))
+	c.Assert(err, IsNil, Commentf("write tmp file %s failed", filename))
 }
 
 type testServer struct {
@@ -445,39 +442,72 @@ type testServer struct {
 	logFile string
 }
 
-func TestTiDBClusterLog(t *testing.T) {
-	testServers := createClusterGRPCServer(t)
+func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServer {
+	// tp => testServer
+	testServers := map[string]*testServer{}
+
+	// create gRPC servers
+	for _, typ := range []string{"tidb", "tikv", "pd"} {
+		tmpDir, err := os.MkdirTemp("", typ)
+		c.Assert(err, IsNil)
+
+		server := grpc.NewServer()
+		logFile := filepath.Join(tmpDir, fmt.Sprintf("%s.log", typ))
+		diagnosticspb.RegisterDiagnosticsServer(server, sysutil.NewDiagnosticsServer(logFile))
+
+		// Find a available port
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		c.Assert(err, IsNil, Commentf("cannot find available port"))
+
+		testServers[typ] = &testServer{
+			typ:     typ,
+			server:  server,
+			address: fmt.Sprintf("127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port),
+			tmpDir:  tmpDir,
+			logFile: logFile,
+		}
+		go func() {
+			if err := server.Serve(listener); err != nil {
+				log.Fatalf("failed to serve: %v", err)
+			}
+		}()
+	}
+	return testServers
+}
+
+func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
+	testServers := s.setupClusterGRPCServer(c)
 	defer func() {
 		for _, s := range testServers {
 			s.server.Stop()
-			require.NoError(t, os.RemoveAll(s.tmpDir), fmt.Sprintf("remove tmpDir %v failed", s.tmpDir))
+			c.Assert(os.RemoveAll(s.tmpDir), IsNil, Commentf("remove tmpDir %v failed", s.tmpDir))
 		}
 	}()
 
 	// time format of log file
 	var logtime = func(s string) string {
-		tt, err := time.ParseInLocation("2006/01/02 15:04:05.000", s, time.Local)
-		require.NoError(t, err)
-		return tt.Format("[2006/01/02 15:04:05.000 -07:00]")
+		t, err := time.ParseInLocation("2006/01/02 15:04:05.000", s, time.Local)
+		c.Assert(err, IsNil)
+		return t.Format("[2006/01/02 15:04:05.000 -07:00]")
 	}
 
 	// time format of query output
 	var restime = func(s string) string {
-		tt, err := time.ParseInLocation("2006/01/02 15:04:05.000", s, time.Local)
-		require.NoError(t, err)
-		return tt.Format("2006/01/02 15:04:05.000")
+		t, err := time.ParseInLocation("2006/01/02 15:04:05.000", s, time.Local)
+		c.Assert(err, IsNil)
+		return t.Format("2006/01/02 15:04:05.000")
 	}
 
 	// prepare log files
 	// TiDB
-	writeTmpFile(t, testServers["tidb"].tmpDir, "tidb.log", []string{
+	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb.log", []string{
 		logtime(`2019/08/26 06:19:13.011`) + ` [INFO] [test log message tidb 1, foo]`,
 		logtime(`2019/08/26 06:19:14.011`) + ` [DEBUG] [test log message tidb 2, foo]`,
 		logtime(`2019/08/26 06:19:15.011`) + ` [error] [test log message tidb 3, foo]`,
 		logtime(`2019/08/26 06:19:16.011`) + ` [trace] [test log message tidb 4, foo]`,
 		logtime(`2019/08/26 06:19:17.011`) + ` [CRITICAL] [test log message tidb 5, foo]`,
 	})
-	writeTmpFile(t, testServers["tidb"].tmpDir, "tidb-1.log", []string{
+	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb-1.log", []string{
 		logtime(`2019/08/26 06:25:13.011`) + ` [info] [test log message tidb 10, bar]`,
 		logtime(`2019/08/26 06:25:14.011`) + ` [debug] [test log message tidb 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message tidb 12, bar]`,
@@ -486,14 +516,14 @@ func TestTiDBClusterLog(t *testing.T) {
 	})
 
 	// TiKV
-	writeTmpFile(t, testServers["tikv"].tmpDir, "tikv.log", []string{
+	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv.log", []string{
 		logtime(`2019/08/26 06:19:13.011`) + ` [INFO] [test log message tikv 1, foo]`,
 		logtime(`2019/08/26 06:20:14.011`) + ` [DEBUG] [test log message tikv 2, foo]`,
 		logtime(`2019/08/26 06:21:15.011`) + ` [error] [test log message tikv 3, foo]`,
 		logtime(`2019/08/26 06:22:16.011`) + ` [trace] [test log message tikv 4, foo]`,
 		logtime(`2019/08/26 06:23:17.011`) + ` [CRITICAL] [test log message tikv 5, foo]`,
 	})
-	writeTmpFile(t, testServers["tikv"].tmpDir, "tikv-1.log", []string{
+	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv-1.log", []string{
 		logtime(`2019/08/26 06:24:15.011`) + ` [info] [test log message tikv 10, bar]`,
 		logtime(`2019/08/26 06:25:16.011`) + ` [debug] [test log message tikv 11, bar]`,
 		logtime(`2019/08/26 06:26:17.011`) + ` [ERROR] [test log message tikv 12, bar]`,
@@ -502,14 +532,14 @@ func TestTiDBClusterLog(t *testing.T) {
 	})
 
 	// PD
-	writeTmpFile(t, testServers["pd"].tmpDir, "pd.log", []string{
+	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd.log", []string{
 		logtime(`2019/08/26 06:18:13.011`) + ` [INFO] [test log message pd 1, foo]`,
 		logtime(`2019/08/26 06:19:14.011`) + ` [DEBUG] [test log message pd 2, foo]`,
 		logtime(`2019/08/26 06:20:15.011`) + ` [error] [test log message pd 3, foo]`,
 		logtime(`2019/08/26 06:21:16.011`) + ` [trace] [test log message pd 4, foo]`,
 		logtime(`2019/08/26 06:22:17.011`) + ` [CRITICAL] [test log message pd 5, foo]`,
 	})
-	writeTmpFile(t, testServers["pd"].tmpDir, "pd-1.log", []string{
+	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd-1.log", []string{
 		logtime(`2019/08/26 06:23:13.011`) + ` [info] [test log message pd 10, bar]`,
 		logtime(`2019/08/26 06:24:14.011`) + ` [debug] [test log message pd 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message pd 12, bar]`,
@@ -854,19 +884,18 @@ func TestTiDBClusterLog(t *testing.T) {
 	}
 	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
-	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	for _, cas := range cases {
 		sql := "select * from information_schema.cluster_log"
 		if len(cas.conditions) > 0 {
 			sql = fmt.Sprintf("%s where %s", sql, strings.Join(cas.conditions, " and "))
 		}
 		result := tk.MustQuery(sql)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnigns: %+v", warnings))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 		var expected []string
 		for _, row := range cas.expected {
 			expectedRow := []string{
@@ -882,22 +911,33 @@ func TestTiDBClusterLog(t *testing.T) {
 	}
 }
 
-func TestTiDBClusterLogError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
-	require.NoError(t, failpoint.Enable(fpName, `return("")`))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	// Test without start time error.
-	err := tk.QueryToErr("select * from information_schema.cluster_log")
-	require.EqualError(t, err, "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	rs, err := tk.Exec("select * from information_schema.cluster_log")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	c.Assert(rs.Close(), IsNil)
 
 	// Test without end time error.
-	err = tk.QueryToErr("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
-	require.EqualError(t, err, "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	c.Assert(rs.Close(), IsNil)
 
 	// Test without specified message error.
-	err = tk.QueryToErr("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
-	require.EqualError(t, err, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+	c.Assert(rs.Close(), IsNil)
 }

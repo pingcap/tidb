@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,46 +18,32 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/retry"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
-	Region         tikv.RegionVerID
-	Meta           *metapb.Region
-	Ranges         *KeyRanges
-	AllStores      []uint64
-	PartitionIndex int64 // used by PartitionTableScan, indicates the n-th partition of the partition table
-}
-
-func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {
-	return &coprocessor.RegionInfo{
-		RegionId: ri.Region.GetID(),
-		RegionEpoch: &metapb.RegionEpoch{
-			ConfVer: ri.Region.GetConfVer(),
-			Version: ri.Region.GetVer(),
-		},
-		Ranges: ri.Ranges.ToPBRanges(),
-	}
+	Region    tikv.RegionVerID
+	Meta      *metapb.Region
+	Ranges    *KeyRanges
+	AllStores []uint64
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	*tikv.RegionRequestSender
-	enableCollectExecutionInfo bool
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
-		enableCollectExecutionInfo: enableCollectExecutionInfo,
+		RegionRequestSender: tikv.NewRegionRequestSender(cache.RegionCache, client),
 	}
 }
 
@@ -74,7 +59,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
-	if ss.Stats != nil && ss.enableCollectExecutionInfo {
+	if ss.Stats != nil {
 		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
@@ -110,6 +95,6 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(tikv.BoTiFlashRPC(), errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
+	err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
 	return errors.Trace(err)
 }

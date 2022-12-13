@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,32 +15,59 @@ package cascades_test
 
 import (
 	"fmt"
-	"testing"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/planner/cascades"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func TestSimpleProjDual(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+var _ = Suite(&testIntegrationSuite{})
 
-	tk := testkit.NewTestKit(t, store)
+type testIntegrationSuite struct {
+	store    kv.Storage
+	testData testutil.TestData
+}
+
+func newStoreWithBootstrap() (kv.Storage, error) {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return nil, err
+	}
+	_, err = session.BootstrapSession(store)
+	return store, err
+}
+
+func (s *testIntegrationSuite) SetUpSuite(c *C) {
+	var err error
+	s.store, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+	s.store.Close()
+}
+
+func (s *testIntegrationSuite) TestSimpleProjDual(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	tk.MustQuery("explain select 1").Check(testkit.Rows(
 		"Projection_3 1.00 root  1->Column#1",
 		"└─TableDual_4 1.00 root  rows:1",
 	))
-	tk.MustQuery("select 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1").Check(testkit.Rows(
+		"1",
+	))
 }
 
-func TestPKIsHandleRangeScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values(1,2),(3,4),(5,6)")
@@ -53,53 +79,44 @@ func TestPKIsHandleRangeScan(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestIndexScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestIndexScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, d int, index idx_b(b), index idx_c_b(c, b))")
 	tk.MustExec("insert into t values(1,2,3,100),(4,5,6,200),(7,8,9,300)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
-
 	var input []string
 	var output []struct {
 		SQL    string
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestBasicShow(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestBasicShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
@@ -109,11 +126,8 @@ func TestBasicShow(t *testing.T) {
 	))
 }
 
-func TestSort(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestSort(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33)")
@@ -124,24 +138,20 @@ func TestSort(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestAggregation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestAggregation(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33)")
@@ -155,58 +165,56 @@ func TestAggregation(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestPushdownDistinctEnable(t *testing.T) {
-	var input []string
-	var output []struct {
-		SQL    string
-		Plan   []string
-		Result []string
-	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+func (s *testIntegrationSuite) TestPushdownDistinctEnable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 	}
-	doTestPushdownDistinct(t, vars, input, output)
+	s.doTestPushdownDistinct(c, vars, input, output)
 }
 
-func TestPushdownDistinctDisable(t *testing.T) {
-	var input []string
-	var output []struct {
-		SQL    string
-		Plan   []string
-		Result []string
-	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+func (s *testIntegrationSuite) TestPushdownDistinctDisable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
 	}
-	doTestPushdownDistinct(t, vars, input, output)
+	s.doTestPushdownDistinct(c, vars, input, output)
 }
 
-func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct {
+func (s *testIntegrationSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
 	SQL    string
 	Plan   []string
 	Result []string
 }) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
@@ -220,21 +228,18 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 	}
 
 	for i, ts := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestSimplePlans(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestSimplePlans(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33)")
@@ -245,24 +250,20 @@ func TestSimplePlans(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -279,24 +280,20 @@ func TestJoin(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestApply(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestApply(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int primary key, b int)")
 	tk.MustExec("create table t2(a int primary key, b int)")
@@ -309,24 +306,20 @@ func TestApply(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestMemTableScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestMemTableScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	var input []string
 	var output []struct {
@@ -334,24 +327,20 @@ func TestMemTableScan(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestTopN(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestTopN(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33);")
@@ -362,25 +351,20 @@ func TestTopN(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestCascadePlannerHashedPartTable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite) TestCascadePlannerHashedPartTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt1")
 	tk.MustExec("create table pt1(a bigint, b bigint) partition by hash(a) partitions 4")
@@ -397,24 +381,20 @@ func TestCascadePlannerHashedPartTable(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func TestInlineProjection(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func (s *testIntegrationSuite) TestInlineProjection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a bigint, b bigint, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t2(a bigint, b bigint, index idx_a(a), index idx_b(b));")
@@ -427,13 +407,12 @@ func TestInlineProjection(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))

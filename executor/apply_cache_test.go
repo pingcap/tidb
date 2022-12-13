@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,20 +16,24 @@ package executor
 import (
 	"strconv"
 	"strings"
-	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestApplyCache(t *testing.T) {
+var _ = SerialSuites(&testApplyCacheSuite{})
+
+type testApplyCacheSuite struct {
+}
+
+func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuotaApplyCache = 100
 	applyCache, err := newApplyCache(ctx)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	value := make([]*chunk.List, 3)
@@ -44,36 +47,36 @@ func TestApplyCache(t *testing.T) {
 		key[i] = []byte(strings.Repeat(strconv.Itoa(i), 100))
 
 		// TODO: *chunk.List.GetMemTracker().BytesConsumed() is not accurate, fix it later.
-		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
+		c.Assert(applyCacheKVMem(key[i], value[i]), Equals, int64(100))
 	}
 
 	ok, err := applyCache.Set(key[0], value[0])
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err := applyCache.Get(key[0])
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	c.Assert(err, IsNil)
+	c.Assert(result, NotNil)
 
 	ok, err = applyCache.Set(key[1], value[1])
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err = applyCache.Get(key[1])
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	c.Assert(err, IsNil)
+	c.Assert(result, NotNil)
 
 	ok, err = applyCache.Set(key[2], value[2])
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err = applyCache.Get(key[2])
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	c.Assert(err, IsNil)
+	c.Assert(result, NotNil)
 
 	// Both key[0] and key[1] are not in the cache
 	result, err = applyCache.Get(key[0])
-	require.NoError(t, err)
-	require.Nil(t, result)
+	c.Assert(err, IsNil)
+	c.Assert(result, IsNil)
 
 	result, err = applyCache.Get(key[1])
-	require.NoError(t, err)
-	require.Nil(t, result)
+	c.Assert(err, IsNil)
+	c.Assert(result, IsNil)
 }

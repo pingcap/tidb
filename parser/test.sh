@@ -1,3 +1,0 @@
-#!/bin/sh
-
-GO111MODULE=on go test -p 1 -race -covermode=atomic -coverprofile=coverage.txt -coverpkg=./... ./...

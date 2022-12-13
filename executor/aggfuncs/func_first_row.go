@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -102,7 +102,7 @@ type partialResult4FirstRowDuration struct {
 type partialResult4FirstRowJSON struct {
 	basePartialResult4FirstRow
 
-	val types.BinaryJSON
+	val json.BinaryJSON
 }
 
 type partialResult4FirstRowEnum struct {
@@ -480,11 +480,11 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	if e.retTp == nil {
 		return errors.New("e.retTp of first_row should not be nil")
 	}
-	frac := e.retTp.GetDecimal()
+	frac := e.retTp.Decimal
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
+	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

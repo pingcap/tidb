@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,8 +17,9 @@ import (
 	"bytes"
 	"sort"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
@@ -27,9 +27,9 @@ type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
 // GetCompareFunc gets a compare function for the field type.
 func GetCompareFunc(tp *types.FieldType) CompareFunc {
-	switch tp.GetType() {
+	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.GetFlag()) {
+		if mysql.HasUnsignedFlag(tp.Flag) {
 			return cmpUint64
 		}
 		return cmpInt64
@@ -39,7 +39,7 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 		return cmpFloat64
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return genCmpStringFunc(tp.GetCollate())
+		return genCmpStringFunc(tp.Collate)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return cmpTime
 	case mysql.TypeDuration:
@@ -165,7 +165,7 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 		return cmpNull(lNull, rNull)
 	}
 	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
-	return types.CompareBinaryJSON(lJ, rJ)
+	return json.CompareBinary(lJ, rJ)
 }
 
 // Compare compares the value with ad.
@@ -210,7 +210,7 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		return types.CompareUint64(l, r)
 	case types.KindMysqlJSON:
 		l, r := row.GetJSON(colIdx), ad.GetMysqlJSON()
-		return types.CompareBinaryJSON(l, r)
+		return json.CompareBinary(l, r)
 	case types.KindMysqlTime:
 		l, r := row.GetTime(colIdx), ad.GetMysqlTime()
 		return l.Compare(r)

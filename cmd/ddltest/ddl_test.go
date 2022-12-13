@@ -8,14 +8,12 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddltest
 
 import (
-	goctx "context"
 	"database/sql"
 	"database/sql/driver"
 	"flag"
@@ -24,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,26 +30,34 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/config"
+	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store"
 	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"go.uber.org/zap"
+	goctx "golang.org/x/net/context"
 )
+
+func TestDDL(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 var (
 	etcd              = flag.String("etcd", "127.0.0.1:2379", "etcd path")
@@ -66,6 +73,8 @@ var (
 	enableRestart     = flag.Bool("enable_restart", true, "whether random restart servers for tests")
 )
 
+var _ = Suite(&TestDDLSuite{})
+
 type server struct {
 	*exec.Cmd
 	logFP *os.File
@@ -73,7 +82,7 @@ type server struct {
 	addr  string
 }
 
-type ddlSuite struct {
+type TestDDLSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	s     session.Session
@@ -86,50 +95,47 @@ type ddlSuite struct {
 	quit chan struct{}
 
 	retryCount int
+
+	testutil.CommonHandleSuite
 }
 
-func createDDLSuite(t *testing.T) (s *ddlSuite) {
-	var err error
-	s = new(ddlSuite)
+func (s *TestDDLSuite) SetUpSuite(c *C) {
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.quit = make(chan struct{})
 
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
 
 	s.dom, err = session.BootstrapSession(s.store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	s.s, err = session.CreateSession(s.store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	s.ctx = s.s.(sessionctx.Context)
 	goCtx := goctx.Background()
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
-	s.Bootstrap(t)
+	s.Bootstrap(c)
 
 	// Stop current DDL worker, so that we can't be the owner now.
 	err = domain.GetDomain(s.ctx).DDL().Stop()
-	require.NoError(t, err)
-	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+	c.Assert(err, IsNil)
+	ddl.RunWorker = false
 	session.ResetStoreForWithTiKVTest(s.store)
-	s.dom.Close()
-	require.NoError(t, s.store.Close())
-
-	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
-	require.NoError(t, err)
 	s.s, err = session.CreateSession(s.store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	s.ctx = s.s.(sessionctx.Context)
 	_, err = s.s.Execute(goCtx, "use test_ddl")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	addEnvPath("..")
 
@@ -139,18 +145,16 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	// Set server restart retry count.
 	s.retryCount = 20
 
-	createLogFiles(t, *serverNum)
+	createLogFiles(c, *serverNum)
 	err = s.startServers()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	s.wg.Add(1)
 	go s.restartServerRegularly()
-
-	return
 }
 
 // restartServerRegularly restarts a tidb server regularly.
-func (s *ddlSuite) restartServerRegularly() {
+func (s *TestDDLSuite) restartServerRegularly() {
 	defer s.wg.Done()
 
 	var err error
@@ -170,7 +174,7 @@ func (s *ddlSuite) restartServerRegularly() {
 	}
 }
 
-func (s *ddlSuite) teardown(t *testing.T) {
+func (s *TestDDLSuite) TearDownSuite(c *C) {
 	close(s.quit)
 	s.wg.Wait()
 
@@ -180,19 +184,21 @@ func (s *ddlSuite) teardown(t *testing.T) {
 	go func() {
 		select {
 		case <-time.After(100 * time.Second):
-			log.Error("testing timeout", zap.Stack("stack"))
+			buf := make([]byte, 2<<20)
+			size := runtime.Stack(buf, true)
+			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
 		case <-quitCh:
 		}
 	}()
 	err := s.store.Close()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	close(quitCh)
 
 	err = s.stopServers()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
 
-func (s *ddlSuite) startServers() (err error) {
+func (s *TestDDLSuite) startServers() (err error) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
@@ -216,7 +222,7 @@ func (s *ddlSuite) startServers() (err error) {
 	return nil
 }
 
-func (s *ddlSuite) killServer(proc *os.Process) error {
+func (s *TestDDLSuite) killServer(proc *os.Process) error {
 	// Make sure this tidb is killed, and it makes the next tidb that has the same port as this one start quickly.
 	err := proc.Kill()
 	if err != nil {
@@ -233,19 +239,13 @@ func (s *ddlSuite) killServer(proc *os.Process) error {
 	return nil
 }
 
-func (s *ddlSuite) stopServers() error {
+func (s *TestDDLSuite) stopServers() error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
 	for i := 0; i < len(s.procs); i++ {
-		if proc := s.procs[i]; proc != nil {
-			if proc.db != nil {
-				if err := proc.db.Close(); err != nil {
-					return err
-				}
-			}
-
-			err := s.killServer(proc.Process)
+		if s.procs[i] != nil {
+			err := s.killServer(s.procs[i].Process)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -257,17 +257,17 @@ func (s *ddlSuite) stopServers() error {
 
 var logFilePrefix = "tidb_log_file_"
 
-func createLogFiles(t *testing.T, length int) {
+func createLogFiles(c *C, length int) {
 	for i := 0; i < length; i++ {
 		fp, err := os.Create(fmt.Sprintf("%s%d", logFilePrefix, i))
 		if err != nil {
-			require.NoError(t, err)
+			c.Assert(err, IsNil)
 		}
-		require.NoError(t, fp.Close())
+		fp.Close()
 	}
 }
 
-func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
+func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 	cmd := exec.Command("ddltest_tidb-server",
 		"--store=tikv",
 		fmt.Sprintf("-L=%s", *ddlServerLogLevel),
@@ -340,7 +340,7 @@ func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
 	}, nil
 }
 
-func (s *ddlSuite) restartServerRand() error {
+func (s *TestDDLSuite) restartServerRand() error {
 	i := rand.Intn(*serverNum)
 
 	s.m.Lock()
@@ -387,7 +387,7 @@ func isRetryError(err error) bool {
 	return false
 }
 
-func (s *ddlSuite) exec(query string, args ...interface{}) (sql.Result, error) {
+func (s *TestDDLSuite) exec(query string, args ...interface{}) (sql.Result, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Exec(query, args...)
@@ -404,7 +404,7 @@ func (s *ddlSuite) exec(query string, args ...interface{}) (sql.Result, error) {
 	}
 }
 
-func (s *ddlSuite) mustExec(query string, args ...interface{}) sql.Result {
+func (s *TestDDLSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
 	r, err := s.exec(query, args...)
 	if err != nil {
 		log.Fatal("[mustExec fail]query",
@@ -417,7 +417,7 @@ func (s *ddlSuite) mustExec(query string, args ...interface{}) sql.Result {
 	return r
 }
 
-func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
+func (s *TestDDLSuite) execInsert(c *C, query string, args ...interface{}) sql.Result {
 	for {
 		r, err := s.exec(query, args...)
 		if err == nil {
@@ -425,7 +425,7 @@ func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
 		}
 
 		if *enableRestart {
-			// If you use enable random restart servers, we should ignore key exists error.
+			// If use enable random restart servers, we should ignore key exists error.
 			if strings.Contains(err.Error(), "Duplicate entry") &&
 				strings.Contains(err.Error(), "for key") {
 				return r
@@ -440,7 +440,7 @@ func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
 	}
 }
 
-func (s *ddlSuite) query(query string, args ...interface{}) (*sql.Rows, error) {
+func (s *TestDDLSuite) query(query string, args ...interface{}) (*sql.Rows, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Query(query, args...)
@@ -457,7 +457,7 @@ func (s *ddlSuite) query(query string, args ...interface{}) (*sql.Rows, error) {
 	}
 }
 
-func (s *ddlSuite) getServer() *server {
+func (s *TestDDLSuite) getServer() *server {
 	s.m.Lock()
 	defer s.m.Unlock()
 
@@ -474,7 +474,7 @@ func (s *ddlSuite) getServer() *server {
 }
 
 // runDDL executes the DDL query, returns a channel so that you can use it to wait DDL finished.
-func (s *ddlSuite) runDDL(sql string) chan error {
+func (s *TestDDLSuite) runDDL(sql string) chan error {
 	done := make(chan error, 1)
 	go func() {
 		_, err := s.s.Execute(goctx.Background(), sql)
@@ -489,15 +489,15 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 	return done
 }
 
-func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
+func (s *TestDDLSuite) getTable(c *C, name string) table.Table {
 	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return tbl
 }
 
-func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
+func dumpRows(c *C, rows *sql.Rows) [][]interface{} {
 	cols, err := rows.Columns()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	var ay [][]interface{}
 	for rows.Next() {
 		v := make([]interface{}, len(cols))
@@ -505,7 +505,7 @@ func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
 			v[i] = new(interface{})
 		}
 		err = rows.Scan(v...)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
 		for i := range v {
 			v[i] = *(v[i].(*interface{}))
@@ -513,38 +513,38 @@ func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
 		ay = append(ay, v)
 	}
 
-	require.NoError(t, rows.Close())
-	require.NoErrorf(t, rows.Err(), "%v", ay)
+	rows.Close()
+	c.Assert(rows.Err(), IsNil, Commentf("%v", ay))
 	return ay
 }
 
-func matchRows(t *testing.T, rows *sql.Rows, expected [][]interface{}) {
-	ay := dumpRows(t, rows)
-	require.Equalf(t, len(expected), len(ay), "%v", expected)
+func matchRows(c *C, rows *sql.Rows, expected [][]interface{}) {
+	ay := dumpRows(c, rows)
+	c.Assert(len(ay), Equals, len(expected), Commentf("%v", expected))
 	for i := range ay {
-		match(t, ay[i], expected[i]...)
+		match(c, ay[i], expected[i]...)
 	}
 }
 
-func match(t *testing.T, row []interface{}, expected ...interface{}) {
-	require.Equal(t, len(expected), len(row))
+func match(c *C, row []interface{}, expected ...interface{}) {
+	c.Assert(len(row), Equals, len(expected))
 	for i := range row {
 		if row[i] == nil {
-			require.Nil(t, expected[i])
+			c.Assert(expected[i], IsNil)
 			continue
 		}
 
 		got, err := types.ToString(row[i])
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
 		need, err := types.ToString(expected[i])
-		require.NoError(t, err)
-		require.Equal(t, need, got)
+		c.Assert(err, IsNil)
+		c.Assert(got, Equals, need)
 	}
 }
 
-func (s *ddlSuite) Bootstrap(t *testing.T) {
-	tk := testkit.NewTestKit(t, s.store)
+func (s *TestDDLSuite) Bootstrap(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_ddl")
 	tk.MustExec("drop table if exists test_index, test_column, test_insert, test_conflict_insert, " +
 		"test_update, test_conflict_update, test_delete, test_conflict_delete, test_mixed, test_inc")
@@ -560,7 +560,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -572,590 +572,521 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 }
 
-func TestSimple(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+func (s *TestDDLSuite) TestSimple(c *C) {
+	done := s.runDDL("create table if not exists test_simple (c1 int, c2 int, c3 int)")
+	err := <-done
+	c.Assert(err, IsNil)
 
-	t.Run("Basic", func(t *testing.T) {
-		done := s.runDDL("create table if not exists test_simple (c1 int, c2 int, c3 int)")
-		err := <-done
-		require.NoError(t, err)
+	_, err = s.exec("insert into test_simple values (1, 1, 1)")
+	c.Assert(err, IsNil)
 
-		_, err = s.exec("insert into test_simple values (1, 1, 1)")
-		require.NoError(t, err)
+	rows, err := s.query("select c1 from test_simple limit 1")
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{1}})
 
-		rows, err := s.query("select c1 from test_simple limit 1")
-		require.NoError(t, err)
-		matchRows(t, rows, [][]interface{}{{1}})
-
-		done = s.runDDL("drop table if exists test_simple")
-		err = <-done
-		require.NoError(t, err)
-	})
-	t.Run("Mixed", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_mixed"},
-			{"test_mixed_common"},
-		}
-
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				workerNum := 10
-				rowCount := 10000
-				batch := rowCount / workerNum
-
-				start := time.Now()
-
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						}
-					}(i)
-				}
-				wg.Wait()
-
-				end := time.Now()
-				fmt.Printf("[TestSimpleMixed][Insert][Time Cost]%v\n", end.Sub(start))
-
-				start = time.Now()
-
-				rowID := int64(rowCount)
-				defaultValue := int64(-1)
-
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func() {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							key := atomic.AddInt64(&rowID, 1)
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
-							key = int64(randomNum(rowCount))
-							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, key))
-							key = int64(randomNum(rowCount))
-							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, key))
-						}
-					}()
-				}
-				wg.Wait()
-
-				end = time.Now()
-				fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
-
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				updateCount := int64(0)
-				insertCount := int64(0)
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
-						insertCount++
-					} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
-						updateCount++
-					} else {
-						log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
-					}
-
-					return true, nil
-				})
-				require.NoError(t, err)
-
-				deleteCount := atomic.LoadInt64(&rowID) - insertCount - updateCount
-				require.Greater(t, insertCount, int64(0))
-				require.Greater(t, updateCount, int64(0))
-				require.Greater(t, deleteCount, int64(0))
-			})
-		}
-	})
-	t.Run("Inc", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_inc"},
-			{"test_inc_common"},
-		}
-
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				workerNum := 10
-				rowCount := 1000
-				batch := rowCount / workerNum
-
-				start := time.Now()
-
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						}
-					}(i)
-				}
-				wg.Wait()
-
-				end := time.Now()
-				fmt.Printf("[TestSimpleInc][Insert][Time Cost]%v\n", end.Sub(start))
-
-				start = time.Now()
-
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func() {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							s.mustExec(fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
-						}
-					}()
-				}
-				wg.Wait()
-
-				end = time.Now()
-				fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
-
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, "test_inc")
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
-						if *enableRestart {
-							require.GreaterOrEqual(t, data[1].GetValue(), int64(rowCount))
-						} else {
-							require.Equal(t, int64(rowCount), data[1].GetValue())
-						}
-					} else {
-						require.Equal(t, data[1].GetValue(), data[0].GetValue())
-					}
-
-					return true, nil
-				})
-				require.NoError(t, err)
-			})
-		}
-	})
+	done = s.runDDL("drop table if exists test_simple")
+	err = <-done
+	c.Assert(err, IsNil)
 }
 
-func TestSimpleInsert(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+func (s *TestDDLSuite) TestSimpleInsert(c *C) {
+	tblName := "test_insert"
+	if s.IsCommonHandle {
+		tblName = "test_insert_common"
+	}
 
-	t.Run("Basic", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_insert"},
-			{"test_insert_common"},
-		}
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
 
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				workerNum := 10
-				rowCount := 10000
-				batch := rowCount / workerNum
+	start := time.Now()
 
-				start := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
 
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+			}
+		}(i)
+	}
+	wg.Wait()
 
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						}
-					}(i)
-				}
-				wg.Wait()
+	end := time.Now()
+	fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
-				end := time.Now()
-				fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
 
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, "test_insert")
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					require.Equal(t, data[1].GetValue(), data[0].GetValue())
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Equal(t, rowCount, handles.Len())
-			})
-		}
+	tbl := s.getTable(c, "test_insert")
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
+		return true, nil
 	})
-	t.Run("Conflict", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_conflict_insert"},
-			{"test_conflict_insert_common"},
-		}
-
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
-				keysMap := make(map[int64]int64)
-
-				workerNum := 10
-				rowCount := 10000
-				batch := rowCount / workerNum
-
-				start := time.Now()
-
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func() {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := randomNum(rowCount)
-							_, _ = s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							mu.Lock()
-							keysMap[int64(k)] = int64(k)
-							mu.Unlock()
-						}
-					}()
-				}
-				wg.Wait()
-
-				end := time.Now()
-				fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
-
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					require.Contains(t, keysMap, data[0].GetValue())
-					require.Equal(t, data[1].GetValue(), data[0].GetValue())
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Len(t, keysMap, handles.Len())
-			})
-		}
-	})
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, rowCount, Commentf("%d %d", handles.Len(), rowCount))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleInsert)
 }
 
-func TestSimpleUpdate(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
+	tblName := "test_conflict_insert"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_insert_common"
+	}
 
-	t.Run("Basic", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_update"},
-			{"test_update_common"},
-		}
+	var mu sync.Mutex
+	keysMap := make(map[int64]int64)
 
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
-				keysMap := make(map[int64]int64)
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
 
-				workerNum := 10
-				rowCount := 10000
-				batch := rowCount / workerNum
+	start := time.Now()
 
-				start := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func() {
+			defer wg.Done()
 
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
+			for j := 0; j < batch; j++ {
+				k := randomNum(rowCount)
+				s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				mu.Lock()
+				keysMap[int64(k)] = int64(k)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							v := randomNum(rowCount)
-							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, v, k))
-							mu.Lock()
-							keysMap[int64(k)] = int64(v)
-							mu.Unlock()
-						}
-					}(i)
-				}
-				wg.Wait()
+	end := time.Now()
+	fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
-				end := time.Now()
-				fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
 
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					key := data[0].GetInt64()
-					require.Equal(t, keysMap[key], data[1].GetValue())
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Equal(t, rowCount, handles.Len())
-			})
-		}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		c.Assert(keysMap, HasKey, data[0].GetValue())
+		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
+		return true, nil
 	})
-	t.Run("Conflict", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_conflict_update"},
-			{"test_conflict_update_common"},
-		}
-
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
-				keysMap := make(map[int64]int64)
-
-				workerNum := 10
-				rowCount := 10000
-				batch := rowCount / workerNum
-
-				start := time.Now()
-
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							mu.Lock()
-							keysMap[int64(k)] = int64(k)
-							mu.Unlock()
-						}
-					}(i)
-				}
-				wg.Wait()
-
-				end := time.Now()
-				fmt.Printf("[TestSimpleConflictUpdate][Insert][Time Cost]%v\n", end.Sub(start))
-
-				start = time.Now()
-
-				defaultValue := int64(-1)
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func() {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := randomNum(rowCount)
-							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
-							mu.Lock()
-							keysMap[int64(k)] = defaultValue
-							mu.Unlock()
-						}
-					}()
-				}
-				wg.Wait()
-
-				end = time.Now()
-				fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
-
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					require.Contains(t, keysMap, data[0].GetValue())
-
-					if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
-						log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
-					}
-
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Equal(t, rowCount, handles.Len())
-			})
-		}
-	})
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, len(keysMap))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictInsert)
 }
 
-func TestSimpleDelete(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
+	tblName := "test_update"
+	if s.IsCommonHandle {
+		tblName = "test_update_common"
+	}
+	var mu sync.Mutex
+	keysMap := make(map[int64]int64)
 
-	t.Run("Basic", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_delete"},
-			{"test_delete_common"},
-		}
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
 
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				workerNum := 10
-				rowCount := 1000
-				batch := rowCount / workerNum
+	start := time.Now()
 
-				start := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
 
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				v := randomNum(rowCount)
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, v, k))
+				mu.Lock()
+				keysMap[int64(k)] = int64(v)
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
 
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
-						}
-					}(i)
-				}
-				wg.Wait()
+	end := time.Now()
+	fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
 
-				end := time.Now()
-				fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
 
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Equal(t, 0, handles.Len())
-			})
-		}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		key := data[0].GetInt64()
+		c.Assert(data[1].GetValue(), Equals, keysMap[key])
+		return true, nil
 	})
-	t.Run("Conflict", func(t *testing.T) {
-		tests := []struct {
-			name string
-		}{
-			{"test_conflict_delete"},
-			{"test_conflict_delete_common"},
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, rowCount)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleUpdate)
+}
+
+func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
+	tblName := "test_conflict_update"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_update_common"
+	}
+	var mu sync.Mutex
+	keysMap := make(map[int64]int64)
+
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				mu.Lock()
+				keysMap[int64(k)] = int64(k)
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end := time.Now()
+	fmt.Printf("[TestSimpleConflictUpdate][Insert][Time Cost]%v\n", end.Sub(start))
+
+	start = time.Now()
+
+	defaultValue := int64(-1)
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func() {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := randomNum(rowCount)
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
+				mu.Lock()
+				keysMap[int64(k)] = defaultValue
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	end = time.Now()
+	fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
+
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		c.Assert(keysMap, HasKey, data[0].GetValue())
+
+		if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
+			log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
 		}
 
-		for _, test := range tests {
-			tblName := test.name
-			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
-				keysMap := make(map[int64]int64)
-
-				workerNum := 10
-				rowCount := 1000
-				batch := rowCount / workerNum
-
-				start := time.Now()
-
-				var wg sync.WaitGroup
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := batch*i + j
-							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							mu.Lock()
-							keysMap[int64(k)] = int64(k)
-							mu.Unlock()
-						}
-					}(i)
-				}
-				wg.Wait()
-
-				end := time.Now()
-				fmt.Printf("[TestSimpleConflictDelete][Insert][Time Cost]%v\n", end.Sub(start))
-
-				start = time.Now()
-
-				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
-					go func(i int) {
-						defer wg.Done()
-
-						for j := 0; j < batch; j++ {
-							k := randomNum(rowCount)
-							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
-							mu.Lock()
-							delete(keysMap, int64(k))
-							mu.Unlock()
-						}
-					}(i)
-				}
-				wg.Wait()
-
-				end = time.Now()
-				fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
-
-				ctx := s.ctx
-				err := sessiontxn.NewTxn(goctx.Background(), ctx)
-				require.NoError(t, err)
-
-				tbl := s.getTable(t, tblName)
-				handles := kv.NewHandleMap()
-				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-					handles.Set(h, struct{}{})
-					require.Contains(t, keysMap, data[0].GetValue())
-					return true, nil
-				})
-				require.NoError(t, err)
-				require.Len(t, keysMap, handles.Len())
-			})
-		}
+		return true, nil
 	})
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, rowCount)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictUpdate)
+}
+
+func (s *TestDDLSuite) TestSimpleDelete(c *C) {
+	tblName := "test_delete"
+	if s.IsCommonHandle {
+		tblName = "test_delete_common"
+	}
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end := time.Now()
+	fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
+
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, 0)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleDelete)
+}
+
+func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
+	tblName := "test_conflict_delete"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_delete_common"
+	}
+	var mu sync.Mutex
+	keysMap := make(map[int64]int64)
+
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				mu.Lock()
+				keysMap[int64(k)] = int64(k)
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end := time.Now()
+	fmt.Printf("[TestSimpleConflictDelete][Insert][Time Cost]%v\n", end.Sub(start))
+
+	start = time.Now()
+
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := randomNum(rowCount)
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
+				mu.Lock()
+				delete(keysMap, int64(k))
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end = time.Now()
+	fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
+
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
+		c.Assert(keysMap, HasKey, data[0].GetValue())
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(handles.Len(), Equals, len(keysMap))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictDelete)
+}
+
+func (s *TestDDLSuite) TestSimpleMixed(c *C) {
+	tblName := "test_mixed"
+	if s.IsCommonHandle {
+		tblName = "test_mixed_common"
+	}
+	workerNum := 10
+	rowCount := 10000
+	batch := rowCount / workerNum
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end := time.Now()
+	fmt.Printf("[TestSimpleMixed][Insert][Time Cost]%v\n", end.Sub(start))
+
+	start = time.Now()
+
+	rowID := int64(rowCount)
+	defaultValue := int64(-1)
+
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func() {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				key := atomic.AddInt64(&rowID, 1)
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
+				key = int64(randomNum(rowCount))
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, key))
+				key = int64(randomNum(rowCount))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, key))
+			}
+		}()
+	}
+	wg.Wait()
+
+	end = time.Now()
+	fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
+
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+
+	tbl := s.getTable(c, tblName)
+	updateCount := int64(0)
+	insertCount := int64(0)
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
+			insertCount++
+		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
+			updateCount++
+		} else {
+			log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
+		}
+
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+
+	deleteCount := atomic.LoadInt64(&rowID) - insertCount - updateCount
+	c.Assert(insertCount, Greater, int64(0))
+	c.Assert(updateCount, Greater, int64(0))
+	c.Assert(deleteCount, Greater, int64(0))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleMixed)
+}
+
+func (s *TestDDLSuite) TestSimpleInc(c *C) {
+	tblName := "test_inc"
+	if s.IsCommonHandle {
+		tblName = "test_inc_common"
+	}
+	workerNum := 10
+	rowCount := 1000
+	batch := rowCount / workerNum
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				k := batch*i + j
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	end := time.Now()
+	fmt.Printf("[TestSimpleInc][Insert][Time Cost]%v\n", end.Sub(start))
+
+	start = time.Now()
+
+	wg.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func() {
+			defer wg.Done()
+
+			for j := 0; j < batch; j++ {
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
+			}
+		}()
+	}
+	wg.Wait()
+
+	end = time.Now()
+	fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
+
+	ctx := s.ctx
+	err := ctx.NewTxn(goctx.Background())
+	c.Assert(err, IsNil)
+
+	tbl := s.getTable(c, "test_inc")
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
+			if *enableRestart {
+				c.Assert(data[1].GetValue(), GreaterEqual, int64(rowCount))
+			} else {
+				c.Assert(data[1].GetValue(), Equals, int64(rowCount))
+			}
+		} else {
+			c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
+		}
+
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleInc)
 }
 
 // addEnvPath appends newPath to $PATH.
 func addEnvPath(newPath string) {
-	_ = os.Setenv("PATH", fmt.Sprintf("%s%c%s", os.Getenv("PATH"), os.PathListSeparator, newPath))
+	os.Setenv("PATH", fmt.Sprintf("%s%c%s", os.Getenv("PATH"), os.PathListSeparator, newPath))
 }
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
+	store.Register("tikv", tidbdriver.TiKVDriver{})
 }

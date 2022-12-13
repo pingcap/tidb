@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,38 +16,41 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
-// It is an improvement because it operates similar to privilege cache:
-// - it caches for 30s instead of 2s
-// - the cache is invalidated on update
-// - an etcd notification is sent to other tidb servers.
+// It is an improvement because it operates similar to privilege cache,
+// where it caches for 5 minutes instead of 2 seconds, plus it listens on etcd
+// for updates from other servers.
 
-// sysVarCache represents the cache of system variables broken up into session and global scope.
-type sysVarCache struct {
-	sync.RWMutex // protects global and session maps
-	global       map[string]string
-	session      map[string]string
-	rebuildLock  sync.Mutex // protects concurrent rebuild
+// SysVarCache represents the cache of system variables broken up into session and global scope.
+type SysVarCache struct {
+	sync.RWMutex
+	global  map[string]string
+	session map[string]string
 }
 
-func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
-	do.sysVarCache.RLock()
-	cacheNeedsRebuild := len(do.sysVarCache.session) == 0 || len(do.sysVarCache.global) == 0
-	do.sysVarCache.RUnlock()
+// GetSysVarCache gets the global variable cache.
+func (do *Domain) GetSysVarCache() *SysVarCache {
+	return &do.sysVarCache
+}
+
+func (svc *SysVarCache) rebuildCacheIfNeeded(ctx sessionctx.Context) (err error) {
+	svc.RLock()
+	cacheNeedsRebuild := len(svc.session) == 0 || len(svc.global) == 0
+	svc.RUnlock()
 	if cacheNeedsRebuild {
 		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
-		if err = do.rebuildSysVarCache(nil); err != nil {
+		if err = svc.RebuildSysVarCache(ctx); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
@@ -58,39 +60,44 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 // GetSessionCache gets a copy of the session sysvar cache.
 // The intention is to copy it directly to the systems[] map
 // on creating a new session.
-func (do *Domain) GetSessionCache() (map[string]string, error) {
-	if err := do.rebuildSysVarCacheIfNeeded(); err != nil {
+func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) (map[string]string, error) {
+	if err := svc.rebuildCacheIfNeeded(ctx); err != nil {
 		return nil, err
 	}
-	do.sysVarCache.RLock()
-	defer do.sysVarCache.RUnlock()
+	svc.RLock()
+	defer svc.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
-	newMap := make(map[string]string, len(do.sysVarCache.session))
-	maps.Copy(newMap, do.sysVarCache.session)
+	newMap := make(map[string]string, len(svc.session))
+	for k, v := range svc.session {
+		newMap[k] = v
+	}
 	return newMap, nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.
-func (do *Domain) GetGlobalVar(name string) (string, error) {
-	if err := do.rebuildSysVarCacheIfNeeded(); err != nil {
+func (svc *SysVarCache) GetGlobalVar(ctx sessionctx.Context, name string) (string, error) {
+	if err := svc.rebuildCacheIfNeeded(ctx); err != nil {
 		return "", err
 	}
-	do.sysVarCache.RLock()
-	defer do.sysVarCache.RUnlock()
+	svc.RLock()
+	defer svc.RUnlock()
 
-	if val, ok := do.sysVarCache.global[name]; ok {
+	if val, ok := svc.global[name]; ok {
 		return val, nil
 	}
 	logutil.BgLogger().Warn("could not find key in global cache", zap.String("name", name))
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
+func (svc *SysVarCache) fetchTableValues(ctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	if err != nil {
+		return tableContents, err
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -102,25 +109,12 @@ func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, 
 	return tableContents, nil
 }
 
-// rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
+// RebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
-func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
+func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
-	if ctx == nil {
-		sysSessionPool := do.SysSessionPool()
-		res, err := sysSessionPool.Get()
-		if err != nil {
-			return err
-		}
-		defer sysSessionPool.Put(res)
-		ctx = res.(sessionctx.Context)
-	}
-	// Only one rebuild can be in progress at a time, this prevents a lost update race
-	// where an earlier fetchTableValues() finishes last.
-	do.sysVarCache.rebuildLock.Lock()
-	defer do.sysVarCache.rebuildLock.Unlock()
-	tableContents, err := do.fetchTableValues(ctx)
+	tableContents, err := svc.fetchTableValues(ctx)
 	if err != nil {
 		return err
 	}
@@ -137,26 +131,74 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		}
 		if sv.HasGlobalScope() {
 			newGlobalCache[sv.Name] = sVal
-
-			// Call the SetGlobal func for this sysvar if it exists.
-			// SET GLOBAL only calls the SetGlobal func on the calling instances.
-			// This ensures it is run on all tidb servers.
-			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
-			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
-				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
-				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
-				if err != nil {
-					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
-				}
-			}
 		}
+		// Propagate any changes to the server scoped variables
+		checkEnableServerGlobalVar(sv.Name, sVal)
 	}
 
 	logutil.BgLogger().Debug("rebuilding sysvar cache")
 
-	do.sysVarCache.Lock()
-	defer do.sysVarCache.Unlock()
-	do.sysVarCache.session = newSessionCache
-	do.sysVarCache.global = newGlobalCache
+	svc.Lock()
+	defer svc.Unlock()
+	svc.session = newSessionCache
+	svc.global = newGlobalCache
 	return nil
+}
+
+// checkEnableServerGlobalVar processes variables that acts in server and global level.
+// This is required because the SetGlobal function on the sysvar struct only executes on
+// the initiating tidb-server. There is no current method to say "run this function on all
+// tidb servers when the value of this variable changes". If you do not require changes to
+// be applied on all servers, use a getter/setter instead! You don't need to add to this list.
+func checkEnableServerGlobalVar(name, sVal string) {
+	var err error
+	switch name {
+	case variable.TiDBEnableStmtSummary:
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+	case variable.TiDBStmtSummaryInternalQuery:
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+	case variable.TiDBStmtSummaryRefreshInterval:
+		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+	case variable.TiDBStmtSummaryHistorySize:
+		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+	case variable.TiDBStmtSummaryMaxStmtCount:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+	case variable.TiDBStmtSummaryMaxSQLLength:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
+	case variable.TiDBCapturePlanBaseline:
+		variable.CapturePlanBaseline.Set(sVal, false)
+	case variable.TiDBEnableTopSQL:
+		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTopSQLPrecisionSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+	case variable.TiDBTopSQLMaxStatementCount:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxCollect:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxCollect.Store(val)
+	case variable.TiDBTopSQLReportIntervalSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	}
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
+	}
 }

@@ -33,8 +33,8 @@ type CopMeetLock struct {
 
 // TransactionEvent represents a transaction event that may belong to any of the possible types.
 type TransactionEvent struct {
-	inner     interface{}
 	eventType EventType
+	inner     interface{}
 }
 
 // GetCopMeetLock tries to extract the inner CopMeetLock event from a TransactionEvent. Returns nil if it's not a

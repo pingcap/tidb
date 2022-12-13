@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,14 +17,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/parser/model"
 )
 
 type repairInfo struct {
-	repairDBInfoMap map[int64]*model.DBInfo
-	repairTableList []string
 	sync.RWMutex
-	repairMode bool
+	repairMode      bool
+	repairTableList []string
+	repairDBInfoMap map[int64]*model.DBInfo
 }
 
 // RepairInfo indicates the repaired table info.

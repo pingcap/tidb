@@ -1,3 +1,0 @@
-[tikv-importer]
-backend = "tidb"
-on-duplicate = "error"

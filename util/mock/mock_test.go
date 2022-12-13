@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +16,19 @@ package mock
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+var _ = Suite(&testMockSuite{})
+
+type testMockSuite struct {
+}
 
 type contextKeyType int
 
@@ -28,16 +38,17 @@ func (k contextKeyType) String() string {
 
 const contextKey contextKeyType = 0
 
-func TestContext(t *testing.T) {
+func (s *testMockSuite) TestContext(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := NewContext()
 
 	ctx.SetValue(contextKey, 1)
 	v := ctx.Value(contextKey)
-	assert.Equal(t, 1, v)
+	c.Assert(v, Equals, 1)
 
 	ctx.ClearValue(contextKey)
 	v = ctx.Value(contextKey)
-	assert.Nil(t, v)
+	c.Assert(v, IsNil)
 }
 
 func BenchmarkNewContext(b *testing.B) {

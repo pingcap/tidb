@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,25 +19,26 @@ import (
 	"fmt"
 	"runtime/trace"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -59,17 +59,13 @@ type LazyTxn struct {
 	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
 
-	// TxnInfo is added for the lock view feature, the data is frequent modified but
-	// rarely read (just in query select * from information_schema.tidb_trx).
-	// The data in this session would be query by other sessions, so Mutex is necessary.
-	// Since read is rare, the reader can copy-on-read to get a data snapshot.
-	mu struct {
-		sync.RWMutex
-		txninfo.TxnInfo
-	}
+	// following atomic fields are used for filling TxnInfo
+	// we need these fields because kv.Transaction provides no thread safety promise
+	// but we hope getting TxnInfo is a thread safe op
 
-	// mark the txn enables lazy uniqueness check in pessimistic transactions.
-	lazyUniquenessCheckEnabled bool
+	// txnInfo provides information about the transaction in a thread-safe way. To atomically replace the struct,
+	// it's stored as an unsafe.Pointer.
+	txnInfo unsafe.Pointer
 }
 
 // GetTableInfo returns the cached index name.
@@ -84,24 +80,9 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.mu.TxnInfo = txninfo.TxnInfo{}
-}
-
-// call this under lock!
-func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
-	if txn.mu.TxnInfo.State != state {
-		lastState := txn.mu.TxnInfo.State
-		lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
-		txn.mu.TxnInfo.State = state
-		txn.mu.TxnInfo.LastStateChangeTime = time.Now()
-		if !lastStateChangeTime.IsZero() {
-			hasLockLbl := !txn.mu.TxnInfo.BlockStartTime.IsZero()
-			txninfo.TxnDurationHistogram(lastState, hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
-		}
-		txninfo.TxnStatusEnteringCounter(state).Inc()
-	}
+	txn.storeTxnInfo(&txninfo.TxnInfo{
+		State: txninfo.TxnRunningNormal,
+	})
 }
 
 func (txn *LazyTxn) initStmtBuf() {
@@ -126,16 +107,6 @@ func (txn *LazyTxn) flushStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
-
-	if txn.lazyUniquenessCheckEnabled {
-		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
-			return flags.HasPresumeKeyNotExists()
-		})
-		for _, key := range keysNeedSetPersistentPNE {
-			buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
-		}
-	}
-
 	buf.Release(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 }
@@ -148,37 +119,36 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	buf.Cleanup(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	txnInfo := txn.getTxnInfo()
+	atomic.StoreUint64(&txnInfo.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txnInfo.EntriesSize, uint64(txn.Transaction.Size()))
 }
 
-// resetTxnInfo resets the transaction info.
-// Note: call it under lock!
-func (txn *LazyTxn) resetTxnInfo(
+func (txn *LazyTxn) storeTxnInfo(info *txninfo.TxnInfo) {
+	atomic.StorePointer(&txn.txnInfo, unsafe.Pointer(info))
+}
+
+func (txn *LazyTxn) recreateTxnInfo(
 	startTS uint64,
 	state txninfo.TxnRunningState,
-	entriesCount uint64,
+	entriesCount,
+	entriesSize uint64,
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
-	if !txn.mu.LastStateChangeTime.IsZero() {
-		lastState := txn.mu.State
-		hasLockLbl := !txn.mu.BlockStartTime.IsZero()
-		txninfo.TxnDurationHistogram(lastState, hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
+	info := &txninfo.TxnInfo{
+		StartTS:          startTS,
+		State:            state,
+		EntriesCount:     entriesCount,
+		EntriesSize:      entriesSize,
+		CurrentSQLDigest: currentSQLDigest,
+		AllSQLDigests:    allSQLDigests,
 	}
-	if txn.mu.TxnInfo.StartTS != 0 {
-		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
-	}
-	txn.mu.TxnInfo = txninfo.TxnInfo{}
-	txn.mu.TxnInfo.StartTS = startTS
-	txn.mu.TxnInfo.State = state
-	txninfo.TxnStatusEnteringCounter(state).Inc()
-	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
-	txn.mu.TxnInfo.EntriesCount = entriesCount
+	txn.storeTxnInfo(info)
+}
 
-	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
-	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
+func (txn *LazyTxn) getTxnInfo() *txninfo.TxnInfo {
+	return (*txninfo.TxnInfo)(atomic.LoadPointer(&txn.txnInfo))
 }
 
 // Size implements the MemBuffer interface.
@@ -187,22 +157,6 @@ func (txn *LazyTxn) Size() int {
 		return 0
 	}
 	return txn.Transaction.Size()
-}
-
-// Mem implements the MemBuffer interface.
-func (txn *LazyTxn) Mem() uint64 {
-	if txn.Transaction == nil {
-		return 0
-	}
-	return txn.Transaction.Mem()
-}
-
-// SetMemoryFootprintChangeHook sets the hook to be called when the memory footprint of this transaction changes.
-func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
-	if txn.Transaction == nil {
-		return
-	}
-	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
 // Valid implements the kv.Transaction interface.
@@ -260,7 +214,20 @@ func (txn *LazyTxn) GetOption(opt int) interface{} {
 	return txn.Transaction.GetOption(opt)
 }
 
-func (txn *LazyTxn) changeToPending(future *txnFuture) {
+func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
+	txn.Transaction = kvTxn
+	txn.initStmtBuf()
+	txn.recreateTxnInfo(
+		kvTxn.StartTS(),
+		txninfo.TxnRunningNormal,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		"",
+		nil)
+	txn.txnFuture = nil
+}
+
+func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
@@ -283,15 +250,14 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	txn.initStmtBuf()
 
 	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.resetTxnInfo(
+	txnInfo := txn.getTxnInfo()
+	txn.recreateTxnInfo(
 		t.StartTS(),
-		txninfo.TxnIdle,
+		txninfo.TxnRunningNormal,
 		uint64(txn.Transaction.Len()),
-		txn.mu.TxnInfo.CurrentSQLDigest,
-		txn.mu.TxnInfo.AllSQLDigests)
-
+		uint64(txn.Transaction.Size()),
+		txnInfo.CurrentSQLDigest,
+		txnInfo.AllSQLDigests)
 	return nil
 }
 
@@ -303,18 +269,13 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.Transaction = nil
 	txn.txnFuture = nil
 
-	txn.mu.Lock()
-	lastState := txn.mu.TxnInfo.State
-	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
-	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
-	if txn.mu.TxnInfo.StartTS != 0 {
-		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
-	}
-	txn.mu.TxnInfo = txninfo.TxnInfo{}
-	txn.mu.Unlock()
-	if !lastStateChangeTime.IsZero() {
-		txninfo.TxnDurationHistogram(lastState, hasLock).Observe(time.Since(lastStateChangeTime).Seconds())
-	}
+	txn.recreateTxnInfo(
+		0,
+		txninfo.TxnRunningNormal,
+		0,
+		0,
+		"",
+		nil)
 }
 
 func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
@@ -322,22 +283,21 @@ func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
 		return
 	}
 
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.updateState(txninfo.TxnRunning)
-	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
+	info := txn.getTxnInfo().ShallowClone()
+	info.CurrentSQLDigest = currentSQLDigest
 	// Keeps at most 50 history sqls to avoid consuming too much memory.
 	const maxTransactionStmtHistory int = 50
-	if len(txn.mu.TxnInfo.AllSQLDigests) < maxTransactionStmtHistory {
-		txn.mu.TxnInfo.AllSQLDigests = append(txn.mu.TxnInfo.AllSQLDigests, currentSQLDigest)
+	if len(info.AllSQLDigests) < maxTransactionStmtHistory {
+		info.AllSQLDigests = append(info.AllSQLDigests, currentSQLDigest)
 	}
+
+	txn.storeTxnInfo(info)
 }
 
 func (txn *LazyTxn) onStmtEnd() {
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.mu.TxnInfo.CurrentSQLDigest = ""
-	txn.updateState(txninfo.TxnIdle)
+	info := txn.getTxnInfo().ShallowClone()
+	info.CurrentSQLDigest = ""
+	txn.storeTxnInfo(info)
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -377,9 +337,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
-	txn.mu.Lock()
-	txn.updateState(txninfo.TxnCommitting)
-	txn.mu.Unlock()
+	atomic.StoreInt32(&txn.getTxnInfo().State, txninfo.TxnCommitting)
 
 	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
 
@@ -411,41 +369,23 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 // Rollback overrides the Transaction interface.
 func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
-	txn.mu.Lock()
-	txn.updateState(txninfo.TxnRollingBack)
-	txn.mu.Unlock()
+	atomic.StoreInt32(&txn.getTxnInfo().State, txninfo.TxnRollingBack)
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
 	return txn.Transaction.Rollback()
 }
 
-// RollbackMemDBToCheckpoint overrides the Transaction interface.
-func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
-	txn.flushStmtBuf()
-	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
-	txn.cleanup()
-}
-
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
-	failpoint.Inject("beforeLockKeys", func() {})
+	txnInfo := txn.getTxnInfo()
+	originState := atomic.SwapInt32(&txnInfo.State, txninfo.TxnLockWaiting)
 	t := time.Now()
-
-	var originState txninfo.TxnRunningState
-	txn.mu.Lock()
-	originState = txn.mu.TxnInfo.State
-	txn.updateState(txninfo.TxnLockAcquiring)
-	txn.mu.TxnInfo.BlockStartTime.Valid = true
-	txn.mu.TxnInfo.BlockStartTime.Time = t
-	txn.mu.Unlock()
-
+	atomic.StorePointer(&txnInfo.BlockStartTime, unsafe.Pointer(&t))
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
-
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.updateState(originState)
-	txn.mu.TxnInfo.BlockStartTime.Valid = false
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	atomic.StorePointer(&txnInfo.BlockStartTime, unsafe.Pointer(nil))
+	atomic.StoreInt32(&txnInfo.State, originState)
+	atomic.StoreUint64(&txnInfo.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txnInfo.EntriesSize, uint64(txn.Transaction.Size()))
 	return err
 }
 
@@ -475,33 +415,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		keys = append(keys, k)
 	})
-
 	return keys, nil
-}
-
-// Wait converts pending txn to valid
-func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
-	if !txn.validOrPending() {
-		return txn, errors.AddStack(kv.ErrInvalidTxn)
-	}
-	if txn.pending() {
-		defer func(begin time.Time) {
-			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
-		}(time.Now())
-
-		// Transaction is lazy initialized.
-		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
-		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(ctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
-				zap.Error(err))
-			txn.cleanup()
-			sctx.GetSessionVars().TxnCtx.StartTS = 0
-			return txn, err
-		}
-		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
-	}
-	return txn, nil
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
@@ -510,13 +424,6 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		// meta key always need to lock.
 		return true
 	}
-
-	// a pessimistic locking is skipped, perform the conflict check and
-	// constraint check (more accurately, PresumeKeyNotExist) in prewrite (or later pessimistic locking)
-	if flags.HasNeedConstraintCheckInPrewrite() {
-		return false
-	}
-
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}
@@ -529,12 +436,30 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
+}
 
-	if !tablecodec.IsIndexKey(k) {
-		return true
+// Info dump the TxnState to Datum for displaying in `TIDB_TRX`
+// This function is supposed to be thread safe
+func (txn *LazyTxn) Info() *txninfo.TxnInfo {
+	info := txn.getTxnInfo().ShallowClone()
+	if info.StartTS == 0 {
+		return nil
 	}
+	return info
+}
 
-	return tablecodec.IndexKVIsUnique(v)
+// UpdateEntriesCountAndSize updates the EntriesCount and EntriesSize
+// Note this function is not thread safe, because
+// txn.Transaction can be changed during this function's execution if running parallel.
+func (txn *LazyTxn) UpdateEntriesCountAndSize() {
+	if txn.Valid() {
+		txnInfo := txn.getTxnInfo()
+		atomic.StoreUint64(&txnInfo.EntriesCount, uint64(txn.Transaction.Len()))
+		atomic.StoreUint64(&txnInfo.EntriesSize, uint64(txn.Transaction.Size()))
+	}
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
@@ -573,16 +498,36 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
+		return tf.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(tf.txnScope).SetStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+	return tf.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(tf.txnScope))
+}
+
+func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	oracleStore := s.store.GetOracle()
+	var tsFuture oracle.Future
+	if s.sessionVars.LowResolutionTSO {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
+	}
+	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		ret.future = txnFailFuture{}
+	})
+	return ret
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

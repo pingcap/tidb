@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,19 +18,9 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// ErrInSandBoxMode is used to indicate that the session is in sandbox mode.
-type ErrInSandBoxMode struct{}
-
-func (e *ErrInSandBoxMode) Error() string {
-	return "The session will enable sandbox mode"
-}
-
 // error definitions.
 var (
-	errInvalidPrivilegeType    = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
-	ErrNonexistingGrant        = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
-	errLoadPrivilege           = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
-	ErrAccessDenied            = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
-	errAccountHasBeenLocked    = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
-	ErrMustChangePasswordLogin = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
+	errInvalidPrivilegeType = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
+	ErrNonexistingGrant     = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
+	errLoadPrivilege        = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
 )

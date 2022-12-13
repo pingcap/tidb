@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,20 +17,15 @@ import (
 	"context"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
 	opts  map[int]interface{}
 	valid bool
-}
-
-func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
-	return nil
 }
 
 // Commit always returns a retryable error.
@@ -67,7 +61,6 @@ func (t *mockTxn) IsReadOnly() bool {
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
-
 func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
@@ -87,7 +80,6 @@ func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
-
 func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
@@ -121,6 +113,7 @@ func (t *mockTxn) Flush() (int, error) {
 }
 
 func (t *mockTxn) Discard() {
+
 }
 
 func (t *mockTxn) Reset() {
@@ -128,6 +121,7 @@ func (t *mockTxn) Reset() {
 }
 
 func (t *mockTxn) SetVars(vars interface{}) {
+
 }
 
 func (t *mockTxn) GetVars() interface{} {
@@ -135,38 +129,11 @@ func (t *mockTxn) GetVars() interface{} {
 }
 
 func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+
 }
 
 func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
-}
-
-func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	// TODO nothing
-}
-
-func (t *mockTxn) GetMemDBCheckpoint() *tikv.MemDBCheckpoint {
-	return nil
-}
-
-func (t *mockTxn) RollbackMemDBToCheckpoint(_ *tikv.MemDBCheckpoint) {
-	// TODO nothing
-}
-
-func (t *mockTxn) ClearDiskFullOpt() {
-	// TODO nothing
-}
-
-func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
-
-}
-
-func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
-
-}
-
-func (t *mockTxn) Mem() uint64 {
-	return 0
 }
 
 // newMockTxn new a mockTxn.
@@ -178,9 +145,14 @@ func newMockTxn() Transaction {
 }
 
 // mockStorage is used to start a must commit-failed txn.
-type mockStorage struct{}
+type mockStorage struct {
+}
 
-func (s *mockStorage) Begin(opts ...tikv.TxnOption) (Transaction, error) {
+func (s *mockStorage) Begin() (Transaction, error) {
+	return newMockTxn(), nil
+}
+
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -261,6 +233,7 @@ func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {
+
 }
 
 func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {

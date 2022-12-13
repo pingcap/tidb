@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"strconv"
 	"sync"
@@ -37,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // InternalKey
@@ -248,13 +247,7 @@ func (ri *regionCtx) AcquireLatches(hashVals []uint64) {
 	dur := time.Since(start)
 	metrics.LatchWait.Observe(dur.Seconds())
 	if dur > time.Millisecond*50 {
-		var id string
-		if ri.meta == nil {
-			id = "unknown"
-		} else {
-			id = strconv.FormatUint(ri.meta.Id, 10)
-		}
-		log.S().Warnf("region %s acquire %d locks takes %v, waitCnt %d", id, len(hashVals), dur, waitCnt)
+		log.S().Warnf("region %d acquire %d locks takes %v, waitCnt %d", ri.meta.Id, len(hashVals), dur, waitCnt)
 	}
 }
 

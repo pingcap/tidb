@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +17,12 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
@@ -78,12 +77,10 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{
-			retEvalType:   types.ETInt,
-			childrenTypes: []types.EvalType{types.ETInt},
-			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
-			},
-			geners: []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
 	ast.IsNull: {
@@ -154,44 +151,44 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 		makeGivenValsOrDefaultGener(arg1s, types.ETInt)}
 }
 
-func TestVectorizedBuiltinOpFunc(t *testing.T) {
-	testVectorizedBuiltinFunc(t, vecBuiltinOpCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
 }
 
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
 }
 
-func TestBuiltinUnaryMinusIntSig(t *testing.T) {
+func (s *testEvaluatorSuite) TestBuiltinUnaryMinusIntSig(c *C) {
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETInt)
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	require.False(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsFalse)
 	input.AppendInt64(0, 233333)
-	require.Nil(t, f.vecEvalInt(input, result))
-	require.Equal(t, int64(-233333), result.GetInt64(0))
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(-233333))
 	input.Reset()
 	input.AppendInt64(0, math.MinInt64)
-	require.NotNil(t, f.vecEvalInt(input, result))
+	c.Assert(f.vecEvalInt(input, result), NotNil)
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, f.vecEvalInt(input, result))
-	require.True(t, result.IsNull(0))
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.IsNull(0), IsTrue)
 
-	col0.GetType().AddFlag(mysql.UnsignedFlag)
-	require.True(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	col0.GetType().Flag |= mysql.UnsignedFlag
+	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsTrue)
 	input.Reset()
 	input.AppendUint64(0, 233333)
-	require.NoError(t, f.vecEvalInt(input, result))
-	require.Equal(t, int64(-233333), result.GetInt64(0))
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(-233333))
 	input.Reset()
 	input.AppendUint64(0, -(math.MinInt64)+1)
-	require.NotNil(t, f.vecEvalInt(input, result))
+	c.Assert(f.vecEvalInt(input, result), NotNil)
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, f.vecEvalInt(input, result))
-	require.True(t, result.IsNull(0))
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.IsNull(0), IsTrue)
 }

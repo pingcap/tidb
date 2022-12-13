@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -27,18 +25,17 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 )
 
@@ -51,29 +48,21 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	s := grpc.NewServer(
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    time.Duration(config.Status.GRPCKeepAliveTime) * time.Second,
-			Timeout: time.Duration(config.Status.GRPCKeepAliveTimeout) * time.Second,
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			// Allow clients send consecutive pings in every 5 seconds.
-			// The default value of MinTime is 5 minutes,
-			// which is too long compared with 10 seconds of TiDB's keepalive time.
-			MinTime: 5 * time.Second,
-		}),
-		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
-		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
-		grpc.MaxSendMsgSize(config.Status.GRPCMaxSendMsgSize),
-	)
+	s := grpc.NewServer()
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
 		sm:                sm,
 	}
+	// For redirection the cop task.
+	mocktikv.GRPCClientFactory = func() mocktikv.Client {
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
+	}
+	unistore.GRPCClientFactory = func() unistore.Client {
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
+	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
-	topsql.RegisterPubSubServer(s)
 	return s
 }
 
@@ -196,13 +185,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 		resp.OtherError = err.Error()
 		return resp
 	}
-	defer func() {
-		sc := se.GetSessionVars().StmtCtx
-		if sc.MemTracker != nil {
-			sc.MemTracker.Detach()
-		}
-		se.Close()
-	}()
+	defer se.Close()
 
 	if p, ok := peer.FromContext(ctx); ok {
 		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
@@ -217,27 +200,18 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	extensions, err := extension.GetExtensions()
-	if err != nil {
-		return nil, err
-	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
+	pm := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
 	privilege.BindPrivilegeManager(se, pm)
-	vars := se.GetSessionVars()
-	vars.TxnCtx.InfoSchema = is
+	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
-	vars.SetHashAggPartialConcurrency(1)
-	vars.SetHashAggFinalConcurrency(1)
-	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
-	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{}
-		vars.MemTracker.SetActionOnExceed(action)
-	}
+	se.GetSessionVars().SetHashAggPartialConcurrency(1)
+	se.GetSessionVars().SetHashAggFinalConcurrency(1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

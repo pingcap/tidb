@@ -1,3 +1,7 @@
+// Copyright 2018 PingCAP, Inc. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -8,13 +12,8 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2018 PingCAP, Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
 
 package timeutil
 
@@ -24,43 +23,51 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
 
-func TestGetTZNameFromFileName(t *testing.T) {
+var _ = Suite(&testTimeSuite{})
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+type testTimeSuite struct{}
+
+func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 	tz, err := inferTZNameFromFileName("/usr/share/zoneinfo/Asia/Shanghai")
 
-	require.NoError(t, err)
-	require.Equal(t, "Asia/Shanghai", tz)
+	c.Assert(err, IsNil)
+	c.Assert(tz, Equals, "Asia/Shanghai")
 
 	tz, err = inferTZNameFromFileName("/usr/share/zoneinfo.default/Asia/Shanghai")
 
-	require.NoError(t, err)
-	require.Equal(t, "Asia/Shanghai", tz)
+	c.Assert(err, IsNil)
+	c.Assert(tz, Equals, "Asia/Shanghai")
 }
 
-func TestLocal(t *testing.T) {
+func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "Asia/Shanghai")
 	systemTZ.Store(InferSystemTZ())
 	loc := SystemLocation()
-	require.Equal(t, "Asia/Shanghai", systemTZ.Load())
-	require.Equal(t, "Asia/Shanghai", loc.String())
+	c.Assert(systemTZ.Load(), Equals, "Asia/Shanghai")
+	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
 	os.Setenv("TZ", "UTC")
 	// reset systemTZ
 	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
-	require.Equal(t, "UTC", loc.String())
+	c.Assert(loc.String(), Equals, "UTC")
 
 	os.Setenv("TZ", "")
 	// reset systemTZ
 	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
-	require.Equal(t, "UTC", loc.String())
+	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")
 }
 
-func TestInferOneStepLinkForPath(t *testing.T) {
+func (s *testTimeSuite) TestInferOneStepLinkForPath(c *C) {
 	os.Remove(filepath.Join(os.TempDir(), "testlink1"))
 	os.Remove(filepath.Join(os.TempDir(), "testlink2"))
 	os.Remove(filepath.Join(os.TempDir(), "testlink3"))
@@ -68,15 +75,15 @@ func TestInferOneStepLinkForPath(t *testing.T) {
 	var err error
 	var link1 *os.File
 	link1, err = os.Create(filepath.Join(os.TempDir(), "testlink1"))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = os.Symlink(link1.Name(), filepath.Join(os.TempDir(), "testlink2"))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = os.Symlink(filepath.Join(os.TempDir(), "testlink2"), filepath.Join(os.TempDir(), "testlink3"))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	link2, err = inferOneStepLinkForPath(filepath.Join(os.TempDir(), "testlink3"))
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join(os.TempDir(), "testlink2"), link2)
+	c.Assert(err, IsNil)
+	c.Assert(link2, Equals, filepath.Join(os.TempDir(), "testlink2"))
 	link3, err = filepath.EvalSymlinks(filepath.Join(os.TempDir(), "testlink3"))
-	require.NoError(t, err)
-	require.NotEqual(t, -1, strings.Index(link3, link1.Name()))
+	c.Assert(err, IsNil)
+	c.Assert(strings.Index(link3, link1.Name()), Not(Equals), -1)
 }

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,22 +22,43 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func loadTableStats(fileName string, dom *domain.Domain) error {
+var _ = Suite(&testAnalyzeSuite{})
+
+type testAnalyzeSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testAnalyzeSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "analyze_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testAnalyzeSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
 	statsPath := filepath.Join("testdata", fileName)
 	bytes, err := os.ReadFile(statsPath)
 	if err != nil {
@@ -57,9 +77,15 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 	return nil
 }
 
-func TestExplainAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
@@ -68,131 +94,151 @@ func TestExplainAnalyze(t *testing.T) {
 	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	require.Len(t, rs.Rows(), 10)
+	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
-		require.Len(t, row, 9)
+		c.Assert(len(row), Equals, 9)
 		execInfo := row[5].(string)
-		require.Contains(t, execInfo, "time")
-		require.Contains(t, execInfo, "loops")
+		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
-			require.Contains(t, execInfo, "cop_task")
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
 		}
 	}
 }
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
-func TestCBOWithoutAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (a int)")
 	testKit.MustExec("create table t2 (a int)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestStraightJoin(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	h := dom.StatsHandle()
 	for _, tblName := range []string{"t1", "t2", "t3", "t4"} {
 		testKit.MustExec(fmt.Sprintf("create table %s (a int)", tblName))
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	}
 	var input []string
 	var output [][]string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
 }
 
-func TestTableDual(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+func (s *testAnalyzeSuite) TestTableDual(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
-	testKit := testkit.NewTestKit(t, store)
+	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec(`use test`)
 	h := dom.StatsHandle()
 	testKit.MustExec(`create table t(a int)`)
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestEstimation(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+		statistics.RatioOfPseudoEstimate.Store(0.7)
+	}()
 	statistics.RatioOfPseudoEstimate.Store(10.0)
-	defer statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
@@ -209,10 +255,15 @@ func constructInsertSQL(i, n int) string {
 	return sql
 }
 
-func TestIndexRead(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set tidb_cost_model_version=2")
+func (s *testAnalyzeSuite) TestIndexRead(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -227,73 +278,80 @@ func TestIndexRead(t *testing.T) {
 	testKit.MustExec("create index ts on t (ts)")
 	testKit.MustExec("create table t1 (a int, b int, index idx(a), index idxx(b))")
 
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	testKit.MustExec("set @@tidb_enable_chunk_rpc = on")
-
 	// This stats is generated by following format:
 	// fill (a, b, c, e) as (i*100+j, i, i+j, i*100+j), i and j is dependent and range of this two are [0, 99].
-	require.NoError(t, loadTableStats("analyzesSuiteTestIndexReadT.json", dom))
+	err = s.loadTableStats("analyzesSuiteTestIndexReadT.json", dom)
+	c.Assert(err, IsNil)
 	for i := 1; i < 16; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
 	}
 	testKit.MustExec("analyze table t1")
-	ctx := testKit.Session()
+	ctx := testKit.Se.(sessionctx.Context)
 	var input, output []string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 
 	for i, tt := range input {
 		stmts, err := session.Parse(ctx, tt)
-		require.NoError(t, err)
-		require.Len(t, stmts, 1)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
-		require.NoError(t, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		planString := core.ToString(p)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i] = planString
 		})
-		require.Equalf(t, output[i], planString, "case: %v", tt)
+		c.Assert(planString, Equals, output[i], Commentf("for %s", tt))
 	}
 }
 
-func TestEmptyTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (c1 int)")
 	testKit.MustExec("create table t1 (c1 int)")
 	testKit.MustExec("analyze table t, t1")
 	var input, output []string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		ctx := testKit.Session()
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, tt)
-		require.NoError(t, err)
-		require.Len(t, stmts, 1)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
-		require.NoError(t, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		planString := core.ToString(p)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i] = planString
 		})
-		require.Equalf(t, output[i], planString, "case: %v", tt)
+		c.Assert(planString, Equals, output[i], Commentf("for %s", tt))
 	}
 }
 
-func TestAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1, t2, t3")
 	testKit.MustExec("create table t (a int, b int)")
@@ -324,87 +382,134 @@ func TestAnalyze(t *testing.T) {
 	testKit.MustExec("analyze table t4")
 
 	testKit.MustExec("create view v as select * from t")
-	_, err := testKit.Exec("analyze table v")
-	require.EqualError(t, err, "analyze view v is not supported now")
+	_, err = testKit.Exec("analyze table v")
+	c.Assert(err.Error(), Equals, "analyze view v is not supported now.")
 	testKit.MustExec("drop view v")
 
 	testKit.MustExec("create sequence seq")
 	_, err = testKit.Exec("analyze table seq")
-	require.EqualError(t, err, "analyze sequence seq is not supported now")
+	c.Assert(err.Error(), Equals, "analyze sequence seq is not supported now.")
 	testKit.MustExec("drop sequence seq")
 
 	var input, output []string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 
 	for i, tt := range input {
-		ctx := testKit.Session()
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, tt)
-		require.NoError(t, err)
-		require.Len(t, stmts, 1)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		err = executor.ResetContextOfStmt(ctx, stmt)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
-		require.NoError(t, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		planString := core.ToString(p)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i] = planString
 		})
-		require.Equalf(t, output[i], planString, "case: %v", tt)
+		c.Assert(planString, Equals, output[i], Commentf("for %s", tt))
 	}
 }
 
-func TestOutdatedAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []struct {
-		SQL                          string
-		EnablePseudoForOutdatedStats bool
-		RatioOfPseudoEstimate        float64
+		SQL                   string
+		RatioOfPseudoEstimate float64
 	}
 	var output []struct {
-		SQL                          string
-		EnablePseudoForOutdatedStats bool
-		RatioOfPseudoEstimate        float64
-		Plan                         []string
+		SQL                   string
+		RatioOfPseudoEstimate float64
+		Plan                  []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		testKit.Session().GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
 		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
 		plan := testKit.MustQuery(tt.SQL)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
-			output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
 			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestNullCount(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	defer config.RestoreFunc()()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.PreparedPlanCache.Enabled = flag
+			conf.PreparedPlanCache.Capacity = 100
+		})
+		testKit := testkit.NewTestKit(c, store)
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t (id int not null, KEY id (id))")
+		testKit.MustExec("insert into t values (1), (2), (3)")
+
+		sql := "select * from t where id = ?"
+		best := "Dual"
+
+		ctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil)
+		stmt := stmts[0]
+
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.InPrepare, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		c.Assert(err, IsNil)
+
+		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
+	}
+}
+
+func (s *testAnalyzeSuite) TestNullCount(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
@@ -412,30 +517,34 @@ func TestNullCount(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	var input []string
 	var output [][]string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i := 0; i < 2; i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	h := dom.StatsHandle()
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	for i := 2; i < 4; i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 }
 
-func TestCorrelatedEstimation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
@@ -444,20 +553,25 @@ func TestCorrelatedEstimation(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		rs := tk.MustQuery(tt)
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(rs.Rows())
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(rs.Rows())
 		})
 		rs.Check(testkit.Rows(output[i]...))
 	}
 }
 
-func TestInconsistentEstimation(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index ab(a,b), index ac(a,c))")
 	tk.MustExec("insert into t values (1,1,1), (1000,1000,1000)")
@@ -469,28 +583,52 @@ func TestInconsistentEstimation(t *testing.T) {
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	err = dom.StatsHandle().Update(dom.InfoSchema())
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery(sql)
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func BenchmarkOptimize(b *testing.B) {
-	store := testkit.CreateMockStore(b)
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
-	testKit := testkit.NewTestKit(b, store)
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dom.SetStatsUpdating(true)
+	return store, dom, errors.Trace(err)
+}
+
+func BenchmarkOptimize(b *testing.B) {
+	c := &C{}
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
@@ -584,48 +722,52 @@ func BenchmarkOptimize(b *testing.B) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Session()
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, tt.sql)
-		require.NoError(b, err)
-		require.Len(b, stmts, 1)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
-		require.NoError(b, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-				require.NoError(b, err)
+				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()
 		})
 	}
 }
 
-func TestIssue9562(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestIssue9562(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	var input [][]string
 	var output []struct {
 		SQL  []string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
 				tk.MustExec(tt)
 			}
-			testdata.OnRecord(func() {
+			s.testData.OnRecord(func() {
 				output[i].SQL = ts
 				if j == len(ts)-1 {
-					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 				}
 			})
 			if j == len(ts)-1 {
@@ -635,9 +777,15 @@ func TestIssue9562(t *testing.T) {
 	}
 }
 
-func TestIssue9805(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestIssue9805(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`
@@ -663,11 +811,16 @@ func TestIssue9805(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
-func TestLimitCrossEstimation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -679,17 +832,16 @@ func TestLimitCrossEstimation(t *testing.T) {
 		SQL  []string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
 				tk.MustExec(tt)
 			}
-			testdata.OnRecord(func() {
+			s.testData.OnRecord(func() {
 				output[i].SQL = ts
 				if j == len(ts)-1 {
-					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 				}
 			})
 			if j == len(ts)-1 {
@@ -699,15 +851,20 @@ func TestLimitCrossEstimation(t *testing.T) {
 	}
 }
 
-func TestLowSelIndexGreedySearch(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_cost_model_version=2")
-	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
-	require.NoError(t, loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom))
+	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
@@ -716,55 +873,59 @@ func TestLowSelIndexGreedySearch(t *testing.T) {
 	// The test purposes are:
 	// - index `idx2` runs much faster than `idx4` experimentally;
 	// - estimated row count of IndexLookUp should be 0;
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestUpdateProjEliminate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
-
-	tk.MustExec("drop table if exists tb1, tb2")
-	tk.MustExec("create table tb1(a int, b int, primary key(a))")
-	tk.MustExec("create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));")
-	tk.MustExec("update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);")
 }
 
-func TestTiFlashCostModel(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	var input, output [][]string
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
 				tk.MustExec(tt)
 			}
-			testdata.OnRecord(func() {
+			s.testData.OnRecord(func() {
 				if j == len(ts)-1 {
-					output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+					output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 				}
 			})
 			if j == len(ts)-1 {
@@ -774,68 +935,81 @@ func TestTiFlashCostModel(t *testing.T) {
 	}
 }
 
-func TestIndexEqualUnknown(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
-	require.NoError(t, loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom))
+	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestLimitIndexEstimation(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
 	// these 2 columns are strictly correlated in reverse order.
-	require.NoError(t, loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom))
+	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-
-	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		testdata.OnRecord(func() {
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
-func TestBatchPointGetTablePartition(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestBatchPointGetTablePartition(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
 
-	testKit.MustExec("create table t1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
+	testKit.MustExec("create table t1(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -872,7 +1046,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t2(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -912,7 +1086,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	testKit.MustExec("create table t3(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t3 values(1,1),(1,2),(2,1),(2,2)")
@@ -1070,9 +1244,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 }
 
 // TestAppendIntPkToIndexTailForRangeBuilding tests for issue25219 https://github.com/pingcap/tidb/issues/25219.
-func TestAppendIntPkToIndexTailForRangeBuilding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAnalyzeSuite) TestAppendIntPkToIndexTailForRangeBuilding(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table t25219(a int primary key, col3 int, col1 int, index idx(col3))")
 	tk.MustExec("insert into t25219 values(1, 1, 1)")

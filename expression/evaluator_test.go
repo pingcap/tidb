@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,136 +18,221 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
-func kindToFieldType(kind byte) types.FieldType {
+var _ = SerialSuites(&testEvaluatorSerialSuites{})
+var _ = Suite(&testEvaluatorSuite{})
+var _ = Suite(&testVectorizeSuite1{})
+var _ = Suite(&testVectorizeSuite2{})
+
+func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	testleak.BeforeTest()
+	defer testleak.AfterTestT(t)()
+
+	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
+
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		t.Fatalf("enable global failpoint `%s` failed: %v", fpname, err)
+	}
+
+	TestingT(t)
+
+	err = failpoint.Disable(fpname)
+	if err != nil {
+		t.Fatalf("disable global failpoint `%s` failed: %v", fpname, err)
+	}
+}
+
+type testEvaluatorSuiteBase struct {
+	*parser.Parser
+	ctx sessionctx.Context
+}
+
+type testEvaluatorSuite struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite1 struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite2 struct {
+	testEvaluatorSuiteBase
+}
+
+type testEvaluatorSerialSuites struct {
+	testEvaluatorSuiteBase
+}
+
+func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+}
+
+func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
+}
+
+func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
+	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	sc := s.ctx.GetSessionVars().StmtCtx
+	sc.TruncateAsWarning = true
+	err := s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
+	c.Assert(err, IsNil)
+	s.ctx.GetSessionVars().PlanColumnID = 0
+}
+
+func (s *testEvaluatorSuiteBase) TearDownTest(c *C) {
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+}
+
+func (s *testEvaluatorSuiteBase) kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
 	case types.KindNull:
-		ft.SetType(mysql.TypeNull)
+		ft.Tp = mysql.TypeNull
 	case types.KindInt64:
-		ft.SetType(mysql.TypeLonglong)
+		ft.Tp = mysql.TypeLonglong
 	case types.KindUint64:
-		ft.SetType(mysql.TypeLonglong)
-		ft.SetFlag(ft.GetFlag() | mysql.UnsignedFlag)
+		ft.Tp = mysql.TypeLonglong
+		ft.Flag |= mysql.UnsignedFlag
 	case types.KindMinNotNull:
-		ft.SetType(mysql.TypeLonglong)
+		ft.Tp = mysql.TypeLonglong
 	case types.KindMaxValue:
-		ft.SetType(mysql.TypeLonglong)
+		ft.Tp = mysql.TypeLonglong
 	case types.KindFloat32:
-		ft.SetType(mysql.TypeDouble)
+		ft.Tp = mysql.TypeDouble
 	case types.KindFloat64:
-		ft.SetType(mysql.TypeDouble)
+		ft.Tp = mysql.TypeDouble
 	case types.KindString:
-		ft.SetType(mysql.TypeVarString)
+		ft.Tp = mysql.TypeVarString
 	case types.KindBytes:
-		ft.SetType(mysql.TypeVarString)
+		ft.Tp = mysql.TypeVarString
 	case types.KindMysqlEnum:
-		ft.SetType(mysql.TypeEnum)
+		ft.Tp = mysql.TypeEnum
 	case types.KindMysqlSet:
-		ft.SetType(mysql.TypeSet)
+		ft.Tp = mysql.TypeSet
 	case types.KindInterface:
-		ft.SetType(mysql.TypeVarString)
+		ft.Tp = mysql.TypeVarString
 	case types.KindMysqlDecimal:
-		ft.SetType(mysql.TypeNewDecimal)
+		ft.Tp = mysql.TypeNewDecimal
 	case types.KindMysqlDuration:
-		ft.SetType(mysql.TypeDuration)
+		ft.Tp = mysql.TypeDuration
 	case types.KindMysqlTime:
-		ft.SetType(mysql.TypeDatetime)
+		ft.Tp = mysql.TypeDatetime
 	case types.KindBinaryLiteral:
-		ft.SetType(mysql.TypeVarString)
-		ft.SetCharset(charset.CharsetBin)
-		ft.SetCollate(charset.CollationBin)
+		ft.Tp = mysql.TypeVarString
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
 	case types.KindMysqlBit:
-		ft.SetType(mysql.TypeBit)
+		ft.Tp = mysql.TypeBit
 	case types.KindMysqlJSON:
-		ft.SetType(mysql.TypeJSON)
+		ft.Tp = mysql.TypeJSON
 	}
 	return ft
 }
 
-func datumsToConstants(datums []types.Datum) []Expression {
+func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		ft := kindToFieldType(d.Kind())
+		ft := s.kindToFieldType(d.Kind())
 		if types.IsNonBinaryStr(&ft) {
-			ft.SetCollate(d.Collation())
+			ft.Collate = d.Collation()
 		}
-		ft.SetFlen(types.UnspecifiedLength)
-		ft.SetDecimal(types.UnspecifiedLength)
+		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
 
-func primitiveValsToConstants(ctx sessionctx.Context, args []interface{}) []Expression {
-	cons := datumsToConstants(types.MakeDatums(args...))
-	char, col := ctx.GetSessionVars().GetCharsetInfo()
+func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
+	cons := s.datumsToConstants(types.MakeDatums(args...))
+	char, col := s.ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
 		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
 	return cons
 }
 
-func TestSleep(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestSleep(c *C) {
+	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
-	sessVars.StmtCtx.BadNullAsWarning = true
+	sessVars.StrictSQLMode = false
 	d := make([]types.Datum, 1)
-	f, err := fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	ret, isNull, err := f.evalInt(chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	ret, isNull, err = f.evalInt(chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
 
 	// for error case under the strict model
-	sessVars.StmtCtx.BadNullAsWarning = false
+	sessVars.StrictSQLMode = true
 	d[0].SetNull()
-	_, err = fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	_, isNull, err = f.evalInt(chunk.Row{})
-	require.Error(t, err)
-	require.False(t, isNull)
+	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
 	d[0].SetFloat64(-2.5)
-	_, err = fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	_, isNull, err = f.evalInt(chunk.Row{})
-	require.Error(t, err)
-	require.False(t, isNull)
+	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
 
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	ret, isNull, err = f.evalInt(chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
 	sub := time.Since(start)
-	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(0.5*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+
 	d[0].SetFloat64(3)
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
-	require.NoError(t, err)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
@@ -156,14 +240,14 @@ func TestSleep(t *testing.T) {
 	}()
 	ret, isNull, err = f.evalInt(chunk.Row{})
 	sub = time.Since(start)
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(1), ret)
-	require.LessOrEqual(t, sub.Nanoseconds(), int64(2*1e9))
-	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(1*1e9))
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
 
-func TestBinopComparison(t *testing.T) {
+func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -199,16 +283,15 @@ func TestBinopComparison(t *testing.T) {
 		{1, ast.LT, 1, 0},
 		{1, ast.LE, 1, 1},
 	}
-	ctx := createContext(t)
-	for _, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx)
-		require.NoError(t, err)
-		require.Equal(t, tt.result, val)
+		c.Assert(err, IsNil)
+		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, t.result)
 	}
 
 	// test nil
@@ -231,17 +314,17 @@ func TestBinopComparison(t *testing.T) {
 		{nil, ast.GE, 1},
 	}
 
-	for _, tt := range nilTbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	for _, t := range nilTbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.KindNull, v.Kind())
+		c.Assert(err, IsNil)
+		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
 }
 
-func TestBinopLogic(t *testing.T) {
+func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -264,23 +347,22 @@ func TestBinopLogic(t *testing.T) {
 		{0, ast.LogicXor, 0, 0},
 		{0, ast.LogicXor, 1, 1},
 	}
-	ctx := createContext(t)
-	for _, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		switch x := tt.ret.(type) {
+		c.Assert(err, IsNil)
+		switch x := t.ret.(type) {
 		case nil:
-			require.Equal(t, types.KindNull, v.Kind())
+			c.Assert(v.Kind(), Equals, types.KindNull)
 		case int:
-			require.Equal(t, v, types.NewDatum(int64(x)))
+			c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(x)))
 		}
 	}
 }
 
-func TestBinopBitop(t *testing.T) {
+func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -300,24 +382,23 @@ func TestBinopBitop(t *testing.T) {
 		{nil, ast.RightShift, 1, nil},
 	}
 
-	ctx := createContext(t)
-	for _, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
-		switch x := tt.ret.(type) {
+		switch x := t.ret.(type) {
 		case nil:
-			require.Equal(t, types.KindNull, v.Kind())
+			c.Assert(v.Kind(), Equals, types.KindNull)
 		case int:
-			require.Equal(t, v, types.NewDatum(uint64(x)))
+			c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(x)))
 		}
 	}
 }
 
-func TestBinopNumeric(t *testing.T) {
+func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -394,25 +475,24 @@ func TestBinopNumeric(t *testing.T) {
 		{types.NewDecFromInt(10), ast.Mod, 0, nil},
 	}
 
-	ctx := createContext(t)
-	for _, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
-			require.Nil(t, tt.ret)
+			c.Assert(t.ret, IsNil)
 		default:
 			// we use float64 as the result type check for all.
-			sc := ctx.GetSessionVars().StmtCtx
+			sc := s.ctx.GetSessionVars().StmtCtx
 			f, err := v.ToFloat64(sc)
-			require.NoError(t, err)
-			d := types.NewDatum(tt.ret)
+			c.Assert(err, IsNil)
+			d := types.NewDatum(t.ret)
 			r, err := d.ToFloat64(sc)
-			require.NoError(t, err)
-			require.Equal(t, r, f)
+			c.Assert(err, IsNil)
+			c.Assert(r, Equals, f)
 		}
 	}
 
@@ -438,30 +518,38 @@ func TestBinopNumeric(t *testing.T) {
 		{types.NewDecFromInt(10), ast.Mod, 0},
 	}
 
-	ctx.GetSessionVars().StmtCtx.InSelectStmt = false
-	ctx.GetSessionVars().SQLMode |= mysql.ModeErrorForDivisionByZero
-	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-	for _, tt := range testcases {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	oldInSelectStmt := s.ctx.GetSessionVars().StmtCtx.InSelectStmt
+	s.ctx.GetSessionVars().StmtCtx.InSelectStmt = false
+	oldSQLMode := s.ctx.GetSessionVars().SQLMode
+	s.ctx.GetSessionVars().SQLMode |= mysql.ModeErrorForDivisionByZero
+	oldInInsertStmt := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	for _, t := range testcases {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
-		require.Error(t, err)
+		c.Assert(err, NotNil)
 	}
 
-	ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
-	for _, tt := range testcases {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
-		require.NoError(t, err)
+	oldDividedByZeroAsWarning := s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
+	for _, t := range testcases {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.KindNull, v.Kind())
+		c.Assert(err, IsNil)
+		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
+
+	s.ctx.GetSessionVars().StmtCtx.InSelectStmt = oldInSelectStmt
+	s.ctx.GetSessionVars().SQLMode = oldSQLMode
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = oldInInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = oldDividedByZeroAsWarning
 }
 
-func TestExtract(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestExtract(c *C) {
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -488,26 +576,25 @@ func TestExtract(t *testing.T) {
 		{"DAY_HOUR", 1110},
 		{"YEAR_MONTH", 201111},
 	}
-	for _, tt := range tbl {
+	for _, t := range tbl {
 		fc := funcs[ast.Extract]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Unit, str)))
-		require.NoError(t, err)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Unit, str)))
+		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(tt.Expect), v)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
 
 	// Test nil
 	fc := funcs[ast.Extract]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("SECOND", nil)))
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("SECOND", nil)))
+	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.KindNull, v.Kind())
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 }
 
-func TestUnaryOp(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	tbl := []struct {
 		arg    interface{}
 		op     string
@@ -528,7 +615,7 @@ func TestUnaryOp(t *testing.T) {
 
 		// test Minus.
 		{nil, ast.UnaryMinus, nil},
-		{1.0, ast.UnaryMinus, -1.0},
+		{float64(1.0), ast.UnaryMinus, float64(-1.0)},
 		{int64(1), ast.UnaryMinus, int64(-1)},
 		{int64(1), ast.UnaryMinus, int64(-1)},
 		{uint64(1), ast.UnaryMinus, -int64(1)},
@@ -540,13 +627,13 @@ func TestUnaryOp(t *testing.T) {
 		{types.Enum{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 		{types.Set{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 	}
-	for i, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
-		require.NoError(t, err)
+	for i, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
+		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
+		c.Assert(err, IsNil)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
 
 	tbl = []struct {
@@ -559,37 +646,36 @@ func TestUnaryOp(t *testing.T) {
 		{types.NewTime(types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), mysql.TypeDatetime, 0), ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
 	}
 
-	for _, tt := range tbl {
-		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
-		require.NoError(t, err)
-		require.NotNil(t, f)
+	for _, t := range tbl {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
-		expect := types.NewDatum(tt.result)
-		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
-		require.NoError(t, err)
-		require.Equalf(t, 0, ret, "%v %s", tt.arg, tt.op)
+		expect := types.NewDatum(t.result)
+		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &expect)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, 0, Commentf("%v %s", t.arg, t.op))
 	}
 }
 
-func TestMod(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestMod(c *C) {
 	fc := funcs[ast.Mod]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))
-	require.NoError(t, err)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(234, 10)))
+	c.Assert(err, IsNil)
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.NewIntDatum(4), r)
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(29, 9)))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(29, 9)))
+	c.Assert(err, IsNil)
 	r, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.NewIntDatum(2), r)
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(34.5, 3)))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(34.5, 3)))
+	c.Assert(err, IsNil)
 	r, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.NewDatum(1.5), r)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }

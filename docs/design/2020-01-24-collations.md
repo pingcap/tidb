@@ -23,7 +23,7 @@ In MySQL, collation is treated as an attribute of the character set: for each ch
   * It defines a total order on all characters of a character set.
   * It determines if padding is applied when comparing two strings.
   * It describes comparisons of logically identical but physically different byte sequences.
-Some examples of the effects of collation can be found in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-effect.html) of the MySQL Manual and [this webpage](https://web.archive.org/web/20171030065123/http://demo.icu-project.org/icu-bin/locexp?_=en_US&x=col).
+Some examples of the effects of collation can be found in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-effect.html) of the MySQL Manual and [this webpage](http://demo.icu-project.org/icu-bin/locexp?_=en_US&x=col).
 
 Several collation implementations are described in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-implementations.html) of MySQL Manual:
 
@@ -76,7 +76,7 @@ Before diving into the details, we should notice that ALL strings in MySQL(and T
       + update like/regex/string comparison related functions in `expression` package.
 	  + update the comparisons logic in Join/Aggregation executors in `executor` package.
 	  + update the codes in `UnionScan`(the internal buffer of transaction).
-  - SQL Optimizer: the optimizer may need to be aligned with the encoding changes in `planner` package.
+  - SQL Optimizer: the optimizer may need to be alignd with the encoding changes in `planner` package.
   - DDL/Schema: check if the new collation is supported according to the versions of tables/columns, the related codes are in `ddl` and `infoschema` package.
   - Misc
       + update string comparison related functions in `util` package.
@@ -105,10 +105,10 @@ The interface is quite similar to the Go [collate package](https://godoc.org/gol
 
 ### Row Format
 
-The encoding layout of TiDB has been described in our [previous article](https://docs.pingcap.com/tidb/stable/tidb-computing). The row format should be changed to make it memory comparable, this is important to the index lookup. Basic principle is that all keys encoded for strings should use the `sortKeys` result from `Key()`/`KeyFromString()` function. However, most of the `sortKeys` calculations are not reversible.
+The encoding layout of TiDB has been described in our [previous article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map). The row format should be changed to make it memory comparable, this is important to the index lookup. Basic principle is that all keys encoded for strings should use the `sortKeys` result from `Key()`/`KeyFromString()` function. However, most of the `sortKeys` calculations are not reversible.
 
   * For table data, encodings stay unchanged. All strings are compared after decoding with the `Compare()` function.
-  * For table indices, we replace current `ColumnValue` with `sortKey` and encode the `ColumnValue` to the value:
+  * For table indices, we replace current `ColumnValue` with `sortKey` and encode the `ColumnValue` to the value,:
     - For unique indices:
 	```
       Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKey
@@ -181,7 +181,7 @@ In this proposal, both of the compatibility issues can be solved in the new vers
 
 Based on the requirements listed above, the following behaviors are proposed:
 
-1. Only TiDB clusters that initially bootstrapped with the new TiDB version are allowed to enable the new collations. For old TiDB clusters, everything remains unchanged after the upgrade.
+1. Only TiDB clusters that initially boostrapped with the new TiDB version are allowed to enable the new collations. For old TiDB clusters, everything remains unchanged after the upgrade.
 
 2. We can also provide a configuration entry for the users to choose between old/new collations when deploying the new clusters.
 
@@ -197,7 +197,7 @@ The main reason to reject those options are: new collations that are not exist i
 
 ##### Option 1
 
-Add a series of new collations named with the suffix "`_np_bin`"(meaning "NO PADDING BINARY"), for example, `utf8mb4_np_bin`. Such new collations don't exist in MySQL, but they're the "real ones" used by current TiDB. After upgrading to newer TiDB versions, all old collations are shown as "`_np_bin`", MySQL collations behave the same with MySQL.
+Add a series of new collatins named with the suffix "`_np_bin`"(meaning "NO PADDING BINARY"), for example, `utf8mb4_np_bin`. Such new collations don't exist in MySQL, but they're the "real ones" used by current TiDB. After upgrading to newer TiDB versions, all old collations are shown as "`_np_bin`", MySQL collations behave the same with MySQL.
 
 Pros: Requirement 1.a, 2, 3 and 4 are met.
 
@@ -254,8 +254,8 @@ The plan depends on the option chosen in [Compatibility](#compatibility) chapter
 
   * For existing TiDB clusters with current binary collations, nothing need to be done if the users are happy with them.
   * For the potential migrations from MySQL to TiDB:
-     - If the collations used in MySQL have been implemented by TiDB, users from MySQL do not need to care about the collations when migrating to TiDB except Compatibility Option 2, in which the those collations need to be updated to their corresponding names.
-     - If there are collations that are not supported by TiDB yet, users may need to change the them to the supported ones and check if no constraint is broken after the change. The check can be done following the approach mentioned in [this article](https://mysqlserverteam.com/mysql-8-0-collations-migrating-from-older-collations).
+     - If the collations used in MySQL have been implemented by TiDB, users from MySQL do not need to care about the collations when mirgrating to TiDB except Compatibility Option 2, in which the those collations need to be updated to their corresponding names.
+     - If there are colltions that are not supported by TiDB yet, users may need to change the them to the supported ones and check if no constraint is broken after the change. The check can be done following the approach mentioned in [this article](https://mysqlserverteam.com/mysql-8-0-collations-migrating-from-older-collations).
 
 ## Testing Plans
 

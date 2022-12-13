@@ -8,21 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package chunk
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 )
 
-func TestIteratorOnSel(t *testing.T) {
+func (s *testChunkSuite) TestIteratorOnSel(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	sel := make([]int, 0, 1024)
@@ -36,25 +33,24 @@ func TestIteratorOnSel(t *testing.T) {
 	it := NewIterator4Chunk(chk)
 	cnt := 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		require.Equal(t, int64(0), row.GetInt64(0)%2)
+		c.Assert(row.GetInt64(0)%2, check.Equals, int64(0))
 		cnt++
 	}
-	require.Equal(t, 1024/2, cnt)
+	c.Assert(cnt, check.Equals, 1024/2)
 }
 
-func checkEqual(it Iterator, exp []int64, t *testing.T) {
-	require.Len(t, exp, it.Len())
+func checkEqual(it Iterator, exp []int64, c *check.C) {
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
-		require.Equal(t, exp[i], row.GetInt64(0))
+		c.Assert(row.GetInt64(0), check.Equals, exp[i])
 	}
 }
 
-func TestMultiIterator(t *testing.T) {
+func (s *testChunkSuite) TestMultiIterator(c *check.C) {
 	it := NewMultiIterator(NewIterator4Chunk(new(Chunk)))
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
 
 	it = NewMultiIterator(NewIterator4Chunk(new(Chunk)), NewIterator4List(new(List)))
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
@@ -65,10 +61,10 @@ func TestMultiIterator(t *testing.T) {
 		expected = append(expected, int64(i))
 	}
 	it = NewMultiIterator(NewIterator4Chunk(chk))
-	checkEqual(it, expected, t)
+	checkEqual(it, expected, c)
 
 	it = NewMultiIterator(NewIterator4Chunk(new(Chunk)), NewIterator4Chunk(chk), NewIterator4Chunk(new(Chunk)))
-	checkEqual(it, expected, t)
+	checkEqual(it, expected, c)
 
 	li := NewList(fields, 32, 1024)
 	chk2 := New(fields, 32, 1024)
@@ -78,21 +74,21 @@ func TestMultiIterator(t *testing.T) {
 	}
 	li.Add(chk2)
 
-	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4Chunk(chk2)), expected, t)
-	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4List(li)), expected, t)
-	rc := NewRowContainer(fields, 1024)
-	rc.m.records.inMemory = li
-	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4RowContainer(rc)), expected, t)
+	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4Chunk(chk2)), expected, c)
+	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4List(li)), expected, c)
+	rc := &RowContainer{}
+	rc.m.records = li
+	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4RowContainer(rc)), expected, c)
 
 	li.Clear()
 	li.Add(chk)
-	checkEqual(NewMultiIterator(NewIterator4List(li), NewIterator4Chunk(chk2)), expected, t)
-	rc = NewRowContainer(fields, 1024)
-	rc.m.records.inMemory = new(List)
-	checkEqual(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4List(li), NewIterator4Chunk(chk2)), expected, t)
+	checkEqual(NewMultiIterator(NewIterator4List(li), NewIterator4Chunk(chk2)), expected, c)
+	rc = &RowContainer{}
+	rc.m.records = new(List)
+	checkEqual(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4List(li), NewIterator4Chunk(chk2)), expected, c)
 }
 
-func TestIterator(t *testing.T) {
+func (s *testChunkSuite) TestIterator(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10
@@ -115,83 +111,91 @@ func TestIterator(t *testing.T) {
 	}
 
 	it := NewIterator4Slice(rows)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, rows[i], it.Current())
+		c.Assert(it.Current(), check.Equals, rows[i])
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, rows[0], it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, rows[0])
 
 	it = NewIterator4Chunk(chk)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, chk.GetRow(i), it.Current())
+		c.Assert(it.Current(), check.Equals, chk.GetRow(i))
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, chk.GetRow(0), it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, chk.GetRow(0))
 
 	it = NewIterator4List(li)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, li.GetRow(ptrs[0]), it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
 
 	it = NewIterator4RowPtr(li, ptrs)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, li.GetRow(ptrs[0]), it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
 
 	it = NewIterator4RowPtr(li2, ptrs2)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, li2.GetRow(ptrs2[i]), it.Current())
+		c.Assert(it.Current(), check.Equals, li2.GetRow(ptrs2[i]))
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, li2.GetRow(ptrs2[0]), it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
 
-	rc := NewRowContainer(fields, 1024)
-	rc.m.records.inMemory = li
+	rc := &RowContainer{}
+	rc.m.records = li
 	it = NewIterator4RowContainer(rc)
-	checkEqual(it, expected, t)
+	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
 		it.Next()
 	}
 	it.ReachEnd()
-	require.Equal(t, it.End(), it.Current())
-	require.Equal(t, li.GetRow(ptrs[0]), it.Begin())
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
 
 	it = NewIterator4Slice(nil)
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4Chunk(new(Chunk))
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4List(new(List))
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4RowPtr(li, nil)
-	require.Equal(t, it.End(), it.Begin())
-	rc = NewRowContainer(fields, 1024)
-	rc.m.records.inMemory = NewList(fields, 1, 1)
+	c.Assert(it.Begin(), check.Equals, it.End())
+	rc = &RowContainer{}
+	rc.m.records = NewList(fields, 1, 1)
 	it = NewIterator4RowContainer(rc)
-	require.Equal(t, it.End(), it.Begin())
+	c.Assert(it.Begin(), check.Equals, it.End())
+}
+
+func checkIterator(c *check.C, it Iterator, expected []int64) {
+	var got []int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		got = append(got, row.GetInt64(0))
+	}
+	c.Assert(got, check.DeepEquals, expected)
 }

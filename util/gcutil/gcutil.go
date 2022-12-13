@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,13 +17,12 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -42,12 +40,12 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBGCEnable, variable.Off)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.Off)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBGCEnable, variable.On)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.On)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
@@ -71,10 +69,13 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 }
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
-func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectVariableValueSQL, "tikv_gc_safe_point")
+func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_safe_point")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

@@ -8,18 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package plancodec
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/require"
 )
+
+var _ = Suite(&testPlanCodecSuite{})
+
+type testPlanCodecSuite struct{}
 
 type encodeTaskTypeCase struct {
 	IsRoot     bool
@@ -28,7 +29,7 @@ type encodeTaskTypeCase struct {
 	DecodedStr string
 }
 
-func TestEncodeTaskType(t *testing.T) {
+func (s *testPlanCodecSuite) TestEncodeTaskType(c *C) {
 	cases := []encodeTaskTypeCase{
 		{true, kv.UnSpecified, "0", "root"},
 		{false, kv.TiKV, "1_0", "cop[tikv]"},
@@ -36,22 +37,22 @@ func TestEncodeTaskType(t *testing.T) {
 		{false, kv.TiDB, "1_2", "cop[tidb]"},
 	}
 	for _, cas := range cases {
-		require.Equal(t, cas.EncodedStr, EncodeTaskType(cas.IsRoot, cas.StoreType))
+		c.Assert(EncodeTaskType(cas.IsRoot, cas.StoreType), Equals, cas.EncodedStr)
 		str, err := decodeTaskType(cas.EncodedStr)
-		require.NoError(t, err)
-		require.Equal(t, cas.DecodedStr, str)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, cas.DecodedStr)
 	}
 
 	str, err := decodeTaskType("1")
-	require.NoError(t, err)
-	require.Equal(t, "cop", str)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, "cop")
 
 	_, err = decodeTaskType("1_x")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestDecodeDiscardPlan(t *testing.T) {
+func (s *testPlanCodecSuite) TestDecodeDiscardPlan(c *C) {
 	plan, err := DecodePlan(PlanDiscardedEncoded)
-	require.NoError(t, err)
-	require.Equal(t, planDiscardedDecoded, plan)
+	c.Assert(err, IsNil)
+	c.Assert(plan, DeepEquals, planDiscardedDecoded)
 }

@@ -8,54 +8,43 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
-	"bytes"
 	"context"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/glue"
+	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	pd "github.com/tikv/pd/client"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
 )
-
-const clearInterval = 10 * time.Minute
-
-var outdatedDuration = types.Duration{
-	Duration: 30 * time.Minute,
-	Fsp:      types.DefaultFsp,
-}
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
@@ -77,16 +66,6 @@ func (p *brieTaskProgress) Inc() {
 	atomic.AddInt64(&p.current, 1)
 }
 
-// IncBy implements glue.Progress
-func (p *brieTaskProgress) IncBy(cnt int64) {
-	atomic.AddInt64(&p.current, cnt)
-}
-
-// GetCurrent implements glue.Progress
-func (p *brieTaskProgress) GetCurrent() int64 {
-	return atomic.LoadInt64(&p.current)
-}
-
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
@@ -97,14 +76,11 @@ func (p *brieTaskProgress) Close() {
 type brieTaskInfo struct {
 	queueTime   types.Time
 	execTime    types.Time
-	finishTime  types.Time
 	kind        ast.BRIEKind
 	storage     string
 	connID      uint64
 	backupTS    uint64
-	restoreTS   uint64
 	archiveSize uint64
-	message     string
 }
 
 type brieQueueItem struct {
@@ -116,8 +92,6 @@ type brieQueueItem struct {
 type brieQueue struct {
 	nextID uint64
 	tasks  sync.Map
-
-	lastClearTime time.Time
 
 	workerCh chan struct{}
 }
@@ -177,24 +151,8 @@ func (bq *brieQueue) cancelTask(taskID uint64) {
 	if !ok {
 		return
 	}
+	bq.tasks.Delete(taskID)
 	item.(*brieQueueItem).cancel()
-}
-
-func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
-	if time.Since(bq.lastClearTime) < clearInterval {
-		return
-	}
-
-	bq.lastClearTime = time.Now()
-	currTime := types.CurrentTime(mysql.TypeDatetime)
-
-	bq.tasks.Range(func(key, value interface{}) bool {
-		item := value.(*brieQueueItem)
-		if d := currTime.Sub(sc, &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
-			bq.tasks.Delete(key)
-		}
-		return true
-	})
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
@@ -219,6 +177,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
+	}
+
 	cfg := task.Config{
 		TLS: task.TLSConfig{
 			CA:   tidbCfg.Security.ClusterSSLCA,
@@ -230,12 +193,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		Checksum:    true,
 		SendCreds:   true,
 		LogProgress: true,
-		CipherInfo: backuppb.CipherInfo{
-			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-		},
 	}
 
-	storageURL, err := storage.ParseRawURL(s.Storage)
+	storageURL, err := url.Parse(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -246,24 +206,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
-	case "hdfs":
-		if sem.IsEnabled() {
-			// Storage is not permitted to be hdfs when SEM is enabled.
-			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
-			return nil
-		}
-	case "local", "file", "":
-		if sem.IsEnabled() {
-			// Storage is not permitted to be local when SEM is enabled.
-			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
-			return nil
-		}
 	default:
-	}
-
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
+		break
 	}
 
 	cfg.Storage = storageURL.String()
@@ -295,9 +239,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		cfg.TableFilter = filter.All()
 	}
 
-	// table options are stored in original case, but comparison
-	// is expected to be performed insensitive.
-	cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
+	if tidbCfg.LowerCaseTableNames != 0 {
+		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
+	}
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
@@ -362,7 +306,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	bq := globalBRIEQueue
-	bq.clearTask(e.ctx.GetSessionVars().StmtCtx)
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
@@ -403,26 +346,15 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
-	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	if err != nil {
-		e.info.message = err.Error()
 		return err
 	}
-	e.info.message = ""
 
 	req.AppendString(0, e.info.storage)
 	req.AppendUint64(1, e.info.archiveSize)
-	switch e.info.kind {
-	case ast.BRIEKindBackup:
-		req.AppendUint64(2, e.info.backupTS)
-		req.AppendTime(3, e.info.queueTime)
-		req.AppendTime(4, e.info.execTime)
-	case ast.BRIEKindRestore:
-		req.AppendUint64(2, e.info.backupTS)
-		req.AppendUint64(3, e.info.restoreTS)
-		req.AppendTime(4, e.info.queueTime)
-		req.AppendTime(5, e.info.execTime)
-	}
+	req.AppendUint64(2, e.info.backupTS)
+	req.AppendTime(3, e.info.queueTime)
+	req.AppendTime(4, e.info.execTime)
 	e.info = nil
 	return nil
 }
@@ -446,17 +378,11 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 			e.result.AppendFloat64(2, 100.0*float64(current)/float64(item.progress.total))
 			e.result.AppendTime(3, item.info.queueTime)
 			e.result.AppendTime(4, item.info.execTime)
-			e.result.AppendTime(5, item.info.finishTime)
+			e.result.AppendNull(5) // FIXME: fill in finish time after keeping history.
 			e.result.AppendUint64(6, item.info.connID)
-			if len(item.info.message) > 0 {
-				e.result.AppendString(7, item.info.message)
-			} else {
-				e.result.AppendNull(7)
-			}
 		}
 		return true
 	})
-	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	return nil
 }
 
@@ -466,12 +392,7 @@ type tidbGlueSession struct {
 	info     *brieTaskInfo
 }
 
-// GetSessionCtx implements glue.Glue
-func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
-	return gs.se
-}
-
-// GetDomain implements glue.Glue
+// BootstrapSession implements glue.Glue
 func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }
@@ -484,46 +405,28 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // Execute implements glue.Session
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
-// NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
-	return err
-}
-
-func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	exec := gs.se.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, sql, args...)
+	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, sql)
+	if err != nil {
+		return err
+	}
+	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
 	return err
 }
 
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
-	// 512 is defaultCapOfCreateTable.
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	if err := ConstructResultOfShowCreateDatabase(gs.se, schema, true, result); err != nil {
-		return err
-	}
-	gs.se.SetValue(sessionctx.QueryString, result.String())
 	schema = schema.Clone()
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
+	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore, true)
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
-
-	// 512 is defaultCapOfCreateTable.
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	if err := ConstructResultOfShowCreateTable(gs.se, table, autoid.Allocators{}, result); err != nil {
-		return err
-	}
-	gs.se.SetValue(sessionctx.QueryString, result.String())
 
 	// Clone() does not clone partitions yet :(
 	table = table.Clone()
@@ -533,24 +436,11 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 		table.Partition = &newPartition
 	}
 
-	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
-}
-
-// CreatePlacementPolicy implements glue.Session
-func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
-	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
-	d := domain.GetDomain(gs.se).DDL()
-	// the default behaviour is ignoring duplicated policy during restore.
-	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
 }
 
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
-}
-
-// GetGlobalVariables implements glue.Session.
-func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
-	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
 // Open implements glue.Glue
@@ -578,8 +468,6 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	switch name {
 	case "BackupTS":
 		gs.info.backupTS = value
-	case "RestoreTS":
-		gs.info.restoreTS = value
 	case "Size":
 		gs.info.archiveSize = value
 	}
@@ -587,10 +475,4 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 
 func (gs *tidbGlueSession) GetVersion() string {
 	return "TiDB\n" + printer.GetTiDBInfo()
-}
-
-// UseOneShotSession implements glue.Glue
-func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
-	// in SQL backup. we don't need to close domain.
-	return fn(gs)
 }

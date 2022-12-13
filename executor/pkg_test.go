@@ -1,35 +1,29 @@
-// Copyright 2021 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package executor
 
 import (
 	"context"
 	"fmt"
-	"testing"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-func TestNestedLoopApply(t *testing.T) {
+var _ = Suite(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
+
+type pkgTestSuite struct {
+}
+
+type pkgTestSerialSuite struct {
+}
+
+func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -62,7 +56,7 @@ func TestNestedLoopApply(t *testing.T) {
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
-		retTypes(outerExec), retTypes(innerExec), nil, false)
+		retTypes(outerExec), retTypes(innerExec), nil)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),
@@ -80,20 +74,20 @@ func TestNestedLoopApply(t *testing.T) {
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)
-		require.NoError(t, err)
+		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			correctResult := fmt.Sprintf("%v %v", rowIdx, rowIdx)
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
-			require.Equal(t, correctResult, obtainedResult)
+			c.Check(obtainedResult, Equals, correctResult)
 			rowIdx++
 		}
 	}
 }
 
-func TestMoveInfoSchemaToFront(t *testing.T) {
+func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 	dbss := [][]string{
 		{},
 		{"A", "B", "C", "a", "b", "c"},
@@ -116,9 +110,9 @@ func TestMoveInfoSchemaToFront(t *testing.T) {
 	}
 
 	for i, dbs := range wanted {
-		require.Equal(t, len(dbs), len(dbss[i]))
+		c.Check(len(dbss[i]), Equals, len(dbs))
 		for j, db := range dbs {
-			require.Equal(t, db, dbss[i][j])
+			c.Check(dbss[i][j], Equals, db)
 		}
 	}
 }

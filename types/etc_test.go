@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,93 +17,107 @@ import (
 	"io"
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func testIsTypeBlob(t *testing.T, tp byte, expect bool) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testTypeEtcSuite{})
+
+type testTypeEtcSuite struct {
+}
+
+func testIsTypeBlob(c *C, tp byte, expect bool) {
 	v := IsTypeBlob(tp)
-	require.Equal(t, expect, v)
+	c.Assert(v, Equals, expect)
 }
 
-func testIsTypeChar(t *testing.T, tp byte, expect bool) {
+func testIsTypeChar(c *C, tp byte, expect bool) {
 	v := IsTypeChar(tp)
-	require.Equal(t, expect, v)
+	c.Assert(v, Equals, expect)
 }
 
-func TestIsType(t *testing.T) {
-	testIsTypeBlob(t, mysql.TypeTinyBlob, true)
-	testIsTypeBlob(t, mysql.TypeMediumBlob, true)
-	testIsTypeBlob(t, mysql.TypeBlob, true)
-	testIsTypeBlob(t, mysql.TypeLongBlob, true)
-	testIsTypeBlob(t, mysql.TypeInt24, false)
+func (s *testTypeEtcSuite) TestIsType(c *C) {
+	defer testleak.AfterTest(c)()
+	testIsTypeBlob(c, mysql.TypeTinyBlob, true)
+	testIsTypeBlob(c, mysql.TypeMediumBlob, true)
+	testIsTypeBlob(c, mysql.TypeBlob, true)
+	testIsTypeBlob(c, mysql.TypeLongBlob, true)
+	testIsTypeBlob(c, mysql.TypeInt24, false)
 
-	testIsTypeChar(t, mysql.TypeString, true)
-	testIsTypeChar(t, mysql.TypeVarchar, true)
-	testIsTypeChar(t, mysql.TypeLong, false)
+	testIsTypeChar(c, mysql.TypeString, true)
+	testIsTypeChar(c, mysql.TypeVarchar, true)
+	testIsTypeChar(c, mysql.TypeLong, false)
 }
 
-func testTypeStr(t *testing.T, tp byte, expect string) {
+func testTypeStr(c *C, tp byte, expect string) {
 	v := TypeStr(tp)
-	require.Equal(t, expect, v)
+	c.Assert(v, Equals, expect)
 }
 
-func testTypeToStr(t *testing.T, tp byte, charset string, expect string) {
+func testTypeToStr(c *C, tp byte, charset string, expect string) {
 	v := TypeToStr(tp, charset)
-	require.Equal(t, expect, v)
+	c.Assert(v, Equals, expect)
 }
 
-func TestTypeToStr(t *testing.T) {
-	testTypeStr(t, mysql.TypeYear, "year")
-	testTypeStr(t, 0xdd, "")
+func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
+	defer testleak.AfterTest(c)()
+	testTypeStr(c, mysql.TypeYear, "year")
+	testTypeStr(c, 0xdd, "")
 
-	testTypeToStr(t, mysql.TypeBlob, "utf8", "text")
-	testTypeToStr(t, mysql.TypeLongBlob, "utf8", "longtext")
-	testTypeToStr(t, mysql.TypeTinyBlob, "utf8", "tinytext")
-	testTypeToStr(t, mysql.TypeMediumBlob, "utf8", "mediumtext")
-	testTypeToStr(t, mysql.TypeVarchar, "binary", "varbinary")
-	testTypeToStr(t, mysql.TypeString, "binary", "binary")
-	testTypeToStr(t, mysql.TypeTiny, "binary", "tinyint")
-	testTypeToStr(t, mysql.TypeBlob, "binary", "blob")
-	testTypeToStr(t, mysql.TypeLongBlob, "binary", "longblob")
-	testTypeToStr(t, mysql.TypeTinyBlob, "binary", "tinyblob")
-	testTypeToStr(t, mysql.TypeMediumBlob, "binary", "mediumblob")
-	testTypeToStr(t, mysql.TypeVarchar, "utf8", "varchar")
-	testTypeToStr(t, mysql.TypeString, "utf8", "char")
-	testTypeToStr(t, mysql.TypeShort, "binary", "smallint")
-	testTypeToStr(t, mysql.TypeInt24, "binary", "mediumint")
-	testTypeToStr(t, mysql.TypeLong, "binary", "int")
-	testTypeToStr(t, mysql.TypeLonglong, "binary", "bigint")
-	testTypeToStr(t, mysql.TypeFloat, "binary", "float")
-	testTypeToStr(t, mysql.TypeDouble, "binary", "double")
-	testTypeToStr(t, mysql.TypeYear, "binary", "year")
-	testTypeToStr(t, mysql.TypeDuration, "binary", "time")
-	testTypeToStr(t, mysql.TypeDatetime, "binary", "datetime")
-	testTypeToStr(t, mysql.TypeDate, "binary", "date")
-	testTypeToStr(t, mysql.TypeTimestamp, "binary", "timestamp")
-	testTypeToStr(t, mysql.TypeNewDecimal, "binary", "decimal")
-	testTypeToStr(t, mysql.TypeUnspecified, "binary", "unspecified")
-	testTypeToStr(t, 0xdd, "binary", "")
-	testTypeToStr(t, mysql.TypeBit, "binary", "bit")
-	testTypeToStr(t, mysql.TypeEnum, "binary", "enum")
-	testTypeToStr(t, mysql.TypeSet, "binary", "set")
+	testTypeToStr(c, mysql.TypeBlob, "utf8", "text")
+	testTypeToStr(c, mysql.TypeLongBlob, "utf8", "longtext")
+	testTypeToStr(c, mysql.TypeTinyBlob, "utf8", "tinytext")
+	testTypeToStr(c, mysql.TypeMediumBlob, "utf8", "mediumtext")
+	testTypeToStr(c, mysql.TypeVarchar, "binary", "varbinary")
+	testTypeToStr(c, mysql.TypeString, "binary", "binary")
+	testTypeToStr(c, mysql.TypeTiny, "binary", "tinyint")
+	testTypeToStr(c, mysql.TypeBlob, "binary", "blob")
+	testTypeToStr(c, mysql.TypeLongBlob, "binary", "longblob")
+	testTypeToStr(c, mysql.TypeTinyBlob, "binary", "tinyblob")
+	testTypeToStr(c, mysql.TypeMediumBlob, "binary", "mediumblob")
+	testTypeToStr(c, mysql.TypeVarchar, "utf8", "varchar")
+	testTypeToStr(c, mysql.TypeString, "utf8", "char")
+	testTypeToStr(c, mysql.TypeShort, "binary", "smallint")
+	testTypeToStr(c, mysql.TypeInt24, "binary", "mediumint")
+	testTypeToStr(c, mysql.TypeLong, "binary", "int")
+	testTypeToStr(c, mysql.TypeLonglong, "binary", "bigint")
+	testTypeToStr(c, mysql.TypeFloat, "binary", "float")
+	testTypeToStr(c, mysql.TypeDouble, "binary", "double")
+	testTypeToStr(c, mysql.TypeYear, "binary", "year")
+	testTypeToStr(c, mysql.TypeDuration, "binary", "time")
+	testTypeToStr(c, mysql.TypeDatetime, "binary", "datetime")
+	testTypeToStr(c, mysql.TypeDate, "binary", "date")
+	testTypeToStr(c, mysql.TypeTimestamp, "binary", "timestamp")
+	testTypeToStr(c, mysql.TypeNewDecimal, "binary", "decimal")
+	testTypeToStr(c, mysql.TypeUnspecified, "binary", "unspecified")
+	testTypeToStr(c, 0xdd, "binary", "")
+	testTypeToStr(c, mysql.TypeBit, "binary", "bit")
+	testTypeToStr(c, mysql.TypeEnum, "binary", "enum")
+	testTypeToStr(c, mysql.TypeSet, "binary", "set")
 }
 
-func TestEOFAsNil(t *testing.T) {
+func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
+	defer testleak.AfterTest(c)()
 	err := EOFAsNil(io.EOF)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = EOFAsNil(errors.New("test"))
-	require.EqualError(t, err, "test")
+	c.Assert(err, ErrorMatches, "test")
 }
 
-func TestMaxFloat(t *testing.T) {
-	tests := []struct {
-		flen    int
-		decimal int
-		expect  float64
+func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Flen    int
+		Decimal int
+		Expect  float64
 	}{
 		{3, 2, 9.99},
 		{5, 2, 999.99},
@@ -112,15 +125,17 @@ func TestMaxFloat(t *testing.T) {
 		{5, 5, 0.99999},
 	}
 
-	for _, test := range tests {
-		require.Equal(t, test.expect, GetMaxFloat(test.flen, test.decimal))
+	for _, t := range tbl {
+		f := GetMaxFloat(t.Flen, t.Decimal)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
 
-func TestRoundFloat(t *testing.T) {
-	tests := []struct {
-		input  float64
-		expect float64
+func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  float64
+		Expect float64
 	}{
 		{2.5, 2},
 		{1.5, 2},
@@ -133,16 +148,18 @@ func TestRoundFloat(t *testing.T) {
 		{-1.5, -2},
 	}
 
-	for _, test := range tests {
-		require.Equal(t, test.expect, RoundFloat(test.input))
+	for _, t := range tbl {
+		f := RoundFloat(t.Input)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
 
-func TestRound(t *testing.T) {
-	tests := []struct {
-		input  float64
-		dec    int
-		expect float64
+func (s *testTypeEtcSuite) TestRound(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  float64
+		Dec    int
+		Expect float64
 	}{
 		{-1.23, 0, -1},
 		{-1.58, 0, -2},
@@ -152,18 +169,20 @@ func TestRound(t *testing.T) {
 		{23.298, -1, 20},
 	}
 
-	for _, test := range tests {
-		require.Equal(t, test.expect, Round(test.input, test.dec))
+	for _, t := range tbl {
+		f := Round(t.Input, t.Dec)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
 
-func TestTruncateFloat(t *testing.T) {
-	tests := []struct {
-		input   float64
-		flen    int
-		decimal int
-		expect  float64
-		err     error
+func (s *testTypeEtcSuite) TestTruncate(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input   float64
+		Flen    int
+		Decimal int
+		Expect  float64
+		Err     error
 	}{
 		{100.114, 10, 2, 100.11, nil},
 		{100.115, 10, 2, 100.12, nil},
@@ -171,139 +190,151 @@ func TestTruncateFloat(t *testing.T) {
 		{100.1156, 3, 1, 99.9, ErrOverflow},
 		{1.36, 10, 2, 1.36, nil},
 	}
-
-	for _, test := range tests {
-		f, err := TruncateFloat(test.input, test.flen, test.decimal)
-		require.Equal(t, test.expect, f)
-		require.Truef(t, terror.ErrorEqual(err, test.err), "err: %v", err)
+	for _, t := range tbl {
+		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
+		c.Assert(f, Equals, t.Expect)
+		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue, Commentf("err %v", err))
 	}
 }
 
-func TestIsTypeTemporal(t *testing.T) {
+func (s *testTypeEtcSuite) TestIsTypeTemporal(c *C) {
+	defer testleak.AfterTest(c)()
 	res := IsTypeTemporal(mysql.TypeDuration)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 	res = IsTypeTemporal(mysql.TypeDatetime)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 	res = IsTypeTemporal(mysql.TypeTimestamp)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 	res = IsTypeTemporal(mysql.TypeDate)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 	res = IsTypeTemporal(mysql.TypeNewDate)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 	res = IsTypeTemporal('t')
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 }
 
-func TestIsBinaryStr(t *testing.T) {
-	in := &FieldType{}
-	in.SetType(mysql.TypeBit)
-	in.SetFlag(mysql.UnsignedFlag)
-	in.SetFlen(1)
-	in.SetDecimal(0)
-	in.SetCharset(charset.CharsetUTF8)
-	in.SetCollate(charset.CollationUTF8)
+func (s *testTypeEtcSuite) TestIsBinaryStr(c *C) {
+	defer testleak.AfterTest(c)()
+	in := FieldType{
+		Tp:      mysql.TypeBit,
+		Flag:    mysql.UnsignedFlag,
+		Flen:    1,
+		Decimal: 0,
+		Charset: charset.CharsetUTF8,
+		Collate: charset.CollationUTF8,
+	}
+	in.Collate = charset.CollationUTF8
+	res := IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
 
-	in.SetCollate(charset.CollationUTF8)
-	res := IsBinaryStr(in)
-	require.False(t, res)
+	in.Collate = charset.CollationBin
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
 
-	in.SetCollate(charset.CollationBin)
-	res = IsBinaryStr(in)
-	require.False(t, res)
-
-	in.SetType(mysql.TypeBlob)
-	res = IsBinaryStr(in)
-	require.True(t, res)
+	in.Tp = mysql.TypeBlob
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, true)
 }
 
-func TestIsNonBinaryStr(t *testing.T) {
-	in := NewFieldType(mysql.TypeBit)
-	in.SetFlag(mysql.UnsignedFlag)
-	in.SetFlen(1)
-	in.SetDecimal(0)
-	in.SetCharset(charset.CharsetUTF8)
-	in.SetCollate(charset.CollationUTF8)
+func (s *testTypeEtcSuite) TestIsNonBinaryStr(c *C) {
+	defer testleak.AfterTest(c)()
+	in := FieldType{
+		Tp:      mysql.TypeBit,
+		Flag:    mysql.UnsignedFlag,
+		Flen:    1,
+		Decimal: 0,
+		Charset: charset.CharsetUTF8,
+		Collate: charset.CollationUTF8,
+	}
 
-	in.SetCollate(charset.CollationBin)
-	res := IsBinaryStr(in)
-	require.False(t, res)
+	in.Collate = charset.CollationBin
+	res := IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
 
-	in.SetCollate(charset.CollationUTF8)
-	res = IsBinaryStr(in)
-	require.False(t, res)
+	in.Collate = charset.CollationUTF8
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
 
-	in.SetType(mysql.TypeBlob)
-	res = IsBinaryStr(in)
-	require.False(t, res)
+	in.Tp = mysql.TypeBlob
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
 }
 
-func TestIsTemporalWithDate(t *testing.T) {
+func (s *testTypeEtcSuite) TestIsTemporalWithDate(c *C) {
+	defer testleak.AfterTest(c)()
+
 	res := IsTemporalWithDate(mysql.TypeDatetime)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTemporalWithDate(mysql.TypeDate)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTemporalWithDate(mysql.TypeTimestamp)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTemporalWithDate('t')
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 }
 
-func TestIsTypePrefixable(t *testing.T) {
+func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
+	defer testleak.AfterTest(c)()
+
 	res := IsTypePrefixable('t')
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 
 	res = IsTypePrefixable(mysql.TypeBlob)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 }
 
-func TestIsTypeFractionable(t *testing.T) {
+func (s *testTypeEtcSuite) TestIsTypeFractionable(c *C) {
+	defer testleak.AfterTest(c)()
+
 	res := IsTypeFractionable(mysql.TypeDatetime)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeFractionable(mysql.TypeDuration)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeFractionable(mysql.TypeTimestamp)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeFractionable('t')
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 }
 
-func TestIsTypeNumeric(t *testing.T) {
+func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
+	defer testleak.AfterTest(c)()
+
 	res := IsTypeNumeric(mysql.TypeBit)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeTiny)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeInt24)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeLong)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeLonglong)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeNewDecimal)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeUnspecified)
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 
 	res = IsTypeNumeric(mysql.TypeFloat)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeDouble)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeShort)
-	require.True(t, res)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric('t')
-	require.False(t, res)
+	c.Assert(res, Equals, false)
 }

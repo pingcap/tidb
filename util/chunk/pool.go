@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,7 +35,7 @@ type Pool struct {
 func NewPool(initCap int) *Pool {
 	return &Pool{
 		initCap:         initCap,
-		varLenColPool:   &sync.Pool{New: func() interface{} { return newVarLenColumn(initCap) }},
+		varLenColPool:   &sync.Pool{New: func() interface{} { return newVarLenColumn(initCap, nil) }},
 		fixLenColPool4:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(4, initCap) }},
 		fixLenColPool8:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(8, initCap) }},
 		fixLenColPool16: &sync.Pool{New: func() interface{} { return newFixedLenColumn(16, initCap) }},

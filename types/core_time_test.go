@@ -8,30 +8,32 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types
 
 import (
-	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
 
-func TestWeekBehaviour(t *testing.T) {
-	require.Equal(t, weekBehaviour(1), weekBehaviourMondayFirst)
-	require.Equal(t, weekBehaviour(2), weekBehaviourYear)
-	require.Equal(t, weekBehaviour(4), weekBehaviourFirstWeekday)
+type testCoreTimeSuite struct{}
 
-	require.True(t, weekBehaviour(1).test(weekBehaviourMondayFirst))
-	require.True(t, weekBehaviour(2).test(weekBehaviourYear))
-	require.True(t, weekBehaviour(4).test(weekBehaviourFirstWeekday))
+var _ = Suite(&testCoreTimeSuite{})
+
+func (s *testCoreTimeSuite) TestWeekBehaviour(c *C) {
+	c.Assert(weekBehaviourMondayFirst, Equals, weekBehaviour(1))
+	c.Assert(weekBehaviourYear, Equals, weekBehaviour(2))
+	c.Assert(weekBehaviourFirstWeekday, Equals, weekBehaviour(4))
+
+	c.Check(weekBehaviour(1).test(weekBehaviourMondayFirst), IsTrue)
+	c.Check(weekBehaviour(2).test(weekBehaviourYear), IsTrue)
+	c.Check(weekBehaviour(4).test(weekBehaviourFirstWeekday), IsTrue)
 }
 
-func TestWeek(t *testing.T) {
+func (s *testCoreTimeSuite) TestWeek(c *C) {
 	tests := []struct {
 		Input  CoreTime
 		Mode   int
@@ -44,20 +46,20 @@ func TestWeek(t *testing.T) {
 
 	for ith, tt := range tests {
 		_, week := calcWeek(tt.Input, weekMode(tt.Mode))
-		require.Equal(t, tt.Expect, week, "%d failed.", ith)
+		c.Check(week, Equals, tt.Expect, Commentf("%d failed.", ith))
 	}
 }
 
-func TestCalcDaynr(t *testing.T) {
-	require.Equal(t, 0, calcDaynr(0, 0, 0))
-	require.Equal(t, 3652424, calcDaynr(9999, 12, 31))
-	require.Equal(t, 719528, calcDaynr(1970, 1, 1))
-	require.Equal(t, 733026, calcDaynr(2006, 12, 16))
-	require.Equal(t, 3654, calcDaynr(10, 1, 2))
-	require.Equal(t, 733457, calcDaynr(2008, 2, 20))
+func (s *testCoreTimeSuite) TestCalcDaynr(c *C) {
+	c.Assert(calcDaynr(0, 0, 0), Equals, 0)
+	c.Assert(calcDaynr(9999, 12, 31), Equals, 3652424)
+	c.Assert(calcDaynr(1970, 1, 1), Equals, 719528)
+	c.Assert(calcDaynr(2006, 12, 16), Equals, 733026)
+	c.Assert(calcDaynr(10, 1, 2), Equals, 3654)
+	c.Assert(calcDaynr(2008, 2, 20), Equals, 733457)
 }
 
-func TestCalcTimeTimeDiff(t *testing.T) {
+func (s *testCoreTimeSuite) TestCalcTimeTimeDiff(c *C) {
 	tests := []struct {
 		T1           CoreTime
 		T2           CoreTime
@@ -91,12 +93,12 @@ func TestCalcTimeTimeDiff(t *testing.T) {
 
 	for i, tt := range tests {
 		seconds, microseconds, _ := calcTimeTimeDiff(tt.T1, tt.T2, tt.Sign)
-		require.Equal(t, tt.ExpectSecond, seconds, "%d failed.", i)
-		require.Equal(t, tt.ExpectMicro, microseconds, "%d failed.", i)
+		c.Assert(seconds, Equals, tt.ExpectSecond, Commentf("%d failed.", i))
+		c.Assert(microseconds, Equals, tt.ExpectMicro, Commentf("%d failed.", i))
 	}
 }
 
-func TestCompareTime(t *testing.T) {
+func (s *testCoreTimeSuite) TestCompareTime(c *C) {
 	tests := []struct {
 		T1     CoreTime
 		T2     CoreTime
@@ -110,12 +112,12 @@ func TestCompareTime(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		require.Equal(t, tt.Expect, compareTime(tt.T1, tt.T2))
-		require.Equal(t, -tt.Expect, compareTime(tt.T2, tt.T1))
+		c.Assert(compareTime(tt.T1, tt.T2), Equals, tt.Expect)
+		c.Assert(compareTime(tt.T2, tt.T1), Equals, -tt.Expect)
 	}
 }
 
-func TestGetDateFromDaynr(t *testing.T) {
+func (s *testCoreTimeSuite) TestGetDateFromDaynr(c *C) {
 	tests := []struct {
 		daynr uint
 		year  uint
@@ -138,13 +140,13 @@ func TestGetDateFromDaynr(t *testing.T) {
 
 	for _, tt := range tests {
 		yy, mm, dd := getDateFromDaynr(tt.daynr)
-		require.Equal(t, tt.year, yy)
-		require.Equal(t, tt.month, mm)
-		require.Equal(t, tt.day, dd)
+		c.Assert(yy, Equals, tt.year)
+		c.Assert(mm, Equals, tt.month)
+		c.Assert(dd, Equals, tt.day)
 	}
 }
 
-func TestMixDateAndTime(t *testing.T) {
+func (s *testCoreTimeSuite) TestMixDateAndTime(c *C) {
 	tests := []struct {
 		date   CoreTime
 		dur    Duration
@@ -183,17 +185,17 @@ func TestMixDateAndTime(t *testing.T) {
 		},
 	}
 
-	for ith, tt := range tests {
-		if tt.neg {
-			mixDateAndDuration(&tt.date, tt.dur.Neg())
+	for ith, t := range tests {
+		if t.neg {
+			mixDateAndDuration(&t.date, t.dur.Neg())
 		} else {
-			mixDateAndDuration(&tt.date, tt.dur)
+			mixDateAndDuration(&t.date, t.dur)
 		}
-		require.Equal(t, 0, compareTime(tt.date, tt.expect), "%d", ith)
+		c.Assert(compareTime(t.date, t.expect), Equals, 0, Commentf("%d", ith))
 	}
 }
 
-func TestIsLeapYear(t *testing.T) {
+func (s *testCoreTimeSuite) TestIsLeapYear(c *C) {
 	tests := []struct {
 		T      CoreTime
 		Expect bool
@@ -214,10 +216,10 @@ func TestIsLeapYear(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		require.Equal(t, tt.Expect, tt.T.IsLeapYear())
+		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
 	}
 }
-func TestGetLastDay(t *testing.T) {
+func (s *testCoreTimeSuite) TestGetLastDay(c *C) {
 	tests := []struct {
 		year        int
 		month       int
@@ -230,13 +232,13 @@ func TestGetLastDay(t *testing.T) {
 		{1996, 2, 29},
 	}
 
-	for _, tt := range tests {
-		day := GetLastDay(tt.year, tt.month)
-		require.Equal(t, tt.expectedDay, day)
+	for _, t := range tests {
+		day := GetLastDay(t.year, t.month)
+		c.Assert(day, Equals, t.expectedDay)
 	}
 }
 
-func TestGetFixDays(t *testing.T) {
+func (s *testCoreTimeSuite) TestgetFixDays(c *C) {
 	tests := []struct {
 		year        int
 		month       int
@@ -251,13 +253,13 @@ func TestGetFixDays(t *testing.T) {
 		{2019, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC), 0},
 	}
 
-	for _, tt := range tests {
-		res := getFixDays(tt.year, tt.month, tt.day, tt.ot)
-		require.Equal(t, tt.expectedDay, res)
+	for _, t := range tests {
+		res := getFixDays(t.year, t.month, t.day, t.ot)
+		c.Assert(res, Equals, t.expectedDay)
 	}
 }
 
-func TestAddDate(t *testing.T) {
+func (s *testCoreTimeSuite) TestAddDate(c *C) {
 	tests := []struct {
 		year  int
 		month int
@@ -271,13 +273,13 @@ func TestAddDate(t *testing.T) {
 		{01, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC)},
 	}
 
-	for _, tt := range tests {
-		res := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
-		require.Equal(t, tt.year+tt.ot.Year(), res.Year())
+	for _, t := range tests {
+		res := AddDate(int64(t.year), int64(t.month), int64(t.day), t.ot)
+		c.Assert(res.Year(), Equals, t.year+t.ot.Year())
 	}
 }
 
-func TestWeekday(t *testing.T) {
+func (s *testCoreTimeSuite) TestWeekday(c *C) {
 	tests := []struct {
 		Input  CoreTime
 		Expect string
@@ -289,43 +291,6 @@ func TestWeekday(t *testing.T) {
 
 	for _, tt := range tests {
 		weekday := tt.Input.Weekday()
-		require.Equal(t, tt.Expect, weekday.String())
-	}
-}
-
-func TestAdjustedGoTime(t *testing.T) {
-	tests := []struct {
-		TZ      string
-		dt      CoreTime
-		Expect  string
-		Success bool
-	}{
-		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 01, 59, 59, 997), "2020-10-04 01:59:59.000997 +1030 +1030", true},
-		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 00, 00, 0), "2020-10-04 02:30:00 +11 +1100", true},
-		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 15, 00, 0), "2020-10-04 02:30:00 +11 +1100", true},
-		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 29, 59, 999999), "2020-10-04 02:30:00 +11 +1100", true},
-		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 30, 00, 1), "2020-10-04 02:30:00.000001 +11 +1100", true},
-		{"Australia/Lord_Howe", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 +1030 +1030", true},
-		{"Australia/Lord_Howe", FromDate(2020, 04, 04, 01, 45, 00, 0), "2020-04-04 01:45:00 +11 +1100", true},
-		{"Europe/Vilnius", FromDate(2020, 03, 29, 03, 45, 00, 0), "2020-03-29 04:00:00 EEST +0300", true},
-		{"Europe/Vilnius", FromDate(2020, 03, 29, 03, 59, 59, 456789), "2020-03-29 04:00:00 EEST +0300", true},
-		{"Europe/Vilnius", FromDate(2020, 03, 29, 04, 00, 01, 130000), "2020-03-29 04:00:01.13 EEST +0300", true},
-		{"Europe/Vilnius", FromDate(2020, 10, 25, 03, 45, 00, 0), "2020-10-25 03:45:00 EET +0200", true},
-		{"Europe/Vilnius", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 EEST +0300", true},
-		{"Europe/Amsterdam", FromDate(2020, 03, 29, 02, 45, 00, 0), "2020-03-29 03:00:00 CEST +0200", true},
-		{"Europe/Amsterdam", FromDate(2020, 10, 25, 02, 35, 00, 0), "2020-10-25 02:35:00 CET +0100", true},
-		{"UTC", FromDate(2020, 2, 31, 02, 35, 00, 0), "", false},
-	}
-
-	for _, tt := range tests {
-		loc, err := time.LoadLocation(tt.TZ)
-		require.NoError(t, err)
-		tp, err := tt.dt.AdjustedGoTime(loc)
-		if !tt.Success {
-			require.Error(t, err, tp.Format("2006-01-02 15:04:05.999999999 MST -0700"))
-		} else {
-			require.NoError(t, err, tp.Format("2006-01-02 15:04:05.999999999 MST -0700"))
-			require.Equal(t, tt.Expect, tp.Format("2006-01-02 15:04:05.999999999 MST -0700"))
-		}
+		c.Check(weekday.String(), Equals, tt.Expect)
 	}
 }

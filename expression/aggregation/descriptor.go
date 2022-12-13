@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,21 +15,18 @@ package aggregation
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -75,15 +71,6 @@ func (a *AggFuncDesc) String() string {
 			buffer.WriteString(", ")
 		}
 	}
-	if len(a.OrderByItems) > 0 {
-		buffer.WriteString(" order by ")
-	}
-	for i, arg := range a.OrderByItems {
-		buffer.WriteString(arg.String())
-		if i+1 != len(a.OrderByItems) {
-			buffer.WriteString(", ")
-		}
-	}
 	buffer.WriteString(")")
 	return buffer.String()
 }
@@ -125,6 +112,8 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
 		partialAggDesc.Mode = Partial2Mode
+	} else {
+		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Mode:        FinalMode, // We only support FinalMode now in final phase.
@@ -230,7 +219,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		var s string
 		var err error
 		var maxLen uint64
-		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
+		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -240,9 +229,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		}
 		return &concatFunction{aggFunction: aggFunc, maxLen: maxLen}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:
@@ -302,7 +291,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
-		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg,
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg,
 		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
@@ -311,7 +300,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		}
 	// `select max(a) from empty_tbl` returns `null`, while `select max(a) from empty_tbl group by b` returns empty.
 	case ast.AggFuncMax, ast.AggFuncMin:
-		if !hasGroupBy && a.RetTp.GetType() != mysql.TypeBit {
+		if !hasGroupBy && a.RetTp.Tp != mysql.TypeBit {
 			removeNotNull = true
 		}
 	// `select distinct a from empty_tbl` returns empty
@@ -329,20 +318,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 	}
 	if removeNotNull {
 		a.RetTp = a.RetTp.Clone()
-		a.RetTp.DelFlag(mysql.NotNullFlag)
+		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
 	return nil
-}
-
-// MemoryUsage the memory usage of AggFuncDesc
-func (a *AggFuncDesc) MemoryUsage() (sum int64) {
-	if a == nil {
-		return
-	}
-
-	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
-	for _, item := range a.OrderByItems {
-		sum += item.MemoryUsage()
-	}
-	return
 }

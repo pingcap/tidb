@@ -8,28 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
 )
 
-func TestCompareFunctionWithRefine(t *testing.T) {
-	ctx := createContext(t)
-
+func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
@@ -71,23 +68,21 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
-	require.NoError(t, err)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
-	for _, test := range tests {
-		f, err := ParseSimpleExprsWithNames(ctx, test.exprStr, schema, names)
-		require.NoError(t, err)
-		require.Equal(t, test.result, f[0].String())
+	for _, t := range tests {
+		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
+		c.Assert(err, IsNil)
+		c.Assert(f[0].String(), Equals, t.result)
 	}
 }
 
-func TestCompare(t *testing.T) {
-	ctx := createContext(t)
-
+func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
-	jsonVal := types.CreateBinaryJSON("123")
+	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
 		arg0     interface{}
@@ -137,46 +132,36 @@ func TestCompare(t *testing.T) {
 		{jsonVal, jsonVal, ast.NullEQ, mysql.TypeJSON, 1},
 	}
 
-	for _, test := range tests {
-		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{test.arg0, test.arg1}))
-		require.NoError(t, err)
+	for _, t := range tests {
+		bf, err := funcs[t.funcName].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{t.arg0, t.arg1}))
+		c.Assert(err, IsNil)
 		args := bf.getArgs()
-		require.Equal(t, test.tp, args[0].GetType().GetType())
-		require.Equal(t, test.tp, args[1].GetType().GetType())
+		c.Assert(args[0].GetType().Tp, Equals, t.tp)
+		c.Assert(args[1].GetType().Tp, Equals, t.tp)
 		res, isNil, err := bf.evalInt(chunk.Row{})
-		require.NoError(t, err)
-		require.False(t, isNil)
-		require.Equal(t, test.expected, res)
+		c.Assert(err, IsNil)
+		c.Assert(isNil, IsFalse)
+		c.Assert(res, Equals, t.expected)
 	}
 
 	// test <non-const decimal expression> <cmp> <const string expression>
 	decimalCol, stringCon := &Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldType(mysql.TypeVarchar)}
-	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
-	require.NoError(t, err)
+	bf, err := funcs[ast.LT].getFunction(s.ctx, []Expression{decimalCol, stringCon})
+	c.Assert(err, IsNil)
 	args := bf.getArgs()
-	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().GetType())
+	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeNewDecimal)
+	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeNewDecimal)
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
-	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
-	require.NoError(t, err)
+	bf, err = funcs[ast.LT].getFunction(s.ctx, []Expression{timeCol, stringCon})
+	c.Assert(err, IsNil)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
-
-	// test <json column> <cmp> <const int expression>
-	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
-	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
-	require.NoError(t, err)
-	args = bf.getArgs()
-	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
+	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeDatetime)
+	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeDatetime)
 }
 
-func TestCoalesce(t *testing.T) {
-	ctx := createContext(t)
-
+func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	cases := []struct {
 		args     []interface{}
 		expected interface{}
@@ -187,59 +172,47 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, nil}, nil, true, false},
 		{[]interface{}{nil, nil, nil}, nil, true, false},
 		{[]interface{}{nil, 1}, int64(1), false, false},
-		{[]interface{}{nil, 1.1}, 1.1, false, false},
+		{[]interface{}{nil, 1.1}, float64(1.1), false, false},
 		{[]interface{}{1, 1.1}, float64(1), false, false},
 		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
-		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
-		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
-		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
-		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
-		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
-		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
 
-	for _, test := range cases {
-		f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, test.args)...)
-		require.NoError(t, err)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Coalesce, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
 
-		if test.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if test.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				if f.GetType().EvalType() == types.ETDuration {
-					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
-				} else {
-					require.Equal(t, test.expected, d.GetValue())
-				}
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
 			}
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
-	require.NoError(t, err)
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }
 
-func TestIntervalFunc(t *testing.T) {
-	ctx := createContext(t)
-
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
 	defer func() {
 		sc.IgnoreTruncate = origin
 	}()
 
-	for _, test := range []struct {
+	for _, t := range []struct {
 		args   []types.Datum
 		ret    int64
 		getErr bool
@@ -271,24 +244,23 @@ func TestIntervalFunc(t *testing.T) {
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1, false},
 	} {
 		fc := funcs[ast.Interval]
-		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
-		require.NoError(t, err)
-		if test.getErr {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
+		c.Assert(err, IsNil)
+		if t.getErr {
 			v, err := evalBuiltinFunc(f, chunk.Row{})
-			require.Error(t, err)
-			require.Equal(t, test.ret, v.GetInt64())
+			c.Assert(err, NotNil)
+			c.Assert(v.GetInt64(), Equals, t.ret)
 			continue
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, test.ret, v.GetInt64())
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
 }
 
 // greatest/least function is compatible with MySQL 8.0
-func TestGreatestLeastFunc(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
+func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
 	decG := &types.MyDecimal{}
@@ -297,7 +269,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
 
-	for _, test := range []struct {
+	for _, t := range []struct {
 		args             []interface{}
 		expectedGreatest interface{}
 		expectedLeast    interface{}
@@ -350,7 +322,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{duration, duration},
-			duration, duration, false, false,
+			"12:59:59", "12:59:59", false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},
@@ -368,41 +340,37 @@ func TestGreatestLeastFunc(t *testing.T) {
 			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
 			"905969664", "1990-06-16 17:22:56.005534", false, false,
 		},
-		{
-			[]interface{}{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
-			"20:00:00", "105969664", false, false,
-		},
 	} {
-		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)
-		require.NoError(t, err)
+		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err := f0.Eval(chunk.Row{})
-		if test.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if test.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, test.expectedGreatest, d.GetValue())
+				c.Assert(d.GetValue(), DeepEquals, t.expectedGreatest)
 			}
 		}
 
-		f1, err := newFunctionForTest(ctx, ast.Least, primitiveValsToConstants(ctx, test.args)...)
-		require.NoError(t, err)
+		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
 		d, err = f1.Eval(chunk.Row{})
-		if test.getErr {
-			require.Error(t, err)
+		if t.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			require.NoError(t, err)
-			if test.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				require.Equal(t, test.expectedLeast, d.GetValue())
+				c.Assert(d.GetValue(), DeepEquals, t.expectedLeast)
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(ctx, []Expression{NewZero(), NewOne()})
-	require.NoError(t, err)
-	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
-	require.NoError(t, err)
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
+	c.Assert(err, IsNil)
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
+	c.Assert(err, IsNil)
 }

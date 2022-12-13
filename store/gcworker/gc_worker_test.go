@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -36,63 +36,30 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/oracle/oracles"
-	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/retry"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
-type mockGCWorkerClient struct {
-	tikv.Client
-	unsafeDestroyRangeHandler   handler
-	physicalScanLockHandler     handler
-	registerLockObserverHandler handler
-	checkLockObserverHandler    handler
-	removeLockObserverHandler   handler
+func TestT(t *testing.T) {
+	TestingT(t)
 }
 
-type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
-
-func gcContext() context.Context {
-	// internal statements must bind with resource type
-	return kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
-}
-
-func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
-		return c.unsafeDestroyRangeHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdPhysicalScanLock && c.physicalScanLockHandler != nil {
-		return c.physicalScanLockHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdRegisterLockObserver && c.registerLockObserverHandler != nil {
-		return c.registerLockObserverHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdCheckLockObserver && c.checkLockObserverHandler != nil {
-		return c.checkLockObserverHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdRemoveLockObserver && c.removeLockObserverHandler != nil {
-		return c.removeLockObserverHandler(addr, req)
-	}
-
-	return c.Client.SendRequest(ctx, addr, req, timeout)
-}
-
-type mockGCWorkerSuite struct {
+type testGCWorkerSuite struct {
 	store      kv.Storage
 	tikvStore  tikv.Storage
-	cluster    testutils.Cluster
+	cluster    cluster.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
-	client     *mockGCWorkerClient
+	client     *testGCWorkerClient
 	pdClient   pd.Client
 	initRegion struct {
 		storeIDs []uint64
@@ -101,20 +68,20 @@ type mockGCWorkerSuite struct {
 	}
 }
 
-func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
-	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
-}
+var _ = SerialSuites(&testGCWorkerSuite{})
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite) {
-	s = new(mockGCWorkerSuite)
+func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	hijackClient := func(client tikv.Client) tikv.Client {
-		s.client = &mockGCWorkerClient{Client: client}
+		s.client = &testGCWorkerClient{
+			Client: client,
+		}
 		client = s.client
 		return client
 	}
-	opts := []mockstore.MockTiKVStoreOption{
-		mockstore.WithStoreType(storeType),
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
@@ -123,93 +90,99 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 			s.pdClient = c
 			return c
 		}),
-	}
+	)
+	c.Assert(err, IsNil)
 
+	s.store = store
+	s.tikvStore = store.(tikv.Storage)
 	s.oracle = &oracles.MockOracle{}
-	store, err := mockstore.NewMockStore(opts...)
-	require.NoError(t, err)
-	store.GetOracle().Close()
-	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, 0)
-	s.store, s.dom = store, dom
-
-	s.tikvStore = s.store.(tikv.Storage)
+	s.tikvStore.SetOracle(s.oracle)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
 	s.gcWorker = gcWorker
-
-	return
 }
 
-func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
+func (s *testGCWorkerSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) timeEqual(c *C, t1, t2 time.Time, epsilon time.Duration) {
+	c.Assert(math.Abs(float64(t1.Sub(t2))), Less, float64(epsilon))
+}
+
+func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
 	txn, err := s.store.Begin()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = txn.Set([]byte(key), []byte(value))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
 
-func (s *mockGCWorkerSuite) mustGet(t *testing.T, key string, ts uint64) string {
+func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
 	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
 	value, err := snap.Get(context.TODO(), []byte(key))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return string(value)
 }
 
-func (s *mockGCWorkerSuite) mustGetNone(t *testing.T, key string, ts uint64) {
+func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
 	_, err := snap.Get(context.TODO(), []byte(key))
 	if err != nil {
-		// unistore gc is based on compaction filter.
+		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		require.True(t, kv.ErrNotExist.Equal(err))
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 }
 
-func (s *mockGCWorkerSuite) mustAllocTs(t *testing.T) uint64 {
+func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
 	ts, err := s.oracle.GetTimestamp(context.Background(), &oracle.Option{})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return ts
 }
 
-func (s *mockGCWorkerSuite) mustGetSafePointFromPd(t *testing.T) uint64 {
+func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 	// UpdateGCSafePoint returns the newest safePoint after the updating, which can be used to check whether the
 	// safePoint is successfully uploaded.
 	safePoint, err := s.pdClient.UpdateGCSafePoint(context.Background(), 0)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return safePoint
 }
 
-func (s *mockGCWorkerSuite) mustGetMinServiceSafePointFromPd(t *testing.T) uint64 {
+func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
 	// UpdateServiceGCSafePoint returns the minimal service safePoint. If trying to update it with a value less than the
 	// current minimal safePoint, nothing will be updated and the current minimal one will be returned. So we can use
 	// this API to check the current safePoint.
 	// This function shouldn't be invoked when there's no service safePoint set.
 	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 0, 0)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return minSafePoint
 }
 
-func (s *mockGCWorkerSuite) mustUpdateServiceGCSafePoint(t *testing.T, serviceID string, safePoint, expectedMinSafePoint uint64) {
+func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
 	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, math.MaxInt64, safePoint)
-	require.NoError(t, err)
-	require.Equal(t, expectedMinSafePoint, minSafePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
 }
 
-func (s *mockGCWorkerSuite) mustRemoveServiceGCSafePoint(t *testing.T, serviceID string, safePoint, expectedMinSafePoint uint64) {
+func (s *testGCWorkerSuite) mustRemoveServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
 	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
-	require.NoError(t, err)
-	require.Equal(t, expectedMinSafePoint, minSafePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
 }
 
-func (s *mockGCWorkerSuite) mustSetTiDBServiceSafePoint(t *testing.T, safePoint, expectedMinSafePoint uint64) {
+func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
 	minSafePoint, err := s.gcWorker.setGCWorkerServiceSafePoint(context.Background(), safePoint)
-	require.NoError(t, err)
-	require.Equal(t, expectedMinSafePoint, minSafePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
 }
 
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
@@ -225,380 +198,351 @@ type gcProbe struct {
 }
 
 // createGCProbe creates gcProbe on specified key.
-func (s *mockGCWorkerSuite) createGCProbe(t *testing.T, key string) *gcProbe {
-	s.mustPut(t, key, "v1")
-	ts1 := s.mustAllocTs(t)
-	s.mustPut(t, key, "v2")
-	ts2 := s.mustAllocTs(t)
+func (s *testGCWorkerSuite) createGCProbe(c *C, key string) *gcProbe {
+	s.mustPut(c, key, "v1")
+	ts1 := s.mustAllocTs(c)
+	s.mustPut(c, key, "v2")
+	ts2 := s.mustAllocTs(c)
 	p := &gcProbe{
 		key:  key,
 		v1Ts: ts1,
 		v2Ts: ts2,
 	}
-	s.checkNotCollected(t, p)
+	s.checkNotCollected(c, p)
 	return p
 }
 
 // checkCollected asserts the gcProbe has been correctly collected.
-func (s *mockGCWorkerSuite) checkCollected(t *testing.T, p *gcProbe) {
-	s.mustGetNone(t, p.key, p.v1Ts)
-	require.Equal(t, "v2", s.mustGet(t, p.key, p.v2Ts))
+func (s *testGCWorkerSuite) checkCollected(c *C, p *gcProbe) {
+	s.mustGetNone(c, p.key, p.v1Ts)
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
 }
 
 // checkNotCollected asserts the gcProbe has not been collected.
-func (s *mockGCWorkerSuite) checkNotCollected(t *testing.T, p *gcProbe) {
-	require.Equal(t, "v1", s.mustGet(t, p.key, p.v1Ts))
-	require.Equal(t, "v2", s.mustGet(t, p.key, p.v2Ts))
+func (s *testGCWorkerSuite) checkNotCollected(c *C, p *gcProbe) {
+	c.Assert(s.mustGet(c, p.key, p.v1Ts), Equals, "v1")
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
 }
 
-func timeEqual(t *testing.T, t1, t2 time.Time, epsilon time.Duration) {
-	require.Less(t, math.Abs(float64(t1.Sub(t2))), float64(epsilon))
-}
-
-func TestGetOracleTime(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	t1, err := s.gcWorker.getOracleTime()
-	require.NoError(t, err)
-	timeEqual(t, time.Now(), t1, time.Millisecond*10)
+	c.Assert(err, IsNil)
+	s.timeEqual(c, time.Now(), t1, time.Millisecond*10)
 
 	s.oracle.AddOffset(time.Second * 10)
 	t2, err := s.gcWorker.getOracleTime()
-	require.NoError(t, err)
-	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
+	c.Assert(err, IsNil)
+	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
-func TestGetLowResolveTS(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	lowResolveTS, err := s.gcWorker.getTryResolveLocksTS()
-	require.NoError(t, err)
-
-	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
-	timeEqual(t, time.Now(), lowResolveTime.Add(gcTryResolveLocksIntervalFromNow), time.Millisecond*10)
-}
-
-func TestMinStartTS(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	ctx := context.Background()
 	spkv := s.tikvStore.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	now := oracle.GoTimeToTS(time.Now())
 	sp := s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, now, sp)
+	c.Assert(sp, Equals, now)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, uint64(0), sp)
+	c.Assert(sp, Equals, uint64(0))
 
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, uint64(0), sp)
+	c.Assert(sp, Equals, uint64(0))
 
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
-	require.NoError(t, err)
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
-	require.NoError(t, err)
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
+		strconv.FormatUint(now, 10))
+	c.Assert(err, IsNil)
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
+		strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
+	c.Assert(err, IsNil)
 	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.ComposeTS(10000, 0))
-	require.Equal(t, now-oracle.ComposeTS(20000, 0)-1, sp)
+	c.Assert(sp, Equals, now-oracle.ComposeTS(20000, 0)-1)
 }
 
-func TestPrepareGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	now, err := s.gcWorker.getOracleTime()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	close(s.gcWorker.done)
-	ok, _, err := s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
+	ok, _, err := s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-	require.NoError(t, err)
-	require.NotNil(t, lastRun)
+	c.Assert(err, IsNil)
+	c.Assert(lastRun, NotNil)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
-	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
+	c.Assert(err, IsNil)
+	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 4)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	s.oracle.AddOffset(time.Minute * 2)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 
-	// Change GC lifetime.
+	// Change GC life time.
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 5)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	s.oracle.AddOffset(time.Minute * 40)
 	now, err = s.gcWorker.getOracleTime()
-	require.NoError(t, err)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
-	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(time.Minute*30), now, 2*time.Second)
+	c.Assert(err, IsNil)
+	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 
 	// Change GC concurrency.
 	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
-	require.NoError(t, err)
-	require.Equal(t, gcDefaultConcurrency, concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcDefaultConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	require.NoError(t, err)
-	require.Equal(t, gcMinConcurrency, concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	require.NoError(t, err)
-	require.Equal(t, gcMinConcurrency, concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	require.NoError(t, err)
-	require.Equal(t, gcMaxConcurrency, concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMaxConcurrency)
 
 	// Change GC enable status.
 	s.oracle.AddOffset(time.Minute * 40)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
-	require.NoError(t, err)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
-	require.NoError(t, err)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 
-	// Check gc lifetime smaller than min.
+	// Check gc life time small than min.
 	s.oracle.AddOffset(time.Minute * 40)
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
-	require.NoError(t, err)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 	lifeTime, err := s.gcWorker.loadDuration(gcLifeTimeKey)
-	require.NoError(t, err)
-	require.Equal(t, gcMinLifeTime, *lifeTime)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, gcMinLifeTime)
 
 	s.oracle.AddOffset(time.Minute * 40)
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
-	require.NoError(t, err)
-	ok, _, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
-	require.NoError(t, err)
-	require.Equal(t, 30*time.Minute, *lifeTime)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 30*time.Minute)
 
 	// Change auto concurrency
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useAutoConcurrency, err := s.gcWorker.checkUseAutoConcurrency()
-	require.NoError(t, err)
-	require.False(t, useAutoConcurrency)
+	c.Assert(err, IsNil)
+	c.Assert(useAutoConcurrency, IsFalse)
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useAutoConcurrency, err = s.gcWorker.checkUseAutoConcurrency()
-	require.NoError(t, err)
-	require.True(t, useAutoConcurrency)
+	c.Assert(err, IsNil)
+	c.Assert(useAutoConcurrency, IsTrue)
 
 	// Check skipping GC if safe point is not changed.
 	safePointTime, err := s.gcWorker.loadTime(gcSafePointKey)
 	minStartTS := oracle.GoTimeToTS(*safePointTime) + 1
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(minStartTS, 10))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 40)
-	ok, safepoint, err := s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Equal(t, uint64(0), safepoint)
+	ok, safepoint, err := s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	c.Assert(safepoint, Equals, uint64(0))
 }
 
-func TestStatusVars(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestStatusVars(c *C) {
 	// Status variables should now exist for:
 	// tidb_gc_safe_point, tidb_gc_last_run_time
 	se := createSession(s.gcWorker.store)
 	defer se.Close()
 
 	safePoint, err := s.gcWorker.loadValueFromSysTable(gcSafePointKey)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	lastRunTime, err := s.gcWorker.loadValueFromSysTable(gcLastRunTimeKey)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	statusVars, _ := s.gcWorker.Stats(se.GetSessionVars())
 	val, ok := statusVars[tidbGCSafePoint]
-	require.True(t, ok)
-	require.Equal(t, safePoint, val)
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, safePoint)
 	val, ok = statusVars[tidbGCLastRunTime]
-	require.True(t, ok)
-	require.Equal(t, lastRunTime, val)
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, lastRunTime)
 }
 
-func TestDoGCForOneRegion(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
 
-	p := s.createGCProbe(t, "k1")
-	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(t), loc.Region)
-	require.Nil(t, regionErr)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	p := s.createGCProbe(c, "k1")
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
-	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(t), loc.Region)
-	require.Nil(t, regionErr)
-	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCNotLeader")`))
-	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(t), loc.Region)
-	require.NoError(t, err)
-	require.NotNil(t, regionErr.GetNotLeader())
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
+	c.Assert(regionErr.GetNotLeader(), NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCServerIsBusy")`))
-	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(t), loc.Region)
-	require.NoError(t, err)
-	require.NotNil(t, regionErr.GetServerIsBusy())
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
+	c.Assert(regionErr.GetServerIsBusy(), NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 }
 
-func TestGetGCConcurrency(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
 	// Pick a concurrency that doesn't equal to the number of stores.
 	concurrencyConfig := 25
-	require.NotEqual(t, len(s.cluster.GetAllStores()), concurrencyConfig)
+	c.Assert(concurrencyConfig, Not(Equals), len(s.cluster.GetAllStores()))
 	err := s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(concurrencyConfig))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	ctx := context.Background()
 
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
-	require.NoError(t, err)
-	require.Equal(t, concurrencyConfig, concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, concurrencyConfig)
 
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
-	require.NoError(t, err)
-	require.Len(t, s.cluster.GetAllStores(), concurrency)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, len(s.cluster.GetAllStores()))
 }
 
-func TestDoGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	var err error
 	ctx := context.Background()
+
 	gcSafePointCacheInterval = 1
 
-	p := s.createGCProbe(t, "k1")
-	err := s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcDefaultConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	p := s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcDefaultConcurrency)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	p = s.createGCProbe(t, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcMinConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	p = s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMinConcurrency)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	p = s.createGCProbe(t, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcMaxConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	p = s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMaxConcurrency)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 }
 
-func TestCheckGCMode(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
-	require.True(t, useDistributedGC)
+	c.Assert(useDistributedGC, Equals, true)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
-	require.NoError(t, err)
-	require.Equal(t, gcModeDistributed, str)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
 
 	// Central mode is deprecated in v5.0.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
-	require.NoError(t, err)
-	require.True(t, useDistributedGC)
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
-	require.True(t, useDistributedGC)
+	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
-	require.True(t, useDistributedGC)
+	c.Assert(useDistributedGC, Equals, true)
 }
 
-func TestCheckScanLockMode(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
-	require.Equal(t, usePhysical, gcScanLockModeDefault == gcScanLockModePhysical)
-
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+	c.Assert(usePhysical, Equals, gcScanLockModeDefault == gcScanLockModePhysical)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
-	require.NoError(t, err)
-	require.Equal(t, gcScanLockModeDefault, str)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcScanLockModeDefault)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.True(t, usePhysical)
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
 }
 
-func TestNeedsGCOperationForStore(t *testing.T) {
+func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 	newStore := func(state metapb.StoreState, hasEngineLabel bool, engineLabel string) *metapb.Store {
 		store := &metapb.Store{}
 		store.State = state
@@ -612,23 +556,23 @@ func TestNeedsGCOperationForStore(t *testing.T) {
 	for _, state := range []metapb.StoreState{metapb.StoreState_Up, metapb.StoreState_Offline, metapb.StoreState_Tombstone} {
 		needGC := state != metapb.StoreState_Tombstone
 		res, err := needsGCOperationForStore(newStore(state, false, ""))
-		require.NoError(t, err)
-		require.Equal(t, needGC, res)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 		res, err = needsGCOperationForStore(newStore(state, true, ""))
-		require.NoError(t, err)
-		require.Equal(t, needGC, res)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 		res, err = needsGCOperationForStore(newStore(state, true, placement.EngineLabelTiKV))
-		require.NoError(t, err)
-		require.Equal(t, needGC, res)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 
 		// TiFlash does not need these operations.
 		res, err = needsGCOperationForStore(newStore(state, true, placement.EngineLabelTiFlash))
-		require.NoError(t, err)
-		require.False(t, res)
+		c.Assert(err, IsNil)
+		c.Assert(res, IsFalse)
 	}
 	// Throw an error for unknown store types.
 	_, err := needsGCOperationForStore(newStore(metapb.StoreState_Up, true, "invalid"))
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
 const (
@@ -637,142 +581,132 @@ const (
 	failErrResp = 2
 )
 
-func TestDeleteRangesFailure(t *testing.T) {
-	tests := []struct {
-		name     string
-		failType int
-	}{
-		{"failRPCErr", failRPCErr},
-		{"failNilResp", failNilResp},
-		{"failErrResp", failErrResp},
+func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
+	// Put some delete range tasks.
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
+		("1", "2", "31", "32", "10"),
+		("3", "4", "33", "34", "10"),
+		("5", "6", "35", "36", "10")`)
+	c.Assert(err, IsNil)
+
+	ranges := []util.DelRangeTask{
+		{
+			JobID:     1,
+			ElementID: 2,
+			StartKey:  []byte("1"),
+			EndKey:    []byte("2"),
+		},
+		{
+			JobID:     3,
+			ElementID: 4,
+			StartKey:  []byte("3"),
+			EndKey:    []byte("4"),
+		},
+		{
+			JobID:     5,
+			ElementID: 6,
+			StartKey:  []byte("5"),
+			EndKey:    []byte("6"),
+		},
 	}
 
-	s := createGCWorkerSuite(t)
+	// Check the delete range tasks.
+	preparedRanges, err := util.LoadDeleteRanges(se, 20)
+	se.Close()
+	c.Assert(err, IsNil)
+	c.Assert(preparedRanges, DeepEquals, ranges)
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			failType := test.failType
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
-			}()
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(stores), Equals, 3)
 
-			// Put some delete range tasks.
-			se := createSession(s.gcWorker.store)
-			defer se.Close()
-			_, err := se.Execute(gcContext(), `INSERT INTO mysql.gc_delete_range VALUES
-("1", "2", "31", "32", "10"),
-("3", "4", "33", "34", "10"),
-("5", "6", "35", "36", "10")`)
-			require.NoError(t, err)
+	// Sort by address for checking.
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
 
-			ranges := []util.DelRangeTask{
-				{
-					JobID:     1,
-					ElementID: 2,
-					StartKey:  []byte("1"),
-					EndKey:    []byte("2"),
-				},
-				{
-					JobID:     3,
-					ElementID: 4,
-					StartKey:  []byte("3"),
-					EndKey:    []byte("4"),
-				},
-				{
-					JobID:     5,
-					ElementID: 6,
-					StartKey:  []byte("5"),
-					EndKey:    []byte("6"),
-				},
+	sendReqCh := make(chan SentReq, 20)
+
+	// The request sent to the specified key and store wil fail.
+	var (
+		failKey   []byte
+		failStore *metapb.Store
+	)
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}
+		if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
+			if failType == failRPCErr {
+				return nil, errors.New("error")
+			} else if failType == failNilResp {
+				resp.Resp = nil
+			} else if failType == failErrResp {
+				(resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error = "error"
+			} else {
+				panic("unreachable")
 			}
-
-			// Check the DeleteRanges tasks.
-			preparedRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
-			se.Close()
-			require.NoError(t, err)
-			require.Equal(t, ranges, preparedRanges)
-
-			stores, err := s.gcWorker.getStoresForGC(context.Background())
-			require.NoError(t, err)
-			require.Len(t, stores, 3)
-
-			// Sort by address for checking.
-			sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
-
-			sendReqCh := make(chan SentReq, 20)
-
-			// The request sent to the specified key and store wil fail.
-			var (
-				failKey   []byte
-				failStore *metapb.Store
-			)
-			s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-				sendReqCh <- SentReq{req, addr}
-				resp := &tikvrpc.Response{
-					Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
-				}
-				if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
-					if failType == failRPCErr {
-						return nil, errors.New("error")
-					} else if failType == failNilResp {
-						resp.Resp = nil
-					} else if failType == failErrResp {
-						(resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error = "error"
-					} else {
-						panic("unreachable")
-					}
-				}
-				return resp, nil
-			}
-			defer func() { s.client.unsafeDestroyRangeHandler = nil }()
-
-			// Make the logic in a closure to reduce duplicated code that tests deleteRanges and
-			test := func(redo bool) {
-				deleteRangeFunc := s.gcWorker.deleteRanges
-				loadRangesFunc := util.LoadDeleteRanges
-				if redo {
-					deleteRangeFunc = s.gcWorker.redoDeleteRanges
-					loadRangesFunc = util.LoadDoneDeleteRanges
-				}
-
-				// Make the first request fail.
-				failKey = ranges[0].StartKey
-				failStore = stores[0]
-
-				err = deleteRangeFunc(gcContext(), 20, 1)
-				require.NoError(t, err)
-
-				s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
-
-				// The first delete range task should be still here since it didn't success.
-				se = createSession(s.gcWorker.store)
-				remainingRanges, err := loadRangesFunc(gcContext(), se, 20)
-				se.Close()
-				require.NoError(t, err)
-				require.Equal(t, ranges[:1], remainingRanges)
-
-				failKey = nil
-				failStore = nil
-
-				// Delete the remaining range again.
-				err = deleteRangeFunc(gcContext(), 20, 1)
-				require.NoError(t, err)
-				s.checkDestroyRangeReq(t, sendReqCh, ranges[:1], stores)
-
-				se = createSession(s.gcWorker.store)
-				remainingRanges, err = loadRangesFunc(gcContext(), se, 20)
-				se.Close()
-				require.NoError(t, err)
-				require.Len(t, remainingRanges, 0)
-			}
-
-			test(false)
-			// Change the order because the first range is the last successfully deleted.
-			ranges = append(ranges[1:], ranges[0])
-			test(true)
-		})
+		}
+		return resp, nil
 	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	// Make the logic in a closure to reduce duplicated code that tests deleteRanges and
+	test := func(redo bool) {
+		deleteRangeFunc := s.gcWorker.deleteRanges
+		loadRangesFunc := util.LoadDeleteRanges
+		if redo {
+			deleteRangeFunc = s.gcWorker.redoDeleteRanges
+			loadRangesFunc = util.LoadDoneDeleteRanges
+		}
+
+		// Make the first request fail.
+		failKey = ranges[0].StartKey
+		failStore = stores[0]
+
+		err = deleteRangeFunc(context.Background(), 20, 1)
+		c.Assert(err, IsNil)
+
+		s.checkDestroyRangeReq(c, sendReqCh, ranges, stores)
+
+		// The first delete range task should be still here since it didn't success.
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err := loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(remainingRanges, DeepEquals, ranges[:1])
+
+		failKey = nil
+		failStore = nil
+
+		// Delete the remaining range again.
+		err = deleteRangeFunc(context.Background(), 20, 1)
+		c.Assert(err, IsNil)
+		s.checkDestroyRangeReq(c, sendReqCh, ranges[:1], stores)
+
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err = loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(len(remainingRanges), Equals, 0)
+	}
+
+	test(false)
+	// Change the order because the first range is the last successfully deleted.
+	ranges = append(ranges[1:], ranges[0])
+	test(true)
+}
+
+func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
+	s.testDeleteRangesFailureImpl(c, failRPCErr)
+	s.testDeleteRangesFailureImpl(c, failNilResp)
+	s.testDeleteRangesFailureImpl(c, failErrResp)
 }
 
 type SentReq struct {
@@ -781,7 +715,7 @@ type SentReq struct {
 }
 
 // checkDestroyRangeReq checks whether given sentReq matches given ranges and stores.
-func (s *mockGCWorkerSuite) checkDestroyRangeReq(t *testing.T, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
+func (s *testGCWorkerSuite) checkDestroyRangeReq(c *C, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
 	sentReq := make([]SentReq, 0, len(expectedStores)*len(expectedStores))
 Loop:
 	for {
@@ -806,16 +740,47 @@ Loop:
 	for rangeIndex := range sortedRanges {
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
-			require.Equal(t, expectedStores[storeIndex].Address, sentReq[i].addr)
-			require.Equal(t, sortedRanges[rangeIndex].StartKey, kv.Key(sentReq[i].req.UnsafeDestroyRange().GetStartKey()))
-			require.Equal(t, sortedRanges[rangeIndex].EndKey, kv.Key(sentReq[i].req.UnsafeDestroyRange().GetEndKey()))
+			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetStartKey()), DeepEquals,
+				sortedRanges[rangeIndex].StartKey)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetEndKey()), DeepEquals,
+				sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }
 
-func TestLeaderTick(t *testing.T) {
-	s := createGCWorkerSuite(t)
+type testGCWorkerClient struct {
+	tikv.Client
+	unsafeDestroyRangeHandler   handler
+	physicalScanLockHandler     handler
+	registerLockObserverHandler handler
+	checkLockObserverHandler    handler
+	removeLockObserverHandler   handler
+}
 
+type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+
+func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
+		return c.unsafeDestroyRangeHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdPhysicalScanLock && c.physicalScanLockHandler != nil {
+		return c.physicalScanLockHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdRegisterLockObserver && c.registerLockObserverHandler != nil {
+		return c.registerLockObserverHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdCheckLockObserver && c.checkLockObserverHandler != nil {
+		return c.checkLockObserverHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdRemoveLockObserver && c.removeLockObserverHandler != nil {
+		return c.removeLockObserverHandler(addr, req)
+	}
+
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	gcSafePointCacheInterval = 0
 
 	veryLong := gcDefaultLifeTime * 10
@@ -823,45 +788,45 @@ func TestLeaderTick(t *testing.T) {
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	// Use central mode to do this test.
 	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
-	require.NoError(t, err)
-	p := s.createGCProbe(t, "k1")
+	c.Assert(err, IsNil)
+	p := s.createGCProbe(c, "k1")
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
 	// Skip if GC is running.
 	s.gcWorker.gcIsRunning = true
 	err = s.gcWorker.leaderTick(context.Background())
-	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
 	s.gcWorker.gcIsRunning = false
 	// Reset GC last run time
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
 
 	// Skip if prepare failed (disabling GC will make prepare returns ok = false).
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
-	require.NoError(t, err)
-	err = s.gcWorker.leaderTick(gcContext())
-	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Reset GC last run time
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
 
 	// Skip if gcWaitTime not exceeded.
 	s.gcWorker.lastFinish = time.Now()
-	err = s.gcWorker.leaderTick(gcContext())
-	require.NoError(t, err)
-	s.checkNotCollected(t, p)
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	// Reset GC last run time
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
 
 	// Continue GC if all those checks passed.
-	err = s.gcWorker.leaderTick(gcContext())
-	require.NoError(t, err)
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
 	// Wait for GC finish
 	select {
 	case err = <-s.gcWorker.done:
@@ -870,18 +835,18 @@ func TestLeaderTick(t *testing.T) {
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
 	// Test again to ensure the synchronization between goroutines is correct.
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
-	p = s.createGCProbe(t, "k1")
+	p = s.createGCProbe(c, "k1")
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
-	err = s.gcWorker.leaderTick(gcContext())
-	require.NoError(t, err)
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
 	// Wait for GC finish
 	select {
 	case err = <-s.gcWorker.done:
@@ -890,8 +855,8 @@ func TestLeaderTick(t *testing.T) {
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
 	// No more signals in the channel
 	select {
@@ -901,129 +866,54 @@ func TestLeaderTick(t *testing.T) {
 	case <-time.After(time.Second):
 		break
 	}
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
 
-func TestResolveLockRangeInfine(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	require.NoError(t, failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"))
+func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"), IsNil)
 	}()
-
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, 3, []byte{0}, []byte{1})
-	require.Error(t, err)
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
+	c.Assert(err, NotNil)
 }
 
-func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 	var (
 		scanCnt       int
 		scanCntRef    = &scanCnt
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
-
-		scanLockCnt                   int
-		resolveBeforeSafepointLockCnt int
-		resolveAfterSafepointLockCnt  int
-		safepointTS                   uint64 = 434245550444904450
-		lowResolveTS                  uint64 = 434245550449098752
 	)
-
-	allLocks := []*txnlock.Lock{
-		{
-			Key: []byte{1},
-			// TxnID < safepointTS
-			TxnID: 434245550444904449,
-			TTL:   5,
-		},
-		{
-			Key: []byte{2},
-			// safepointTS < TxnID < lowResolveTS , TxnID + TTL < lowResolveTS
-			TxnID: 434245550445166592,
-			TTL:   10,
-		},
-		{
-			Key: []byte{3},
-			// safepointTS < TxnID < lowResolveTS , TxnID + TTL > lowResolveTS
-			TxnID: 434245550445166593,
-			TTL:   20,
-		},
-		{
-			Key: []byte{4},
-			// TxnID > lowResolveTS
-			TxnID: 434245550449099752,
-			TTL:   20,
-		},
-	}
-
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 		*scanCntRef++
-
-		locks := make([]*txnlock.Lock, 0)
-		for _, l := range allLocks {
-			if l.TxnID <= maxVersion {
-				locks = append(locks, l)
-				scanLockCnt++
-			}
+		return []*tikv.Lock{
+			{
+				Key: []byte{1},
+			},
+			{
+				Key: []byte{1},
+			},
 		}
-		return locks
 	}
-	s.gcWorker.testingKnobs.batchResolveLocks = func(
-		locks []*txnlock.Lock,
-		regionID tikv.RegionVerID,
-		safepoint uint64,
-	) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
 			// mock the region cache miss error
 			return false, nil
 		}
-
-		resolveBeforeSafepointLockCnt = len(locks)
-		for _, l := range locks {
-			require.True(t, l.TxnID <= safepoint)
-		}
 		return true, nil
 	}
-
-	s.gcWorker.testingKnobs.resolveLocks = func(
-		locks []*txnlock.Lock,
-		lowResolutionTS uint64,
-	) (int64, error) {
-		for _, l := range locks {
-			expiredTS := oracle.ComposeTS(oracle.ExtractPhysical(l.TxnID)+int64(l.TTL), oracle.ExtractLogical(l.TxnID))
-			if expiredTS <= lowResolutionTS {
-				resolveAfterSafepointLockCnt++
-			}
-		}
-		return 0, nil
-	}
-
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), safepointTS, lowResolveTS, []byte{0}, []byte{10})
-	require.NoError(t, err)
-	require.Equal(t, 2, resolveCnt)
-	require.Equal(t, 1, scanCnt)
-	require.Equal(t, 3, scanLockCnt)
-	require.Equal(t, 1, resolveBeforeSafepointLockCnt)
-	require.Equal(t, 1, resolveAfterSafepointLockCnt)
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{10})
+	c.Assert(err, IsNil)
+	c.Assert(resolveCnt, Equals, 2)
+	c.Assert(scanCnt, Equals, 1)
 }
 
-func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
-	// TODO: Update the test code.
-	// This test rely on the obsolete mock tikv, but mock tikv does not implement paging.
-	// So use this failpoint to force non-paging protocol.
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
-	}()
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
-
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(c *C) {
 	var (
 		firstAccess    = true
 		firstAccessRef = &firstAccess
@@ -1036,36 +926,32 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	// init a, b lock in region1 and o, p locks in region2
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 		if regionID == s.initRegion.regionID {
-			return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
+			return []*tikv.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
 		}
 		if regionID == region2 {
-			return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
+			return []*tikv.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
 		}
-		return []*txnlock.Lock{}
+		return []*tikv.Lock{}
 	}
 
-	s.gcWorker.testingKnobs.batchResolveLocks = func(
-		locks []*txnlock.Lock,
-		regionID tikv.RegionVerID,
-		safepoint uint64,
-	) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*testutils.MockCluster)
+			mCluster := s.cluster.(*mocktikv.Cluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				tikv.NewNoopBackoff(context.Background()),
+				retry.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
-			require.NoError(t, err)
+			c.Assert(err, IsNil)
 			// also let region1 contains all 4 locks
-			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 				if regionID == s.initRegion.regionID {
-					locks := []*txnlock.Lock{
+					locks := []*tikv.Lock{
 						{Key: []byte("a")},
 						{Key: []byte("b")},
 						{Key: []byte("o")},
@@ -1077,7 +963,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 						}
 					}
 				}
-				return []*txnlock.Lock{}
+				return []*tikv.Lock{}
 			}
 			return false, nil
 		}
@@ -1086,159 +972,138 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		}
 		return true, nil
 	}
-	s.gcWorker.testingKnobs.resolveLocks = func(
-		locks []*txnlock.Lock,
-		lowResolutionTS uint64,
-	) (int64, error) {
-		return 0, nil
-	}
 
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, 3, []byte(""), []byte("z"))
-	require.NoError(t, err)
-	require.Len(t, resolvedLock, 4)
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(len(resolvedLock), Equals, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
 	for i, l := range resolvedLock {
-		require.Equal(t, expects[i], l)
+		c.Assert(l, BytesEquals, expects[i])
 	}
 }
 
-func TestRunGCJob(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
 	// Test distributed mode
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
-	require.True(t, useDistributedGC)
-	safePoint := s.mustAllocTs(t)
-	err := s.gcWorker.runGCJob(gcContext(), safePoint, 1)
-	require.NoError(t, err)
+	c.Assert(useDistributedGC, IsTrue)
+	safePoint := s.mustAllocTs(c)
+	err := s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
 
-	pdSafePoint := s.mustGetSafePointFromPd(t)
-	require.Equal(t, safePoint, pdSafePoint)
+	pdSafePoint := s.mustGetSafePointFromPd(c)
+	c.Assert(pdSafePoint, Equals, safePoint)
 
-	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oracle.GetTimeFromTS(safePoint)))
-	tikvSafePoint, err := s.gcWorker.loadTime(gcSafePointKey)
-	require.NoError(t, err)
-	require.Equal(t, *tikvSafePoint, oracle.GetTimeFromTS(safePoint))
-
-	etcdSafePoint := s.loadEtcdSafePoint(t)
-	require.Equal(t, safePoint, etcdSafePoint)
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 
 	// Test distributed mode with safePoint regressing (although this is impossible)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, 1)
-	require.Error(t, err)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
+	c.Assert(err, NotNil)
 
 	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
-	require.True(t, useDistributedGC)
+	c.Assert(useDistributedGC, IsTrue)
 
-	p := s.createGCProbe(t, "k1")
-	safePoint = s.mustAllocTs(t)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint, 1)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
+	p := s.createGCProbe(c, "k1")
+	safePoint = s.mustAllocTs(c)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	etcdSafePoint = s.loadEtcdSafePoint(t)
-	require.Equal(t, safePoint, etcdSafePoint)
+	etcdSafePoint = s.loadEtcdSafePoint(c)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func TestSetServiceSafePoint(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
 	// SafePoint calculations are based on time rather than ts value.
-	safePoint := s.mustAllocTs(t)
-	s.mustSetTiDBServiceSafePoint(t, safePoint, safePoint)
-	require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	safePoint := s.mustAllocTs(c)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
 	// Advance the service safe point
 	safePoint += 100
-	s.mustSetTiDBServiceSafePoint(t, safePoint, safePoint)
-	require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
 	// It doesn't matter if there is a greater safePoint from other services.
 	safePoint += 100
 	// Returns the last service safePoint that were uploaded.
-	s.mustUpdateServiceGCSafePoint(t, "svc1", safePoint+10, safePoint-100)
-	s.mustSetTiDBServiceSafePoint(t, safePoint, safePoint)
-	require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
 	// Test the case when there is a smaller safePoint from other services.
 	safePoint += 100
 	// Returns the last service safePoint that were uploaded.
-	s.mustUpdateServiceGCSafePoint(t, "svc1", safePoint-10, safePoint-100)
-	s.mustSetTiDBServiceSafePoint(t, safePoint, safePoint-10)
-	require.Equal(t, safePoint-10, s.mustGetMinServiceSafePointFromPd(t))
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint-10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint-10)
 
 	// Test removing the minimum service safe point.
-	s.mustRemoveServiceGCSafePoint(t, "svc1", safePoint-10, safePoint)
-	require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	s.mustRemoveServiceGCSafePoint(c, "svc1", safePoint-10, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
 	// Test the case when there are many safePoints.
 	safePoint += 100
 	for i := 0; i < 10; i++ {
 		svcName := fmt.Sprintf("svc%d", i)
-		s.mustUpdateServiceGCSafePoint(t, svcName, safePoint+uint64(i)*10, safePoint-100)
+		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)
 	}
-	s.mustSetTiDBServiceSafePoint(t, safePoint+50, safePoint)
+	s.mustSetTiDBServiceSafePoint(c, safePoint+50, safePoint)
 }
 
-func TestRunGCJobAPI(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
-	p := s.createGCProbe(t, "k1")
-	safePoint := s.mustAllocTs(t)
-	err := RunGCJob(gcContext(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
-	etcdSafePoint := s.loadEtcdSafePoint(t)
-	require.NoError(t, err)
-	require.Equal(t, safePoint, etcdSafePoint)
+	p := s.createGCProbe(c, "k1")
+	safePoint := s.mustAllocTs(c)
+	err := RunGCJob(context.Background(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(err, IsNil)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func TestRunDistGCJobAPI(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestRunDistGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
-	safePoint := s.mustAllocTs(t)
-	err := RunDistributedGCJob(gcContext(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
-	require.NoError(t, err)
-	pdSafePoint := s.mustGetSafePointFromPd(t)
-	require.Equal(t, safePoint, pdSafePoint)
-	etcdSafePoint := s.loadEtcdSafePoint(t)
-	require.NoError(t, err)
-	require.Equal(t, safePoint, etcdSafePoint)
+	safePoint := s.mustAllocTs(c)
+	err := RunDistributedGCJob(context.Background(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
+	c.Assert(err, IsNil)
+	pdSafePoint := s.mustGetSafePointFromPd(c)
+	c.Assert(pdSafePoint, Equals, safePoint)
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(err, IsNil)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func TestStartWithRunGCJobFailures(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestStartWithRunGCJobFailures(c *C) {
 	s.gcWorker.Start()
 	defer s.gcWorker.Close()
 
 	for i := 0; i < 3; i++ {
 		select {
 		case <-time.After(100 * time.Millisecond):
-			require.FailNow(t, "gc worker failed to handle errors")
+			c.Fatal("gc worker failed to handle errors")
 		case s.gcWorker.done <- errors.New("mock error"):
 		}
 	}
 }
 
-func (s *mockGCWorkerSuite) loadEtcdSafePoint(t *testing.T) uint64 {
+func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	val, err := s.gcWorker.tikvStore.GetSafePointKV().Get(tikv.GcSavedSafePoint)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	res, err := strconv.ParseUint(val, 10, 64)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	return res
 }
 
-func makeMergedChannel(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
+func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
@@ -1256,23 +1121,22 @@ func makeMergedChannel(t *testing.T, count int) (*mergeLockScanner, []chan scanL
 		storeIDs = append(storeIDs, uint64(i))
 	}
 
-	resultCh := make(chan []*txnlock.Lock)
+	resultCh := make(chan []*tikv.Lock)
 	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
 	go func() {
 		scanner.startWithReceivers(receivers)
 		// Get a batch of a enough-large size to get all results.
 		result := scanner.NextBatch(1000)
-		require.Less(t, len(result), 1000)
+		c.Assert(len(result), Less, 1000)
 		resultCh <- result
 	}()
 
 	return scanner, channels, storeIDs, resultCh
 }
 
-func (s *mockGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
+func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	stores := s.cluster.GetAllStores()
-	require.Len(t, stores, count)
-
+	c.Assert(count, Equals, len(stores))
 	storeIDs := make([]uint64, count)
 	for i := 0; i < count; i++ {
 		storeIDs[i] = stores[i].Id
@@ -1280,8 +1144,8 @@ func (s *mockGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*merg
 
 	const scanLockLimit = 3
 
-	storesMap, err := s.gcWorker.getStoresMapForGC(gcContext())
-	require.NoError(t, err)
+	storesMap, err := s.gcWorker.getStoresMapForGC(context.Background())
+	c.Assert(err, IsNil)
 	scanner := newMergeLockScanner(100000, s.client, storesMap)
 	scanner.scanLockLimit = scanLockLimit
 	channels := make([]chan scanLockResult, 0, len(stores))
@@ -1322,23 +1186,21 @@ func (s *mockGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*merg
 		return nil, errors.Errorf("No store in the cluster has address %v", addr)
 	}
 
-	resultCh := make(chan []*txnlock.Lock)
+	resultCh := make(chan []*tikv.Lock)
 	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
 	go func() {
-		err := scanner.Start(gcContext())
-		require.NoError(t, err)
+		err := scanner.Start(context.Background())
+		c.Assert(err, IsNil)
 		// Get a batch of a enough-large size to get all results.
 		result := scanner.NextBatch(1000)
-		require.Less(t, len(result), 1000)
+		c.Assert(len(result), Less, 1000)
 		resultCh <- result
 	}()
 
 	return scanner, channels, storeIDs, resultCh
 }
 
-func TestMergeLockScanner(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
+func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 	// Shortcuts to make the following test code simpler
 
 	// Get stores by index, and get their store IDs.
@@ -1350,32 +1212,32 @@ func TestMergeLockScanner(t *testing.T) {
 		return res
 	}
 
-	makeLock := func(key string, ts uint64) *txnlock.Lock {
-		return &txnlock.Lock{Key: []byte(key), TxnID: ts}
+	makeLock := func(key string, ts uint64) *tikv.Lock {
+		return &tikv.Lock{Key: []byte(key), TxnID: ts}
 	}
 
-	makeLockList := func(locks ...*txnlock.Lock) []*txnlock.Lock {
-		res := make([]*txnlock.Lock, 0, len(locks))
+	makeLockList := func(locks ...*tikv.Lock) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(locks))
 		res = append(res, locks...)
 		return res
 	}
 
-	makeLockListByKey := func(keys ...string) []*txnlock.Lock {
-		res := make([]*txnlock.Lock, 0, len(keys))
+	makeLockListByKey := func(keys ...string) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(keys))
 		for _, key := range keys {
 			res = append(res, makeLock(key, 0))
 		}
 		return res
 	}
 
-	sendLocks := func(ch chan<- scanLockResult, locks ...*txnlock.Lock) {
+	sendLocks := func(ch chan<- scanLockResult, locks ...*tikv.Lock) {
 		for _, lock := range locks {
 			ch <- scanLockResult{Lock: lock}
 		}
 	}
 
-	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*txnlock.Lock {
-		locks := make([]*txnlock.Lock, 0, len(keys))
+	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*tikv.Lock {
+		locks := make([]*tikv.Lock, 0, len(keys))
 		for _, key := range keys {
 			locks = append(locks, makeLock(key, 0))
 		}
@@ -1388,27 +1250,27 @@ func TestMergeLockScanner(t *testing.T) {
 	}
 
 	// No lock.
-	scanner, sendCh, storeIDs, resCh := makeMergedChannel(t, 1)
+	scanner, sendCh, storeIDs, resCh := makeMergedChannel(c, 1)
 	close(sendCh[0])
-	require.Len(t, <-resCh, 0)
-	require.Equal(t, makeIDSet(storeIDs, 0), scanner.GetSucceededStores())
+	c.Assert(len(<-resCh), Equals, 0)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	locks := sendLocksByKey(sendCh[0], "a", "b", "c")
 	close(sendCh[0])
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0), scanner.GetSucceededStores())
+	c.Assert(<-resCh, DeepEquals, locks)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
 	// Send locks with error
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	locks = sendLocksByKey(sendCh[0], "a", "b", "c")
 	sendErr(sendCh[0])
 	close(sendCh[0])
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs), scanner.GetSucceededStores())
+	c.Assert(<-resCh, DeepEquals, locks)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs))
 
 	// Merge sort locks with different keys.
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 2)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
 	locks = sendLocksByKey(sendCh[0], "a", "c", "e")
 	time.Sleep(time.Millisecond * 100)
 	locks = append(locks, sendLocksByKey(sendCh[1], "b", "d", "f")...)
@@ -1417,26 +1279,26 @@ func TestMergeLockScanner(t *testing.T) {
 	sort.Slice(locks, func(i, j int) bool {
 		return bytes.Compare(locks[i].Key, locks[j].Key) < 0
 	})
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0, 1), scanner.GetSucceededStores())
+	c.Assert(<-resCh, DeepEquals, locks)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
 	// Merge sort locks with different timestamps.
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 2)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
 	sendLocks(sendCh[0], makeLock("a", 0), makeLock("a", 1))
 	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], makeLock("a", 1), makeLock("a", 2), makeLock("b", 0))
 	close(sendCh[0])
 	close(sendCh[1])
-	require.Equal(t, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("a", 2), makeLock("b", 0)), <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0, 1), scanner.GetSucceededStores())
+	c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("a", 2), makeLock("b", 0)))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
 	for _, useMock := range []bool{false, true} {
 		channel := makeMergedChannel
-		if useMock {
+		if useMock == true {
 			channel = s.makeMergedMockClient
 		}
 
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
 		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
@@ -1445,10 +1307,10 @@ func TestMergeLockScanner(t *testing.T) {
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
 		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
@@ -1458,47 +1320,34 @@ func TestMergeLockScanner(t *testing.T) {
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 1, 2), scanner.GetSucceededStores())
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 1, 2))
 
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocksByKey(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
 		sendLocksByKey(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
 		sendLocksByKey(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocks(sendCh[0], makeLock("a", 0), makeLock("d", 0), makeLock("g", 0), makeLock("h", 0))
 		sendLocks(sendCh[1], makeLock("a", 1), makeLock("b", 0), makeLock("c", 0), makeLock("d", 1))
 		sendLocks(sendCh[2], makeLock("e", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0))
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		locks := makeLockList(
-			makeLock("a", 0),
-			makeLock("a", 1),
-			makeLock("b", 0),
-			makeLock("c", 0),
-			makeLock("d", 0),
-			makeLock("d", 1),
-			makeLock("e", 0),
-			makeLock("g", 0),
-			makeLock("g", 1),
-			makeLock("g", 2),
-			makeLock("h", 0))
-		require.Equal(t, locks, <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
+		c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("b", 0), makeLock("c", 0),
+			makeLock("d", 0), makeLock("d", 1), makeLock("e", 0), makeLock("g", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0)))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 	}
 }
 
-func TestResolveLocksPhysical(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	alwaysSucceedHandler := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
+	alwaysSucceedHanlder := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		switch req.Type {
 		case tikvrpc.CmdPhysicalScanLock:
 			return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: nil, Error: ""}}, nil
@@ -1527,27 +1376,27 @@ func TestResolveLocksPhysical(t *testing.T) {
 		}
 	}
 	reset := func() {
-		s.client.physicalScanLockHandler = alwaysSucceedHandler
-		s.client.registerLockObserverHandler = alwaysSucceedHandler
-		s.client.checkLockObserverHandler = alwaysSucceedHandler
-		s.client.removeLockObserverHandler = alwaysSucceedHandler
+		s.client.physicalScanLockHandler = alwaysSucceedHanlder
+		s.client.registerLockObserverHandler = alwaysSucceedHanlder
+		s.client.checkLockObserverHandler = alwaysSucceedHanlder
+		s.client.removeLockObserverHandler = alwaysSucceedHanlder
 	}
 
-	ctx := gcContext()
+	ctx := context.Background()
 	var safePoint uint64 = 10000
 
 	// No lock
 	reset()
 	physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsTrue)
+	c.Assert(err, IsNil)
 
 	// Should fall back on the legacy mode when fails to register lock observers.
 	reset()
 	s.client.registerLockObserverHandler = alwaysFailHandler
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsFalse)
+	c.Assert(err, IsNil)
 
 	// Should fall back when fails to resolve locks.
 	reset()
@@ -1555,11 +1404,11 @@ func TestResolveLocksPhysical(t *testing.T) {
 		locks := []*kvrpcpb.LockInfo{{Key: []byte{0}}}
 		return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: locks, Error: ""}}, nil
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(100)"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(100)"), IsNil)
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"))
+	c.Assert(physicalUsed, IsFalse)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
 
 	// Shouldn't fall back when fails to scan locks less than 3 times.
 	reset()
@@ -1568,18 +1417,18 @@ func TestResolveLocksPhysical(t *testing.T) {
 		if atomic.CompareAndSwapUint32(&returnError, 1, 0) {
 			return alwaysFailHandler(addr, req)
 		}
-		return alwaysSucceedHandler(addr, req)
+		return alwaysSucceedHanlder(addr, req)
 	}
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsTrue)
+	c.Assert(err, IsNil)
 
 	// Should fall back if reaches retry limit
 	reset()
 	s.client.physicalScanLockHandler = alwaysFailHandler
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsFalse)
+	c.Assert(err, IsNil)
 
 	// Should fall back when one registered store is dirty.
 	reset()
@@ -1587,27 +1436,27 @@ func TestResolveLocksPhysical(t *testing.T) {
 		return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
 	}
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsFalse)
+	c.Assert(err, IsNil)
 
 	// When fails to check lock observer in a store, we assume the store is dirty.
 	// Should fall back when fails to check lock observers.
 	reset()
 	s.client.checkLockObserverHandler = alwaysFailHandler
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsFalse)
+	c.Assert(err, IsNil)
 
 	// Shouldn't fall back when the dirty store is newly added.
 	reset()
 	var wg sync.WaitGroup
 	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.True(t, physicalUsed)
-		require.NoError(t, err)
+		c.Assert(physicalUsed, IsTrue)
+		c.Assert(err, IsNil)
 	}()
 	// Sleep to let the goroutine pause.
 	time.Sleep(500 * time.Millisecond)
@@ -1619,36 +1468,36 @@ func TestResolveLocksPhysical(t *testing.T) {
 			once = false
 			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
 		}
-		return alwaysSucceedHandler(addr, req)
+		return alwaysSucceedHanlder(addr, req)
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Shouldn't fall back when a store is removed.
 	reset()
 	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.True(t, physicalUsed)
-		require.NoError(t, err)
+		c.Assert(physicalUsed, IsTrue)
+		c.Assert(err, IsNil)
 	}()
 	// Sleep to let the goroutine pause.
 	time.Sleep(500 * time.Millisecond)
 	s.cluster.RemoveStore(100)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Should fall back when a cleaned store becomes dirty.
 	reset()
 	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.False(t, physicalUsed)
-		require.NoError(t, err)
+		c.Assert(physicalUsed, IsFalse)
+		c.Assert(err, IsNil)
 	}()
 	// Sleep to let the goroutine pause.
 	time.Sleep(500 * time.Millisecond)
@@ -1663,37 +1512,35 @@ func TestResolveLocksPhysical(t *testing.T) {
 			if atomic.CompareAndSwapUint32(&onceDirty, 1, 0) {
 				return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
 			}
-			return alwaysSucceedHandler(addr, req)
+			return alwaysSucceedHanlder(addr, req)
 		case store.Address:
 			// The store returns IsClean=true for the first time.
 			if atomic.CompareAndSwapUint32(&onceClean, 1, 0) {
-				return alwaysSucceedHandler(addr, req)
+				return alwaysSucceedHanlder(addr, req)
 			}
 			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
 		default:
-			return alwaysSucceedHandler(addr, req)
+			return alwaysSucceedHanlder(addr, req)
 		}
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Shouldn't fall back when fails to remove lock observers.
 	reset()
 	s.client.removeLockObserverHandler = alwaysFailHandler
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
+	c.Assert(physicalUsed, IsTrue)
+	c.Assert(err, IsNil)
 }
 
-func TestPhysicalScanLockDeadlock(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	ctx := gcContext()
+func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
+	ctx := context.Background()
 	stores := s.cluster.GetAllStores()
-	require.Greater(t, len(stores), 1)
+	c.Assert(len(stores), Greater, 1)
 
 	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		require.Equal(t, stores[0].Address, addr)
+		c.Assert(addr, Equals, stores[0].Address)
 		scanReq := req.PhysicalScanLock()
 		scanLockLimit := int(scanReq.Limit)
 		locks := make([]*kvrpcpb.LockInfo, 0, scanReq.Limit)
@@ -1711,9 +1558,9 @@ func TestPhysicalScanLockDeadlock(t *testing.T) {
 
 	// Sleep 1000ms to let the main goroutine block on sending tasks.
 	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
 	}()
 
 	done := make(chan interface{})
@@ -1721,121 +1568,63 @@ func TestPhysicalScanLockDeadlock(t *testing.T) {
 		defer close(done)
 		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
 		succeeded, err := s.gcWorker.physicalScanAndResolveLocks(ctx, 10000, storesMap)
-		require.Nil(t, succeeded)
-		require.EqualError(t, err, "injectedError")
+		c.Assert(succeeded, IsNil)
+		c.Assert(err, ErrorMatches, "injectedError")
 	}()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "physicalScanAndResolveLocks blocks")
+		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
 }
 
-func TestGCPlacementRules(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(10)"))
+func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
-	}()
-
-	gcPlacementRuleCache := make(map[int64]interface{})
-	deletePlacementRuleCounter := 0
-	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
-		deletePlacementRuleCounter++
-		return nil
-	}))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter"))
-	}()
-
-	bundleID := "TiDB_DDL_10"
-	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
-		PrimaryRegion: "r1",
-		Regions:       "r1, r2",
-	})
-	require.NoError(t, err)
-	bundle.ID = bundleID
-
-	// prepare bundle before gc
-	require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
-	got, err := infosync.GetRuleBundle(context.Background(), bundleID)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.False(t, got.IsEmpty())
-
-	// do gc
-	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
-	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
-	require.Equal(t, 1, deletePlacementRuleCounter)
-
-	// check bundle deleted after gc
-	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.True(t, got.IsEmpty())
-
-	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
-	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
-	require.Equal(t, 1, deletePlacementRuleCounter)
-}
-
-func TestGCLabelRules(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"), IsNil)
 	}()
 
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
-	err := s.gcWorker.doGCLabelRules(dr)
-	require.NoError(t, err)
+	pid, err := s.gcWorker.doGCPlacementRules(dr)
+	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
 }
 
-func TestGCWithPendingTxn(t *testing.T) {
-	s := createGCWorkerSuite(t)
-	// set to false gc worker won't resolve locks after safepoint.
-	s.gcWorker.logBackupEnabled = false
-
-	ctx := gcContext()
+func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
+	ctx := context.Background()
 	gcSafePointCacheInterval = 0
 	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	k1 := []byte("tk1")
 	v1 := []byte("v1")
 	txn, err := s.store.Begin()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	txn.SetOption(kv.Pessimistic, true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
 
 	// Lock the key.
 	err = txn.Set(k1, v1)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = txn.LockKeys(ctx, lockCtx, k1)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// Prepare to run gc with txn's startTS as the safepoint ts.
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
-	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
+	c.Assert(err, IsNil)
+	s.mustSetTiDBServiceSafePoint(c, txn.StartTS(), txn.StartTS())
 	veryLong := gcDefaultLifeTime * 100
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	s.oracle.AddOffset(time.Minute * 10)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// Trigger the tick let the gc job start.
 	err = s.gcWorker.leaderTick(ctx)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	// Wait for GC finish
 	select {
 	case err = <-s.gcWorker.done:
@@ -1844,154 +1633,8 @@ func TestGCWithPendingTxn(t *testing.T) {
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	err = txn.Commit(ctx)
-	require.NoError(t, err)
-}
-
-func TestGCWithPendingTxn2(t *testing.T) {
-	s := createGCWorkerSuite(t)
-	// only when log backup enabled will scan locks after safepoint.
-	s.gcWorker.logBackupEnabled = true
-
-	ctx := gcContext()
-	gcSafePointCacheInterval = 0
-	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
-	require.NoError(t, err)
-
-	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
-	require.NoError(t, err)
-
-	// Prepare to run gc with txn's startTS as the safepoint ts.
-	spkv := s.tikvStore.GetSafePointKV()
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
-	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, now, now)
-	veryLong := gcDefaultLifeTime * 100
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
-	require.NoError(t, err)
-	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
-	require.NoError(t, err)
-
-	// lock the key1
-	k1 := []byte("tk1")
-	v1 := []byte("v1")
-	txn, err := s.store.Begin(tikv.WithStartTS(now))
-	require.NoError(t, err)
-	txn.SetOption(kv.Pessimistic, true)
-	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
-
-	err = txn.Set(k1, v1)
-	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, k1)
-	require.NoError(t, err)
-
-	// lock the key2
-	k2 := []byte("tk2")
-	v2 := []byte("v2")
-	startTS := oracle.ComposeTS(oracle.ExtractPhysical(now)+10000, oracle.ExtractLogical(now))
-	txn2, err := s.store.Begin(tikv.WithStartTS(startTS))
-	require.NoError(t, err)
-	txn2.SetOption(kv.Pessimistic, true)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now()}
-
-	err = txn2.Set(k2, v2)
-	require.NoError(t, err)
-	err = txn2.LockKeys(ctx, lockCtx, k2)
-	require.NoError(t, err)
-
-	// Trigger the tick let the gc job start.
-	s.oracle.AddOffset(time.Minute * 5)
-	err = s.gcWorker.leaderTick(ctx)
-	require.NoError(t, err)
-	// Wait for GC finish
-	select {
-	case err = <-s.gcWorker.done:
-		s.gcWorker.gcIsRunning = false
-		break
-	case <-time.After(time.Second * 10):
-		err = errors.New("receive from s.gcWorker.done timeout")
-	}
-	require.NoError(t, err)
-
-	err = txn.Commit(ctx)
-	require.Error(t, err)
-	err = txn2.Commit(ctx)
-	require.NoError(t, err)
-}
-
-func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	s := createGCWorkerSuite(t)
-	// only when log backup enabled will scan locks after safepoint.
-	s.gcWorker.logBackupEnabled = true
-
-	ctx := gcContext()
-	gcSafePointCacheInterval = 0
-	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
-	require.NoError(t, err)
-	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
-	require.NoError(t, err)
-
-	// Prepare to run gc with txn's startTS as the safepoint ts.
-	spkv := s.tikvStore.GetSafePointKV()
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
-	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, now, now)
-	veryLong := gcDefaultLifeTime * 100
-	lastRunTime := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
-	newGcLifeTime := time.Hour * 24
-	err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunTime)
-	require.NoError(t, err)
-	err = s.gcWorker.saveTime(gcSafePointKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-time.Minute*10))
-	require.NoError(t, err)
-	err = s.gcWorker.saveDuration(gcLifeTimeKey, newGcLifeTime)
-	require.NoError(t, err)
-	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
-	require.NoError(t, err)
-
-	// lock the key1
-	k1 := []byte("tk1")
-	v1 := []byte("v1")
-	txn, err := s.store.Begin(tikv.WithStartTS(now))
-	require.NoError(t, err)
-	txn.SetOption(kv.Pessimistic, true)
-	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
-
-	err = txn.Set(k1, v1)
-	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, k1)
-	require.NoError(t, err)
-
-	// Trigger the tick let the gc job start.
-	s.oracle.AddOffset(time.Minute * 5)
-	err = s.gcWorker.leaderTick(ctx)
-	require.NoError(t, err)
-
-	// check the lock has been resolved.
-	err = txn.Commit(ctx)
-	require.Error(t, err)
-
-	// check gc is skipped
-	last, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-	require.NoError(t, err)
-	require.Equal(t, last.Unix(), lastRunTime.Unix())
-}
-
-func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	dom.SetStatsUpdating(true)
-
-	t.Cleanup(func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	})
-	return dom
+	c.Assert(err, IsNil)
 }

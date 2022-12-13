@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +15,7 @@ package plugin
 
 import (
 	"context"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -26,55 +23,29 @@ import (
 type GeneralEvent byte
 
 const (
-	// Starting represents a GeneralEvent that is about to start
-	Starting GeneralEvent = iota
-	// Completed represents a GeneralEvent that has completed
-	Completed
-	// Error represents a GeneralEvent that has error (and typically couldn't start)
+	// Log presents log event.
+	Log GeneralEvent = iota
+	// Error presents error event.
 	Error
-	// GeneralEventCount is the count for the general events
-	// The new events MUST be added before it
-	GeneralEventCount
+	// Result presents result event.
+	Result
+	// Status presents status event.
+	Status
 )
-
-// GeneralEventFromString gets the `GeneralEvent` from the given string
-func GeneralEventFromString(s string) (GeneralEvent, error) {
-	upperStr := strings.ToUpper(s)
-	for i := 0; i < int(GeneralEventCount); i++ {
-		event := GeneralEvent(i)
-		if event.String() == upperStr {
-			return event, nil
-		}
-	}
-	return 0, errors.Errorf("Invalid general event: %s", s)
-}
-
-// String returns the string for the `GeneralEvent`
-func (e GeneralEvent) String() string {
-	switch e {
-	case Starting:
-		return "STARTING"
-	case Completed:
-		return "COMPLETED"
-	case Error:
-		return "ERROR"
-	}
-	return ""
-}
 
 // ConnectionEvent presents TiDB connection event.
 type ConnectionEvent byte
 
 const (
-	// Connected represents new connection establish event(finish auth).
+	// Connected presents new connection establish event(finish auth).
 	Connected ConnectionEvent = iota
-	// Disconnect represents disconnect event.
+	// Disconnect presents disconnect event.
 	Disconnect
-	// ChangeUser represents change user.
+	// ChangeUser presents change user.
 	ChangeUser
-	// PreAuth represents event before start auth.
+	// PreAuth presents event before start auth.
 	PreAuth
-	// Reject represents event reject connection event.
+	// Reject presents event reject connection event.
 	Reject
 )
 

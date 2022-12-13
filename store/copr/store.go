@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/tikv/client-go/v2/config"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 type kvStore struct {
@@ -59,11 +58,6 @@ func (c *tikvClient) Close() error {
 	return derr.ToTiDBErr(err)
 }
 
-func (c *tikvClient) CloseAddr(addr string) error {
-	err := c.c.CloseAddr(addr)
-	return derr.ToTiDBErr(err)
-}
-
 // SendRequest sends Request.
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	res, err := c.c.SendRequest(ctx, addr, req, timeout)
@@ -83,7 +77,6 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +18,9 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -81,13 +81,13 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 }
 
 func zeroValForType(tp *types.FieldType) interface{} {
-	switch tp.GetType() {
+	switch tp.Tp {
 	case mysql.TypeFloat:
 		return float32(0)
 	case mysql.TypeDouble:
 		return float64(0)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.GetFlag()) {
+		if mysql.HasUnsignedFlag(tp.Flag) {
 			return uint64(0)
 		}
 		return int64(0)
@@ -112,7 +112,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 	case mysql.TypeEnum:
 		return types.Enum{}
 	case mysql.TypeJSON:
-		return types.CreateBinaryJSON(nil)
+		return json.CreateBinary(nil)
 	default:
 		return nil
 	}
@@ -150,7 +150,7 @@ func makeMutRowColumn(in interface{}) *Column {
 		col := newMutRowFixedLenColumn(sizeTime)
 		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 		return col
-	case types.BinaryJSON:
+	case json.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
 		col.data[0] = x.TypeCode
 		copy(col.data[1:], x.Value)
@@ -276,7 +276,7 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
 		setMutRowNameValue(col, x.Name, x.Value)
-	case types.BinaryJSON:
+	case json.BinaryJSON:
 		setMutRowJSON(col, x)
 	}
 	col.nullBitmap[0] = 1
@@ -349,7 +349,7 @@ func setMutRowNameValue(col *Column, name string, val uint64) {
 	col.offsets[1] = int64(dataLen)
 }
 
-func setMutRowJSON(col *Column, j types.BinaryJSON) {
+func setMutRowJSON(col *Column, j json.BinaryJSON) {
 	dataLen := len(j.Value) + 1
 	if len(col.data) >= dataLen {
 		col.data = col.data[:dataLen]

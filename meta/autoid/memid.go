@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,29 +17,21 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/parser/model"
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.
 func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	var alloc Allocator
 	// Temporary tables don't support auto_random and sequence.
 	if hasRowID || hasAutoIncID {
-		alloc = &inMemoryAllocator{
+		return &inMemoryAllocator{
 			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
 			allocType:  RowIDAllocType,
 		}
 	}
-	// Rebase the allocator if the base is specified.
-	if alloc != nil && tblInfo.AutoIncID > 1 {
-		// Actually, `inMemoryAllocator.Rebase` always returns nil.
-		if err := alloc.Rebase(context.Background(), tblInfo.AutoIncID-1, false); err != nil {
-			return nil
-		}
-	}
-	return alloc
+	return nil
 }
 
 // inMemoryAllocator is typically used for temporary tables.
@@ -61,7 +52,7 @@ func (alloc *inMemoryAllocator) Base() int64 {
 }
 
 // End implements autoid.Allocator End interface.
-func (*inMemoryAllocator) End() int64 {
+func (alloc *inMemoryAllocator) End() int64 {
 	// It doesn't matter.
 	return 0
 }
@@ -72,14 +63,11 @@ func (alloc *inMemoryAllocator) GetType() AllocatorType {
 }
 
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
-func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
-	if alloc.isUnsigned {
-		return int64(uint64(alloc.base) + 1), nil
-	}
-	return alloc.base + 1, nil
+func (alloc *inMemoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	return alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	if n == 0 {
 		return 0, 0, nil
 	}
@@ -97,7 +85,7 @@ func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, of
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *inMemoryAllocator) Rebase(_ context.Context, requiredBase int64, _ bool) error {
+func (alloc *inMemoryAllocator) Rebase(tableID, requiredBase int64, allocIDs bool) error {
 	if alloc.isUnsigned {
 		if uint64(requiredBase) > uint64(alloc.base) {
 			alloc.base = requiredBase
@@ -110,13 +98,7 @@ func (alloc *inMemoryAllocator) Rebase(_ context.Context, requiredBase int64, _ 
 	return nil
 }
 
-// ForceRebase implements autoid.Allocator ForceRebase interface.
-func (alloc *inMemoryAllocator) ForceRebase(requiredBase int64) error {
-	alloc.base = requiredBase
-	return nil
-}
-
-func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		alloc.base = offset - 1
@@ -129,12 +111,12 @@ func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) 
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min = alloc.base
+	min := alloc.base
 	alloc.base += n1
 	return min, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if uint64(offset)-1 > uint64(alloc.base) {
 		alloc.base = int64(uint64(offset) - 1)
@@ -148,16 +130,16 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min = alloc.base
+	min := alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
 }
 
-func (*inMemoryAllocator) AllocSeqCache() (base int64, end int64, round int64, err error) {
+func (alloc *inMemoryAllocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
 	return 0, 0, 0, errNotImplemented.GenWithStackByArgs()
 }
 
-func (*inMemoryAllocator) RebaseSeq(_ int64) (res int64, alreadySatisfied bool, err error) {
+func (alloc *inMemoryAllocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, error) {
 	return 0, false, errNotImplemented.GenWithStackByArgs()
 }

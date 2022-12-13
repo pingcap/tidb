@@ -8,22 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
-	"golang.org/x/exp/slices"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
@@ -114,7 +113,7 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.String())
+		result.AppendString(data.User.AuthIdentityString())
 	}
 	return nil
 }
@@ -124,7 +123,7 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 }
 
 // evalString evals a builtinCurrentUserSig.
-// See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
@@ -136,7 +135,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	result.ReserveString(n)
 	if len(data.ActiveRoles) == 0 {
 		for i := 0; i < n; i++ {
-			result.AppendString("NONE")
+			result.AppendString("")
 		}
 		return nil
 	}
@@ -145,7 +144,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
 	}
-	slices.Sort(sortedRes)
+	sort.Strings(sortedRes)
 	res := strings.Join(sortedRes, ",")
 	for i := 0; i < n; i++ {
 		result.AppendString(res)
@@ -168,7 +167,7 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.LoginString())
+		result.AppendString(data.User.String())
 	}
 	return nil
 }
@@ -179,8 +178,9 @@ func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
 	var res int64
-	if b.ctx.IsDDLOwner() {
+	if ddlOwnerChecker.IsOwner() {
 		res = 1
 	}
 	result.ResizeInt64(n, false)
@@ -219,7 +219,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	loopCount := b.constLoopCount
 	arg, ctx := b.args[1], b.ctx
 	evalType := arg.GetType().EvalType()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(evalType, n)
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,32 +15,60 @@ package core_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPreferRangeScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+var _ = Suite(&testPlanNormalize{})
+
+type testPlanNormalize struct {
+	store kv.Storage
+	dom   *domain.Domain
+
+	testData testutil.TestData
+}
+
+func (s *testPlanNormalize) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPlanNormalize) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *testPlanNormalize) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
 	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
@@ -58,51 +85,38 @@ func TestPreferRangeScan(t *testing.T) {
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("analyze table test;")
-
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		if i == 0 {
 			tk.MustExec("set session tidb_opt_prefer_range_scan=0")
 		} else if i == 1 {
 			tk.MustExec("set session tidb_opt_prefer_range_scan=1")
 		}
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Session().ShowProcess()
-		require.NotNil(t, info)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
 		p, ok := info.Plan.(core.Plan)
-		require.True(t, ok)
-		normalized, digest := core.NormalizePlan(p)
-
-		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(p, false)
-		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
-		require.Equal(t, normalized, newNormalized)
-		require.Equal(t, digest, newDigest)
-
+		c.Assert(ok, IsTrue)
+		normalized, _ := core.NormalizePlan(p)
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
-		require.NoError(t, err)
-		testdata.OnRecord(func() {
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
 	}
 }
 
-func TestNormalizedPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static';")
 	tk.MustExec("drop table if exists t1,t2,t3,t4")
@@ -110,56 +124,40 @@ func TestNormalizedPlan(t *testing.T) {
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
-	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
-		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, " +
-		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
-		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
-	tk.MustExec("insert into t5 values (1,1,1), (2,2,2)")
 	var input []string
 	var output []struct {
 		SQL  string
 		Plan []string
 	}
-	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Session().ShowProcess()
-		require.NotNil(t, info)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
 		p, ok := info.Plan.(core.Plan)
-		require.True(t, ok)
-		normalized, digest := core.NormalizePlan(p)
-
-		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(p, false)
-		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
-		require.Equal(t, normalized, newNormalized)
-		require.Equal(t, digest, newDigest)
-
+		c.Assert(ok, IsTrue)
+		normalized, _ := core.NormalizePlan(p)
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
-		require.NoError(t, err)
-		testdata.OnRecord(func() {
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
 	}
 }
 
-func TestNormalizedPlanForDiffStore(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
-	require.NoError(t, err)
+
+	tbl, err := s.dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	c.Assert(err, IsNil)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
@@ -168,144 +166,78 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		Digest string
 		Plan   []string
 	}
-	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
+	s.testData.GetTestCases(c, &input, &output)
 	lastDigest := ""
 	for i, tt := range input {
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Session().ShowProcess()
-		require.NotNil(t, info)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
 		ep, ok := info.Plan.(*core.Explain)
-		require.True(t, ok)
+		c.Assert(ok, IsTrue)
 		normalized, digest := core.NormalizePlan(ep.TargetPlan)
-
-		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(ep.TargetPlan, false)
-		newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
-		require.Equal(t, digest, newPlanDigest)
-		require.Equal(t, normalized, newNormalized)
-
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
-		require.NoError(t, err)
-		testdata.OnRecord(func() {
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
 			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
-		require.NotEqual(t, digest.String(), lastDigest)
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+		c.Assert(digest.String() != lastDigest, IsTrue)
 		lastDigest = digest.String()
 	}
 }
 
-func TestEncodeDecodePlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table tp (a int ,b int,c int) partition by hash(b) partitions 5;")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
-	tk.MustExec("set tidb_partition_prune_mode='static';")
 
-	tk.Session().GetSessionVars().PlanID = 0
-	getPlanTree := func() (str1, str2 string) {
-		info := tk.Session().ShowProcess()
-		require.NotNil(t, info)
+	tk.Se.GetSessionVars().PlanID = 0
+	getPlanTree := func() string {
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
 		p, ok := info.Plan.(core.Plan)
-		require.True(t, ok)
+		c.Assert(ok, IsTrue)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
-		require.NoError(t, err)
-
-		// test the new encoding method
-		flat := core.FlattenPhysicalPlan(p, true)
-		newEncodeStr := core.EncodeFlatPlan(flat)
-		newPlanTree, err := plancodec.DecodePlan(newEncodeStr)
-		require.NoError(t, err)
-
-		return planTree, newPlanTree
+		c.Assert(err, IsNil)
+		return planTree
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
-	planTree, newplanTree := getPlanTree()
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+	planTree := getPlanTree()
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 
-	tk.MustExec("prepare stmt from \"select max(a) from t1 where a > ?\";")
-	tk.MustExec("set @a = 1;")
-	tk.MustExec("execute stmt using @a;")
-	planTree, newplanTree = getPlanTree()
-	require.Empty(t, planTree)
-	require.Empty(t, newplanTree)
-
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Insert")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Insert")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
-
-	tk.MustExec("update t1 set b = 3 where c = 1;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Update")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Update")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
-
-	tk.MustExec("delete from t1 where b = 3;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Delete")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Delete")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+	tk.MustExec("insert into t1 values (1,1,1);")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 
 	tk.MustExec("with cte(a) as (select 1) select * from cte")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Projection_7")
-	require.Contains(t, planTree, "1->Column#3")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Projection_7")
-	require.Contains(t, newplanTree, "1->Column#3")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "1->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 
 	tk.MustExec("with cte(a) as (select 2) select * from cte")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Projection_7")
-	require.Contains(t, planTree, "2->Column#3")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Projection_7")
-	require.Contains(t, newplanTree, "2->Column#3")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
-
-	tk.MustExec("select * from tp")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "PartitionUnion")
-	require.Contains(t, newplanTree, "PartitionUnion")
-
-	tk.MustExec("select row_number() over (partition by c) from t1;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Shuffle")
-	require.Contains(t, planTree, "ShuffleReceiver")
-	require.Contains(t, newplanTree, "Shuffle")
-	require.Contains(t, newplanTree, "ShuffleReceiver")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "2->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
 
-func TestNormalizedDigest(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
@@ -323,7 +255,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   ol_supply_w_id  int(11) DEFAULT NULL,
 	   ol_quantity  int(11) DEFAULT NULL,
 	   ol_dist_info  char(24) DEFAULT NULL,
-	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number ) NONCLUSTERED
+	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number )
 	);`)
 	tk.MustExec(`CREATE TABLE  bmsql_district  (
 	   d_w_id  int(11) NOT NULL,
@@ -337,7 +269,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   d_city  varchar(20) DEFAULT NULL,
 	   d_state  char(2) DEFAULT NULL,
 	   d_zip  char(9) DEFAULT NULL,
-	  PRIMARY KEY ( d_w_id , d_id ) NONCLUSTERED
+	  PRIMARY KEY ( d_w_id , d_id )
 	);`)
 	tk.MustExec(`CREATE TABLE  bmsql_stock  (
 	   s_w_id  int(11) NOT NULL,
@@ -357,16 +289,8 @@ func TestNormalizedDigest(t *testing.T) {
 	   s_dist_08  char(24) DEFAULT NULL,
 	   s_dist_09  char(24) DEFAULT NULL,
 	   s_dist_10  char(24) DEFAULT NULL,
-	  PRIMARY KEY ( s_w_id , s_i_id ) NONCLUSTERED
+	  PRIMARY KEY ( s_w_id , s_i_id )
 	);`)
-
-	err := failpoint.Enable("github.com/pingcap/tidb/planner/mockRandomPlanID", "return(true)")
-	require.NoError(t, err)
-	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/planner/mockRandomPlanID")
-		require.NoError(t, err)
-	}()
-
 	normalizedDigestCases := []struct {
 		sql1   string
 		sql2   string
@@ -480,44 +404,33 @@ func TestNormalizedDigest(t *testing.T) {
 		},
 	}
 	for _, testCase := range normalizedDigestCases {
-		testNormalizeDigest(tk, t, testCase.sql1, testCase.sql2, testCase.isSame)
+		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
 	}
 }
 
-func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, isSame bool) {
+func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bool) {
+	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql1)
-	info := tk.Session().ShowProcess()
-	require.NotNil(t, info)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
 	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
-	require.True(t, ok)
+	c.Assert(ok, IsTrue)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
-	// test the new normalization code
-	flat := core.FlattenPhysicalPlan(physicalPlan, false)
-	newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
-	require.Equal(t, digest1, newPlanDigest)
-	require.Equal(t, normalized1, newNormalized)
-
+	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql2)
-	info = tk.Session().ShowProcess()
-	require.NotNil(t, info)
+	info = tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
 	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
-	require.True(t, ok)
+	c.Assert(ok, IsTrue)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
-
-	// test the new normalization code
-	flat = core.FlattenPhysicalPlan(physicalPlan, false)
-	newNormalized, newPlanDigest = core.NormalizeFlatPlan(flat)
-	require.Equal(t, digest2, newPlanDigest)
-	require.Equal(t, normalized2, newNormalized)
-
-	comment := fmt.Sprintf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
+	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
-		require.Equal(t, normalized1, normalized2, comment)
-		require.Equal(t, digest1.String(), digest2.String(), comment)
+		c.Assert(normalized1, Equals, normalized2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
-		require.NotEqual(t, normalized1, normalized2, comment)
-		require.NotEqual(t, digest1.String(), digest2.String(), comment)
+		c.Assert(normalized1 != normalized2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 
@@ -526,38 +439,33 @@ func getPlanRows(planStr string) []string {
 	return strings.Split(planStr, "\n")
 }
 
-func compareStringSlice(t *testing.T, ss1, ss2 []string) {
-	require.Equal(t, len(ss1), len(ss2))
+func compareStringSlice(c *C, ss1, ss2 []string) {
+	c.Assert(len(ss1), Equals, len(ss2))
 	for i, s := range ss1 {
-		require.Equal(t, len(s), len(ss2[i]))
+		c.Assert(s, Equals, ss2[i])
 	}
 }
 
-func TestExplainFormatHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20))")
 
-	tk.MustQuery("explain format='hint'" +
-		"select " +
-		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
-		"count(1) from t t1 " +
-		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), use_index(@`sel_1` `test`.`t1` `idx_c2`)"))
+	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
+		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
 }
 
-func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestExplainFormatHintRecoverableForTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
+	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
+	c.Assert(exists, IsTrue)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -568,19 +476,18 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 
 	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
-	require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
+	c.Assert(rows[0][0], Equals, "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
 
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
-	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 }
 
-func TestNthPlanHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testPlanNormalize) TestNthPlanHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
@@ -588,7 +495,7 @@ func TestNthPlanHint(t *testing.T) {
 
 	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 
 	// Test hints for nth_plan(x).
 	tk.MustExec("drop table if exists t")
@@ -602,11 +509,11 @@ func TestNthPlanHint(t *testing.T) {
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
@@ -631,15 +538,14 @@ func TestNthPlanHint(t *testing.T) {
 	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
 	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
-func BenchmarkDecodePlan(b *testing.B) {
-	store := testkit.CreateMockStore(b)
-	tk := testkit.NewTestKit(b, store)
+func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10) key,b int);")
@@ -654,25 +560,24 @@ func BenchmarkDecodePlan(b *testing.B) {
 		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
 	}
 	query := buf.String()
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
-	info := tk.Session().ShowProcess()
-	require.NotNil(b, info)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
 	p, ok := info.Plan.(core.PhysicalPlan)
-	require.True(b, ok)
+	c.Assert(ok, IsTrue)
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
-	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	encodedPlanStr := core.EncodePlan(p)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
 		_, err := plancodec.DecodePlan(encodedPlanStr)
-		require.NoError(b, err)
+		c.Assert(err, IsNil)
 	}
 }
 
-func BenchmarkEncodePlan(b *testing.B) {
-	store := testkit.CreateMockStore(b)
-	tk := testkit.NewTestKit(b, store)
+func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -681,173 +586,16 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
-	info := tk.Session().ShowProcess()
-	require.NotNil(b, info)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
 	p, ok := info.Plan.(core.PhysicalPlan)
-	require.True(b, ok)
-	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	c.Assert(ok, IsTrue)
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
 		core.EncodePlan(p)
-	}
-}
-
-func BenchmarkEncodeFlatPlan(b *testing.B) {
-	store := testkit.CreateMockStore(b)
-	tk := testkit.NewTestKit(b, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
-	tk.MustExec("set @@tidb_slow_log_threshold=200000")
-
-	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
-	tk.MustExec(query)
-	info := tk.Session().ShowProcess()
-	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
-	require.True(b, ok)
-	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		flat := core.FlattenPhysicalPlan(p, false)
-		core.EncodeFlatPlan(flat)
-	}
-}
-
-func TestIssue35090(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists p, t;")
-	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
-	tk.MustExec("create table t (id int);")
-	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
-	tk.MustExec("insert into t values (4), (9);")
-	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
-	rows := [][]interface{}{
-		{"IndexJoin"},
-		{"├─TableReader(Build)"},
-		{"│ └─Selection"},
-		{"│   └─TableFullScan"},
-		{"└─IndexLookUp(Probe)"},
-		{"  ├─Selection(Build)"},
-		{"  │ └─IndexRangeScan"},
-		{"  └─TableRowIDScan(Probe)"},
-	}
-	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
-}
-
-// Close issue 25729
-func TestIssue25729(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tt")
-	// Case1
-	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
-
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
-			"Projection 0.10 root  test.tt.a, test.tt.b",
-			"└─IndexLookUp 0.10 root  ",
-			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
-			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
-	}
-
-	tk.MustExec("insert into tt values(4, 3);")
-	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
-
-	// Case2
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE `t1` (" +
-		"  `a` varchar(10) DEFAULT NULL," +
-		"  `b` varchar(10) DEFAULT NULL," +
-		"  KEY `expression_index` ((concat(`a`, `b`)))," +
-		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
-		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
-		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
-		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
-		");")
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
-			"Projection 0.10 root  test.t1.a, test.t1.b",
-			"└─IndexReader 0.10 root  index:IndexRangeScan",
-			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
-
-		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
-			"Projection 33.33 root  test.t1.b",
-			"└─IndexReader 33.33 root  index:IndexRangeScan",
-			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
-	}
-	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
-	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
-}
-
-func TestCopPaging(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set session tidb_enable_paging = 1")
-	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
-	defer tk.MustExec("drop table t")
-	for i := 0; i < 1024; i++ {
-		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
-	}
-	tk.MustExec("analyze table t")
-
-	// limit 960 should go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:960",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// selection between limit and indexlookup, limit 960 should also go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:960",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
-	}
-
-	// limit 961 exceeds the threshold, it should not go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:961",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// selection between limit and indexlookup, limit 961 should not go paging too
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:961",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 }
 
@@ -995,148 +743,4 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	mixedAggFuncs = append(mixedAggFuncs, groupConcatAggFuncs...)
 	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
 	checkResult(ctx, mixedAggFuncs, groupByItems)
-}
-
-func TestIssue34863(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists c")
-	tk.MustExec("drop table if exists o")
-	tk.MustExec("create table c(c_id bigint);")
-	tk.MustExec("create table o(o_id bigint, c_id bigint);")
-	tk.MustExec("insert into c values(1),(2),(3),(4),(5);")
-	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);")
-	tk.MustExec("set @@tidb_opt_agg_push_down=1")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustExec("set @@tidb_opt_agg_push_down=0")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-}
-
-func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
-	newPlan, err := window.Clone()
-	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
-	require.Equal(t, ok, true)
-	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
-
-	window.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = window.Clone()
-	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
-	require.Equal(t, ok, true)
-	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
-
-	sort := &core.PhysicalSort{}
-	newPlan, err = sort.Clone()
-	require.NoError(t, err)
-	newSort, ok := newPlan.(*core.PhysicalSort)
-	require.Equal(t, ok, true)
-	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
-
-	sort.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = sort.Clone()
-	require.NoError(t, err)
-	newSort, ok = newPlan.(*core.PhysicalSort)
-	require.Equal(t, ok, true)
-	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
-}
-
-// https://github.com/pingcap/tidb/issues/35527.
-func TestTableDualAsSubQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
-	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
-	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
-}
-
-// https://github.com/pingcap/tidb/issues/38310
-func TestNullEQConditionPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
-	tk.MustExec("INSERT INTO t0 VALUES (FALSE);")
-	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
-
-	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
-		})
-
-	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
-	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
-			{"Point_Get_5", "root", "handle:0"},
-		})
-}
-
-// https://github.com/pingcap/tidb/issues/38304
-// https://github.com/pingcap/tidb/issues/38654
-func TestOuterJoinOnNull(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));")
-	tk.MustExec("CREATE TABLE t1 (c0 BOOL);")
-	tk.MustExec("INSERT INTO t1 VALUES(false);")
-	tk.MustExec("INSERT INTO t0(c0, c1) VALUES ('>', true);")
-	tk.MustQuery("SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL); ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
-
-	tk.MustExec("CREATE TABLE t2(c0 INT);")
-	tk.MustExec("CREATE TABLE t3(c0 INT);")
-	tk.MustExec("INSERT INTO t3 VALUES (1);")
-	tk.MustQuery("SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
-}
-
-func TestJSONPlanInExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(id int, key(id))")
-	tk.MustExec("create table t2(id int, key(id))")
-
-	var input []string
-	var output []struct {
-		SQL      string
-		JSONPlan []*core.ExplainInfoForEncode
-	}
-	planSuiteData := core.GetJSONPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, test := range input {
-		resJSON := tk.MustQuery(test).Rows()
-		var res []*core.ExplainInfoForEncode
-		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
-		for j, expect := range output[i].JSONPlan {
-			require.Equal(t, expect.ID, res[j].ID)
-			require.Equal(t, expect.EstRows, res[j].EstRows)
-			require.Equal(t, expect.ActRows, res[j].ActRows)
-			require.Equal(t, expect.TaskType, res[j].TaskType)
-			require.Equal(t, expect.AccessObject, res[j].AccessObject)
-			require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
-		}
-	}
 }

@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 use test;
 drop table if exists t;
 create table t(a bigint, b bigint);

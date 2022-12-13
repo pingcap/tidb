@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,22 +15,33 @@ package format
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
-	_, err := f.Format(str, 3)
-	assert.Nil(t, err)
-	b, err := io.ReadAll(buf)
-	assert.Nil(t, err)
-	assert.Equal(t, string(b), expect)
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
 }
 
-func TestFormat(t *testing.T) {
+var _ = Suite(&testFormatSuite{})
+
+type testFormatSuite struct {
+}
+
+func checkFormat(c *C, f Formatter, buf *bytes.Buffer, str, expect string) {
+	_, err := f.Format(str, 3)
+	c.Assert(err, IsNil)
+	b, err := io.ReadAll(buf)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, expect)
+}
+
+func (s *testFormatSuite) TestFormat(c *C) {
+	defer testleak.AfterTest(c)()
 	str := "abc%d%%e%i\nx\ny\n%uz\n"
 	buf := &bytes.Buffer{}
 	f := IndentFormatter(buf, "\t")
@@ -40,15 +50,14 @@ func TestFormat(t *testing.T) {
 	y
 z
 `
-	checkFormat(t, f, buf, str, expect)
+	checkFormat(c, f, buf, str, expect)
 
 	str = "abc%d%%e%i\nx\ny\n%uz\n%i\n"
 	buf = &bytes.Buffer{}
 	f = FlatFormatter(buf)
 	expect = "abc3%e x y z\n "
-	checkFormat(t, f, buf, str, expect)
+	checkFormat(c, f, buf, str, expect)
 
-	str1 := fmt.Sprintf("%c%c%s%c%c%s", '\'', '\000', "abc", '\n', '\r', "def")
-	str2 := OutputFormat(str1)
-	assert.Equal(t, str2, "''\\0abc\\n\\rdef")
+	str2 := OutputFormat(`\'\000abc\n\rdef`)
+	c.Assert(str2, Equals, "\\''\\000abc\\n\\rdef")
 }

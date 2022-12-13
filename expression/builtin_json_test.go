@@ -8,27 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"fmt"
-	"testing"
-
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/testkit/testutil"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func TestJSONType(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
 		Input    interface{}
@@ -43,17 +38,16 @@ func TestJSONType(t *testing.T) {
 		{`{}`, `OBJECT`},
 	}
 	dtbl := tblToDtbl(tbl)
-	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
-		require.NoError(t, err)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Expected"][0], d)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
 
-func TestJSONQuote(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
 		Input    interface{}
@@ -72,57 +66,47 @@ func TestJSONQuote(t *testing.T) {
 		{`1\u2232\u22322`, `"1\\u2232\\u22322"`},
 	}
 	dtbl := tblToDtbl(tbl)
-	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
-		require.NoError(t, err)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Expected"][0], d)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
 
-func TestJSONUnquote(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
-		Input  string
-		Result string
-		Error  error
+		Input    interface{}
+		Expected interface{}
 	}{
-		{``, ``, nil},
-		{`""`, ``, nil},
-		{`''`, `''`, nil},
-		{`3`, `3`, nil},
-		{`{"a": "b"}`, `{"a": "b"}`, nil},
-		{`{"a":     "b"}`, `{"a":     "b"}`, nil},
-		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`, nil},
-		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`, nil},
-		{`Invalid Json string\tis OK`, `Invalid Json string\tis OK`, nil},
-		{`"1\\u2232\\u22322"`, `1\u2232\u22322`, nil},
-		{`"[{\"x\":\"{\\\"y\\\":12}\"}]"`, `[{"x":"{\"y\":12}"}]`, nil},
-		{`[{\"x\":\"{\\\"y\\\":12}\"}]`, `[{\"x\":\"{\\\"y\\\":12}\"}]`, nil},
-		{`"a"`, `a`, nil},
-		{`""a""`, `""a""`, types.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
-		{`"""a"""`, `"""a"""`, types.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
+		{nil, nil},
+		{``, ``},
+		{`""`, ``},
+		{`''`, `''`},
+		{`"a"`, `a`},
+		{`3`, `3`},
+		{`{"a": "b"}`, `{"a": "b"}`},
+		{`{"a":     "b"}`, `{"a":     "b"}`},
+		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
+		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
+		{`Invalid Json string\tis OK`, `Invalid Json string\tis OK`},
+		{`"1\\u2232\\u22322"`, `1\u2232\u22322`},
+		{`"[{\"x\":\"{\\\"y\\\":12}\"}]"`, `[{"x":"{\"y\":12}"}]`},
+		{`[{\"x\":\"{\\\"y\\\":12}\"}]`, `[{\"x\":\"{\\\"y\\\":12}\"}]`},
 	}
-	for _, tt := range tbl {
-		var d types.Datum
-		d.SetString(tt.Input, mysql.DefaultCollationName)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{d}))
-		require.NoError(t, err)
-		d, err = evalBuiltinFunc(f, chunk.Row{})
-		if tt.Error == nil {
-			require.Equal(t, tt.Result, d.GetString())
-			require.NoError(t, err)
-		} else {
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "The document root must not be followed by other values")
-		}
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
 
-func TestJSONExtract(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
 	tbl := []struct {
@@ -134,33 +118,32 @@ func TestJSONExtract(t *testing.T) {
 		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`, true},
 		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$InvalidPath`}, nil, false},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.Success {
-			require.NoError(t, err)
-			switch x := tt.Expected.(type) {
+		if t.Success {
+			c.Assert(err, IsNil)
+			switch x := t.Expected.(type) {
 			case string:
-				var j1 types.BinaryJSON
-				j1, err = types.ParseBinaryJSONFromString(x)
-				require.NoError(t, err)
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
 				var cmp int
-				cmp = types.CompareBinaryJSON(j1, j2)
-				require.NoError(t, err)
-				require.Equal(t, 0, cmp)
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
-func TestJSONSetInsertReplace(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 	tbl := []struct {
 		fc           functionClass
 		Input        []interface{}
@@ -180,33 +163,32 @@ func TestJSONSetInsertReplace(t *testing.T) {
 	var err error
 	var f builtinFunc
 	var d types.Datum
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err = tt.fc.getFunction(ctx, datumsToConstants(args))
-		if tt.BuildSuccess {
-			require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err = t.fc.getFunction(s.ctx, s.datumsToConstants(args))
+		if t.BuildSuccess {
+			c.Assert(err, IsNil)
 			d, err = evalBuiltinFunc(f, chunk.Row{})
-			if tt.Success {
-				require.NoError(t, err)
-				switch x := tt.Expected.(type) {
+			if t.Success {
+				c.Assert(err, IsNil)
+				switch x := t.Expected.(type) {
 				case string:
-					var j1 types.BinaryJSON
-					j1, err = types.ParseBinaryJSONFromString(x)
-					require.NoError(t, err)
+					var j1 json.BinaryJSON
+					j1, err = json.ParseBinaryFromString(x)
+					c.Assert(err, IsNil)
 					j2 := d.GetMysqlJSON()
 					var cmp int
-					cmp = types.CompareBinaryJSON(j1, j2)
-					require.Equal(t, 0, cmp)
+					cmp = json.CompareBinary(j1, j2)
+					c.Assert(cmp, Equals, 0)
 				}
 				continue
 			}
 		}
-		require.Error(t, err)
+		c.Assert(err, NotNil)
 	}
 }
 
-func TestJSONMerge(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
 		Input    []interface{}
@@ -216,28 +198,27 @@ func TestJSONMerge(t *testing.T) {
 		{[]interface{}{`{}`, `[]`}, `[{}]`},
 		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
-		switch x := tt.Expected.(type) {
+		switch x := t.Expected.(type) {
 		case string:
-			j1, err := types.ParseBinaryJSONFromString(x)
-			require.NoError(t, err)
+			j1, err := json.ParseBinaryFromString(x)
+			c.Assert(err, IsNil)
 			j2 := d.GetMysqlJSON()
-			cmp := types.CompareBinaryJSON(j1, j2)
-			require.Zerof(t, cmp, "got %v expect %v", j1.String(), j2.String())
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
 		case nil:
-			require.True(t, d.IsNull())
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
 
-func TestJSONMergePreserve(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
 		Input    []interface{}
@@ -247,28 +228,27 @@ func TestJSONMergePreserve(t *testing.T) {
 		{[]interface{}{`{}`, `[]`}, `[{}]`},
 		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
-		switch x := tt.Expected.(type) {
+		switch x := t.Expected.(type) {
 		case string:
-			j1, err := types.ParseBinaryJSONFromString(x)
-			require.NoError(t, err)
+			j1, err := json.ParseBinaryFromString(x)
+			c.Assert(err, IsNil)
 			j2 := d.GetMysqlJSON()
-			cmp := types.CompareBinaryJSON(j1, j2)
-			require.Zerof(t, cmp, "got %v expect %v", j1.String(), j2.String())
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
 		case nil:
-			require.True(t, d.IsNull())
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
 
-func TestJSONArray(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
 		Input    []interface{}
@@ -277,23 +257,22 @@ func TestJSONArray(t *testing.T) {
 		{[]interface{}{1}, `[1]`},
 		{[]interface{}{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 
-		j1, err := types.ParseBinaryJSONFromString(tt.Expected)
-		require.NoError(t, err)
+		j1, err := json.ParseBinaryFromString(t.Expected)
+		c.Assert(err, IsNil)
 		j2 := d.GetMysqlJSON()
-		cmp := types.CompareBinaryJSON(j1, j2)
-		require.Equal(t, 0, cmp)
+		cmp := json.CompareBinary(j1, j2)
+		c.Assert(cmp, Equals, 0)
 	}
 }
 
-func TestJSONObject(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
 		Input        []interface{}
@@ -311,33 +290,32 @@ func TestJSONObject(t *testing.T) {
 	var err error
 	var f builtinFunc
 	var d types.Datum
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err = fc.getFunction(ctx, datumsToConstants(args))
-		if tt.BuildSuccess {
-			require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
+		if t.BuildSuccess {
+			c.Assert(err, IsNil)
 			d, err = evalBuiltinFunc(f, chunk.Row{})
-			if tt.Success {
-				require.NoError(t, err)
-				switch x := tt.Expected.(type) {
+			if t.Success {
+				c.Assert(err, IsNil)
+				switch x := t.Expected.(type) {
 				case string:
-					var j1 types.BinaryJSON
-					j1, err = types.ParseBinaryJSONFromString(x)
-					require.NoError(t, err)
+					var j1 json.BinaryJSON
+					j1, err = json.ParseBinaryFromString(x)
+					c.Assert(err, IsNil)
 					j2 := d.GetMysqlJSON()
 					var cmp int
-					cmp = types.CompareBinaryJSON(j1, j2)
-					require.Equal(t, 0, cmp)
+					cmp = json.CompareBinary(j1, j2)
+					c.Assert(cmp, Equals, 0)
 				}
 				continue
 			}
 		}
-		require.Error(t, err)
+		c.Assert(err, NotNil)
 	}
 }
 
-func TestJSONRemove(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONRemove(c *C) {
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
 		Input    []interface{}
@@ -362,32 +340,31 @@ func TestJSONRemove(t *testing.T) {
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]", "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 
-		if tt.Success {
-			require.NoError(t, err)
-			switch x := tt.Expected.(type) {
+		if t.Success {
+			c.Assert(err, IsNil)
+			switch x := t.Expected.(type) {
 			case string:
-				var j1 types.BinaryJSON
-				j1, err = types.ParseBinaryJSONFromString(x)
-				require.NoError(t, err)
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
 				var cmp int
-				cmp = types.CompareBinaryJSON(j1, j2)
-				require.Zerof(t, cmp, "got %v expect %v", j2.Value, j1.Value)
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j2.Value, j1.Value))
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONContains(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
 		input    []interface{}
@@ -423,31 +400,31 @@ func TestJSONContains(t *testing.T) {
 		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
 		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, json.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, json.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, json.ErrInvalidJSONPathWildcard},
 		// Tests path expression does not identify a section of the target document
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, nil},
 		// For issue 9957: test 'argument 1 and 2 as valid json object'
-		{[]interface{}{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
-		{[]interface{}{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]interface{}{`[1,2,[1,3]]`, `a:1`}, 1, json.ErrInvalidJSONText},
+		{[]interface{}{`a:1`, `1`}, 1, json.ErrInvalidJSONText},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.err == nil {
-			require.NoError(t, err)
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+		if t.err == nil {
+			c.Assert(err, IsNil)
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			require.True(t, tt.err.(*terror.Error).Equal(err))
+			c.Assert(t.err.(*terror.Error).Equal(err), IsTrue)
 		}
 	}
 	// For issue 9957: test 'argument 1 and 2 as valid json object'
@@ -461,13 +438,12 @@ func TestJSONContains(t *testing.T) {
 		{"", 0.05},
 	}
 	for _, cs := range cases {
-		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
-		require.True(t, types.ErrInvalidJSONData.Equal(err))
+		_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
+		c.Assert(json.ErrInvalidJSONData.Equal(err), IsTrue)
 	}
 }
 
-func TestJSONContainsPath(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
 	fc := funcs[ast.JSONContainsPath]
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
 	invalidJSON := `{"a": 1`
@@ -477,29 +453,29 @@ func TestJSONContainsPath(t *testing.T) {
 		success  bool
 	}{
 		// Tests nil arguments
-		{[]interface{}{nil, types.JSONContainsPathOne, "$.c"}, nil, true},
-		{[]interface{}{nil, types.JSONContainsPathAll, "$.c"}, nil, true},
+		{[]interface{}{nil, json.ContainsPathOne, "$.c"}, nil, true},
+		{[]interface{}{nil, json.ContainsPathAll, "$.c"}, nil, true},
 		{[]interface{}{jsonString, nil, "$.a[3]"}, nil, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, nil}, nil, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, nil}, nil, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, nil}, nil, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, nil}, nil, true},
 		// Tests with one path expression
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a.d"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a.d"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a.d"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a.d"}, 0, true},
 		// Tests with multiple path expression
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a", "$.e"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a", "$.c"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a", "$.e"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a", "$.c"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a", "$.e"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a", "$.c"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a", "$.e"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a", "$.c"}, 1, true},
 		// Tests path expression contains any asterisk
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.*"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$[*]"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.*"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$[*]"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.*"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$[*]"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.*"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$[*]"}, 0, true},
 		// Tests invalid json document
-		{[]interface{}{invalidJSON, types.JSONContainsPathOne, "$.a"}, nil, false},
-		{[]interface{}{invalidJSON, types.JSONContainsPathAll, "$.a"}, nil, false},
+		{[]interface{}{invalidJSON, json.ContainsPathOne, "$.a"}, nil, false},
+		{[]interface{}{invalidJSON, json.ContainsPathAll, "$.a"}, nil, false},
 		// Tests compatible contains path
 		{[]interface{}{jsonString, "ONE", "$.c.d"}, 1, true},
 		{[]interface{}{jsonString, "ALL", "$.c.d"}, 1, true},
@@ -507,26 +483,25 @@ func TestJSONContainsPath(t *testing.T) {
 		{[]interface{}{jsonString, "aLl", "$.a", "$.e"}, 0, true},
 		{[]interface{}{jsonString, "test", "$.a"}, nil, false},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+		if t.success {
+			c.Assert(err, IsNil)
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONLength(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONLength(c *C) {
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
 		input    []interface{}
@@ -578,27 +553,26 @@ func TestJSONLength(t *testing.T) {
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, nil, true},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].b"}, nil, true},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
+		if t.success {
+			c.Assert(err, IsNil)
 
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONKeys(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
 		input    []interface{}
@@ -643,33 +617,32 @@ func TestJSONKeys(t *testing.T) {
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.c"}, nil, true},
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.d"}, nil, true},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
-			switch x := tt.expected.(type) {
+		if t.success {
+			c.Assert(err, IsNil)
+			switch x := t.expected.(type) {
 			case string:
-				var j1 types.BinaryJSON
-				j1, err = types.ParseBinaryJSONFromString(x)
-				require.NoError(t, err)
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
 				var cmp int
-				cmp = types.CompareBinaryJSON(j1, j2)
-				require.Equal(t, 0, cmp)
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0)
 			case nil:
-				require.True(t, d.IsNull())
+				c.Assert(d.IsNull(), IsTrue)
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONDepth(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
 		input    []interface{}
@@ -708,29 +681,28 @@ func TestJSONDepth(t *testing.T) {
 		// Tests non-json
 		{[]interface{}{`a`}, nil, false},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
+		if t.success {
+			c.Assert(err, IsNil)
 
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONArrayAppend(t *testing.T) {
-	ctx := createContext(t)
-	sampleJSON, err := types.ParseBinaryJSONFromString(`{"b": 2}`)
-	require.NoError(t, err)
+func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
+	sampleJSON, err := json.ParseBinaryFromString(`{"b": 2}`)
+	c.Assert(err, IsNil)
 	fc := funcs[ast.JSONArrayAppend]
 	tbl := []struct {
 		input    []interface{}
@@ -751,14 +723,14 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]interface{}{`[]`, `$`, nil}, `[null]`, nil},
 		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, nil},
 		// Bad arguments.
-		{[]interface{}{`asdf`, `$`, nil}, nil, types.ErrInvalidJSONText},
-		{[]interface{}{``, `$`, nil}, nil, types.ErrInvalidJSONText},
+		{[]interface{}{`asdf`, `$`, nil}, nil, json.ErrInvalidJSONText},
+		{[]interface{}{``, `$`, nil}, nil, json.ErrInvalidJSONText},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, json.ErrInvalidJSONPathWildcard},
 		// Following tests come from MySQL doc.
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
@@ -771,43 +743,42 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
 	}
 
-	for i, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		// No error should return in getFunction if tt.err is nil.
+	for i, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		// No error should return in getFunction if t.err is nil.
 		if err != nil {
-			require.Error(t, tt.err)
-			require.True(t, tt.err.Equal(err))
+			c.Assert(t.err, NotNil)
+			c.Assert(t.err.Equal(err), Equals, true)
 			continue
 		}
 
-		require.NotNil(t, f)
+		c.Assert(f, NotNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		comment := fmt.Sprintf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, tt.input, d.GetMysqlJSON(), tt.expected, ctx.GetSessionVars().StmtCtx.GetWarnings(), tt.err)
+		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.err)
 
-		if tt.err != nil {
-			require.True(t, tt.err.Equal(err), comment)
+		if t.err != nil {
+			c.Assert(t.err.Equal(err), Equals, true, comment)
 			continue
 		}
 
-		require.NoError(t, err, comment)
-		require.Equal(t, 0, int(ctx.GetSessionVars().StmtCtx.WarningCount()), comment)
+		c.Assert(err, IsNil, comment)
+		c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
 
-		if tt.expected == nil {
-			require.True(t, d.IsNull(), comment)
+		if t.expected == nil {
+			c.Assert(d.IsNull(), IsTrue, comment)
 			continue
 		}
 
-		j1, err := types.ParseBinaryJSONFromString(tt.expected.(string))
+		j1, err := json.ParseBinaryFromString(t.expected.(string))
 
-		require.NoError(t, err, comment)
-		require.Equal(t, 0, types.CompareBinaryJSON(j1, d.GetMysqlJSON()), comment)
+		c.Assert(err, IsNil, comment)
+		c.Assert(json.CompareBinary(j1, d.GetMysqlJSON()), Equals, 0, comment)
 	}
 }
 
-func TestJSONSearch(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 	fc := funcs[ast.JSONSearch]
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
 	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
@@ -857,32 +828,31 @@ func TestJSONSearch(t *testing.T) {
 		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
 		{[]interface{}{jsonString, nil, `abc`}, nil, true},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
-			switch x := tt.expected.(type) {
+		if t.success {
+			c.Assert(err, IsNil)
+			switch x := t.expected.(type) {
 			case string:
-				var j1, j2 types.BinaryJSON
-				j1, err = types.ParseBinaryJSONFromString(x)
-				require.NoError(t, err)
+				var j1, j2 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
 				j2 = d.GetMysqlJSON()
-				cmp := types.CompareBinaryJSON(j1, j2)
-				require.Equal(t, 0, cmp)
+				cmp := json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0)
 			case nil:
-				require.True(t, d.IsNull())
+				c.Assert(d.IsNull(), IsTrue)
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONArrayInsert(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONArrayInsert(c *C) {
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
 		input    []interface{}
@@ -903,16 +873,16 @@ func TestJSONArrayInsert(t *testing.T) {
 		{[]interface{}{`[]`, `$[0]`, nil}, `[null]`, true, nil},
 		{[]interface{}{`{}`, `$[0]`, nil}, `{}`, true, nil},
 		// Bad arguments
-		{[]interface{}{`asdf`, `$`, nil}, nil, false, types.ErrInvalidJSONText},
-		{[]interface{}{``, `$`, nil}, nil, false, types.ErrInvalidJSONText},
+		{[]interface{}{`asdf`, `$`, nil}, nil, false, json.ErrInvalidJSONText},
+		{[]interface{}{``, `$`, nil}, nil, false, json.ErrInvalidJSONText},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, false, ErrIncorrectParameterCount},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, false, ErrIncorrectParameterCount},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, json.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, json.ErrInvalidJSONPathArrayCell},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, json.ErrInvalidJSONPathArrayCell},
 		// Following tests come from MySQL doc.
 		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[1]`, `x`}, `["a", "x", {"b": [1, 2]}, [3, 4]]`, true, nil},
 		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[100]`, `x`}, `["a", {"b": [1, 2]}, [3, 4], "x"]`, true, nil},
@@ -922,40 +892,39 @@ func TestJSONArrayInsert(t *testing.T) {
 		// More test cases
 		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[0]`, `y`}, `["y", "x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		// Parameter count error
 		if err != nil {
-			require.Error(t, tt.err)
-			require.True(t, tt.err.Equal(err))
+			c.Assert(t.err, NotNil)
+			c.Assert(t.err.Equal(err), Equals, true)
 			continue
 		}
 
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 
-		if tt.success {
-			require.NoError(t, err)
-			switch x := tt.expected.(type) {
+		if t.success {
+			c.Assert(err, IsNil)
+			switch x := t.expected.(type) {
 			case string:
-				var j1, j2 types.BinaryJSON
-				j1, err = types.ParseBinaryJSONFromString(x)
-				require.NoError(t, err)
+				var j1, j2 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
 				j2 = d.GetMysqlJSON()
 				var cmp int
-				cmp = types.CompareBinaryJSON(j1, j2)
-				require.Equal(t, 0, cmp)
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0)
 			case nil:
-				require.True(t, d.IsNull())
+				c.Assert(d.IsNull(), IsTrue)
 			}
 		} else {
-			require.True(t, tt.err.Equal(err))
+			c.Assert(t.err.Equal(err), Equals, true)
 		}
 	}
 }
 
-func TestJSONValid(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 	fc := funcs[ast.JSONValid]
 	tbl := []struct {
 		Input    interface{}
@@ -976,60 +945,16 @@ func TestJSONValid(t *testing.T) {
 		{nil, nil},
 	}
 	dtbl := tblToDtbl(tbl)
-	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
-		require.NoError(t, err)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Expected"][0], d)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
 
-func TestJSONStorageFree(t *testing.T) {
-	ctx := createContext(t)
-	fc := funcs[ast.JSONStorageFree]
-	tbl := []struct {
-		input    []interface{}
-		expected interface{}
-		success  bool
-	}{
-		// Tests scalar arguments
-		{[]interface{}{`null`}, 0, true},
-		{[]interface{}{`true`}, 0, true},
-		{[]interface{}{`1`}, 0, true},
-		{[]interface{}{`"1"`}, 0, true},
-		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
-		// Tests valid json documents
-		{[]interface{}{`{}`}, 0, true},
-		{[]interface{}{`{"a":1}`}, 0, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 0, true},
-		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
-		// Tests invalid json documents
-		{[]interface{}{`[{"a":1]`}, 0, false},
-		{[]interface{}{`[{a":1]`}, 0, false},
-	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
-
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
-			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
-			}
-		} else {
-			require.Error(t, err)
-		}
-	}
-}
-
-func TestJSONStorageSize(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONStorageSize(c *C) {
 	fc := funcs[ast.JSONStorageSize]
 	tbl := []struct {
 		input    []interface{}
@@ -1037,42 +962,41 @@ func TestJSONStorageSize(t *testing.T) {
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 2, true},
-		{[]interface{}{`true`}, 2, true},
-		{[]interface{}{`1`}, 9, true},
+		{[]interface{}{`null`}, 4, true},
+		{[]interface{}{`true`}, 4, true},
+		{[]interface{}{`1`}, 1, true},
 		{[]interface{}{`"1"`}, 3, true},
 		// Tests nil arguments
 		{[]interface{}{nil}, nil, true},
 		// Tests valid json documents
-		{[]interface{}{`{}`}, 9, true},
-		{[]interface{}{`{"a":1}`}, 29, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 82, true},
-		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 71, true},
+		{[]interface{}{`{}`}, 2, true},
+		{[]interface{}{`{"a":1}`}, 8, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 25, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 45, true},
 		// Tests invalid json documents
 		{[]interface{}{`[{"a":1]`}, 0, false},
 		{[]interface{}{`[{a":1]`}, 0, false},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
+		if t.success {
+			c.Assert(err, IsNil)
 
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }
 
-func TestJSONPretty(t *testing.T) {
-	ctx := createContext(t)
+func (s *testEvaluatorSuite) TestJSONPretty(c *C) {
 	fc := funcs[ast.JSONPretty]
 	tbl := []struct {
 		input    []interface{}
@@ -1126,113 +1050,21 @@ func TestJSONPretty(t *testing.T) {
 		{[]interface{}{`{1}`}, nil, false},
 		{[]interface{}{`[1,3,4,5]]`}, nil, false},
 	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
+		if t.success {
+			c.Assert(err, IsNil)
 
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
 			} else {
-				require.Equal(t, tt.expected.(string), d.GetString())
+				c.Assert(d.GetString(), Equals, t.expected.(string))
 			}
 		} else {
-			require.Error(t, err)
-		}
-	}
-}
-
-func TestJSONMergePatch(t *testing.T) {
-	ctx := createContext(t)
-	fc := funcs[ast.JSONMergePatch]
-	tbl := []struct {
-		input    []interface{}
-		expected interface{}
-		success  bool
-	}{
-		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
-		// RFC 7396 Example Test Cases
-		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true},
-		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true},
-		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true},
-		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true},
-		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true},
-		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true},
-		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true},
-		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true},
-		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true},
-		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true},
-		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true},
-		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true},
-		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true},
-		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true},
-		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true},
-		// RFC 7396 Example Document
-		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true},
-
-		// From mysql Example Test Cases
-		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
-		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
-		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true},
-		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true},
-
-		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true},
-
-		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true},
-		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true},
-		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true},
-		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true},
-
-		// non-object last item
-		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true},
-		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true},
-		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true},
-		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true},
-		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true},
-		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true},
-		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true},
-
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true},
-		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true},
-		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true},
-		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true},
-		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true},
-		{[]interface{}{`{"a":1}`, `null`}, `null`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true},
-
-		// Invalid json text
-		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false},
-		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false},
-		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false},
-	}
-	for _, tt := range tbl {
-		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.success {
-			require.NoError(t, err)
-
-			if tt.expected == nil {
-				require.True(t, d.IsNull())
-			} else {
-				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
-				require.NoError(t, e)
-				require.Equal(t, j.String(), d.GetMysqlJSON().String())
-			}
-		} else {
-			require.Error(t, err)
+			c.Assert(err, NotNil)
 		}
 	}
 }

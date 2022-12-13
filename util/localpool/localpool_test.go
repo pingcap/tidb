@@ -8,21 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !race
+// +build !race
 
 package localpool
 
 import (
 	"math/rand"
 	"runtime"
+	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/require"
+	. "github.com/pingcap/check"
 )
 
 type Obj struct {
@@ -30,21 +29,30 @@ type Obj struct {
 	val int64 // nolint:structcheck // Dummy field to make it non-empty.
 }
 
-func TestPool(t *testing.T) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testPoolSuite{})
+
+type testPoolSuite struct {
+}
+
+func (s *testPoolSuite) TestPool(c *C) {
 	numWorkers := runtime.GOMAXPROCS(0)
-	wg := new(util.WaitGroupWrapper)
+	wg := new(sync.WaitGroup)
+	wg.Add(numWorkers)
 	pool := NewLocalPool(16, func() interface{} {
 		return new(Obj)
 	}, nil)
 	n := 1000
 	for i := 0; i < numWorkers; i++ {
-		wg.Run(func() {
+		go func() {
 			for j := 0; j < n; j++ {
-				obj := pool.Get().(*Obj)
-				obj.val = rand.Int63()
-				pool.Put(obj)
+				GetAndPut(pool)
 			}
-		})
+			wg.Done()
+		}()
 	}
 	wg.Wait()
 	var getHit, getMiss, putHit, putMiss int
@@ -54,6 +62,17 @@ func TestPool(t *testing.T) {
 		putHit += slot.putHit
 		putMiss += slot.putMiss
 	}
-	require.Greater(t, getHit, getMiss)
-	require.Greater(t, putHit, putMiss)
+	c.Assert(getHit, Greater, getMiss)
+	c.Assert(putHit, Greater, putMiss)
+}
+
+func GetAndPut(pool *LocalPool) {
+	objs := make([]interface{}, rand.Intn(4)+1)
+	for i := 0; i < len(objs); i++ {
+		objs[i] = pool.Get()
+	}
+	runtime.Gosched()
+	for _, obj := range objs {
+		pool.Put(obj)
+	}
 }

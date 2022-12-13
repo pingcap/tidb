@@ -8,7 +8,6 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,33 +15,25 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -60,18 +51,14 @@ const (
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
-	flagSemiJoinRewrite
 	flagEliminateAgg
-	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
-	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagPushDownTopN
-	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
@@ -82,68 +69,29 @@ var optRuleList = []logicalOptRule{
 	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
-	&semiJoinRewriter{},
 	&aggregationEliminator{},
-	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
-	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
-	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
-type logicalOptimizeOp struct {
-	// tracer is goring to track optimize steps during rule optimizing
-	tracer *tracing.LogicalOptimizeTracer
-}
-
-func defaultLogicalOptimizeOption() *logicalOptimizeOp {
-	return &logicalOptimizeOp{}
-}
-
-func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
-	op.tracer = tracer
-	return op
-}
-
-func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildPlanTrace())
-}
-
-func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
-}
-
-func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.RecordFinalLogicalPlan(final.buildPlanTrace())
-}
-
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
+	optimize(context.Context, LogicalPlan) (LogicalPlan, error)
 	name() string
 }
 
-// BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+// BuildLogicalPlan used to build logical plan from ast.Node.
+func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, is, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -171,89 +119,14 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 	return nil
 }
 
-// VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
-// with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
-// statements do not need any privileges.
-func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
-	if node == nil {
-		return vs
-	}
-
-	switch stmt := node.(type) {
-	case *ast.CreateTableStmt:
-		privVisitInfo = make([]visitInfo, 0, len(vs))
-		for _, v := range vs {
-			if v.privilege == mysql.CreatePriv {
-				if stmt.TemporaryKeyword == ast.TemporaryLocal {
-					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
-					newVisitInfo := v
-					newVisitInfo.privilege = mysql.CreateTMPTablePriv
-					newVisitInfo.table = ""
-					privVisitInfo = append(privVisitInfo, newVisitInfo)
-				} else {
-					// If both the normal table and temporary table already exist, we need to check the privilege.
-					privVisitInfo = append(privVisitInfo, v)
-				}
-			} else {
-				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
-				if needCheckTmpTablePriv(is, v) {
-					privVisitInfo = append(privVisitInfo, v)
-				}
-			}
-		}
-	case *ast.DropTableStmt:
-		// Dropping a local temporary table doesn't need any privileges.
-		if stmt.IsView {
-			privVisitInfo = vs
-		} else {
-			privVisitInfo = make([]visitInfo, 0, len(vs))
-			if stmt.TemporaryKeyword != ast.TemporaryLocal {
-				for _, v := range vs {
-					if needCheckTmpTablePriv(is, v) {
-						privVisitInfo = append(privVisitInfo, v)
-					}
-				}
-			}
-		}
-	case *ast.GrantStmt, *ast.DropSequenceStmt, *ast.DropPlacementPolicyStmt:
-		// Some statements ignore local temporary tables, so they should check the privileges on normal tables.
-		privVisitInfo = vs
-	default:
-		privVisitInfo = make([]visitInfo, 0, len(vs))
-		for _, v := range vs {
-			if needCheckTmpTablePriv(is, v) {
-				privVisitInfo = append(privVisitInfo, v)
-			}
-		}
-	}
-	return
-}
-
-func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
-	if v.db != "" && v.table != "" {
-		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
-		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
-		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
-			return false
-		}
-	}
-	return true
-}
-
 // CheckTableLock checks the table lock.
 func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}
-
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
-		// if table with lock-write table dropped, we can access other table, such as `rename` operation
-		if err == lock.ErrLockedTableDropped {
-			break
-		}
 		if err != nil {
 			return err
 		}
@@ -276,12 +149,6 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
-	if sctx.GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -297,60 +164,8 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan, err := postOptimize(sctx, physical)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
-		refineCETrace(sctx)
-	}
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
-		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
-	}
+	finalPlan := postOptimize(sctx, physical)
 	return finalPlan, cost, nil
-}
-
-// refineCETrace will adjust the content of CETrace.
-// Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
-func refineCETrace(sctx sessionctx.Context) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
-	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) bool {
-		if i == nil && j != nil {
-			return true
-		}
-		if i == nil || j == nil {
-			return false
-		}
-
-		if i.TableID != j.TableID {
-			return i.TableID < j.TableID
-		}
-		if i.Type != j.Type {
-			return i.Type < j.Type
-		}
-		if i.Expr != j.Expr {
-			return i.Expr < j.Expr
-		}
-		return i.RowCount < j.RowCount
-	})
-	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	for _, rec := range traceRecords {
-		tbl, ok := is.TableByID(rec.TableID)
-		if ok {
-			rec.TableName = tbl.Meta().Name.O
-			continue
-		}
-		tbl, _, _ = is.FindTableByPartitionID(rec.TableID)
-		if tbl != nil {
-			rec.TableName = tbl.Meta().Name.O
-			continue
-		}
-		logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
-			zap.Int64("table id", rec.TableID))
-	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -377,470 +192,13 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
-	// some cases from update optimize will require avoiding projection elimination.
-	// see comments ahead of call of DoOptimize in function of buildUpdate().
-	err := prunePhysicalColumns(sctx, plan)
-	if err != nil {
-		return nil, err
-	}
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
-	handleFineGrainedShuffle(sctx, plan)
-	checkPlanCacheable(sctx, plan)
-	propagateProbeParents(plan, nil)
-	countStarRewrite(plan)
-	return plan, nil
-}
-
-// prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
-// Here add projection instead of pruning columns directly for safety considerations.
-// And projection is cheap here for it saves the network cost and work in memory.
-func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) error {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		for _, child := range plan.Children() {
-			return prunePhysicalColumns(sctx, child)
-		}
-	}
-	return nil
-}
-
-func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
-	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
-	}
-	for _, neCond := range p.NAEqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
-	}
-	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
-	}
-	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
-	}
-	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
-	}
-	lChild := p.children[0]
-	rChild := p.children[1]
-	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
-			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
-			rightCols = append(rightCols, col)
-		}
-	}
-	return leftCols, rightCols
-}
-
-func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
-	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
-	hashCols := make([]*expression.Column, len(sender.HashCols))
-	for i, mppCol := range sender.HashCols {
-		hashCols[i] = mppCol.Col
-	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
-
-	needPrune := false
-	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
-	prunedSchema := sender.Schema().Clone()
-	for i := len(joinUsed) - 1; i >= 0; i-- {
-		usedExprs[i] = sender.Schema().Columns[i]
-		if !joinUsed[i] && !hashUsed[i] {
-			needPrune = true
-			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
-			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
-		}
-	}
-
-	if needPrune && len(sender.children) > 0 {
-		ch := sender.children[0]
-		proj := PhysicalProjection{
-			Exprs: usedExprs,
-		}.Init(sctx, ch.statsInfo(), ch.SelectBlockOffset())
-
-		proj.SetSchema(prunedSchema)
-		proj.SetChildren(ch)
-		sender.children[0] = proj
-
-		// Resolve Indices from bottom to up
-		err = proj.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = sender.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = hashJoin.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
-func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) error {
-	var err error
-	switch x := plan.(type) {
-	case *PhysicalHashJoin:
-		schemaColumns := x.Schema().Clone().Columns
-		leftCols, rightCols := x.extractUsedCols(schemaColumns)
-		matchPattern := false
-		for i := 0; i <= 1; i++ {
-			// Pattern: HashJoin <- ExchangeReceiver <- ExchangeSender
-			matchPattern = false
-			var exchangeSender *PhysicalExchangeSender
-			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
-				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
-			}
-
-			if matchPattern {
-				if i == 0 {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
-				} else {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
-				}
-				if err != nil {
-					return nil
-				}
-			}
-
-			/// recursively travel the physical plan
-			err = prunePhysicalColumnsInternal(sctx, x.children[i])
-			if err != nil {
-				return nil
-			}
-		}
-	default:
-		for _, child := range x.Children() {
-			err = prunePhysicalColumnsInternal(sctx, child)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-/*
-*
-The countStarRewriter is used to rewrite
-
-	count(*) -> count(not null column)
-
-**Only for TiFlash**
-Attention:
-Since count(*) is directly translated into count(1) during grammar parsing,
-the rewritten pattern actually matches count(constant)
-
-Pattern:
-PhysicalAggregation: count(constant)
-
-	    |
-	TableFullScan: TiFlash
-
-Optimize:
-Table
-
-	<k1 bool not null, k2 int null, k3 bigint not null>
-
-Query: select count(*) from table
-ColumnPruningRule: datasource pick row_id
-countStarRewrite: datasource pick k1 instead of row_id
-
-	rewrite count(*) -> count(k1)
-
-Rewritten Query: select count(k1) from table
-*/
-func countStarRewrite(plan PhysicalPlan) {
-	countStarRewriteInternal(plan)
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		countStarRewrite(tableReader.tablePlan)
-	} else {
-		for _, child := range plan.Children() {
-			countStarRewrite(child)
-		}
-	}
-}
-
-func countStarRewriteInternal(plan PhysicalPlan) {
-	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
-	var physicalAgg *basePhysicalAgg
-	switch x := plan.(type) {
-	case *PhysicalHashAgg:
-		physicalAgg = x.getPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
-	default:
-		return
-	}
-	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
-		return
-	}
-	for _, aggFunc := range physicalAgg.AggFuncs {
-		if aggFunc.Name != "count" || len(aggFunc.Args) != 1 || aggFunc.HasDistinct {
-			return
-		}
-		if _, ok := aggFunc.Args[0].(*expression.Constant); !ok {
-			return
-		}
-	}
-	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.schema.Columns) != 1 {
-		return
-	}
-	// rewrite datasource and agg args
-	rewriteTableScanAndAggArgs(physicalTableScan, physicalAgg.AggFuncs)
-}
-
-// rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
-// If there is no not null column in Data Source, the row_id or pk column will be retained
-func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
-	var resultColumnInfo *model.ColumnInfo
-	var resultColumn *expression.Column
-
-	resultColumnInfo = physicalTableScan.Columns[0]
-	resultColumn = physicalTableScan.schema.Columns[0]
-	// prefer not null column from table
-	for _, columnInfo := range physicalTableScan.Table.Columns {
-		if columnInfo.FieldType.IsVarLengthType() {
-			continue
-		}
-		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
-			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
-				resultColumnInfo = columnInfo
-				resultColumn = &expression.Column{
-					UniqueID: physicalTableScan.ctx.GetSessionVars().AllocPlanColumnID(),
-					ID:       resultColumnInfo.ID,
-					RetType:  resultColumnInfo.FieldType.Clone(),
-					OrigName: fmt.Sprintf("%s.%s.%s", physicalTableScan.DBName.L, physicalTableScan.Table.Name.L, resultColumnInfo.Name),
-				}
-			}
-		}
-	}
-	// table scan (row_id) -> (not null column)
-	physicalTableScan.Columns[0] = resultColumnInfo
-	physicalTableScan.schema.Columns[0] = resultColumn
-	// agg arg count(1) -> count(not null column)
-	arg := resultColumn.Clone()
-	for _, aggFunc := range aggFuncs {
-		constExpr, ok := aggFunc.Args[0].(*expression.Constant)
-		if !ok {
-			return
-		}
-		// count(null) shouldn't be rewritten
-		if constExpr.Value.IsNull() {
-			continue
-		}
-		aggFunc.Args[0] = arg
-	}
-}
-
-// Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
-// TiFlashFineGrainedShuffleStreamCount:
-// < 0: fine grained shuffle is disabled.
-// > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
-// == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
-func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
-	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
-	if streamCount < 0 {
-		return
-	}
-	if streamCount == 0 {
-		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
-			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
-		} else {
-			streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
-		}
-	}
-	setupFineGrainedShuffle(uint64(streamCount), plan)
-}
-
-func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(tableReader.tablePlan, &helper, streamCount)
-		}
-	} else {
-		for _, child := range plan.Children() {
-			setupFineGrainedShuffle(streamCount, child)
-		}
-	}
-}
-
-type shuffleTarget uint8
-
-const (
-	unknown shuffleTarget = iota
-	window
-	joinBuild
-)
-
-type fineGrainedShuffleHelper struct {
-	shuffleTarget shuffleTarget
-	plans         []*basePhysicalPlan
-}
-
-func (h *fineGrainedShuffleHelper) clear() {
-	h.shuffleTarget = unknown
-	h.plans = h.plans[:0]
-}
-
-func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
-	h.shuffleTarget = t
-	h.plans = append(h.plans, p)
-}
-
-func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount uint64) {
-	switch x := plan.(type) {
-	case *PhysicalWindow:
-		// Do not clear the plans because window executor will keep the data partition.
-		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
-		// which will break data partition.
-		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalSort:
-		if x.IsPartialSort {
-			// Partial sort will keep the data partition.
-			helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		} else {
-			// Global sort will break the data partition.
-			helper.clear()
-		}
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalSelection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalProjection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalExchangeReceiver:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalHashAgg:
-		// HashAgg is not implemented for now.
-		helper.clear()
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	case *PhysicalHashJoin:
-		child0 := x.children[0]
-		child1 := x.children[1]
-		if x.InnerChildIdx == 0 {
-			// Child0 is build side.
-			child0Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child0, &child0Helper, streamCount)
-
-			// HashJoin is not implemented for now.
-			helper.clear()
-			setupFineGrainedShuffleInternal(child1, helper, streamCount)
-		} else {
-			// Child1 is build side.
-			child1Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child1, &child1Helper, streamCount)
-
-			// HashJoin is not implemented for now.
-			helper.clear()
-			setupFineGrainedShuffleInternal(child0, helper, streamCount)
-		}
-	case *PhysicalExchangeSender:
-		if x.ExchangeType == tipb.ExchangeType_Hash {
-			if helper.shuffleTarget == window {
-				// Set up stream count for all plans based on shuffle target type.
-				// Currently, only enable fine grained shuffle if the shuffle target is window.
-				x.TiFlashFineGrainedShuffleStreamCount = streamCount
-				for _, p := range helper.plans {
-					p.TiFlashFineGrainedShuffleStreamCount = streamCount
-				}
-			}
-		}
-		// exchange sender will break the data partition.
-		helper.clear()
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
-	default:
-		for _, child := range x.Children() {
-			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child, &childHelper, streamCount)
-		}
-	}
-}
-
-// checkPlanCacheable used to check whether a plan can be cached. Plans that
-// meet the following characteristics cannot be cached:
-// 1. Use the TiFlash engine.
-// Todo: make more careful check here.
-func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
-	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
-	}
-}
-
-// propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
-// It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
-// see comments in PhysicalPlan for details.
-func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
-	plan.setProbeParents(probeParents)
-	switch x := plan.(type) {
-	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
-		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
-			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
-
-			// The core logic of this method:
-			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
-			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
-			copy(newParents, probeParents)
-			newParents = append(newParents, plan)
-			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
-		}
-	case *PhysicalTableReader:
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-	case *PhysicalIndexLookUpReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexMergeReader:
-		for _, pchild := range x.partialPlans {
-			propagateProbeParents(pchild, probeParents)
-		}
-		propagateProbeParents(x.tablePlan, probeParents)
-	default:
-		for _, child := range plan.Children() {
-			propagateProbeParents(child, probeParents)
-		}
-	}
-}
-
-// useTiFlash used to check whether the plan use the TiFlash engine.
-func useTiFlash(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		switch x.StoreType {
-		case kv.TiFlash:
-			return true
-		default:
-			return false
-		}
-	default:
-		if len(p.Children()) > 0 {
-			for _, plan := range p.Children() {
-				return useTiFlash(plan)
-			}
-		}
-	}
-	return false
+	return plan
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
@@ -860,8 +218,6 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
 		}
 
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
@@ -875,24 +231,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 	return plan
 }
 
-// LogicalOptimizeTest is just exported for test.
-func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
-	return logicalOptimize(ctx, flag, logic)
-}
-
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
-	opt := defaultLogicalOptimizeOption()
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		opt = opt.withEnableOptimizeTracer(tracer)
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
-	}
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -901,13 +240,11 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
-		logic, err = rule.optimize(ctx, logic, opt)
+		logic, err = rule.optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
-	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 
@@ -916,7 +253,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
+func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPlan, float64, error) {
 	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
@@ -928,39 +265,20 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := defaultPhysicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{
-			PhysicalPlanCostDetails: make(map[int]*tracing.PhysicalPlanCostDetail),
-			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
-		}
-		opt = opt.withEnableOptimizeTracer(tracer)
-		defer func() {
-			if err == nil {
-				tracer.RecordFinalPlanTrace(plan.buildPlanTrace())
-				stmtCtx.OptimizeTracer.Physical = tracer
-			}
-		}()
-	}
-
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter, opt)
+	t, _, err := logic.findBestTask(prop, planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range."))
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	if err = t.plan().ResolveIndices(); err != nil {
-		return nil, 0, err
-	}
-	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
-	return t.plan(), cost, err
+	err = t.plan().ResolveIndices()
+	return t.plan(), t.cost(), err
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.

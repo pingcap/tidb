@@ -1,4 +1,0 @@
-CREATE TABLE c(
-    id INT NOT NULL PRIMARY KEY,
-    k INT NOT NULL
-);
