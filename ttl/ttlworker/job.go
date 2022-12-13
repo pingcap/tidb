@@ -83,7 +83,11 @@ func (job *ttlJob) changeStatus(ctx context.Context, se session.Session, status 
 }
 
 func (job *ttlJob) updateState(ctx context.Context, se session.Session) error {
-	_, err := se.ExecuteSQL(ctx, updateJobState(job.tbl.ID, job.id, job.statistics.String(), job.ownerID))
+	jsonStatistics, err := job.statistics.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	_, err = se.ExecuteSQL(ctx, updateJobState(job.tbl.ID, job.id, string(jsonStatistics), job.ownerID))
 	if err != nil {
 		return errors.Trace(err)
 	}
