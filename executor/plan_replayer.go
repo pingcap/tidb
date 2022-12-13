@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -43,8 +45,15 @@ var _ Executor = &PlanReplayerLoadExec{}
 // PlanReplayerExec represents a plan replayer executor.
 type PlanReplayerExec struct {
 	baseExecutor
-	DumpInfo *PlanReplayerDumpInfo
-	endFlag  bool
+	CaptureInfo *PlanReplayerCaptureInfo
+	DumpInfo    *PlanReplayerDumpInfo
+	endFlag     bool
+}
+
+// PlanReplayerCaptureInfo indicates capture info
+type PlanReplayerCaptureInfo struct {
+	SQLDigest  string
+	PlanDigest string
 }
 
 // PlanReplayerDumpInfo indicates dump info
@@ -62,6 +71,9 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.endFlag {
 		return nil
+	}
+	if e.CaptureInfo != nil {
+		return e.registerCaptureTask(ctx)
 	}
 	err := e.createFile()
 	if err != nil {
@@ -89,6 +101,27 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.ctx, e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("plan replayer capture task already exists")
+	}
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx1, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
+		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
+	if err != nil {
+		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.Error(err))
+		return err
+	}
+	e.endFlag = true
+	return nil
+}
+
 func (e *PlanReplayerExec) createFile() error {
 	var err error
 	e.DumpInfo.File, e.DumpInfo.FileName, err = domain.GeneratePlanReplayerFile()
@@ -101,7 +134,12 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
+	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
 	task := &domain.PlanReplayerDumpTask{
+		StartTS:     startTS,
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
@@ -343,21 +381,23 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	sqls := strings.Split(buf.String(), ";")
-	if len(sqls) != 3 {
-		return errors.New("plan replayer: create schema and tables failed")
-	}
+	originText := buf.String()
+	index1 := strings.Index(originText, ";")
+	createDatabaseSQL := originText[:index1+1]
+	index2 := strings.Index(originText[index1+1:], ";")
+	useDatabaseSQL := originText[index1+1:][:index2+1]
+	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
 	// create database if not exists
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createDatabaseSQL)
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[1])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, useDatabaseSQL)
 	if err != nil {
 		return err
 	}
 	// create table or view
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createTableSQL)
 	if err != nil {
 		return err
 	}

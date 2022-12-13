@@ -19,6 +19,7 @@ go_library(
         "stats.go",
         "telemetry.go",
         "topsql.go",
+        "ttl.go",
     ],
     importpath = "github.com/pingcap/tidb/metrics",
     visibility = ["//visibility:public"],

@@ -62,7 +62,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Limit_20",
 				"IndexReader_21",
 				"Limit_14",
-				"HashAgg_9",
+				"StreamAgg_10",
 				"Projection_8",
 			},
 		},
