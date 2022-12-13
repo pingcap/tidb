@@ -54,6 +54,7 @@ const (
 	LitInfoChgMemSetting    string = "[ddl-ingest] change memory setting for ingest"
 	LitInfoInitMemSetting   string = "[ddl-ingest] initial memory setting for ingest"
 	LitInfoUnsafeImport     string = "[ddl-ingest] do a partial import data into the storage"
+	LitErrCloseWriterErr    string = "[ddl-ingest] close writer error"
 )
 
 func genBackendAllocMemFailedErr(memRoot MemRoot, jobID int64) error {
