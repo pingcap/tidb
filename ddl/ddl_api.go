@@ -1082,7 +1082,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 		for _, v := range colDef.Options {
@@ -4456,7 +4456,7 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool
@@ -6279,6 +6279,11 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if _, ok := expr.(*expression.Column); ok {
 			return nil, dbterror.ErrFunctionalIndexOnField
 		}
+
+		// fix https://github.com/pingcap/tidb/issues/39826, remove tableName and SchemaName in ColumnName
+		newRestoreCtx := format.NewRestoreCtx(restoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName, &sb)
+		sb.Reset()
+		err = idxPart.Expr.Restore(newRestoreCtx)
 
 		colInfo := &model.ColumnInfo{
 			Name:                idxPart.Column.Name,
