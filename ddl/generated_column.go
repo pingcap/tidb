@@ -122,7 +122,7 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(schemaName string, tableName string, colDef *ast.ColumnDef) (err error, generated bool, colsMap map[string]struct{}) {
+func findDependedColumnNames(schemaName string, tableName string, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -130,10 +130,10 @@ func findDependedColumnNames(schemaName string, tableName string, colDef *ast.Co
 			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
 				if depCol.Schema.O != "" && schemaName != "" && depCol.Schema.O != schemaName {
-					return dbterror.ErrWrongDBName.GenWithStackByArgs(depCol.Schema.O), false, nil
+					return false, nil, dbterror.ErrWrongDBName.GenWithStackByArgs(depCol.Schema.O)
 				}
 				if depCol.Table.O != "" && tableName != "" && depCol.Table.O != tableName {
-					return dbterror.ErrWrongTableName.GenWithStackByArgs(depCol.Table.O), false, nil
+					return false, nil, dbterror.ErrWrongTableName.GenWithStackByArgs(depCol.Table.O)
 				}
 				colsMap[depCol.Name.L] = struct{}{}
 			}
@@ -258,7 +258,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName string, tbl 
 		}
 
 		// rule 4.
-		err, _, dependColNames := findDependedColumnNames(schemaName, tbl.Meta().Name.O, newColDef)
+		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name.O, newColDef)
 		if err != nil {
 			return errors.Trace(err)
 		}

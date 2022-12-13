@@ -1142,7 +1142,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, _, dependColNames := findDependedColumnNames("", "", colDef)
+				_, dependColNames, _ := findDependedColumnNames("", "", colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionCollate:
 				if field_types.HasCharset(colDef.Tp) {
@@ -1576,7 +1576,7 @@ func checkGeneratedColumn(ctx sessionctx.Context, schemaName string, tableName s
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
-		err, generated, depCols := findDependedColumnNames(schemaName, tableName, colDef)
+		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3667,7 +3667,7 @@ func CreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo,
 				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
-			err, _, dependColNames := findDependedColumnNames(schema.Name.O, t.Meta().Name.O, specNewColumn)
+			_, dependColNames, err := findDependedColumnNames(schema.Name.O, t.Meta().Name.O, specNewColumn)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -6289,6 +6289,9 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		newRestoreCtx := format.NewRestoreCtx(restoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName, &sb)
 		sb.Reset()
 		err = idxPart.Expr.Restore(newRestoreCtx)
+		if err != nil {
+			return nil, err
+		}
 
 		colInfo := &model.ColumnInfo{
 			Name:                idxPart.Column.Name,
