@@ -306,7 +306,7 @@ func TestResizeWorkers(t *testing.T) {
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 	})
-	newWorkers, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
+	newWorkers, _, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
 		return scanWorker2
 	})
 	assert.NoError(t, err)
@@ -328,6 +328,24 @@ func TestResizeWorkers(t *testing.T) {
 
 	assert.NoError(t, m.resizeScanWorkers(1))
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
+
+	// shrink scan workers after job is run
+	scanWorker1 = newMockScanWorker(t)
+	scanWorker1.Start()
+	scanWorker2 = newMockScanWorker(t)
+	scanWorker2.Start()
+
+	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m.SetScanWorkers4Test([]worker{
+		scanWorker1,
+		scanWorker2,
+	})
+	m.runningJobs = append(m.runningJobs, &ttlJob{tbl: tbl})
+
+	scanWorker2.curTaskResult = &ttlScanTaskExecResult{task: &ttlScanTask{tbl: tbl}}
+	assert.NoError(t, m.resizeScanWorkers(1))
+	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
+	assert.Equal(t, m.runningJobs[0].finishedScanTaskCounter, 1)
 }
 
 func TestLocalJobs(t *testing.T) {
