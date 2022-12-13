@@ -895,6 +895,8 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
 )
 
 // TiDB intentional limits
@@ -1150,6 +1152,7 @@ const (
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
 	DefTiDBTTLJobRunInterval                         = "1h0m0s"
 	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
@@ -1230,6 +1233,7 @@ var (
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 )
 
 var (
