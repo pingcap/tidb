@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/window"
 )
@@ -49,6 +50,7 @@ type Statistic struct {
 	bucketPerSecond uint64
 	event           chan event
 	exit            chan struct{}
+	wg              util.WaitGroupWrapper
 }
 
 // NewStatistic returns a new statistic.
@@ -192,24 +194,31 @@ func (s *Statistic) Static() (DoneFunc, error) {
 	return func() {
 		rt := uint64(math.Ceil(float64(time.Now().UnixNano()-start)) / ms)
 		s.event <- event{rt: rt}
-		s.shortRTT.Store(rt)
-		s.inFlight.Add(-1)
 	}, nil
 }
 
-func (s *Statistic) start() {
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case e := <-s.event:
-			s.mu.Lock()
-			s.longRTT.Add(float64(e.rt))
-			s.rtStat.Add(e.rt)
-			s.taskCntStat.Add(1)
-			s.mu.Unlock()
+func (s *Statistic) Start() {
+	s.wg.Run(func() {
+		for {
+			select {
+			case <-s.exit:
+				return
+			case e := <-s.event:
+				s.mu.Lock()
+				s.longRTT.Add(float64(e.rt))
+				s.rtStat.Add(e.rt)
+				s.taskCntStat.Add(1)
+				s.mu.Unlock()
+				s.shortRTT.Store(e.rt)
+				s.inFlight.Add(-1)
+			}
 		}
-	}
+	})
+}
+
+func (s *Statistic) Stop() {
+	close(s.exit)
+	s.wg.Wait()
 }
 
 type event struct {

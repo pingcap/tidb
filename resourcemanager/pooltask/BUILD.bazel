@@ -4,6 +4,7 @@ go_library(
     name = "pooltask",
     srcs = [
         "stat.go",
+        "stat_collector.go",
         "task.go",
         "task_manager.go",
         "task_manager_iterator.go",
@@ -12,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/resourcemanager/pooltask",
     visibility = ["//visibility:public"],
     deps = [
+        "//util",
         "//util/mathutil",
         "//util/window",
         "@org_golang_x_sys//cpu",

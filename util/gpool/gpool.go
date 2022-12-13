@@ -158,3 +158,13 @@ func (p *BasePool) IsLimit() bool {
 	}
 	return false
 }
+
+// Start is to start the pool.
+func (p *BasePool) Start() {
+	p.statistic.Start()
+}
+
+// Stop is to stop the pool.
+func (p *BasePool) Stop() {
+	p.statistic.Stop()
+}

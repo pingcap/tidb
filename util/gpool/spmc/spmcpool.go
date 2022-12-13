@@ -86,6 +86,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	}
 	// Start a goroutine to clean up expired workers periodically.
 	go result.purgePeriodically()
+	result.Start()
 	return result, nil
 }
 
@@ -95,6 +96,7 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 	defer func() {
 		heartbeat.Stop()
 		p.heartbeatDone.Store(true)
+		p.Stop()
 	}()
 	for {
 		select {
