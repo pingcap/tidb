@@ -66,7 +66,6 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			if f.GetResultCh() != nil {
 				for t := range f.GeTaskCh() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
-					t.Done()
 					f.Done()
 				}
 			}

@@ -251,7 +251,6 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 				}
 				task := pooltask.Task[T]{
 					Task: task,
-					Done: func() {}, // TODO: it will be added when to implement statistics
 				}
 				taskCh <- task
 			}
@@ -293,7 +292,6 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			}
 			t := pooltask.Task[T]{
 				Task: task,
-				Done: func() {}, // TODO: it will be added when to implement statistics
 			}
 			taskCh <- t
 		}
