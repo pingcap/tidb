@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "util",
     srcs = [
-        "mock_gpool.go",
         "shard_pool_map.go",
         "util.go",
     ],
