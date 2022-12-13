@@ -56,7 +56,9 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		}
 	}
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
-		logutil.BgLogger().Warn("failed to gc outdated historical stats", zap.Duration("duration", variable.HistoricalStatsDuration.Load()))
+		logutil.BgLogger().Warn("failed to gc outdated historical stats",
+			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
+			zap.Error(err))
 	}
 	return h.removeDeletedExtendedStats(gcVer)
 }

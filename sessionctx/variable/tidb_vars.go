@@ -1141,7 +1141,7 @@ const (
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
-	DefTiDBHistoricalStatsDuration                   = time.Hour * 24 * 7
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
 )
 
 // Process global variables.
