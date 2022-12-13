@@ -1337,6 +1337,7 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains 
 }
 
 // handle the batched cop response.
+// tasks will be changed, so the input tasks should not be used after calling this function.
 func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
 	if len(tasks) == 0 {
 		return nil, nil
@@ -1414,7 +1415,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		if len(batchResps) != 0 {
 			firstRangeStartKey := task.ranges.At(0).StartKey
 			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
-			logutil.Logger(bo.GetCtx()).Warn("response of batched task missing",
+			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
 				zap.Uint64("id", task.taskID),
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
