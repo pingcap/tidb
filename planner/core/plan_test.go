@@ -139,6 +139,8 @@ func TestNormalizedPlan(t *testing.T) {
 		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
 		require.Equal(t, digest, newDigest)
+		// Test for GenHintsFromFlatPlan won't panic.
+		core.GenHintsFromFlatPlan(flat)
 
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)

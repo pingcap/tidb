@@ -196,7 +196,6 @@ type TxnCtxNoNeedToRestore struct {
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
-	shardRand    *rand.Rand
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
@@ -246,21 +245,22 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (tc *TransactionContext) GetCurrentShard(count int) int64 {
-	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard()
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
 	return tc.currentShard
 }
 
-func (tc *TransactionContext) updateShard() {
+func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
@@ -638,8 +638,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
-	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
-	generalPlanCacheStmts *kvcache.SimpleLRUCache
+	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
+	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1255,17 +1255,17 @@ type SessionVars struct {
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
 	PreparedPlanCacheSize uint64
 
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
 
-	// EnableGeneralPlanCache indicates whether to enable general plan cache.
-	EnableGeneralPlanCache bool
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
-	GeneralPlanCacheSize uint64
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
 
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
@@ -1322,6 +1322,9 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
 
 	// Resource group name
 	ResourceGroupName string
@@ -2035,20 +2038,20 @@ func (k planCacheStmtKey) Hash() []byte {
 	return []byte(k)
 }
 
-// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
-func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
-	if s.generalPlanCacheStmts == nil {
-		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
+// AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
+func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
+	if s.nonPreparedPlanCacheStmts == nil {
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
 	}
-	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
 
-// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
-	if s.generalPlanCacheStmts == nil {
+// GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
+	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
-	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
 }
 
