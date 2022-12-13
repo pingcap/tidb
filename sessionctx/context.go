@@ -52,7 +52,7 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and general plan cache
+// PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
 	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
 	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
@@ -120,8 +120,8 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetPlanCache returns the cache of the physical plan.
-	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
-	GetPlanCache(isGeneralPlanCache bool) PlanCache
+	// isNonPrepared indicates to return the non-prepared plan cache or the prepared plan cache.
+	GetPlanCache(isNonPrepared bool) PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})

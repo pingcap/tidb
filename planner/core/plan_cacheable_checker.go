@@ -175,16 +175,16 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 
-// GeneralPlanCacheable checks whether the input ast is cacheable for general plan cache with empty session context, which is mainly for testing.
-func GeneralPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	return GeneralPlanCacheableWithCtx(nil, node, is)
+// NonPreparedPlanCacheable checks whether the input ast is cacheable for non-prepared plan cache with empty session context, which is mainly for testing.
+func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
+	return NonPreparedPlanCacheableWithCtx(nil, node, is)
 }
 
-// GeneralPlanCacheableWithCtx checks whether the input ast is cacheable for general plan cache.
+// NonPreparedPlanCacheableWithCtx checks whether the input ast is cacheable for non-prepared plan cache.
 // Only support: select {field} from {single-table} where {cond} and {cond} ...
 // {cond}: {col} {op} {val}
 // {op}: >, <, =
-func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
+func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
 	selectStmt, isSelect := node.(*ast.SelectStmt)
 	if !isSelect { // only support select statement now
 		return false
@@ -206,7 +206,7 @@ func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is info
 	}
 	tableRefs := from.TableRefs
 	if tableRefs.Right != nil {
-		// We don't support the join for the general plan cache now.
+		// We don't support the join for the non-prepared plan cache now.
 		return false
 	}
 	switch x := tableRefs.Left.(type) {
@@ -217,7 +217,7 @@ func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is info
 		}
 	}
 
-	checker := generalPlanCacheableChecker{
+	checker := nonPreparedPlanCacheableChecker{
 		sctx:      sctx,
 		cacheable: true,
 		schema:    is,
@@ -226,19 +226,19 @@ func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is info
 	return checker.cacheable
 }
 
-// generalPlanCacheableChecker checks whether a query's plan can be cached for general plan cache.
+// nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
 // NOTE: we can add more rules in the future.
-type generalPlanCacheableChecker struct {
+type nonPreparedPlanCacheableChecker struct {
 	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
 }
 
 // Enter implements Visitor interface.
-func (checker *generalPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.BinaryOperationExpr:
-		if _, found := expression.GeneralPlanCacheableOp[node.Op.String()]; !found {
+		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			return in, true
 		}
@@ -265,7 +265,7 @@ func (checker *generalPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, sk
 }
 
 // Leave implements Visitor interface.
-func (checker *generalPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 

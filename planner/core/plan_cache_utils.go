@@ -161,21 +161,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, ParamCount, nil
 }
 
-func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key, paramTypes)
-	if !exist {
-		return nil, exist
-	}
-	candidate := val.(*PlanCacheValue)
-	return candidate, true
-}
-
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	cache.Put(key, plan, paramTypes)
-}
-
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
