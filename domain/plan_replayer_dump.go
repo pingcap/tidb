@@ -138,7 +138,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 // DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
 /*
- |-sql_meta.txt
+ |-sql_meta.toml
  |-meta.txt
  |-schema
  |	 |-db1.table1.schema.txt
