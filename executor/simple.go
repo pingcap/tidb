@@ -63,12 +63,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const notSpecified = -1
+
 var (
 	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
 	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
 )
-
-const notSpecified = -1
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
@@ -1113,7 +1113,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
@@ -1673,6 +1673,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
+
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1752,7 +1753,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if err != nil {
 			return err
 		}
-
 		if !exists {
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
