@@ -7539,7 +7539,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	rows := [][]interface{}{
 		{"TableReader_9", "root", "data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
-		{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.a)->Column#4"},
+		{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
