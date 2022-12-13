@@ -6286,7 +6286,6 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			return nil, dbterror.ErrFunctionalIndexOnField
 		}
 
-		// fix https://github.com/pingcap/tidb/issues/39826, remove tableName and SchemaName in ColumnName
 		newRestoreCtx := format.NewRestoreCtx(restoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName, &sb)
 		sb.Reset()
 		err = idxPart.Expr.Restore(newRestoreCtx)
