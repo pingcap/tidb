@@ -95,7 +95,7 @@ func selectPushDownConditions(conditions []expression.Expression)([]expression.E
 
 Since we need statistics to calculate the selectivity of the filter conditions, so this algorithm should be executed in postOptimize phase.
 
-Obviously, beacuse the selectivity of the filter conditions is accurate, and the algorithm is not optimal, we can not guarantee that the pushed down filter conditions are the best. In order to patch a workaround for performance degradation, we will add a optimizer hint `/*+ enable_late_materialization=false */` to disable optimizer to push down filter conditions.
+Obviously, beacuse the selectivity of the filter conditions is accurate, and the algorithm is not optimal, we can not guarantee that the pushed down filter conditions are the best. In order to patch a workaround for performance degradation, we will add a variable `/*+ set_var(enable_late_materialization=false) */` to disable optimizer to push down filter conditions.
 
 Therefore, it should work like this:
 
@@ -114,7 +114,7 @@ mysql> EXPLAIN SELECT RegionID, CounterID, TraficSourceID, SearchEngineID, AdvEn
 5 rows in set (0.00 sec)
 
 # disable late materialization
-mysql> EXPLAIN SELECT /*+ enable_late_materialization=false */ RegionID, CounterID, TraficSourceID, SearchEngineID, AdvEngineID FROM hits WHERE URL LIKE "%google%"  AND FUNC(SearchPhrase) > 0;
+mysql> EXPLAIN SELECT /*+ set_var(enable_late_materialization=false) */ RegionID, CounterID, TraficSourceID, SearchEngineID, AdvEngineID FROM hits WHERE URL LIKE "%google%"  AND FUNC(SearchPhrase) > 0;
 +------------------------------+-------------+--------------+---------------+--------------------------------------------------------------------------------------------------------------------+
 | id                           | estRows     | task         | access object | operator info                                                                                                      |
 +------------------------------+-------------+--------------+---------------+--------------------------------------------------------------------------------------------------------------------+
@@ -141,4 +141,4 @@ The Process of execution of tablescan should be changed to:
 ## Impact & Risks
 
 There is no optimal algorithm to determine which filter conditions should be pushed down. We can only try to implement a good solution. So, the performance of some AP queries may degrade.
-We will try to make sure most AP queries would not go with performance degradation. And we will add an optimizer hint to disable late materialization manually.
+We will try to make sure most AP queries would not go with performance degradation. And we can add add a variable `/*+ set_var(enable_late_materialization=false) */` to disable late materialization manually.
