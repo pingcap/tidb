@@ -47,6 +47,8 @@ type Statistic struct {
 	// inFlight is from the task create to the task complete.
 	inFlight        atomic.Int64
 	bucketPerSecond uint64
+	event           chan event
+	exit            chan struct{}
 }
 
 // NewStatistic returns a new statistic.
@@ -61,6 +63,7 @@ func NewStatistic() *Statistic {
 		rtStat:          window.NewRollingCounter[uint64](opts),
 		bucketPerSecond: uint64(time.Second / bucketDuration),
 		longRTT:         mathutil.NewExponentialMovingAverage(0.2, 10),
+		event:           make(chan event, 100),
 	}
 }
 
@@ -86,6 +89,8 @@ func (s *Statistic) MaxInFlight() int64 {
 
 // MinRT is the minimum processing time.
 func (s *Statistic) MinRT() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rc := s.minRtCache.Load()
 	if rc != nil {
 		if s.timespan(rc.time) < 1 {
@@ -120,6 +125,8 @@ func (s *Statistic) MinRT() uint64 {
 
 // MaxPASS is the maximum processing count per unit time.
 func (s *Statistic) MaxPASS() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ps := s.maxPASSCache.Load()
 	if ps != nil {
 		if s.timespan(ps.time) < 1 {
@@ -160,11 +167,15 @@ func (s *Statistic) InFlight() int64 {
 
 // LongRTT returns the longRTT.
 func (s *Statistic) LongRTT() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.longRTT.Get()
 }
 
 // UpdateLongRTT updates the longRTT.
 func (s *Statistic) UpdateLongRTT(f func(float64) float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.longRTT.Update(f)
 }
 
@@ -179,22 +190,28 @@ func (s *Statistic) Static() (DoneFunc, error) {
 	start := time.Now().UnixNano()
 	ms := float64(time.Millisecond)
 	return func() {
-		s.mu.Lock()
 		rt := uint64(math.Ceil(float64(time.Now().UnixNano()-start)) / ms)
-		s.longRTT.Add(float64(rt))
-		long := s.LongRTT()
-		// If the long RTT is substantially larger than the short RTT then reduce the long RTT measurement.
-		// This can happen when latency returns to normal after a prolonged prior of excessive load.  Reducing the
-		// long RTT without waiting for the exponential smoothing helps bring the system back to steady state.
-		if (long / float64(rt)) > 2 {
-			s.longRTT.Update(func(value float64) float64 {
-				return value * 0.9
-			})
-		}
-		s.mu.Unlock()
+		s.event <- event{rt: rt}
 		s.shortRTT.Store(rt)
-		s.rtStat.Add(rt)
 		s.inFlight.Add(-1)
-		s.taskCntStat.Add(1)
 	}, nil
+}
+
+func (s *Statistic) start() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case e := <-s.event:
+			s.mu.Lock()
+			s.longRTT.Add(float64(e.rt))
+			s.rtStat.Add(e.rt)
+			s.taskCntStat.Add(1)
+			s.mu.Unlock()
+		}
+	}
+}
+
+type event struct {
+	rt uint64
 }
