@@ -587,7 +587,16 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+<<<<<<< HEAD
 	reorgInfo, err := getReorgInfo(w.JobContext, d, t, job, tbl, elements)
+=======
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
+>>>>>>> b73eb4bf4c (ddl: fix unexpect fail when create expression index (#39822))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.

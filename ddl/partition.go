@@ -1153,6 +1153,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		dbInfo, err := t.GetDatabase(job.SchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// If table has global indexes, we need reorg to clean up them.
 		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
@@ -1162,7 +1166,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
+<<<<<<< HEAD
 			reorgInfo, err := getReorgInfoFromPartitions(w.JobContext, d, t, job, tbl, physicalTableIDs, elements)
+=======
+			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, dbInfo, tbl, physicalTableIDs, elements)
+>>>>>>> b73eb4bf4c (ddl: fix unexpect fail when create expression index (#39822))
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version

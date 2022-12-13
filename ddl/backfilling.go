@@ -528,8 +528,7 @@ func loadDDLReorgVars(w *worker) error {
 	return ddlutil.LoadDDLReorgVars(w.ddlJobCtx, ctx)
 }
 
-func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
-	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
@@ -579,7 +578,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	sessCtx := newContext(reorgInfo.d.store)
-	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, reorgInfo.dbInfo.Name, t)
 	if err != nil {
 		return errors.Trace(err)
 	}

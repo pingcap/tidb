@@ -397,6 +397,7 @@ type reorgInfo struct {
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+	dbInfo          *model.DBInfo
 	elements        []*meta.Element
 	currElement     *meta.Element
 }
@@ -590,7 +591,12 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
+<<<<<<< HEAD
 func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+=======
+func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo,
+	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
+>>>>>>> b73eb4bf4c (ddl: fix unexpect fail when create expression index (#39822))
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -659,7 +665,73 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
+<<<<<<< HEAD
 		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+=======
+		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
+		if err != nil {
+			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
+			// It's compatible with the older TiDB versions.
+			// We'll try to remove it in the next major TiDB version.
+			if meta.ErrDDLReorgElementNotExist.Equal(err) {
+				job.SnapshotVer = 0
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()), zap.Bool("enableConcurrentDDL", rh.enableConcurrentDDL))
+			}
+			return &info, errors.Trace(err)
+		}
+	}
+	info.Job = job
+	info.d = d
+	info.StartKey = start
+	info.EndKey = end
+	info.PhysicalTableID = pid
+	info.currElement = element
+	info.elements = elements
+	info.mergingTmpIdx = mergingTmpIdx
+	info.dbInfo = dbInfo
+
+	return &info, nil
+}
+
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+	var (
+		element *meta.Element
+		start   kv.Key
+		end     kv.Key
+		pid     int64
+		info    reorgInfo
+	)
+	if job.SnapshotVer == 0 {
+		info.first = true
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
+		ver, err := getValidCurrentVersion(d.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pid = partitionIDs[0]
+		tb := tbl.(table.PartitionedTable).GetPartition(pid)
+		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
+			zap.String("start key", hex.EncodeToString(start)),
+			zap.String("end key", hex.EncodeToString(end)))
+
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
+		// Update info should after data persistent.
+		job.SnapshotVer = ver.Ver
+		element = elements[0]
+	} else {
+		var err error
+		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
+>>>>>>> b73eb4bf4c (ddl: fix unexpect fail when create expression index (#39822))
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -678,6 +750,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
+	info.dbInfo = dbInfo
 
 	return &info, nil
 }
