@@ -11,6 +11,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
@@ -19,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -427,4 +429,248 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRu
 	}
 
 	return s, nil
+}
+
+const SplitThreShold = 128 * 1024 * 1024 // 128 MB
+
+type LogSplitHelper struct {
+	tableSplitter map[int64]*split.SplitHelper
+}
+
+func NewLogSplitHelper() *LogSplitHelper {
+	return &LogSplitHelper{
+		tableSplitter: make(map[int64]*split.SplitHelper),
+	}
+}
+
+const splitFileThreshold = 1024 * 1024 // 1 MB
+
+func checkFile(file *backuppb.DataFileInfo) bool {
+	return !(file.Length < splitFileThreshold || file.IsMeta)
+}
+
+func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
+	if !checkFile(file) {
+		return
+	}
+	splitHelper, exist := helper.tableSplitter[file.TableId]
+	if !exist {
+		splitHelper = split.NewSplitHelper()
+		helper.tableSplitter[file.TableId] = splitHelper
+	}
+
+	splitHelper.Merge(split.Valued{
+		Key: split.Span{
+			StartKey: file.StartKey,
+			EndKey:   file.EndKey,
+		},
+		Value: file.Length,
+	})
+}
+
+type splitFunc = func(context.Context, *RegionSplitter, uint64, *split.RegionInfo, []split.Valued) ([]*split.RegionInfo, error)
+
+func splitRegionByPoints(
+	ctx context.Context,
+	regionSplitter *RegionSplitter,
+	initialLength uint64,
+	region *split.RegionInfo,
+	valueds []split.Valued,
+) ([]*split.RegionInfo, error) {
+	var (
+		splitPoints [][]byte = make([][]byte, 0)
+		length      uint64   = initialLength
+	)
+	for _, v := range valueds {
+		if length > SplitThreShold {
+			splitPoints = append(splitPoints, v.GetStartKey())
+			length = 0
+		}
+		length += v.Value
+	}
+
+	newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
+	if errSplit != nil {
+		log.Warn("failed split regions")
+		startKey := region.Region.StartKey
+		ranges := make([]rtree.Range, 0)
+		for _, point := range splitPoints {
+			ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
+			startKey = point
+		}
+		return nil, regionSplitter.Split(ctx, ranges, nil, false, func([][]byte) {})
+	}
+
+	return newRegions, nil
+}
+
+func getRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
+	endKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey, rule := rewriteEncodedKey(endKey, rewriteRules)
+	if rule == nil {
+		return 0
+	}
+	return tablecodec.DecodeTableID(endKey)
+}
+
+func SplitPoint(
+	ctx context.Context,
+	tableID int64,
+	splitHelper *split.SplitHelper,
+	client split.SplitClient,
+	rewriteRules *RewriteRules,
+	splitF splitFunc,
+) error {
+	// common status
+	var (
+		err       error  = nil
+		vStartKey []byte = nil
+		vEndKey   []byte = nil
+		endKey    []byte = codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(tableID+1))
+
+		scatterRegions []*split.RegionInfo = make([]*split.RegionInfo, 0)
+		regionSplitter *RegionSplitter     = NewRegionSplitter(client)
+	)
+	// region traverse status
+	var (
+		regions     []*split.RegionInfo = nil
+		regionIndex int                 = 0
+	)
+	// region split status
+	var (
+		// range span   +----------------+------+---+-------------+
+		// region span    +------------------------------------+
+		//                +initial length+          +end length+
+		// intialLength is the length of the part of the first range overlapped with the region
+		regionValueds []split.Valued    = nil
+		regionInfo    *split.RegionInfo = nil
+		initialLength uint64            = 0
+	)
+	// range status
+	var (
+		regionOverCount uint64 = 0
+	)
+
+	splitHelper.Traverse(func(v split.Valued) bool {
+		if v.Value == 0 {
+			return true
+		}
+		vStartKey, vEndKey, err = GetRewriteEncodedKeys(v, rewriteRules)
+		if err != nil {
+			return false
+		}
+		// traverse to the first region overlapped with the range
+		for ; regionIndex < len(regions); regionIndex++ {
+			if bytes.Compare(vStartKey, regions[regionIndex].Region.EndKey) < 0 {
+				break
+			}
+		}
+		// cannot find any regions overlapped with the range
+		// need to scan regions again
+		if regionIndex == len(regions) {
+			regions = nil
+		}
+		regionOverCount = 0
+		for {
+			if regionIndex >= len(regions) {
+				var startKey []byte
+				if len(regions) > 0 {
+					startKey = regions[len(regions)-1].Region.EndKey
+				} else {
+					startKey = vStartKey
+				}
+				regions, err = split.ScanRegionsWithRetry(ctx, client, startKey, endKey, 128)
+				if err != nil {
+					return false
+				}
+				regionIndex = 0
+			}
+
+			region := regions[regionIndex]
+			// this region must be overlapped with the range
+			regionOverCount++
+			// 1. over the value key
+			if bytes.Compare(vEndKey, region.Region.EndKey) < 0 {
+				endLength := v.Value / regionOverCount
+				if len(regionValueds) > 0 && regionInfo != region {
+					// add a part of the range as the end part
+					if bytes.Compare(vStartKey, regionInfo.Region.EndKey) < 0 {
+						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, endLength))
+					}
+					// try to split the region
+					newRegions, err := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+					if err != nil {
+						return false
+					}
+					scatterRegions = append(scatterRegions, newRegions...)
+					regionValueds = make([]split.Valued, 0)
+				}
+				if regionOverCount == 1 {
+					regionValueds = append(regionValueds, split.Valued{
+						Key: split.Span{
+							StartKey: vStartKey,
+							EndKey:   vEndKey,
+						},
+						Value: v.Value,
+					})
+				} else {
+					initialLength = endLength
+				}
+				regionInfo = region
+				// try the next range
+				return true
+			}
+
+			// try the next region
+			regionIndex++
+		}
+	})
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(regionValueds) > 0 {
+		// try to split the region
+		newRegions, err := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		scatterRegions = append(scatterRegions, newRegions...)
+	}
+
+	startTime := time.Now()
+	for _, region := range scatterRegions {
+		regionSplitter.waitForScatterRegion(ctx, region)
+		if time.Since(startTime) > split.ScatterWaitUpperInterval {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (helper *LogSplitHelper) Split(
+	ctx context.Context,
+	client split.SplitClient,
+	rewriteRulesMap map[int64]*RewriteRules,
+) error {
+	for tableID, splitter := range helper.tableSplitter {
+		delete(helper.tableSplitter, tableID)
+		rewriteRule, exists := rewriteRulesMap[tableID]
+		if !exists {
+			log.Info("no rule. pass.", zap.Int64("tableID", tableID))
+			continue
+		}
+		newTableID := getRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
+			continue
+		}
+		if err := SplitPoint(ctx, newTableID, splitter, client, rewriteRule, splitRegionByPoints); err != nil {
+			return errors.Trace(err)
+		}
+
+	}
+
+	return nil
 }

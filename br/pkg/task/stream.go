@@ -1177,8 +1177,12 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
+	splitHelper := restore.NewLogSplitHelper()
 	dataFileCount := 0
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, func(f *backuppb.DataFileInfo) {
+		dataFileCount += 1
+		splitHelper.Merge(f)
+	})
 	if err != nil {
 		return err
 	}
@@ -1196,6 +1200,10 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
+	err = client.SplitByLogFiles(ctx, splitHelper, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)

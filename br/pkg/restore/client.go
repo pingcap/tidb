@@ -1094,6 +1094,14 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
+func (rc *Client) SplitByLogFiles(
+	ctx context.Context,
+	splitHelper *LogSplitHelper,
+	rewriteRules map[int64]*RewriteRules,
+) error {
+	return splitHelper.Split(ctx, split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false), rewriteRules)
+}
+
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
