@@ -16,7 +16,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-package ddl_test
+package tiflashtest
 
 import (
 	"context"
@@ -124,10 +124,6 @@ func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime
 			       UPDATE variable_value = '%[1]s'`
 	s = fmt.Sprintf(s, lifeTime)
 	tk.MustExec(s)
-}
-
-func CheckPlacementRule(tiflash *infosync.MockTiFlash, rule placement.TiFlashRule) bool {
-	return tiflash.CheckPlacementRule(rule)
 }
 
 func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
@@ -524,7 +520,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
@@ -536,7 +532,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	defer fCancelPD()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res = CheckPlacementRule(s.tiflash, *expectRule)
+	res = s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 }
 
@@ -580,7 +576,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
@@ -590,7 +586,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = CheckPlacementRule(s.tiflash, *expectRule)
+	res = s.tiflash.CheckPlacementRule(*expectRule)
 	require.False(t, res)
 }
 
@@ -611,7 +607,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.False(t, res)
 }
 
