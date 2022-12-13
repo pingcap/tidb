@@ -51,3 +51,22 @@ func TestJobSize(t *testing.T) {
 	job := model.Job{}
 	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
 }
+
+func TestBackfillMetaCodec(t *testing.T) {
+	jm := &model.JobMeta{
+		SchemaID: 1,
+		TableID:  2,
+		Query:    "alter table t add index idx(a)",
+		Priority: 1,
+	}
+	bm := &model.BackfillMeta{
+		EndInclude: true,
+		ErrMsg:     "has a err",
+		JobMeta:    jm,
+	}
+	bmBytes, err := bm.Encode()
+	require.NoError(t, err)
+	bmRet := &model.BackfillMeta{}
+	bmRet.Decode(bmBytes)
+	require.Equal(t, bm, bmRet)
+}

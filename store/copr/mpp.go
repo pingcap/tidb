@@ -149,7 +149,8 @@ type mppIterator struct {
 
 	cancelFunc context.CancelFunc
 
-	wg sync.WaitGroup
+	wg         sync.WaitGroup
+	wgDoneChan chan struct{}
 
 	closed uint32
 
@@ -188,6 +189,7 @@ func (m *mppIterator) run(ctx context.Context) {
 		}(task)
 	}
 	m.wg.Wait()
+	close(m.wgDoneChan)
 	close(m.respChan)
 }
 
@@ -446,7 +448,7 @@ func (m *mppIterator) Close() error {
 		close(m.finishCh)
 	}
 	m.cancelFunc()
-	m.wg.Wait()
+	<-m.wgDoneChan
 	return nil
 }
 
@@ -533,6 +535,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		store:                      c.store,
 		tasks:                      dispatchReqs,
 		finishCh:                   make(chan struct{}),
+		wgDoneChan:                 make(chan struct{}),
 		cancelFunc:                 cancelFunc,
 		respChan:                   make(chan *mppResponse),
 		startTs:                    startTs,

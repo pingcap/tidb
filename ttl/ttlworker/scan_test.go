@@ -47,8 +47,7 @@ func newMockScanWorker(t *testing.T) *mockScanWorker {
 	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, w.sessPoll)
 	require.Equal(t, workerStatusCreated, w.Status())
 	require.False(t, w.Idle())
-	result, ok := w.PollTaskResult()
-	require.False(t, ok)
+	result := w.PollTaskResult()
 	require.Nil(t, result)
 	return w
 }
@@ -61,8 +60,8 @@ func (w *mockScanWorker) checkWorkerStatus(status workerStatus, idle bool, curTa
 
 func (w *mockScanWorker) checkPollResult(exist bool, err string) {
 	curTask := w.CurrentTask()
-	r, ok := w.PollTaskResult()
-	require.Equal(w.t, exist, ok)
+	r := w.PollTaskResult()
+	require.Equal(w.t, exist, r != nil)
 	if !exist {
 		require.Nil(w.t, r)
 	} else {
@@ -135,6 +134,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
+		ctx:        context.Background(),
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
@@ -181,6 +181,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
+		ctx:        context.Background(),
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
@@ -220,6 +221,7 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 	task := &mockScanTask{
 		t: t,
 		ttlScanTask: &ttlScanTask{
+			ctx:    context.Background(),
 			tbl:    tbl,
 			expire: time.UnixMilli(0),
 			scanRange: cache.ScanRange{
@@ -400,4 +402,14 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+}
+
+func TestTTLStatisticsMarshalJSON(t *testing.T) {
+	statistics := &ttlStatistics{}
+	statistics.TotalRows.Store(1)
+	statistics.ErrorRows.Store(255)
+	statistics.SuccessRows.Store(128)
+	j, err := statistics.MarshalJSON()
+	require.NoError(t, err)
+	require.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255}`, string(j))
 }
