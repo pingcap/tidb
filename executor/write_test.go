@@ -592,6 +592,35 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
+func TestIssue39847(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (id smallint auto_increment primary key);`
+	tk.MustExec(testSQL)
+
+	testSQL = `alter table t add column c1 int default 1;`
+	tk.MustExec(testSQL)
+
+	testSQL = `insert ignore into t(id) values (194626268);`
+	tk.MustExec(testSQL)
+	require.Empty(t, tk.Session().LastMessage())
+
+	r := tk.MustQuery("select * from t;")
+	rowStr := fmt.Sprintf("%v %v", "32767", "1")
+	r.Check(testkit.Rows(rowStr))
+
+	tk.MustExec("insert ignore into t(id) values ('*') on duplicate key update c1 = 2;")
+	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
+	require.Empty(t, tk.Session().LastMessage())
+
+	r = tk.MustQuery("select * from t;")
+	rowStr = fmt.Sprintf("%v %v", "32767", "2")
+	r.Check(testkit.Rows(rowStr))
+}
+
 func TestInsertOnDup(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
