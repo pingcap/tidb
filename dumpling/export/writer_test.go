@@ -5,7 +5,6 @@ package export
 import (
 	"context"
 	"database/sql/driver"
-	"io/ioutil"
 	"os"
 	"path"
 	"sync"
@@ -31,7 +30,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
 }
@@ -50,7 +49,7 @@ func TestWritePolicyMeta(t *testing.T) {
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
 }
@@ -68,7 +67,7 @@ func TestWriteTableMeta(t *testing.T) {
 	p := path.Join(dir, "test.t-schema.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 }
@@ -89,14 +88,14 @@ func TestWriteViewMeta(t *testing.T) {
 	p := path.Join(dir, "test.v-schema.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, specCmt+createTableSQL, string(bytes))
 
 	p = path.Join(dir, "test.v-schema-view.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err = ioutil.ReadFile(p)
+	bytes, err = os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, specCmt+createViewSQL, string(bytes))
 }
@@ -126,7 +125,7 @@ func TestWriteTableData(t *testing.T) {
 	p := path.Join(dir, "test.employee.000000000.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 
 	expected := "/*!40101 SET NAMES binary*/;\n" +
@@ -182,7 +181,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		p = path.Join(dir, p)
 		_, err := os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -232,7 +231,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 		p = path.Join(dir, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -281,7 +280,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err1 := ioutil.ReadFile(p)
+		bytes, err1 := os.ReadFile(p)
 		require.NoError(t, err1)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -297,7 +296,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	require.NoError(t, err)
 	err = os.RemoveAll(config.OutputDirPath)
 	require.NoError(t, err)
-	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
+	config.OutputDirPath, err = os.MkdirTemp("", "dumpling")
 
 	writer = createTestWriter(config, t)
 
@@ -322,7 +321,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -331,6 +330,8 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 var mu sync.Mutex
 
 func createTestWriter(conf *Config, t *testing.T) *Writer {
+	t.Helper()
+
 	mu.Lock()
 	extStore, err := conf.createExternalStorage(context.Background())
 	mu.Unlock()
