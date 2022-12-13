@@ -17,7 +17,7 @@ package core_test
 import (
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -521,7 +521,7 @@ func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set global tidb_slow_log_threshold = 1;")
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 100;")
-	slowLogBytes, err := ioutil.ReadAll(f)
+	slowLogBytes, err := io.ReadAll(f)
 	require.NoError(t, err)
 	require.NotContains(t, string(slowLogBytes), `tidb_decode_binary_plan('')`)
 }

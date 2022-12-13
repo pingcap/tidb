@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -53,6 +54,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if err := h.ClearOutdatedHistoryStats(); err != nil {
+		logutil.BgLogger().Warn("failed to gc outdated historical stats",
+			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
+			zap.Error(err))
 	}
 	return h.removeDeletedExtendedStats(gcVer)
 }
@@ -139,6 +145,22 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	return nil
+}
+
+// ClearOutdatedHistoryStats clear outdated historical stats
+func (h *Handle) ClearOutdatedHistoryStats() error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	sql := "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
+	_, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	if err != nil {
+		return err
+	}
+	sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
+	_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	return err
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
