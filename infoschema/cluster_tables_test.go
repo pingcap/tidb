@@ -1025,8 +1025,6 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 
 	sql := "select * from t"
 	tk.MustExec(sql)
-	rows := tk.MustQuery("explain select * from t").Rows()
-	fmt.Println(rows)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
 }
