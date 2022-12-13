@@ -19,6 +19,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//ttl/cache",
+        "//ttl/metrics",
         "//ttl/session",
         "//ttl/sqlbuilder",
         "//types",
