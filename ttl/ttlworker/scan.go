@@ -309,4 +309,6 @@ type scanWorker interface {
 
 	Idle() bool
 	Schedule(*ttlScanTask) error
+	PollTaskResult() *ttlScanTaskExecResult
+	CurrentTask() *ttlScanTask
 }
