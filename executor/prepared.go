@@ -145,7 +145,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.ParamCount = paramCnt
 	e.Stmt = stmt
 	if e.IsGeneralStmt {
-		vars.AddGeneralPlanCacheStmt(e.sqlText, stmt)
+		vars.AddNonPreparedPlanCacheStmt(e.sqlText, stmt)
 		return nil
 	}
 	return vars.AddPreparedStmt(e.ID, stmt)
