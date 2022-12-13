@@ -87,6 +87,7 @@ func checkFileName(s string) bool {
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"sql_meta.toml",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
