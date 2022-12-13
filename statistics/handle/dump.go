@@ -19,7 +19,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -501,7 +501,7 @@ func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 	if err := gzipReader.Close(); err != nil {
 		return nil, err
 	}
-	jsonStr, err := ioutil.ReadAll(gzipReader)
+	jsonStr, err := io.ReadAll(gzipReader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
