@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -748,14 +749,10 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 		// Auto ID is out of range, the truncated ID is possible to duplicate with an existing ID.
 		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
 		sc := ctx.GetSessionVars().StmtCtx
-		if sc.IgnoreTruncate {
-			return nil
+		var insertPlan *core.Insert = sc.GetPlan().(*core.Insert)
+		if insertPlan.IsReplace {
+			return autoid.ErrAutoincReadFailed
 		}
-		if sc.TruncateAsWarning {
-			sc.AppendWarning(autoid.ErrAutoincReadFailed)
-			return nil
-		}
-		return autoid.ErrAutoincReadFailed
 	}
 	return err
 }
