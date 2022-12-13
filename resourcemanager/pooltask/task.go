@@ -16,7 +16,6 @@ package pooltask
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 // Context is a interface that can be used to create a context.
@@ -32,17 +31,6 @@ func (NilContext) GetContext() any {
 	return nil
 }
 
-const (
-	// PendingTask is a task waiting to start
-	PendingTask int32 = iota
-	// RunningTask is a task running
-	RunningTask
-	// StopTask is a stop task
-	StopTask
-	// PausingTask is a task running
-	PausingTask
-)
-
 // TaskBox is a box which contains all info about pooltask.
 type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
@@ -51,10 +39,9 @@ type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task        chan Task[T]
 	resultCh    chan U
 	taskID      uint64
-	status      atomic.Int32 // task manager is able to make this task stop, wait or running
 }
 
-// NewTaskBox is to create a pooltask box.
+// NewTaskBox is to create a task box for pool.
 func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
 	return TaskBox[T, U, C, CT, TF]{
 		constArgs:   constArgs,
@@ -84,16 +71,6 @@ func (t *TaskBox[T, U, C, CT, TF]) GetResultCh() chan U {
 // GetContextFunc is to get context func.
 func (t *TaskBox[T, U, C, CT, TF]) GetContextFunc() TF {
 	return t.contextFunc
-}
-
-// GetStatus is to get the status of pooltask.
-func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
-	return t.status.Load()
-}
-
-// SetStatus is to set the status of pooltask.
-func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
-	t.status.Store(s)
 }
 
 // Done is to set the pooltask status to complete.
