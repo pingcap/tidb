@@ -16,11 +16,14 @@ package variable
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -748,10 +751,10 @@ const (
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
-	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
-	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
-	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
-	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -841,6 +844,8 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
+	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -876,10 +881,22 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
+	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
+	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
+	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowEndTime = "tidb_ttl_job_schedule_window_end_time"
+	// TiDBTTLScanWorkerCount indicates the count of the scan workers in each TiDB node
+	TiDBTTLScanWorkerCount = "tidb_ttl_scan_worker_count"
+	// TiDBTTLDeleteWorkerCount indicates the count of the delete workers in each TiDB node
+	TiDBTTLDeleteWorkerCount = "tidb_ttl_delete_worker_count"
 	// PasswordReuseHistory limit a few passwords to reuse.
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
 )
 
 // TiDB intentional limits
@@ -1078,6 +1095,7 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
+	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1096,8 +1114,8 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableGeneralPlanCache                  = false
-	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1106,7 +1124,7 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = false
+	DefTiDBForeignKeyChecks                      = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1127,13 +1145,19 @@ const (
 	DefTiDBTTLScanBatchSize                          = 500
 	DefTiDBTTLScanBatchMaxSize                       = 10240
 	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 500
+	DefTiDBTTLDeleteBatchSize                        = 100
 	DefTiDBTTLDeleteBatchMaxSize                     = 10240
 	DefTiDBTTLDeleteBatchMinSize                     = 1
 	DefTiDBTTLDeleteRateLimit                        = 0
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
+	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
 )
 
 // Process global variables.
@@ -1176,6 +1200,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1185,7 +1210,7 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
@@ -1200,9 +1225,15 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
+	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
+	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 )
 
 var (
@@ -1234,4 +1265,22 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
+}
+
+func mustParseDuration(str string) time.Duration {
+	duration, err := time.ParseDuration(str)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not a duration", str))
+	}
+
+	return duration
+}
+
+func mustParseTime(layout string, str string) time.Time {
+	time, err := time.ParseInLocation(layout, str, time.UTC)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not in %s duration format", str, layout))
+	}
+
+	return time
 }

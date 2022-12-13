@@ -1040,11 +1040,38 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
+func fetchRecordFromClusterStmtSummary(sctx sessionctx.Context, planDigest string) ([]chunk.Row, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	exec, _ := sctx.(sqlexec.SQLExecutor)
+	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
+	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
+		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
+		"order by length(plan_digest) desc"
+	rs, err := exec.ExecuteInternal(ctx, sql)
+	if rs == nil {
+		return nil, errors.New("can't find any records for '" + planDigest + "' in statement summary")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
 	if v.PlanDigest == "" {
 		return nil, errors.New("plan digest is empty")
 	}
-	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
+	rows, err := fetchRecordFromClusterStmtSummary(b.ctx, v.PlanDigest)
+	if err != nil {
+		return nil, err
+	}
+	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
 	if bindableStmt == nil {
 		return nil, errors.New("can't find any plans for '" + v.PlanDigest + "'")
 	}
@@ -1054,7 +1081,9 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-
+	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
+		return nil, err
+	}
 	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
@@ -1166,7 +1195,8 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath *util.AccessPath
+	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	prefixMatches := 0
 	for _, path := range paths {
 		if path.StoreType == kv.TiFlash {
 			continue
@@ -1178,9 +1208,18 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 		if path.Index.Name.L == idxName.L {
 			return path
 		}
+		if strings.HasPrefix(path.Index.Name.L, idxName.L) {
+			indexPrefixPath = path
+			prefixMatches++
+		}
 	}
 	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 		return primaryIdxPath
+	}
+
+	// Return only unique prefix matches
+	if prefixMatches == 1 {
+		return indexPrefixPath
 	}
 	return nil
 }
@@ -1390,7 +1429,10 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
+	var outputComputeNodeErrMsg bool
+	noTiFlashComputeNode := config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ctx)
 	for i := len(paths) - 1; i >= 0; i-- {
+		// availableEngineStr is for warning message.
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
 			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
@@ -1398,7 +1440,15 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 			}
 			availableEngineStr += paths[i].StoreType.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
+		_, exists := isolationReadEngines[paths[i].StoreType]
+		// Prune this path if:
+		// 1. path.StoreType doesn't exists in isolationReadEngines or
+		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
+		shouldPruneTiFlashCompute := noTiFlashComputeNode && exists && paths[i].StoreType == kv.TiFlash
+		if shouldPruneTiFlashCompute {
+			outputComputeNodeErrMsg = true
+		}
+		if (!exists && paths[i].StoreType != kv.TiDB) || shouldPruneTiFlashCompute {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -1407,7 +1457,11 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			if outputComputeNodeErrMsg {
+				helpMsg = ". Please check tiflash_compute node is available"
+			} else {
+				helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			}
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
