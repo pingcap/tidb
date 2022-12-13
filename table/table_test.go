@@ -41,3 +41,33 @@ func TestErrorCode(t *testing.T) {
 	require.Equal(t, mysql.ErrNoPartitionForGivenValue, int(terror.ToSQLError(ErrNoPartitionForGivenValue).Code))
 	require.Equal(t, mysql.ErrLockOrActiveTransaction, int(terror.ToSQLError(ErrLockOrActiveTransaction).Code))
 }
+
+func TestType(t *testing.T) {
+	typeTest := Type(NormalTable)
+	require.True(t, typeTest.IsNormalTable())
+	typeTest = VirtualTable
+	require.True(t, typeTest.IsVirtualTable())
+	typeTest = ClusterTable
+	require.True(t, typeTest.IsClusterTable())
+}
+
+func TestAddRecordOpts(t *testing.T) {
+	opt := AddRecordOpt{
+		CreateIdxOpt:  CreateIdxOpt{Untouched: true},
+		ReserveAutoID: 0,
+		IsUpdate:      false,
+	}
+	hint := WithReserveAutoIDHint(42)
+	hint.ApplyOn(&opt)
+	require.Equal(t, 42, opt.ReserveAutoID)
+
+	update := isUpdate{}
+	update.ApplyOn(&opt)
+	require.True(t, opt.IsUpdate)
+
+	createIdxOptFunc := func(in *CreateIdxOpt) {
+		in.Untouched = false
+	}
+	(CreateIdxOptFunc).ApplyOn(createIdxOptFunc, &opt)
+	require.False(t, opt.CreateIdxOpt.Untouched)
+}
