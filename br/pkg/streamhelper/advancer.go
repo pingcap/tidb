@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -285,16 +286,27 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
-		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
+		c.lastCheckpoint = e.Info.StartTs
+		p, err := c.env.BlockGCUntil(ctx, c.task.StartTs)
+		if err != nil {
+			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
+		}
+		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.taskRange = nil
 		c.checkpoints = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
-		c.subscriber.Clear()
+		// Do the null check because some of test cases won't equip the advancer with subscriber.
+		if c.subscriber != nil {
+			c.subscriber.Clear()
+		}
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
+		}
+		if _, err := c.env.BlockGCUntil(ctx, 0); err != nil {
+			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventErr:
@@ -323,9 +335,6 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 		zap.Uint64("checkpoint", cp),
 		zap.String("task", c.task.Name),
 		zap.Stringer("take", time.Since(start)))
-	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, cp); err != nil {
-		return errors.Annotate(err, "failed to upload global checkpoint")
-	}
 	c.lastCheckpoint = cp
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
@@ -375,16 +384,19 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
-func (c *CheckpointAdvancer) tick(ctx context.Context) error {
-	c.taskMu.Lock()
-	defer c.taskMu.Unlock()
-	if c.task == nil {
-		log.Debug("No tasks yet, skipping advancing.")
-		return nil
+func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
+	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint); err != nil {
+		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
-	defer cancel()
+	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint-1)
+	if err != nil {
+		return errors.Annotate(err, "failed to update service GC safepoint")
+	}
+	log.Info("[log backup advancer] Update service GC safe point", zap.Uint64("updated-to", p), zap.Uint64("checkpoint", c.lastCheckpoint))
+	return nil
+}
 
+func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
@@ -397,6 +409,32 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	return nil
+}
+
+func (c *CheckpointAdvancer) tick(ctx context.Context) error {
+	c.taskMu.Lock()
+	defer c.taskMu.Unlock()
+	if c.task == nil {
+		log.Debug("No tasks yet, skipping advancing.")
+		return nil
+	}
+
+	var errs error
+
+	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
+	defer cancel()
+	err := c.optionalTick(cx)
+	if err != nil {
+		log.Warn("[log backup advancer] option tick failed.", logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	err = c.importantTick(ctx)
+	if err != nil {
+		log.Warn("[log backup advancer] important tick failed.", logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	return errs
 }
