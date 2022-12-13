@@ -1049,7 +1049,7 @@ func fetchRecordFromClusterStmtSummary(sctx sessionctx.Context, planDigest strin
 		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
 	if rs == nil {
-		return nil, errors.New("can't find any record for '" + planDigest + "' in statement summary")
+		return nil, errors.New("can't find any records for '" + planDigest + "' in statement summary")
 	}
 	if err != nil {
 		return nil, err
