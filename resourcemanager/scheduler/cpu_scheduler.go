@@ -19,15 +19,16 @@ import (
 	"github.com/pingcap/tidb/util/cpu"
 )
 
-// CpuScheduler is a cpu scheduler
-type CpuScheduler struct{}
+// CPUScheduler is a cpu scheduler
+type CPUScheduler struct{}
 
 // NewCpuScheduler is to create a new cpu scheduler
-func NewCpuScheduler() *CpuScheduler {
-	return &CpuScheduler{}
+func NewCpuScheduler() *CPUScheduler {
+	return &CPUScheduler{}
 }
 
-func (b *CpuScheduler) Tune(c util.Component, p util.GorotinuePool) Command {
+// Tune is to tune the goroutine pool
+func (b *CPUScheduler) Tune(c util.Component, p util.GorotinuePool) Command {
 	if cpu.GetCPUUsage() < 0.5 {
 		return Downclock
 	}
