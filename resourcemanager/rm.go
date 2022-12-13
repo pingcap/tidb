@@ -38,7 +38,7 @@ type ResourceManager struct {
 // NewResourceManger is to create a new resource manager
 func NewResourceManger() *ResourceManager {
 	sc := make([]scheduler.Scheduler, 0, 1)
-	sc = append(sc, scheduler.NewGradient2Scheduler())
+	sc = append(sc, scheduler.NewCpuScheduler())
 	return &ResourceManager{
 		poolMap: util.NewShardPoolMap(),
 

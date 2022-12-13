@@ -1,30 +1,16 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "scheduler",
     srcs = [
-        "gradient2_scheduler.go",
+        "cpu_scheduler.go",
         "scheduler.go",
     ],
     importpath = "github.com/pingcap/tidb/resourcemanager/scheduler",
     visibility = ["//visibility:public"],
     deps = [
         "//resourcemanager/util",
-        "//util/mathutil",
+        "//util/cpu",
         "@org_uber_go_atomic//:atomic",
-    ],
-)
-
-go_test(
-    name = "scheduler_test",
-    srcs = [
-        "gradient2_scheduler_test.go",
-        "mock_rms_test.go",
-    ],
-    embed = [":scheduler"],
-    flaky = True,
-    deps = [
-        "//resourcemanager/util",
-        "@com_github_stretchr_testify//require",
     ],
 )
