@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -186,9 +187,11 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	p.prepareStmtTS()
+	start := time.Now()
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
 	}
+	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
