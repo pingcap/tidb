@@ -1440,8 +1440,13 @@ func (s *SessionVars) IsMPPEnforced() bool {
 // TODO: Confirm whether this function will be inlined and
 // omit the overhead of string construction when calling with false condition.
 func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
-	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+	if !s.IsMPPEnforced() {
+		return
+	}
+	if s.StmtCtx.InExplainStmt {
 		s.StmtCtx.AppendWarning(errors.New(warning))
+	} else {
+		s.StmtCtx.AppendExtraWarning(errors.New(warning))
 	}
 }
 
