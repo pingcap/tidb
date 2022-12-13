@@ -450,8 +450,8 @@ func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache) *ba
 }
 
 func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
-	task.taskID = b.taskID
 	b.taskID++
+	task.taskID = b.taskID
 	handled := false
 	defer func() {
 		if !handled && err == nil {
@@ -1351,6 +1351,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		return nil, nil
 	}
 	var remainTasks []*copTask
+	appendRemainTasks := func(tasks ...*copTask) {
+		if remainTasks == nil {
+			// allocate size fo remain length
+			remainTasks = make([]*copTask, 0, len(tasks))
+		}
+		remainTasks = append(remainTasks, tasks...)
+	}
 	for _, batchResp := range batchResps {
 		taskID := batchResp.GetTaskId()
 		batchedTask, ok := tasks[taskID]
@@ -1374,7 +1381,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			if err != nil {
 				return nil, err
 			}
-			remainTasks = append(remainTasks, remains...)
+			appendRemainTasks(remains...)
 			continue
 		}
 		//TODO: handle locks in batch
@@ -1382,7 +1389,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
-			remainTasks = append(remainTasks, task)
+			appendRemainTasks(task)
 			continue
 		}
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
@@ -1412,7 +1419,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 	}
 	for _, t := range tasks {
 		logutil.Logger(bo.GetCtx()).Warn("response of batched task missing", zap.Uint64("id", t.task.taskID))
-		remainTasks = append(remainTasks, t.task)
+		appendRemainTasks(t.task)
 	}
 	return remainTasks, nil
 }
