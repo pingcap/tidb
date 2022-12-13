@@ -10,6 +10,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	tidbconfig "github.com/pingcap/tidb/config"
+
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
@@ -64,13 +66,18 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
 	keepaliveCfg.PermitWithoutStream = true
+	tc := tidbconfig.GetGlobalConfig()
+	tc.SkipRegisterToDashboard = true
+	tc.EnableGlobalKill = false
+	tidbconfig.StoreGlobalConfig(tc)
+
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 
 	err = client.Init(g, mgr.GetStorage())
