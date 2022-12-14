@@ -702,6 +702,54 @@ func TestScanQueryGenerator(t *testing.T) {
 				},
 			},
 		},
+		{
+			tbl:        t2,
+			expire:     time.UnixMilli(0).In(time.UTC),
+			rangeStart: d(1),
+			rangeEnd:   d(100),
+			path: [][]interface{}{
+				{
+					nil, 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` >= 1 AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x1a}), 5), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x20}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "y", []byte{0x0a}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+			},
+		},
+		{
+			tbl:        t2,
+			expire:     time.UnixMilli(0).In(time.UTC),
+			rangeStart: d(1, "x"),
+			rangeEnd:   d(100, "z"),
+			path: [][]interface{}{
+				{
+					nil, 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x1a}), 5), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x20}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "y", []byte{0x0a}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+			},
+		},
 	}
 
 	for i, c := range cases {
