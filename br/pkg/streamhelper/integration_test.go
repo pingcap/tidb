@@ -352,10 +352,12 @@ func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 		req.Len(resp.Kvs, 1)
 		return binary.BigEndian.Uint64(resp.Kvs[0].Value)
 	}
-	metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5)
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
 	req.EqualValues(5, getCheckpoint())
-	metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18)
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
 	req.EqualValues(18, getCheckpoint())
-	metaCli.ClearV3GlobalCheckpointForTask(ctx, task)
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
+	req.EqualValues(18, getCheckpoint())
+	req.NoError(metaCli.ClearV3GlobalCheckpointForTask(ctx, task))
 	req.EqualValues(0, getCheckpoint())
 }
