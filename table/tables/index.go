@@ -280,6 +280,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
+	if keyIsTempIdxKey {
+		value = tablecodec.DecodeTempIndexOriginValue(value)
+	}
 	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 	if err != nil {
 		return nil, err
@@ -407,6 +410,9 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 	// For distinct index, the value of key is handle.
 	if distinct {
 		var handle kv.Handle
+		if keyVer != TempIndexKeyTypeNone {
+			value = tablecodec.DecodeTempIndexOriginValue(value)
+		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 		if err != nil {
 			return false, nil, err
