@@ -25,6 +25,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/hack",
         "//util/logutil",
         "//util/sqlexec",
         "//util/timeutil",
