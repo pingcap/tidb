@@ -588,12 +588,12 @@ INSERT INTO ...;
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
 	tk := testkit.NewTestKit(t, store)
 
-	//check schema
+	// check schema
 	tk.MustQuery(`select COUNT(*) from information_schema.columns
 WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
 		Check(testkit.Rows("1"))
 
-	//check select
+	// check select
 	tk.MustQuery(`select ` + columnName +
 		` from information_schema.slow_query`).Check(testkit.Rows("1"))
 }
@@ -1058,7 +1058,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
+			"collation , source , `sql_digest` , `plan_digest` from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
@@ -1393,16 +1393,19 @@ func TestTiDBTrx(t *testing.T) {
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	sm := &testkit.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
+	memDBTracker.Consume(19)
+	tk.Session().GetSessionVars().MemDBFootprint = memDBTracker
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		EntriesSize:      19,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",
 	}
+
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
 	sm.TxnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
@@ -1419,7 +1422,7 @@ func TestTiDBTrx(t *testing.T) {
 
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
 		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
@@ -1657,4 +1660,34 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Equal(t, row[9], "")                                                                                                 // USER
 	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
 	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+}
+
+func TestAddFieldsForBinding(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("select /*+ ignore_index(t, a)*/ * from t where a = 1")
+	planDigest := "4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb"
+	rows := tk.MustQuery(fmt.Sprintf("select stmt_type, prepared, sample_user, schema_name, query_sample_text, charset, collation, plan_hint, digest_text "+
+		"from information_schema.cluster_statements_summary where plan_digest = '%s'", planDigest)).Rows()
+
+	require.Equal(t, rows[0][0], "Select")
+	require.Equal(t, rows[0][1], "0")
+	require.Equal(t, rows[0][2], "root")
+	require.Equal(t, rows[0][3], "test")
+	require.Equal(t, rows[0][4], "select /*+ ignore_index(t, a)*/ * from t where a = 1")
+	require.Equal(t, rows[0][5], "utf8mb4")
+	require.Equal(t, rows[0][6], "utf8mb4_bin")
+	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
+	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
 }

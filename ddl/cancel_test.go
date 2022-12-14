@@ -149,8 +149,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t modify column c11 char(10)", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t modify column c11 char(10)", false, model.StatePublic, false, true, nil},
 	// Add foreign key.
-	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
-	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int key, c2 int, c3 int, c11 tinyint);"}},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, []string{"insert into t_ref (c1) select c1 from t;"}},
 	// Drop foreign key.
 	{"alter table t drop foreign key fk", true, model.StatePublic, true, false, nil},
 	{"alter table t drop foreign key fk", false, model.StateNone, false, true, nil},
@@ -232,8 +232,6 @@ func TestCancel(t *testing.T) {
 
 	// Prepare schema.
 	tk.MustExec("use test")
-	// TODO: Will check why tidb_ddl_enable_fast_reorg could not default be on in another PR.
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("drop table if exists t_partition;")
 	tk.MustExec(`create table t_partition (
 		c1 int, c2 int, c3 int

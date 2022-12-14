@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -22,6 +23,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -144,8 +150,8 @@ func TestCostModelShowFormula(t *testing.T) {
 		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
 	}
 	require.Equal(t, actual, [][]interface{}{
-		{"TableReader_7", "((Selection_6) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15"},
-		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (TableFullScan_5)"},
+		{"TableReader_7", "(((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
+		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))"},
 		{"  └─TableFullScan_5", "scan(3*logrowsize(32)*tikv_scan_factor(40.7))"},
 	})
 }
@@ -240,5 +246,37 @@ func TestCostModelTraceVer2(t *testing.T) {
 			}
 		}
 		require.True(t, ok)
+	}
+}
+
+func BenchmarkGetPlanCost(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+
+	p := parser.New()
+	sql := "select sum(t1.b), t1.a from t t1, t t2 where t1.a>0 and t2.a>10 and t1.b=t2.b group by t1.a order by t1.a limit 5"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	sctx := tk.Session()
+	sctx.GetSessionVars().CostModelVersion = 2
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	plan, _, err := planner.Optimize(context.TODO(), sctx, stmt, is)
+	if err != nil {
+		b.Fatal(err)
+	}
+	phyPlan := plan.(core.PhysicalPlan)
+	_, err = core.GetPlanCost(phyPlan, property.RootTaskType, core.NewDefaultPlanCostOption().WithCostFlag(core.CostFlagRecalculate))
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, core.NewDefaultPlanCostOption().WithCostFlag(core.CostFlagRecalculate))
 	}
 }

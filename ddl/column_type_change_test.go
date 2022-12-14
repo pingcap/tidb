@@ -1812,8 +1812,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	tk.MustExec("use test")
 
 	prepare := func() {
-		tk.MustExec("drop table if exists users")
-		tk.MustExec("drop table if exists orders")
+		tk.MustExec("drop table if exists users, orders")
 		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
 		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
 	}

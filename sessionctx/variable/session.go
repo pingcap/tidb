@@ -196,7 +196,6 @@ type TxnCtxNoNeedToRestore struct {
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
-	shardRand    *rand.Rand
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
@@ -246,21 +245,22 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (tc *TransactionContext) GetCurrentShard(count int) int64 {
-	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard()
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
 	return tc.currentShard
 }
 
-func (tc *TransactionContext) updateShard() {
+func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
@@ -638,8 +638,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
-	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
-	generalPlanCacheStmts *kvcache.SimpleLRUCache
+	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
+	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -741,6 +741,11 @@ type SessionVars struct {
 
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
+
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
 
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
@@ -1041,6 +1046,10 @@ type SessionVars struct {
 
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
+
+	// CDCWriteSource indicates the following data is written by TiCDC if it is not 0.
+	CDCWriteSource uint64
+
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
 
@@ -1246,17 +1255,17 @@ type SessionVars struct {
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
 	PreparedPlanCacheSize uint64
 
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
 
-	// EnableGeneralPlanCache indicates whether to enable general plan cache.
-	EnableGeneralPlanCache bool
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
-	GeneralPlanCacheSize uint64
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
 
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
@@ -1290,8 +1299,10 @@ type SessionVars struct {
 	HookContext
 
 	// MemTracker indicates the memory tracker of current session.
-	MemTracker  *memory.Tracker
-	DiskTracker *memory.Tracker
+	MemTracker *memory.Tracker
+	// MemDBDBFootprint tracks the memory footprint of memdb, and is attached to `MemTracker`
+	MemDBFootprint *memory.Tracker
+	DiskTracker    *memory.Tracker
 
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
@@ -1308,6 +1319,15 @@ type SessionVars struct {
 
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
+
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1383,7 +1403,12 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	if sc == s.StmtCtx {
 		sc = &s.cachedStmtCtx[1]
 	}
-	*sc = stmtctx.StatementContext{}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
 	return sc
 }
 
@@ -1660,18 +1685,19 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:     DefIndexLookupConcurrency,
-		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		projectionConcurrency:      DefTiDBProjectionConcurrency,
-		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		windowConcurrency:          DefTiDBWindowConcurrency,
-		mergeJoinConcurrency:       DefTiDBMergeJoinConcurrency,
-		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
-		ExecutorConcurrency:        DefExecutorConcurrency,
+		indexLookupConcurrency:            DefIndexLookupConcurrency,
+		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency:        DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
+		projectionConcurrency:             DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:                 DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:              DefTiDBMergeJoinConcurrency,
+		streamAggConcurrency:              DefTiDBStreamAggConcurrency,
+		indexMergeIntersectionConcurrency: DefTiDBIndexMergeIntersectionConcurrency,
+		ExecutorConcurrency:               DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      DefTiDBMemQuotaQuery,
@@ -2012,20 +2038,20 @@ func (k planCacheStmtKey) Hash() []byte {
 	return []byte(k)
 }
 
-// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
-func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
-	if s.generalPlanCacheStmts == nil {
-		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
+// AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
+func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
+	if s.nonPreparedPlanCacheStmts == nil {
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
 	}
-	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
 
-// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
-	if s.generalPlanCacheStmts == nil {
+// GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
+	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
-	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
 }
 
@@ -2386,6 +2412,10 @@ type Concurrency struct {
 	// streamAggConcurrency is deprecated, use ExecutorConcurrency instead.
 	streamAggConcurrency int
 
+	// indexMergeIntersectionConcurrency is the number of indexMergeProcessWorker
+	// Only meaningful for dynamic pruned partition table.
+	indexMergeIntersectionConcurrency int
+
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
 
@@ -2444,6 +2474,11 @@ func (c *Concurrency) SetMergeJoinConcurrency(n int) {
 // SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
 func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
+}
+
+// SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
+func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
+	c.indexMergeIntersectionConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -2524,6 +2559,14 @@ func (c *Concurrency) MergeJoinConcurrency() int {
 func (c *Concurrency) StreamAggConcurrency() int {
 	if c.streamAggConcurrency != ConcurrencyUnset {
 		return c.streamAggConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexMergeIntersectionConcurrency return the number of concurrent process worker.
+func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
+	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
+		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
 }

@@ -968,6 +968,7 @@ func TestEncryptionBuiltin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root"}
 	ctx := context.Background()
 
 	// for password
@@ -1143,6 +1144,25 @@ func TestEncryptionBuiltin(t *testing.T) {
 	tk.MustQuery("SELECT RANDOM_BYTES(1024);")
 	result = tk.MustQuery("SELECT RANDOM_BYTES(NULL);")
 	result.Check(testkit.Rows("<nil>"))
+
+	// for VALIDATE_PASSWORD_STRENGTH
+	tk.MustExec(fmt.Sprintf("SET GLOBAL validate_password.dictionary='%s'", "password"))
+	tk.MustExec("SET GLOBAL validate_password.enable = 1")
+	tk.MustQuery("SELECT validate_password_strength('root')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT validate_password_strength('toor')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT validate_password_strength('ROOT')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('TOOR')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('fooHoHo%1')").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT validate_password_strength('pass')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT validate_password_strength('password')").Check(testkit.Rows("50"))
+	tk.MustQuery("SELECT validate_password_strength('password0000')").Check(testkit.Rows("50"))
+	tk.MustQuery("SELECT validate_password_strength('password1A#')").Check(testkit.Rows("75"))
+	tk.MustQuery("SELECT validate_password_strength('PA12wrd!#')").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH(REPEAT(\"aA1#\", 26))").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT validate_password_strength(null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT validate_password_strength('null')").Check(testkit.Rows("25"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH( 0x6E616E646F73617135234552 )").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH(CAST(0xd2 AS BINARY(10)))").Check(testkit.Rows("50"))
 }
 
 func TestOpBuiltin(t *testing.T) {
@@ -3742,8 +3762,6 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
-		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -7863,4 +7881,17 @@ func TestIfNullParamMarker(t *testing.T) {
 	tk.MustExec(`set @a='1',@b=repeat('x', 80);`)
 	// Should not report 'Data too long for column' error.
 	tk.MustExec(`execute pr1 using @a,@b;`)
+}
+
+func TestIssue39146(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `sun` ( `dest` varchar(10) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into sun values('20231020');")
+	tk.MustExec("set @@sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = on;")
+	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
+	tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
+	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
 }

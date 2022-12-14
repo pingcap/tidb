@@ -954,6 +954,27 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	return tableInfo, errors.Trace(err)
 }
 
+// CheckTableExists checks if the table is existed with dbID and tableID.
+func (m *Meta) CheckTableExists(dbID int64, tableID int64) (bool, error) {
+	// Check if db exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// Check if table exists.
+	tableKey := m.tableKey(tableID)
+	v, err := m.txn.HGet(dbKey, tableKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if v != nil {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // DDL job structure
 //	DDLJobList: list jobs
 //	DDLJobHistory: hash

@@ -33,7 +33,9 @@ var (
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
 
-	pitrSupportBatchKVFiles bool = true
+	checkpointSupportError error = nil
+	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
+	pitrSupportBatchKVFiles bool = false
 )
 
 // NextMajorVersion returns the next major version.
@@ -139,6 +141,8 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 	// If tikv version < 6.5, PITR do not support restoring batch kv files.
 	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
 		pitrSupportBatchKVFiles = false
+	} else {
+		pitrSupportBatchKVFiles = true
 	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
@@ -202,6 +206,14 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
+	}
+
+	// reset the checkpoint support error
+	checkpointSupportError = nil
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		// checkpoint mode only support after v6.5.0
+		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
+			s.Address, tikvVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
@@ -309,6 +321,10 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return versionInfo, nil
+}
+
+func CheckCheckpointSupport() error {
+	return checkpointSupportError
 }
 
 func CheckPITRSupportBatchKVFiles() bool {
