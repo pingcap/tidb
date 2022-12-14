@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/parser/model"
 	"math"
 	"os"
 	"testing"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/logutil"
