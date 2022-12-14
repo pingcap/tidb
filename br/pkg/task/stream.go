@@ -1177,7 +1177,7 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err = restoreGc(); err != nil {
+		if err := restoreGc(); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
 	}()
