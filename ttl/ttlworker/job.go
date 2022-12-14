@@ -96,8 +96,8 @@ func (job *ttlJob) updateState(ctx context.Context, se session.Session) error {
 }
 
 // peekScanTask returns the next scan task, but doesn't promote the iterator
-func (job *ttlJob) peekScanTask() (*ttlScanTask, error) {
-	return job.tasks[job.taskIter], nil
+func (job *ttlJob) peekScanTask() *ttlScanTask {
+	return job.tasks[job.taskIter]
 }
 
 // nextScanTask promotes the iterator
