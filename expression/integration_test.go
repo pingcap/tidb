@@ -2746,6 +2746,7 @@ func TestFuncJSON(t *testing.T) {
 	tk.MustExec("create table t(a enum('a', 'b'), b time, c binary(10))")
 	tk.MustExec("insert into t values ('a', '11:00:00', 'a')")
 	tk.MustQuery("select a member of ('\"a\"') from t").Check(testkit.Rows(`1`))
+	tk.MustQuery("select b member of (json_array(cast('11:00:00' as time))) from t;").Check(testkit.Rows(`1`))
 	tk.MustQuery("select b member of ('\"11:00:00\"') from t").Check(testkit.Rows(`0`))
 	tk.MustQuery("select c member of ('\"a\"') from t").Check(testkit.Rows(`0`))
 	err = tk.QueryToErr("select 'a' member of ('a')")
