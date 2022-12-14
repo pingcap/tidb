@@ -390,8 +390,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
-	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
-	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
 	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
 	originHook := dom.DDL().GetHook()
@@ -440,5 +438,4 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
-
 }
