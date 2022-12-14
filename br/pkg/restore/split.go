@@ -479,13 +479,16 @@ func splitRegionByPoints(
 ) ([]*split.RegionInfo, error) {
 	var (
 		splitPoints [][]byte = make([][]byte, 0)
+		lastKey     []byte   = nil
 		length      uint64   = initialLength
 	)
 	for _, v := range valueds {
-		if length > SplitThreShold {
-			splitPoints = append(splitPoints, v.GetStartKey())
+		if length > SplitThreShold && !bytes.Equal(lastKey, v.GetStartKey()) {
+			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
+			splitPoints = append(splitPoints, rawKey)
 			length = 0
 		}
+		lastKey = v.GetStartKey()
 		length += v.Value
 	}
 
@@ -504,13 +507,14 @@ func splitRegionByPoints(
 	return newRegions, nil
 }
 
-func getRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
-	endKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey, rule := rewriteEncodedKey(endKey, rewriteRules)
+func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
+	tableKey := tablecodec.EncodeTablePrefix(tableID)
+	rule := matchOldPrefix(tableKey, rewriteRules)
+	tableKey = bytes.Replace(tableKey, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
 	if rule == nil {
 		return 0
 	}
-	return tablecodec.DecodeTableID(endKey)
+	return tablecodec.DecodeTableID(tableKey)
 }
 
 func SplitPoint(
@@ -598,8 +602,9 @@ func SplitPoint(
 						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, endLength))
 					}
 					// try to split the region
-					newRegions, err := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
-					if err != nil {
+					newRegions, errSplit := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+					if errSplit != nil {
+						err = errSplit
 						return false
 					}
 					scatterRegions = append(scatterRegions, newRegions...)
@@ -661,7 +666,7 @@ func (helper *LogSplitHelper) Split(
 			log.Info("no rule. pass.", zap.Int64("tableID", tableID))
 			continue
 		}
-		newTableID := getRewriteTableID(tableID, rewriteRule)
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
 		if newTableID == 0 {
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue

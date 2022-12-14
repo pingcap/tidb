@@ -920,3 +920,19 @@ func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID
 func (*fakeSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
 	return nil
 }
+
+func TestGetRewriteTableID(t *testing.T) {
+	var tableID int64 = 76
+	var oldTableID int64 = 80
+	rewriteRules := &restore.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+			},
+		},
+	}
+
+	newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
+	require.Equal(t, tableID, newTableID)
+}

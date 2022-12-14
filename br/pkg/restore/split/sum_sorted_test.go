@@ -136,25 +136,3 @@ func TestSumSorted(t *testing.T) {
 		})
 	}
 }
-
-func TestSumSorted1(t *testing.T) {
-	full := split.NewSplitHelper()
-
-	//    250  50    150    50
-	// . a   c .  da     db     f
-	full.Merge(v("a", "f", mb(100)))
-	full.Merge(v("a", "c", mb(200)))
-	full.Merge(v("c", "f", mb(100)))
-	full.Merge(v("da", "db", mb(100)))
-	full.Merge(v("c", "f", mb(150)))
-
-	//full.Merge(v("d", "e", mb(50)))
-	//full.Merge(v("c", "e", mb(170)))
-
-	full.Traverse(func(v split.Valued) bool {
-		t.Log(v.String())
-		return true
-	})
-
-	require.True(t, false)
-}
