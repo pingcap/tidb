@@ -272,12 +272,17 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 func (m *JobManager) updateTaskState() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
+		logger := logutil.Logger(m.ctx).With(zap.Int64("tableID", result.task.tbl.ID))
+		if result.err != nil {
+			logger = logger.With(zap.Error(result.err))
+		}
+
 		job := findJobWithTableID(m.runningJobs, result.task.tbl.ID)
 		if job == nil {
-			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
+			logger.Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
 			continue
 		}
-		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+		logger.Info("scan task finished", zap.String("jobID", job.id))
 
 		job.finishedScanTaskCounter += 1
 		job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
@@ -304,7 +309,11 @@ func (m *JobManager) checkNotOwnJob() {
 	for _, job := range m.runningJobs {
 		tableStatus := m.tableStatusCache.Tables[job.tbl.ID]
 		if tableStatus == nil || tableStatus.CurrentJobOwnerID != m.id {
-			logutil.Logger(m.ctx).Info("job has been taken over by another node", zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+			logger := logutil.Logger(m.ctx).With(zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+			if tableStatus != nil {
+				logger.With(zap.String("newJobOwnerID", tableStatus.CurrentJobOwnerID))
+			}
+			logger.Info("job has been taken over by another node")
 			m.removeJob(job)
 			job.cancel()
 		}
@@ -358,9 +367,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		case len(newJobTables) > 0:
 			table := newJobTables[0]
 			newJobTables = newJobTables[1:]
-			logutil.Logger(m.ctx).Debug("try lock new job", zap.Int64("tableID", table.ID))
+			logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
 			job, err = m.lockNewJob(m.ctx, se, table, now)
 			if job != nil {
+				logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 				m.appendJob(job)
 			}
 		}
@@ -372,10 +382,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 
 		for !job.AllSpawned() {
-			task, err := job.peekScanTask()
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to generate scan task", zap.Error(err))
-				break
+			task := job.peekScanTask()
+			logger := logutil.Logger(m.ctx).With(zap.String("jobID", job.id), zap.String("table", task.tbl.TableInfo.Name.L))
+			if task.tbl.PartitionDef != nil {
+				logger = logger.With(zap.String("partition", task.tbl.PartitionDef.Name.L))
 			}
 
 			for len(idleScanWorkers) > 0 {
@@ -384,7 +394,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				err := idleWorker.Schedule(task)
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to schedule task", zap.Error(err))
+					logger.Info("fail to schedule task", zap.Error(err))
 					continue
 				}
 
@@ -393,16 +403,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 				if err != nil {
 					// not a big problem, current logic doesn't depend on the job status to promote
 					// the routine, so we could just print a log here
-					logutil.Logger(m.ctx).Error("change ttl job status", zap.Error(err), zap.String("id", job.id))
+					logger.Error("change ttl job status", zap.Error(err), zap.String("id", job.id))
 				}
 				cancel()
 
-				logArgs := []zap.Field{zap.String("table", task.tbl.TableInfo.Name.L)}
-				if task.tbl.PartitionDef != nil {
-					logArgs = append(logArgs, zap.String("partition", task.tbl.PartitionDef.Name.L))
-				}
-				logutil.Logger(m.ctx).Debug("schedule ttl task",
-					logArgs...)
+				logger.Info("scheduled ttl task")
 
 				job.nextScanTask()
 				break
@@ -426,14 +431,17 @@ func (m *JobManager) idleScanWorkers() []scanWorker {
 }
 
 func (m *JobManager) localJobs() []*ttlJob {
+	jobs := make([]*ttlJob, 0, len(m.runningJobs))
 	for _, job := range m.runningJobs {
 		status := m.tableStatusCache.Tables[job.tbl.ID]
 		if status == nil || status.CurrentJobOwnerID != m.id {
-			m.removeJob(job)
+			// these jobs will be removed in `checkNotOwnJob`
 			continue
 		}
+
+		jobs = append(jobs, job)
 	}
-	return m.runningJobs
+	return jobs
 }
 
 // readyForNewJobTables returns all tables which should spawn a TTL job according to cache
