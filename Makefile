@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint check-testcase-marker
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint generate-testmarker-data
 
 default: server buildsucc
 
@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare check-testcase-marker
+check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -44,9 +44,8 @@ check-file-perm:
 	@echo "check file permission"
 	./tools/check/check-file-perm.sh
 
-check-testcase-marker:
-	@echo "check incremental tests are all marked(from origin/master)"
-	./tools/check/check-testcase-marker.sh
+generate-testmarker-data:
+	./build/linter/testmarker/generate-data.sh
 
 gogenerate:
 	@echo "go generate ./..."

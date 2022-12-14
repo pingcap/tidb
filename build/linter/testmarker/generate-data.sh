@@ -15,12 +15,5 @@
 
 set -euo pipefail
 
-go run tests/testmarker/walker.go > tests/testmarker/testdata/markdata.yaml
-set +e
-diffline=$(git status -s tests/testmarker/testdata/markdata.yaml 2>/dev/null)
-set -e
-if [[ $diffline != "" ]]
-then
-  echo "Your commit is changed after running go run tests/testmarker/walker.go, it should not happen."
-  exit 1
-fi
+go run tests/testmarker/walker.go > build/linter/testmarker/data.yaml
+echo "data.yaml generated"

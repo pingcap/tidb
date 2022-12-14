@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testmarker",
+    srcs = ["analyzer.go"],
+    embedsrcs = ["data.yaml"],
+    importpath = "github.com/pingcap/tidb/build/linter/testmarker",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tests/testmarker/pkg",
+        "@in_gopkg_yaml_v2//:yaml_v2",
+        "@org_golang_x_tools//go/analysis",
+    ],
+)
