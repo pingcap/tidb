@@ -635,6 +635,8 @@ import (
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
+	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
+	passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -6408,6 +6410,8 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"FAILED_LOGIN_ATTEMPTS"
+|	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
 
@@ -13021,6 +13025,26 @@ PasswordOrLockOption:
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
+		}
+	}
+|	"FAILED_LOGIN_ATTEMPTS" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.FailedLoginAttempts,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.PasswordLockTime,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" "UNBOUNDED"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
 
