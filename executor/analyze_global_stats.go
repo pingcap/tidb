@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -94,6 +95,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						info.statsVersion,
 						1,
 						true,
+						handle.StatsMetaHistorySourceAnalyze,
 					)
 					if err != nil {
 						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
