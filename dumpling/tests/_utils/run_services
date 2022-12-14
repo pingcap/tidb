@@ -36,6 +36,7 @@ start_services() {
 
     cat > "$DUMPLING_TEST_DIR/tidb.toml" <<EOF
 port = 4000
+enable-table-lock = true
 [status]
 status-port = 10080
 [log.file]

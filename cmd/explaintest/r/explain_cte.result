@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists t1, t2;
 create table t1 (c1 int primary key, c2 int, index c2 (c2));
@@ -113,8 +114,8 @@ id	estRows	task	access object	operator info
 Apply_24	10000.00	root		CARTESIAN semi join
 ├─TableReader_26(Build)	10000.00	root		data:TableFullScan_25
 │ └─TableFullScan_25	10000.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
-└─Selection_29(Probe)	1.44	root		eq(Column#8, 1)
-  └─CTEFullScan_30	1.80	root	CTE:qn	data:CTE_0
+└─Selection_29(Probe)	14400.00	root		eq(Column#8, 1)
+  └─CTEFullScan_30	18000.00	root	CTE:qn	data:CTE_0
 CTE_0	1.80	root		Recursive CTE
 ├─Projection_17(Seed Part)	1.00	root		plus(mul(test.t1.c1, 0), 1)->Column#4
 │ └─TableDual_18	1.00	root		rows:1
@@ -417,9 +418,9 @@ CTE_0	50.00	root		Non-Recursive CTE
   │           │ └─TableReader(Probe)	9980.01	root		data:Selection
   │           │   └─Selection	9980.01	cop[tikv]		not(isnull(test.store_sales.ss_customer_sk)), not(isnull(test.store_sales.ss_sold_date_sk))
   │           │     └─TableFullScan	10000.00	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
-  │           └─IndexLookUp(Probe)	1.00	root		
-  │             ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
-  │             └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+  │           └─IndexLookUp(Probe)	25.00	root		
+  │             ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
+  │             └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
   └─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#158, w->Column#169
     └─Selection	25.00	root		or(0, or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(test.date_dim.d_year, 2002))))
       └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
@@ -433,9 +434,9 @@ CTE_0	50.00	root		Non-Recursive CTE
               │ └─TableReader(Probe)	9980.01	root		data:Selection
               │   └─Selection	9980.01	cop[tikv]		not(isnull(test.web_sales.ws_bill_customer_sk)), not(isnull(test.web_sales.ws_sold_date_sk))
               │     └─TableFullScan	10000.00	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
-              └─IndexLookUp(Probe)	1.00	root		
-                ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
-                └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+              └─IndexLookUp(Probe)	25.00	root		
+                ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
+                └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
 insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);

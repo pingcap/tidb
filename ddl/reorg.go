@@ -199,12 +199,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 	rc := w.getReorgCtx(job)
 	if rc == nil {
-		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
-		// for the later entrances.
-		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-		if lease > 0 {
-			delayForAsyncCommit()
-		}
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
 		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
@@ -240,7 +234,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		}
+
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
@@ -279,11 +278,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
-			zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", currentElement.TypeKey),
-			zap.Int64("elementID", currentElement.ID),
-			zap.Int64("totalAddedRowCount", rowCount),
-			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
+			zap.Duration("wait time", waitTimeout),
+			zap.ByteString("element type", currentElement.TypeKey),
+			zap.Int64("element ID", currentElement.ID),
+			zap.Int64("total added row count", rowCount),
+			zap.String("done key", hex.EncodeToString(doneKey)),
 			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
@@ -387,6 +386,7 @@ type reorgInfo struct {
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+	dbInfo          *model.DBInfo
 	elements        []*meta.Element
 	currElement     *meta.Element
 }
@@ -565,10 +565,12 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
+		logutil.BgLogger().Info("[ddl] get noop table range",
+			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
-			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
+			zap.String("start key", hex.EncodeToString(startHandleKey)),
+			zap.String("end key", hex.EncodeToString(endHandleKey)),
+			zap.Bool("is empty table", isEmptyTable))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -584,7 +586,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
+func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo,
 	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
 	var (
 		element *meta.Element
@@ -608,7 +610,9 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 		})
 
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -682,11 +686,12 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 	info.currElement = element
 	info.elements = elements
 	info.mergingTmpIdx = mergingTmpIdx
+	info.dbInfo = dbInfo
 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -696,7 +701,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	)
 	if job.SnapshotVer == 0 {
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -708,9 +715,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
-			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", tryDecodeToHandleString(start)),
-			zap.String("endHandle", tryDecodeToHandleString(end)))
+			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
+			zap.String("start key", hex.EncodeToString(start)),
+			zap.String("end key", hex.EncodeToString(end)))
 
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
@@ -740,6 +747,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
+	info.dbInfo = dbInfo
 
 	return &info, nil
 }

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 create table t (a int primary key, b int, c int, d int, e int, f int);
 create index tb on t (b);
@@ -6,33 +7,33 @@ create index td on t (d);
 load stats 's/explain_indexmerge_stats_t.json';
 explain format = 'brief' select * from t where a < 50 or b < 50;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 └─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where (a < 50 or b < 50) and f > 100;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 └─Selection(Probe)	98.00	cop[tikv]		gt(test.t.f, 100)
   └─TableRowIDScan	98.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where b < 50 or c < 50;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,50), keep order:false
 └─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
 set session tidb_enable_index_merge = on;
 explain format = 'brief' select * from t where a < 50 or b < 50;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 └─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where (a < 50 or b < 50) and f > 100;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 └─Selection(Probe)	98.00	cop[tikv]		gt(test.t.f, 100)
@@ -44,7 +45,7 @@ TableReader	4999999.00	root		data:Selection
   └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where b < 50 or c < 50;
 id	estRows	task	access object	operator info
-IndexMerge	98.00	root		
+IndexMerge	98.00	root		type: union
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,50), keep order:false
 └─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
@@ -55,14 +56,14 @@ TableReader	4999999.00	root		data:Selection
   └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where a < 50 or b < 50 or c < 50;
 id	estRows	task	access object	operator info
-IndexMerge	147.00	root		
+IndexMerge	147.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,50), keep order:false
 └─TableRowIDScan(Probe)	147.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	estRows	task	access object	operator info
-IndexMerge	0.00	root		
+IndexMerge	0.00	root		type: union
 ├─TableRangeScan(Build)	9.00	cop[tikv]	table:t	range:[-inf,10), keep order:false
 ├─IndexRangeScan(Build)	9.00	cop[tikv]	table:t, index:td(d)	range:[-inf,10), keep order:false
 └─Selection(Probe)	0.00	cop[tikv]		lt(test.t.f, 10), or(lt(test.t.b, 10000), lt(test.t.c, 10000))
@@ -103,20 +104,20 @@ label = "cop"
 set session tidb_enable_index_merge = off;
 explain format = 'brief' select /*+ use_index_merge(t, primary, tb, tc) */ * from t where a <= 500000 or b <= 1000000 or c <= 3000000;
 id	estRows	task	access object	operator info
-IndexMerge	3560000.00	root		
+IndexMerge	3560000.00	root		type: union
 ├─TableRangeScan(Build)	500000.00	cop[tikv]	table:t	range:[-inf,500000], keep order:false
 ├─IndexRangeScan(Build)	1000000.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,1000000], keep order:false
 ├─IndexRangeScan(Build)	3000000.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,3000000], keep order:false
 └─TableRowIDScan(Probe)	3560000.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select /*+ use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
 id	estRows	task	access object	operator info
-IndexMerge	4999999.00	root		
+IndexMerge	4999999.00	root		type: union
 ├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	4999999.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,5000000), keep order:false
 └─TableRowIDScan(Probe)	4999999.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select /*+ use_index_merge(t, tb, tc) */ * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	estRows	task	access object	operator info
-IndexMerge	0.00	root		
+IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	9999.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,10000), keep order:false
 ├─IndexRangeScan(Build)	9999.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,10000), keep order:false
 └─Selection(Probe)	0.00	cop[tikv]		lt(test.t.f, 10), or(lt(test.t.a, 10), lt(test.t.d, 10))
@@ -133,7 +134,7 @@ TableReader	4999999.00	root		data:Selection
   └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select /*+ use_index_merge(t, primary, tb) */ * from t where a < 50 or b < 5000000;
 id	estRows	task	access object	operator info
-IndexMerge	4999999.00	root		
+IndexMerge	4999999.00	root		type: union
 ├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan(Build)	4999999.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,5000000), keep order:false
 └─TableRowIDScan(Probe)	4999999.00	cop[tikv]	table:t	keep order:false
@@ -150,7 +151,7 @@ KEY `aid_c2` (`aid`,`c2`)
 );
 desc select /*+ USE_INDEX_MERGE(t, aid_c1, aid_c2) */ * from t where (aid = 1 and c1='aaa') or (aid = 2 and c2='bbb');
 id	estRows	task	access object	operator info
-IndexMerge_8	8.08	root		
+IndexMerge_8	8.08	root		type: union
 ├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
 ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t, index:aid_c2(aid, c2)	range:[2 "bbb",2 "bbb"], keep order:false, stats:pseudo
 └─TableRowIDScan_7(Probe)	8.08	cop[tikv]	table:t	keep order:false, stats:pseudo

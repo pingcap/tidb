@@ -56,6 +56,7 @@ type FieldType struct {
 	// elems is the element list for enum and set type.
 	elems            []string
 	elemsIsBinaryLit []bool
+	array            bool
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
@@ -75,6 +76,16 @@ func (ft *FieldType) IsDecimalValid() bool {
 		return false
 	}
 	return true
+}
+
+// IsVarLengthType Determine whether the column type is a variable-length type
+func (ft *FieldType) IsVarLengthType() bool {
+	switch ft.tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetType returns the type of the FieldType.
@@ -206,6 +217,16 @@ func (ft *FieldType) SetElems(elems []string) {
 // SetElem sets the element of the FieldType.
 func (ft *FieldType) SetElem(idx int, element string) {
 	ft.elems[idx] = element
+}
+
+// SetArray sets the array field of the FieldType.
+func (ft *FieldType) SetArray(array bool) {
+	ft.array = array
+}
+
+// IsArray return true if the filed type is array.
+func (ft *FieldType) IsArray() bool {
+	return ft.array
 }
 
 // SetElemWithIsBinaryLit sets the element of the FieldType.
@@ -382,6 +403,8 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeNull:
+		suffix = "(0)"
 	}
 	return ts + suffix
 }
@@ -390,7 +413,9 @@ func (ft *FieldType) CompactStr() string {
 // returns a string.
 func (ft *FieldType) InfoSchemaStr() string {
 	suffix := ""
-	if mysql.HasUnsignedFlag(ft.flag) {
+	if mysql.HasUnsignedFlag(ft.flag) &&
+		ft.tp != mysql.TypeBit &&
+		ft.tp != mysql.TypeYear {
 		suffix = " unsigned"
 	}
 	return ft.CompactStr() + suffix
@@ -537,6 +562,10 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 	case mysql.TypeYear:
 		ctx.WriteKeyWord("YEAR")
 	}
+	if ft.array {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("ARRAY")
+	}
 }
 
 // FormatAsCastType is used for write AST back to string.
@@ -590,6 +619,7 @@ type jsonFieldType struct {
 	Collate          string
 	Elems            []string
 	ElemsIsBinaryLit []bool
+	Array            bool
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -605,6 +635,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.collate = r.Collate
 		ft.elems = r.Elems
 		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
+		ft.array = r.Array
 	}
 	return err
 }
@@ -620,6 +651,7 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Collate = ft.collate
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
+	r.Array = ft.array
 	return json.Marshal(r)
 }
 
@@ -630,12 +662,11 @@ func (ft *FieldType) MemoryUsage() (sum int64) {
 	if ft == nil {
 		return
 	}
-	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate))
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate)) + int64(cap(ft.elems))*int64(unsafe.Sizeof(*new(string))) +
+		int64(cap(ft.elemsIsBinaryLit))*int64(unsafe.Sizeof(*new(bool)))
 
 	for _, s := range ft.elems {
 		sum += int64(len(s))
 	}
-	sum += int64(cap(ft.elems)) * int64(unsafe.Sizeof(*new(string)))
-	sum += int64(cap(ft.elemsIsBinaryLit)) * int64(unsafe.Sizeof(*new(bool)))
 	return
 }

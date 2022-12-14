@@ -404,13 +404,22 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	initialized := false
 	checkpoint := t.Info.StartTs
 	for _, cp := range checkPointMap {
-		if !initialized || cp.TS < checkpoint {
+		if cp.Type() == CheckpointTypeGlobal {
+			return cp.TS, nil
+		}
+
+		if cp.Type() == CheckpointTypeStore && (!initialized || cp.TS < checkpoint) {
 			initialized = true
 			checkpoint = cp.TS
 		}
 	}
 
-	return checkpoint, nil
+	ts, err := t.GetStorageCheckpoint(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return mathutil.Max(checkpoint, ts), nil
 }
 
 // Step forwards the progress (next_backup_ts) of some region.

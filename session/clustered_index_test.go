@@ -64,6 +64,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
 	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
@@ -285,7 +286,7 @@ func TestClusteredPrefixingPrimaryKey(t *testing.T) {
 
 	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 't.PRIMARY'"))
 	tk.MustExec("admin check table t;")
 
 	tk.MustExec("drop table if exists t1, t2")

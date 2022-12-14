@@ -1391,9 +1391,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
 	} else if v.IsGlobal {
-		val, err = sessionVars.GetGlobalSystemVar(name)
+		val, err = sessionVars.GetGlobalSystemVar(er.ctx, name)
 	} else {
-		val, err = sessionVars.GetSessionOrGlobalSystemVar(name)
+		val, err = sessionVars.GetSessionOrGlobalSystemVar(er.ctx, name)
 	}
 	if err != nil {
 		er.err = err
@@ -1554,6 +1554,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
 						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+						er.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
 						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 					} else {
 						continue
@@ -2169,6 +2170,9 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		tbl, _, _ = is.FindTableByPartitionID(tableID)
+	}
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
@@ -2185,7 +2189,7 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID)
+		ret, err := decodeTableKey(key, tableID, tbl)
 		if err != nil {
 			sc.AppendWarning(err)
 			return s
@@ -2203,6 +2207,10 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 	}
 	if handle.IsInt() {
 		ret := make(map[string]interface{})
+		if tbl != nil && tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
 		// When the clustered index is enabled, we should show the PK name.
 		if tbl != nil && tbl.Meta().HasClusteredIndex() {
@@ -2239,6 +2247,10 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			return "", errors.Trace(err)
 		}
 		ret := make(map[string]interface{})
+		if tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID := range datumMap {
@@ -2308,6 +2320,10 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			ds = append(ds, d)
 		}
 		ret := make(map[string]interface{})
+		if tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
@@ -2340,8 +2356,13 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(_ []byte, tableID int64) (string, error) {
-	ret := map[string]int64{"table_id": tableID}
+func decodeTableKey(_ []byte, tableID int64, tbl table.Table) (string, error) {
+	ret := map[string]int64{}
+	if tbl != nil && tbl.Meta().GetPartitionInfo() != nil {
+		ret["partition_id"] = tableID
+		tableID = tbl.Meta().ID
+	}
+	ret["table_id"] = tableID
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)

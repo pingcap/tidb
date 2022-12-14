@@ -17,6 +17,7 @@ package schematracker
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"time"
@@ -207,6 +208,11 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 	}
 
 	d.checkDBInfo(ctx, stmt.Name)
+	return nil
+}
+
+// RecoverSchema implements the DDL interface.
+func (d Checker) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *ddl.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
@@ -443,13 +449,13 @@ func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, onExist ddl.OnExist) error {
+func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
+func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -548,15 +554,37 @@ func (d Checker) MoveJobFromTable2Queue() error {
 // StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
 type StorageDDLInjector struct {
 	kv.Storage
+	kv.EtcdBackend
 	Injector func(ddl.DDL) *Checker
+}
+
+var _ kv.EtcdBackend = StorageDDLInjector{}
+
+// EtcdAddrs implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) EtcdAddrs() ([]string, error) {
+	return s.EtcdBackend.EtcdAddrs()
+}
+
+// TLSConfig implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) TLSConfig() *tls.Config {
+	return s.EtcdBackend.TLSConfig()
+}
+
+// StartGCWorker implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) StartGCWorker() error {
+	return s.EtcdBackend.StartGCWorker()
 }
 
 // NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
 func NewStorageDDLInjector(s kv.Storage) kv.Storage {
-	return StorageDDLInjector{
+	ret := StorageDDLInjector{
 		Storage:  s,
 		Injector: NewChecker,
 	}
+	if ebd, ok := s.(kv.EtcdBackend); ok {
+		ret.EtcdBackend = ebd
+	}
+	return ret
 }
 
 // UnwrapStorage unwraps StorageDDLInjector for one level.
