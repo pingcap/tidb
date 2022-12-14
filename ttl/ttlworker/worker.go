@@ -96,6 +96,12 @@ func (w *baseWorker) Error() error {
 }
 
 func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) error {
+	// consider the situation when the worker has stopped, but the context has also stopped. We should
+	// return without error
+	if w.Status() == workerStatusStopped {
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	go func() {
 		w.wg.Wait()
