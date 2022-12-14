@@ -72,7 +72,7 @@ func TestUpgradeVersion84(t *testing.T) {
 		{"modify_count", "bigint(64)"},
 		{"count", "bigint(64)"},
 		{"version", "bigint(64)"},
-		{"source", "varchar(16)"},
+		{"source", "varchar(40)"},
 		{"create_time", "datetime(6)"},
 	}
 	rStatsHistoryTbl, err := tk.Exec(`desc mysql.stats_meta_history`)

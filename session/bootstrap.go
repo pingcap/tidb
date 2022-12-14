@@ -412,8 +412,8 @@ const (
 		modify_count bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
-		create_time datetime(6) NOT NULL,
     	source varchar(40) NOT NULL,
+		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
 	);`
@@ -2198,7 +2198,7 @@ func upgradeToVer109(s Session, ver int64) {
 	if ver >= version109 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN `source` varchar(40) NOT NULL after `version`;")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
 func writeOOMAction(s Session) {
