@@ -1127,9 +1127,9 @@ func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 	case JSONTypeCodeArray:
 		if target.TypeCode == JSONTypeCodeArray {
 			for i := 0; i < obj.GetElemCount(); i++ {
-				o := obj.arrayGetElem(i)
+				o := obj.ArrayGetElem(i)
 				for j := 0; j < target.GetElemCount(); j++ {
-					if CompareBinaryJSON(o, target.arrayGetElem(j)) == 0 {
+					if CompareBinaryJSON(o, target.ArrayGetElem(j)) == 0 {
 						return true
 					}
 				}
@@ -1138,7 +1138,7 @@ func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 		}
 		elemCount := obj.GetElemCount()
 		for i := 0; i < elemCount; i++ {
-			if CompareBinaryJSON(obj.arrayGetElem(i), target) == 0 {
+			if CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 				return true
 			}
 		}

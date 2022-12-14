@@ -772,28 +772,18 @@ func (c *jsonMemberOfFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-
-	argTps := []types.EvalType{args[0].GetType().EvalType(), types.ETJson}
+	argTps := []types.EvalType{types.ETJson, types.ETJson}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
+	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONMemberOfSig{bf}
 	return sig, nil
 }
 
 func (b *builtinJSONMemberOfSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	var target types.BinaryJSON
-	if b.args[0].GetType().EvalType() != types.ETJson {
-		eval, err := b.args[0].Eval(row)
-		if err != nil || eval.IsNull() {
-			return 0, eval.IsNull(), err
-		}
-		target = types.CreateBinaryJSON(eval.GetValue())
-	} else {
-		target, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	}
-
+	target, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
