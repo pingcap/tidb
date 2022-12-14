@@ -2748,6 +2748,8 @@ func TestFuncJSON(t *testing.T) {
 	tk.MustQuery("select a member of ('\"a\"') from t").Check(testkit.Rows(`1`))
 	tk.MustQuery("select b member of ('\"11:00:00\"') from t").Check(testkit.Rows(`0`))
 	tk.MustQuery("select c member of ('\"a\"') from t").Check(testkit.Rows(`0`))
+	err = tk.QueryToErr("select 'a' member of ('a')")
+	require.Error(t, err, "ERROR 3140 (22032): Invalid JSON text: The document root must not be followed by other values.")
 }
 
 func TestColumnInfoModified(t *testing.T) {
