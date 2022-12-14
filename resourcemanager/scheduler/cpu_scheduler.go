@@ -15,6 +15,8 @@
 package scheduler
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
@@ -28,7 +30,10 @@ func NewCPUScheduler() *CPUScheduler {
 }
 
 // Tune is to tune the goroutine pool
-func (*CPUScheduler) Tune(_ util.Component, _ util.GorotinuePool) Command {
+func (*CPUScheduler) Tune(_ util.Component, pool util.GorotinuePool) Command {
+	if time.Since(pool.LastTunerTs()) < minCPUSchedulerInterval.Load() {
+		return Hold
+	}
 	if cpu.GetCPUUsage() < 0.5 {
 		return Downclock
 	}

@@ -22,7 +22,7 @@ import (
 )
 
 var (
-	minCPUSchedulerInterval = atomic.NewDuration(time.Duration(800) * time.Millisecond)
+	minCPUSchedulerInterval = atomic.NewDuration(time.Minute)
 )
 
 // Command is the command for scheduler
