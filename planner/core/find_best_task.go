@@ -742,7 +742,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 }
 
 func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property.PhysicalProperty) string {
-	if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(candidates) == len(ds.possibleAccessPaths) {
+	if len(candidates) == len(ds.possibleAccessPaths) {
 		return ""
 	}
 	if len(candidates) == 1 && len(candidates[0].path.Ranges) == 0 {
@@ -890,7 +890,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
 			warnErr := errors.New(pruningInfo)
-			if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 				ds.ctx.GetSessionVars().StmtCtx.AppendNote(warnErr)
 			} else {
 				ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(warnErr)
