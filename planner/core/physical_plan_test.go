@@ -816,6 +816,8 @@ func TestMPPHints(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -824,6 +826,7 @@ func TestMPPHints(t *testing.T) {
 	var output []struct {
 		SQL  string
 		Plan []string
+		Warn []string
 	}
 
 	planSuiteData := core.GetPlanSuiteData()
@@ -833,8 +836,10 @@ func TestMPPHints(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
 
