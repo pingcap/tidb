@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/replayer"
 	"go.uber.org/zap"
 )
 
@@ -156,8 +157,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
+		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode)
+		} else {
+			checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+		}
 	}
 
 	return stmt, nil
@@ -175,30 +180,55 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	tasks := handle.GetTasks()
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
 	for _, task := range tasks {
 		if task.SQLDigest == sqlDigest.String() {
 			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
+				sendPlanReplayerDumpTask(key, sctx, stmtNode, false)
 				return
 			}
 		}
 	}
 }
 
-func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode) {
+func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
+	if existed {
+		return
+	}
+	sendPlanReplayerDumpTask(key, sctx, stmtNode, true)
+	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+}
+
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode, isContinuesCapture bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
-		PlanReplayerTaskKey: domain.PlanReplayerTaskKey{
-			SQLDigest:  sqlDigest,
-			PlanDigest: planDigest,
-		},
-		EncodePlan:      GetEncodedPlan,
-		TblStats:        stmtCtx.TableStats,
-		SessionBindings: handle.GetAllBindRecord(),
-		SessionVars:     sctx.GetSessionVars(),
-		ExecStmts:       []ast.StmtNode{stmtNode},
-		Analyze:         false,
+		PlanReplayerTaskKey: key,
+		EncodePlan:          GetEncodedPlan,
+		TblStats:            stmtCtx.TableStats,
+		SessionBindings:     handle.GetAllBindRecord(),
+		SessionVars:         sctx.GetSessionVars(),
+		ExecStmts:           []ast.StmtNode{stmtNode},
+		Analyze:             false,
+		IsContinuesCapture:  isContinuesCapture,
 	}
 	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
