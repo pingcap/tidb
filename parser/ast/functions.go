@@ -331,6 +331,7 @@ const (
 	JSONInsert        = "json_insert"
 	JSONReplace       = "json_replace"
 	JSONRemove        = "json_remove"
+	JSONOverlaps      = "json_overlaps"
 	JSONContains      = "json_contains"
 	JSONMemberOf      = "json_memberof"
 	JSONContainsPath  = "json_contains_path"

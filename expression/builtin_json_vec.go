@@ -359,6 +359,51 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
+func (b *builtinJSONOverlapsSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONOverlapsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+
+	objCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(objCol)
+
+	if err := b.args[0].VecEvalJSON(b.ctx, input, objCol); err != nil {
+		return err
+	}
+
+	targetCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(targetCol)
+
+	if err := b.args[1].VecEvalJSON(b.ctx, input, targetCol); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
+	result.MergeNulls(objCol, targetCol)
+	for i := 0; i < nr; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if types.OverlapsBinaryJSON(objCol.GetJSON(i), targetCol.GetJSON(i)) {
+			resI64s[i] = 1
+		} else {
+			resI64s[i] = 0
+		}
+	}
+
+	return nil
+}
+
 func (b *builtinJSONQuoteSig) vectorized() bool {
 	return true
 }
