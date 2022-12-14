@@ -427,7 +427,6 @@ func TestJSONMemberOf(t *testing.T) {
 	}
 }
 
-
 func TestJSONContains(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]
