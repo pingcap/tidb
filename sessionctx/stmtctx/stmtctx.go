@@ -211,10 +211,11 @@ type StatementContext struct {
 
 		message  string
 		warnings []SQLWarn
-		// extraWarnings record some extra warnings and are only used by the slow log only now.
-		// extraWarnings record warnings that would not be printed through SHOW WARNINGS because they are expected to
-		// be printed only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE), but we want to always output them
-		// through the slow log to help diagnostics, so we store them here separately.
+		// extraWarnings record the extra warnings and are only used by the slow log only now.
+		// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
+		// not under such conditions now, it is considered as an extra warnings.
+		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
+		// log to help diagnostics, so we store them here separately.
 		extraWarnings []SQLWarn
 
 		execDetails    execdetails.ExecDetails
