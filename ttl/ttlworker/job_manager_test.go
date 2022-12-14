@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/assert"
@@ -138,6 +139,22 @@ func (m *JobManager) SetScanWorkers4Test(workers []worker) {
 	m.scanWorkers = workers
 }
 
+// TTLJob exports the ttlJob for test
+type TTLJob = ttlJob
+
+// LockNewJob is an exported version of lockNewJob for test
+func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time) (*TTLJob, error) {
+	return m.lockNewJob(ctx, se, table, now)
+}
+
+func (j *ttlJob) Finish(se session.Session, now time.Time) {
+	j.finish(se, now)
+}
+
+func (j *ttlJob) ID() string {
+	return j.id
+}
+
 func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
 	statistics := &ttlStatistics{}
 	return &ttlJob{tbl: tbl, ctx: context.Background(), statistics: statistics, status: status, tasks: []*ttlScanTask{{ctx: context.Background(), tbl: tbl, statistics: statistics}}}
@@ -194,7 +211,6 @@ func TestReadyForNewJobTables(t *testing.T) {
 func TestLockNewTable(t *testing.T) {
 	now, err := time.Parse(timeFormat, "2022-12-05 17:13:05")
 	assert.NoError(t, err)
-	maxHBTime := now.Add(-2 * jobManagerLoopTickerInterval)
 	expireTime := now
 
 	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year"}}}
@@ -218,7 +234,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				setTableStatusOwnerSQL(1, now, expireTime, maxHBTime, "test-id"),
+				setTableStatusOwnerSQL(1, now, expireTime, "test-id"),
 				nil, nil,
 			},
 			{
@@ -240,7 +256,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				setTableStatusOwnerSQL(1, now, expireTime, maxHBTime, "test-id"),
+				setTableStatusOwnerSQL(1, now, expireTime, "test-id"),
 				nil, nil,
 			},
 			{
@@ -254,7 +270,7 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				setTableStatusOwnerSQL(1, now, expireTime, maxHBTime, "test-id"),
+				setTableStatusOwnerSQL(1, now, expireTime, "test-id"),
 				nil, errors.New("test error message"),
 			},
 		}, false, true},
