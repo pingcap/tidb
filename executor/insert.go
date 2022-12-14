@@ -271,6 +271,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				if tablecodec.CheckTempIndexValueIsDelete(val) {
 					continue
 				}
+				val = tablecodec.DecodeTempIndexOriginValue(val)
 			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
