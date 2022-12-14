@@ -2741,6 +2741,13 @@ func TestFuncJSON(t *testing.T) {
 	tk.MustQuery("SELECT '{\"a\":1}' MEMBER OF('{\"a\":1}');").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT '[4,5]' MEMBER OF('[[3,4],[4,5]]');").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT '[4,5]' MEMBER OF('[[3,4],\"[4,5]\"]');").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a enum('a', 'b'), b time, c binary(10))")
+	tk.MustExec("insert into t values ('a', '11:00:00', 'a')")
+	tk.MustQuery("select a member of ('\"a\"') from t").Check(testkit.Rows(`1`))
+	tk.MustQuery("select b member of ('\"11:00:00\"') from t").Check(testkit.Rows(`0`))
+	tk.MustQuery("select c member of ('\"a\"') from t").Check(testkit.Rows(`0`))
 }
 
 func TestColumnInfoModified(t *testing.T) {
