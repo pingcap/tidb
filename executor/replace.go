@@ -179,6 +179,9 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 			}
 			return false, false, err
 		}
+		if tablecodec.IsTempIndexKey(uk.newKey) {
+			val = tablecodec.DecodeTempIndexOriginValue(val)
+		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
