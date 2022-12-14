@@ -33,6 +33,7 @@ go_test(
     ],
     embed = [":addindextest"],
     deps = [
+        "//br/pkg/lightning/backend/local",
         "//config",
         "//ddl",
         "//ddl/ingest",
