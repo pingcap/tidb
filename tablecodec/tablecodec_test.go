@@ -610,3 +610,33 @@ func TestTempIndexKey(t *testing.T) {
 	require.Equal(t, tid, tableID)
 	require.Equal(t, indexID, iid)
 }
+
+func TestTempIndexValueCodec(t *testing.T) {
+	// Test encode temp index value.
+	encodedValue, err := codec.EncodeValue(&stmtctx.StatementContext{TimeZone: time.UTC}, nil, types.NewIntDatum(1))
+	require.NoError(t, err)
+	encodedValueCopy := make([]byte, len(encodedValue))
+	copy(encodedValueCopy, encodedValue)
+	tempIdxVal := EncodeTempIndexValue(encodedValue, 'b')
+	originVal, handle, isDelete, unique, keyVer := DecodeTempIndexValue(tempIdxVal, false)
+	require.Nil(t, handle)
+	require.False(t, isDelete || unique)
+	require.Equal(t, keyVer, byte('b'))
+	require.EqualValues(t, encodedValueCopy, originVal)
+
+	tempIdxVal = EncodeTempIndexValueDeletedUnique(kv.IntHandle(100), 'm')
+	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
+	require.Equal(t, handle.IntValue(), int64(100))
+	require.True(t, isDelete)
+	require.True(t, unique)
+	require.Equal(t, keyVer, byte('m'))
+	require.Empty(t, originVal)
+
+	tempIdxVal = EncodeTempIndexValueDeleted('b')
+	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
+	require.Nil(t, handle)
+	require.True(t, isDelete)
+	require.False(t, unique)
+	require.Equal(t, keyVer, byte('b'))
+	require.Empty(t, originVal)
+}

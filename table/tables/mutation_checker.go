@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -153,11 +152,11 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			value       []byte
 			orgKey      []byte
 			indexHandle kv.Handle
-			err         error
 		)
 		if idxID != m.indexID {
-			value = append(value, m.value[:len(m.value)-1]...)
-			if len(value) == 0 || (bytes.Equal(value, []byte("delete")) || bytes.Equal(value, []byte("deleteu"))) {
+			value = tablecodec.DecodeTempIndexOriginValue(m.value)
+			if len(value) == 0 {
+				// Skip the deleted operation values.
 				continue
 			}
 			orgKey = append(orgKey, m.key...)
@@ -246,7 +245,7 @@ func checkIndexKeys(
 		}
 
 		// When it is in add index new backfill state.
-		if len(value) == 0 || (idxID != m.indexID && (bytes.Equal(value, []byte("deleteu")) || bytes.Equal(value, []byte("delete")))) {
+		if len(value) == 0 || (idxID != m.indexID && (tablecodec.CheckTempIndexValueIsDelete(value))) {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
