@@ -397,6 +397,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	callback := &ddl.TestDDLCallback{Do: dom}
 
+	runPessimisticTxn := false
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -406,17 +407,20 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			_, err := tk2.Exec("update t set a = 2 where id = 1;")
 			assert.NoError(t, err)
 		}
-	}
-	ddl.MergeTmpIdxBackfillTxnHookForTest = &ddl.MergeTmpIdxBackfillTxnHook{
-		BeforeTxnBegin: func() {
+		if !runPessimisticTxn && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "test", "t", "idx")
+			if idx == nil {
+				return
+			}
+			if idx.BackfillState != model.BackfillStateReadyToMerge {
+				return
+			}
+			runPessimisticTxn = true
 			_, err := tk2.Exec("begin pessimistic;")
 			assert.NoError(t, err)
 			_, err = tk2.Exec("update t set a = 3 where id = 1;")
 			assert.NoError(t, err)
-		},
-		AfterTxnCommit: func() {
-
-		},
+		}
 	}
 	dom.DDL().SetHook(callback)
 	afterCommit := make(chan struct{}, 1)

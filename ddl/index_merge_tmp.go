@@ -102,20 +102,10 @@ func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.Physica
 	}
 }
 
-var MergeTmpIdxBackfillTxnHookForTest *MergeTmpIdxBackfillTxnHook
-
-type MergeTmpIdxBackfillTxnHook struct {
-	BeforeTxnBegin func()
-	AfterTxnCommit func()
-}
-
 // BackfillDataInTxn merge temp index data in txn.
 func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	if MergeTmpIdxBackfillTxnHookForTest != nil {
-		MergeTmpIdxBackfillTxnHookForTest.BeforeTxnBegin()
-	}
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -147,10 +137,10 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 
 			// Lock the corresponding row keys so that it doesn't modify the index KVs
 			// that are changing by a pessimistic transaction.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.rowKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			//err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.rowKey)
+			//if err != nil {
+			//	return errors.Trace(err)
+			//}
 
 			if idxRecord.delete {
 				if idxRecord.unique {
@@ -169,10 +159,6 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 		return nil
 	})
 
-	if MergeTmpIdxBackfillTxnHookForTest != nil {
-		MergeTmpIdxBackfillTxnHookForTest.AfterTxnCommit()
-		MergeTmpIdxBackfillTxnHookForTest = nil
-	}
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 	return
 }
