@@ -13345,6 +13345,15 @@ SetBindingStmt:
 
 		$$ = x
 	}
+|	"SET" "BINDING" BindingStatusType "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			SQLDigest:         $7,
+		}
+
+		$$ = x
+	}
 
 /*************************************************************************************
  * Grant statement
