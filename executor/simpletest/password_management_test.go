@@ -407,9 +407,9 @@ func TestFailedLoginTrackingBasic(t *testing.T) {
 		testkit.Rows("CREATE USER 'u8'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"))
 
 	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0")
-	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`nil`))
+	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
 	tk.MustExec("ALTER USER 'u4'@'localhost' account unlock")
-	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`nil`))
+	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
 	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 6")
 	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`{"Password_locking": {"failed_login_attempts": 0, "password_lock_time_days": 6}}`))
 }
@@ -787,7 +787,7 @@ func TestFailedLoginTracking(t *testing.T) {
 	tk.MustExec("CREATE USER 'testu5'@'localhost' IDENTIFIED BY 'testu5' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "testu5", Hostname: "localhost"}, sha1Password("password"), nil)
 	require.ErrorContains(t, err, "Access denied for user 'testu5'@'localhost' (using password: YES)")
-	tk.MustQuery("select user_attributes from mysql.user where user= 'testu5' and host = 'localhost'").Check(testkit.Rows("nil"))
+	tk.MustQuery("select user_attributes from mysql.user where user= 'testu5' and host = 'localhost'").Check(testkit.Rows("<nil>"))
 
 	tk.MustExec("DROP USER 'testu1'@'localhost', 'testu2'@'localhost', 'testu3'@'localhost', 'testu4'@'localhost', 'testu5'@'localhost'")
 
@@ -1074,7 +1074,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	checkUserUserAttributes(tk, "testu8", "localhost", "1 <nil> <nil> 1 <nil>")
 	tk.MustExec("alter user 'testu8'@'localhost' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
 	tk.MustQuery("select user_attributes from mysql.user where user= 'testu8' and host = 'localhost'").
-		Check(testkit.Rows("nil"))
+		Check(testkit.Rows("<nil>"))
 
 	// Specify only FAILED_LOGIN_ATTEMPTS one attribute when creating user.
 	// Change the value to 0 and check the user_attributes value.
@@ -1082,7 +1082,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts') " +
 		"from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER 'testu9'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
-	tk.MustQuery("select user_attributes from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("nil"))
+	tk.MustQuery("select user_attributes from mysql.user where user='testu9' and host ='localhost'").Check(testkit.Rows("<nil>"))
 
 	// Specify only PASSWORD_LOCK_TIME one attribute when creating user.
 	// Change the value to 0 and check the user_attributes value.
@@ -1090,7 +1090,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	tk.MustQuery("select JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days') " +
 		"from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER 'testu10'@'localhost' PASSWORD_LOCK_TIME 0")
-	tk.MustQuery("select user_attributes from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("nil"))
+	tk.MustQuery("select user_attributes from mysql.user where user='testu10' and host ='localhost'").Check(testkit.Rows("<nil>"))
 
 	// Specify FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME attributes when creating user ,
 	// change the values of the two attributes to 0, and check the value of user_attributes.
@@ -1104,7 +1104,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("1 0"))
 	tk.MustExec("ALTER USER 'testu11'@'localhost' FAILED_LOGIN_ATTEMPTS 0")
 	tk.MustQuery("select user_attributes " +
-		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("nil"))
+		"from mysql.user where user='testu11' and host ='localhost'").Check(testkit.Rows("<nil>"))
 
 	rootTK := testkit.NewTestKit(t, store)
 	sql := new(strings.Builder)

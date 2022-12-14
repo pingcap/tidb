@@ -590,8 +590,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
-	p.user = authUser
-	p.host = record.Host
 	info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
 	return
 }
