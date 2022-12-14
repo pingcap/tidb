@@ -1602,6 +1602,8 @@ func TestBuiltin(t *testing.T) {
 		{"select cast('2000' as year);", true, "SELECT CAST(_UTF8MB4'2000' AS YEAR)"},
 		{"select cast(time '2000' as year);", true, "SELECT CAST(TIME '2000' AS YEAR)"},
 
+		{"select cast(b as signed array);", true, "SELECT CAST(`b` AS SIGNED ARRAY)"},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
 		{"SELECT last_insert_id(1);", true, "SELECT LAST_INSERT_ID(1)"},
@@ -2143,6 +2145,13 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT '{}'->>'$.a' FROM t`, false, ""},
 		{`SELECT a->3 FROM t`, false, ""},
 		{`SELECT a->>3 FROM t`, false, ""},
+
+		{`SELECT 1 member of (a)`, true, "SELECT 1 MEMBER OF (`a`)"},
+		{`SELECT 1 member of a`, false, ""},
+		{`SELECT 1 member a`, false, ""},
+		{`SELECT 1 not member of a`, false, ""},
+		{`SELECT 1 member of (1+1)`, false, ""},
+		{`SELECT concat('a') member of (cast(1 as char(1)))`, true, "SELECT CONCAT(_UTF8MB4'a') MEMBER OF (CAST(1 AS CHAR(1)))"},
 
 		// Test that quoted identifier can be a function name.
 		{"SELECT `uuid`()", true, "SELECT UUID()"},
@@ -7048,8 +7057,6 @@ func TestIntervalPartition(t *testing.T) {
 }
 
 func TestTTLTableOption(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	table := []testCase{
 		// create table with various temporal interval
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 3.1415 YEAR"},
@@ -7073,24 +7080,6 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
-	}
-
-	RunTest(t, table, false)
-}
-
-func TestTTLFeatureGate(t *testing.T) {
-	parser.TTLFeatureGate = false
-
-	table := []testCase{
-		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", false, ""},
-		{"create table t (created_at datetime) TTL_ENABLE = 'OFF'", false, ""},
-		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", false, ""},
-		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH", false, ""},
-		{"alter table t TTL_ENABLE = 'ON'", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", false, ""},
-		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t remove ttl", false, ""},
 	}
 
 	RunTest(t, table, false)
