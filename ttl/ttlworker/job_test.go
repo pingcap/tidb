@@ -17,6 +17,7 @@ package ttlworker
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,11 +28,40 @@ func TestIterScanTask(t *testing.T) {
 		tbl:   tbl,
 		tasks: []*ttlScanTask{{}},
 	}
-	scanTask, err := job.peekScanTask()
-	assert.NoError(t, err)
+	scanTask := job.peekScanTask()
 	assert.NotNil(t, scanTask)
 	assert.Len(t, job.tasks, 1)
 
 	job.nextScanTask()
 	assert.True(t, job.AllSpawned())
+}
+
+func TestJobSummary(t *testing.T) {
+	statistics := &ttlStatistics{}
+	statistics.TotalRows.Store(1)
+	statistics.ErrorRows.Store(255)
+	statistics.SuccessRows.Store(128)
+
+	job := &ttlJob{
+		statistics: statistics,
+		tasks:      []*ttlScanTask{{}},
+	}
+	summary, err := job.summary()
+	assert.NoError(t, err)
+	assert.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255,"total_scan_task":1,"scheduled_scan_task":0,"finished_scan_task":0}`, summary)
+
+	job.taskIter += 1
+	summary, err = job.summary()
+	assert.NoError(t, err)
+	assert.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255,"total_scan_task":1,"scheduled_scan_task":1,"finished_scan_task":0}`, summary)
+
+	job.finishedScanTaskCounter += 1
+	summary, err = job.summary()
+	assert.NoError(t, err)
+	assert.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255,"total_scan_task":1,"scheduled_scan_task":1,"finished_scan_task":1}`, summary)
+
+	job.scanTaskErr = errors.New("test error")
+	summary, err = job.summary()
+	assert.NoError(t, err)
+	assert.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255,"total_scan_task":1,"scheduled_scan_task":1,"finished_scan_task":1,"scan_task_err":"test error"}`, summary)
 }

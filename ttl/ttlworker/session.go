@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -23,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 type sessionPool interface {
@@ -56,11 +60,25 @@ func getSession(pool sessionPool) (session.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
 	}
 
-	se := session.NewSession(sctx, exec, func() {
+	originalRetryLimit := sctx.GetSessionVars().RetryLimit
+	se := session.NewSession(sctx, exec, func(se session.Session) {
+		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
+		if err != nil {
+			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+		}
+
 		pool.Put(resource)
 	})
 
-	if _, err = se.ExecuteSQL(context.Background(), "commit"); err != nil {
+	// store and set the retry limit to 0
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	// Force rollback the session to guarantee the session is not in any explicit transaction
+	if _, err = se.ExecuteSQL(context.Background(), "ROLLBACK"); err != nil {
 		se.Close()
 		return nil, err
 	}
@@ -83,6 +101,10 @@ type ttlTableSession struct {
 }
 
 func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (rows []chunk.Row, shouldRetry bool, err error) {
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+
+	tracer.EnterPhase(metrics.PhaseOther)
 	if !variable.EnableTTLJob.Load() {
 		return nil, false, errors.New("global TTL job is disabled")
 	}
@@ -92,7 +114,10 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	}
 
 	err = s.RunInTxn(ctx, func() error {
+		tracer.EnterPhase(metrics.PhaseQuery)
+		defer tracer.EnterPhase(tracer.Phase())
 		rows, err = s.ExecuteSQL(ctx, sql)
+		tracer.EnterPhase(metrics.PhaseCheckTTL)
 		// We must check the configuration after ExecuteSQL because of MDL and the meta the current transaction used
 		// can only be determined after executed one query.
 		if validateErr := validateTTLWork(ctx, s.Session, s.tbl, s.expire); validateErr != nil {

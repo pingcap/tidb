@@ -870,7 +870,11 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.

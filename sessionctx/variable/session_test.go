@@ -398,21 +398,21 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.Equal(t, 0, len(tc.Savepoints))
 }
 
-func TestGeneralPlanCacheStmt(t *testing.T) {
+func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	sessVars.GeneralPlanCacheSize = 100
+	sessVars.NonPreparedPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 }
 
 func TestHookContext(t *testing.T) {
