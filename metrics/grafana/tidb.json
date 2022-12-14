@@ -17776,9 +17776,9 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type)",
+          "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, instance)",
           "interval": "",
-          "legendFormat": "{{ type }}",
+          "legendFormat": "{{ instance }} {{ type }}",
           "queryType": "randomWalk",
           "refId": "A"
         }
