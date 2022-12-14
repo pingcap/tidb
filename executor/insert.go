@@ -159,6 +159,9 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
 				if tablecodec.IsTempIndexKey(uk.newKey) {
+					if tablecodec.CheckTempIndexValueIsDelete(val) {
+						continue
+					}
 					val = tablecodec.DecodeTempIndexOriginValue(val)
 				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)

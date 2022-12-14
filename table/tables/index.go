@@ -225,7 +225,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	if err != nil && !kv.IsErrNotFound(err) {
 		return nil, err
 	}
-	if err != nil || len(value) == 0 {
+	if err != nil || len(value) == 0 || (keyIsTempIdxKey && tablecodec.CheckTempIndexValueIsDelete(value)) {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
 		var needPresumeKey TempIndexKeyState
 		if keyIsTempIdxKey {
