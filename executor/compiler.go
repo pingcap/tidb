@@ -162,7 +162,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if err != nil {
 			return nil, err
 		}
-		checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
 			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
 		} else {
@@ -235,6 +234,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		Analyze:             false,
+		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
 	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)

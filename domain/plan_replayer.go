@@ -397,7 +397,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
 	jsStats := make(map[int64]*handle.JSONTable)
 	is := GetDomain(w.sctx).InfoSchema()
-	if !task.IsContinuesCapture {
+	if task.IsCapture && !task.IsContinuesCapture {
 		for tblID, stat := range task.TblStats {
 			tbl, ok := is.TableByID(tblID)
 			if !ok {
@@ -527,6 +527,8 @@ type PlanReplayerDumpTask struct {
 	FileName string
 	Zf       *os.File
 
+	// IsCapture indicates whether the task is from capture
+	IsCapture bool
 	// IsContinuesCapture indicates whether the task is from continues capture
 	IsContinuesCapture bool
 }
