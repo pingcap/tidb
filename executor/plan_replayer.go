@@ -445,6 +445,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	// build schema and table first
 	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
 			err = createSchemaAndItems(e.Ctx, zipFile)
