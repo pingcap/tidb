@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
-  "github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -2771,7 +2771,6 @@ func (h *Handle) HandleMyZombieAnalyzeJobs() error {
 
 // HandleOtherZombieAnalyzeJobs updates other servers' analyze jobs which are terminated by server down.
 func (h *Handle) HandleOtherZombieAnalyzeJobs() error {
-	// TODO: outside ctx?
 	serverInfos, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return errors.Trace(err)

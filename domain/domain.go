@@ -2123,12 +2123,12 @@ func (do *Domain) cleanAnalyzeJobWorker(owner owner.Manager) {
 		case <-handleZombieTicker.C:
 			err := do.StatsHandle().HandleMyZombieAnalyzeJobs()
 			if err != nil {
-				logutil.BgLogger().Warn("handle my zombie analyze jobs failed", zap.Error(err))
+				logutil.BgLogger().Error("handle my zombie analyze jobs failed", zap.Error(err))
 			}
 			if owner.IsOwner() {
 				err = do.StatsHandle().HandleOtherZombieAnalyzeJobs()
 				if err != nil {
-					logutil.BgLogger().Warn("handle other servers' zombie analyze jobs failed", zap.Error(err))
+					logutil.BgLogger().Error("handle other servers' zombie analyze jobs failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:
