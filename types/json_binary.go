@@ -275,7 +275,8 @@ func (bj BinaryJSON) GetElemCount() int {
 	return int(jsonEndian.Uint32(bj.Value))
 }
 
-func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
+// ArrayGetElem gets the element of the index `idx`.
+func (bj BinaryJSON) ArrayGetElem(idx int) BinaryJSON {
 	return bj.valEntryGet(headerSize + idx*valEntrySize)
 }
 
@@ -355,7 +356,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 			buf = append(buf, ", "...)
 		}
 		var err error
-		buf, err = bj.arrayGetElem(i).marshalTo(buf)
+		buf, err = bj.ArrayGetElem(i).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -557,7 +558,7 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		elemCount := int(jsonEndian.Uint32(bj.Value))
 		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = bj.arrayGetElem(i).HashValue(buf)
+			buf = bj.ArrayGetElem(i).HashValue(buf)
 		}
 	case JSONTypeCodeObject:
 		// this hash value is bidirectional, because you can get the key using the json

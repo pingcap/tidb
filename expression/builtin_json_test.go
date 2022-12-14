@@ -386,6 +386,47 @@ func TestJSONRemove(t *testing.T) {
 	}
 }
 
+func TestJSONMemberOf(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONMemberOf]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		err      error
+	}{
+		{[]interface{}{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
+
+		{[]interface{}{1, `[1, 2]`}, 1, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[0]`}, 0, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[[1]]`}, 0, nil},
+		{[]interface{}{"1", `[1]`}, 0, nil},
+		{[]interface{}{"1", `["1"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `{"a":1}`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}, 1]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, tt.input)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.err == nil {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, d.IsNull(), tt.input)
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64(), tt.input)
+			}
+		} else {
+			require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+		}
+	}
+}
+
 func TestJSONContains(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]

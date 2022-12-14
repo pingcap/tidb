@@ -43,6 +43,7 @@ var (
 	_ functionClass = &jsonMergeFunctionClass{}
 	_ functionClass = &jsonObjectFunctionClass{}
 	_ functionClass = &jsonArrayFunctionClass{}
+	_ functionClass = &jsonMemberOfFunctionClass{}
 	_ functionClass = &jsonContainsFunctionClass{}
 	_ functionClass = &jsonOverlapsFunctionClass{}
 	_ functionClass = &jsonContainsPathFunctionClass{}
@@ -72,6 +73,7 @@ var (
 	_ builtinFunc = &builtinJSONReplaceSig{}
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
+	_ builtinFunc = &builtinJSONMemberOfSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
 	_ builtinFunc = &builtinJSONOverlapsSig{}
 	_ builtinFunc = &builtinJSONStorageSizeSig{}
@@ -740,6 +742,68 @@ func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt typ
 		return res, true, err
 	}
 	return res, false, nil
+}
+
+type jsonMemberOfFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONMemberOfSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
+	newSig := &builtinJSONMemberOfSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonMemberOfFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
+	}
+	return nil
+}
+
+func (c *jsonMemberOfFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETJson, types.ETJson}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	DisableParseJSONFlag4Expr(args[0])
+	sig := &builtinJSONMemberOfSig{bf}
+	return sig, nil
+}
+
+func (b *builtinJSONMemberOfSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	target, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	obj, isNull, err := b.args[1].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	if obj.TypeCode != types.JSONTypeCodeArray {
+		return boolToInt64(types.CompareBinaryJSON(obj, target) == 0), false, nil
+	}
+
+	elemCount := obj.GetElemCount()
+	for i := 0; i < elemCount; i++ {
+		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
+			return 1, false, nil
+		}
+	}
+
+	return 0, false, nil
 }
 
 type jsonContainsFunctionClass struct {
