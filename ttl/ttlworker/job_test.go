@@ -27,8 +27,7 @@ func TestIterScanTask(t *testing.T) {
 		tbl:   tbl,
 		tasks: []*ttlScanTask{{}},
 	}
-	scanTask, err := job.peekScanTask()
-	assert.NoError(t, err)
+	scanTask := job.peekScanTask()
 	assert.NotNil(t, scanTask)
 	assert.Len(t, job.tasks, 1)
 
