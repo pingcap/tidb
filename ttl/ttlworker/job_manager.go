@@ -21,7 +21,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -117,6 +119,7 @@ func (m *JobManager) jobLoop() error {
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
 	for {
+		m.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -140,18 +143,22 @@ func (m *JobManager) jobLoop() error {
 			}
 			cancel()
 		case <-updateScanTaskStateTicker:
-			m.updateTaskState()
+			if m.updateTaskState() {
+				m.rescheduleJobs(se, now)
+			}
 		case <-m.notifyStateCh:
-			m.updateTaskState()
+			if m.updateTaskState() {
+				m.rescheduleJobs(se, now)
+			}
 		case <-jobCheckTicker:
 			m.checkFinishedJob(se, now)
 			m.checkNotOwnJob()
 		case <-resizeWorkersTicker:
-			err := m.resizeScanWorkers(int(ScanWorkersCount.Load()))
+			err := m.resizeScanWorkers(int(variable.TTLScanWorkerCount.Load()))
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to resize scan workers", zap.Error(err))
 			}
-			err = m.resizeDelWorkers(int(DeleteWorkerCount.Load()))
+			err = m.resizeDelWorkers(int(variable.TTLDeleteWorkerCount.Load()))
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to resize delete workers", zap.Error(err))
 			}
@@ -161,41 +168,89 @@ func (m *JobManager) jobLoop() error {
 	}
 }
 
+func (m *JobManager) reportMetrics() {
+	var runningJobs, cancellingJobs float64
+	for _, job := range m.runningJobs {
+		switch job.status {
+		case cache.JobStatusRunning:
+			runningJobs++
+		case cache.JobStatusCancelling:
+			cancellingJobs++
+		}
+	}
+	metrics.RunningJobsCnt.Set(runningJobs)
+	metrics.CancellingJobsCnt.Set(cancellingJobs)
+}
+
 func (m *JobManager) resizeScanWorkers(count int) error {
 	var err error
-	m.scanWorkers, err = m.resizeWorkers(m.scanWorkers, count, func() worker {
+	var canceledWorkers []worker
+	m.scanWorkers, canceledWorkers, err = m.resizeWorkers(m.scanWorkers, count, func() worker {
 		return newScanWorker(m.delCh, m.notifyStateCh, m.sessPool)
 	})
+	for _, w := range canceledWorkers {
+		s := w.(scanWorker)
+
+		var tableID int64
+		var scanErr error
+		result := s.PollTaskResult()
+		if result != nil {
+			tableID = result.task.tbl.ID
+			scanErr = result.err
+		} else {
+			// if the scan worker failed to poll the task, it's possible that the `WaitStopped` has timeout
+			// we still consider the scan task as finished
+			curTask := s.CurrentTask()
+			if curTask == nil {
+				continue
+			}
+			tableID = curTask.tbl.ID
+			scanErr = errors.New("timeout to cancel scan task")
+		}
+
+		job := findJobWithTableID(m.runningJobs, tableID)
+		if job == nil {
+			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", tableID))
+			continue
+		}
+		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+		job.finishedScanTaskCounter += 1
+		job.scanTaskErr = multierr.Append(job.scanTaskErr, scanErr)
+	}
 	return err
 }
 
 func (m *JobManager) resizeDelWorkers(count int) error {
 	var err error
-	m.delWorkers, err = m.resizeWorkers(m.delWorkers, count, func() worker {
+	m.delWorkers, _, err = m.resizeWorkers(m.delWorkers, count, func() worker {
 		return newDeleteWorker(m.delCh, m.sessPool)
 	})
 	return err
 }
 
-func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() worker) ([]worker, error) {
+// resizeWorkers scales the worker, and returns the full set of workers as the first return value. If there are workers
+// stopped, return the stopped worker in the second return value
+func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() worker) ([]worker, []worker, error) {
 	if count < len(workers) {
 		logutil.Logger(m.ctx).Info("shrink ttl worker", zap.Int("originalCount", len(workers)), zap.Int("newCount", count))
 
 		for _, w := range workers[count:] {
 			w.Stop()
 		}
+
 		var errs error
+		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
 		for _, w := range workers[count:] {
-			err := w.WaitStopped(m.ctx, 30*time.Second)
+			err := w.WaitStopped(ctx, 30*time.Second)
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to stop ttl worker", zap.Error(err))
 				errs = multierr.Append(errs, err)
 			}
 		}
+		cancel()
 
 		// remove the existing workers, and keep the left workers
-		workers = workers[:count]
-		return workers, errs
+		return workers[:count], workers[count:], errs
 	}
 
 	if count > len(workers) {
@@ -206,29 +261,34 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 			w.Start()
 			workers = append(workers, w)
 		}
-		return workers, nil
+		return workers, nil, nil
 	}
 
-	return workers, nil
+	return workers, nil, nil
 }
 
-func (m *JobManager) updateTaskState() {
+// updateTaskState polls the result from scan worker and returns whether there are result polled
+func (m *JobManager) updateTaskState() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
 		job := findJobWithTableID(m.runningJobs, result.task.tbl.ID)
-		if job != nil {
-			logutil.Logger(m.ctx).Debug("scan task state changed", zap.String("jobID", job.id))
-
-			job.finishedScanTaskCounter += 1
-			job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
+		if job == nil {
+			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
+			continue
 		}
+		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+
+		job.finishedScanTaskCounter += 1
+		job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
 	}
+
+	return len(results) > 0
 }
 
 func (m *JobManager) pollScanWorkerResults() []*ttlScanTaskExecResult {
 	results := make([]*ttlScanTaskExecResult, 0, len(m.scanWorkers))
 	for _, w := range m.scanWorkers {
-		worker := w.(*ttlScanWorker)
+		worker := w.(scanWorker)
 		result := worker.PollTaskResult()
 		if result != nil {
 			results = append(results, result)
@@ -271,7 +331,7 @@ func (m *JobManager) checkFinishedJob(se session.Session, now time.Time) {
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	if !timeutil.WithinDayTimePeriod(ttlJobScheduleWindowStartTime, ttlJobScheduleWindowEndTime, now) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		// Local jobs will also not run, but as the server is still sending heartbeat,
 		// and keep the job in memory, it could start the left task in the next window.
 		return
@@ -378,7 +438,18 @@ func (m *JobManager) localJobs() []*ttlJob {
 // readyForNewJobTables returns all tables which should spawn a TTL job according to cache
 func (m *JobManager) readyForNewJobTables(now time.Time) []*cache.PhysicalTable {
 	tables := make([]*cache.PhysicalTable, 0, len(m.infoSchemaCache.Tables))
+
+tblLoop:
 	for _, table := range m.infoSchemaCache.Tables {
+		// If this node already has a job for this table, just ignore.
+		// Actually, the logic should ensure this condition never meet, we still add the check here to keep safety
+		// (especially when the content of the status table is incorrect)
+		for _, job := range m.runningJobs {
+			if job.tbl.ID == table.ID {
+				continue tblLoop
+			}
+		}
+
 		status := m.tableStatusCache.Tables[table.ID]
 		ok := m.couldTrySchedule(status, now)
 		if ok {
@@ -413,7 +484,7 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 
 	finishTime := table.LastJobFinishTime
 
-	return finishTime.Add(ttlJobInterval).Before(now)
+	return finishTime.Add(variable.TTLJobRunInterval.Load()).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new

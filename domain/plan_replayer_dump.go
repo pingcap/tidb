@@ -41,6 +41,8 @@ import (
 )
 
 const (
+	// planReplayerSQLMeta indicates sql meta path for plan replayer
+	planReplayerSQLMeta = "sql_meta.toml"
 	// PlanReplayerConfigFile indicates config file path for plan replayer
 	PlanReplayerConfigFile = "config.toml"
 	// PlanReplayerMetaFile meta file path for plan replayer
@@ -53,6 +55,11 @@ const (
 	PlanReplayerSessionBindingFile = "session_bindings.sql"
 	// PlanReplayerGlobalBindingFile indicates global binding file path for plan replayer
 	PlanReplayerGlobalBindingFile = "global_bindings.sql"
+)
+
+const (
+	// PlanReplayerSQLMetaStartTS indicates the startTS in plan replayer sql meta
+	PlanReplayerSQLMetaStartTS = "startTS"
 )
 
 type tableNamePair struct {
@@ -131,6 +138,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 // DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
 /*
+ |-sql_meta.toml
  |-meta.txt
  |-schema
  |	 |-db1.table1.schema.txt
@@ -164,7 +172,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	sessionVars := task.SessionVars
 	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
-	records := generateRecords(task)
+	var records []PlanReplayerStatusRecord
 	defer func() {
 		if err != nil {
 			logutil.BgLogger().Error("dump plan replayer failed", zap.Error(err))
@@ -183,6 +191,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 		insertPlanReplayerStatus(ctx, sctx, records)
 	}()
+
+	// Dump SQLMeta
+	if err = dumpSQLMeta(zw, task); err != nil {
+		return err
+	}
+
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
 		return err
@@ -244,10 +258,11 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if len(task.EncodedPlan) > 0 {
+		records = generateRecords(task)
 		return dumpEncodedPlan(sctx, zw, task.EncodedPlan)
 	}
 	// Dump explain
-	return dumpExplain(sctx, zw, execStmts, task.Analyze)
+	return dumpExplain(sctx, zw, task, &records)
 }
 
 func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
@@ -263,6 +278,19 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 		}
 	}
 	return records
+}
+
+func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
+	cf, err := zw.Create(planReplayerSQLMeta)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	varMap := make(map[string]string)
+	varMap[PlanReplayerSQLMetaStartTS] = strconv.FormatUint(task.StartTS, 10)
+	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
+		return errors.AddStack(err)
+	}
+	return nil
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -488,12 +516,12 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNode, isAnalyze bool) error {
-	for i, stmtExec := range execStmts {
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+	for i, stmtExec := range task.ExecStmts {
 		sql := stmtExec.Text()
 		var recordSets []sqlexec.RecordSet
 		var err error
-		if isAnalyze {
+		if task.Analyze {
 			// Explain analyze
 			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
@@ -522,6 +550,10 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNod
 				return err
 			}
 		}
+		*records = append(*records, PlanReplayerStatusRecord{
+			OriginSQL: sql,
+			Token:     task.FileName,
+		})
 	}
 	return nil
 }

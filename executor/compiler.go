@@ -157,13 +157,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+		if err != nil {
+			return nil, err
+		}
+		checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 	}
 
 	return stmt, nil
 }
 
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
 	dom := domain.GetDomain(sctx)
 	if dom == nil {
 		return
@@ -178,14 +182,14 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	for _, task := range tasks {
 		if task.SQLDigest == sqlDigest.String() {
 			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
+				sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode, startTS)
 				return
 			}
 		}
 	}
 }
 
-func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode) {
+func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
@@ -193,6 +197,7 @@ func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Cont
 			SQLDigest:  sqlDigest,
 			PlanDigest: planDigest,
 		},
+		StartTS:         startTS,
 		EncodePlan:      GetEncodedPlan,
 		TblStats:        stmtCtx.TableStats,
 		SessionBindings: handle.GetAllBindRecord(),
