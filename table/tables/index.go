@@ -496,6 +496,7 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 	return colInfo
 }
 
+// TempIndexKeyState is the state of the temporary index key.
 type TempIndexKeyState byte
 
 const (
