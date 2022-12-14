@@ -299,6 +299,13 @@ func (r *planReplayerDumpTaskStatus) GetRunningTaskStatusLen() int {
 	return len(r.runningTaskMu.runningTasks)
 }
 
+// CleanFinishedTaskStatus clean then finished tasks, only used for unit test
+func (r *planReplayerDumpTaskStatus) CleanFinishedTaskStatus() {
+	r.finishedTaskMu.Lock()
+	defer r.finishedTaskMu.Unlock()
+	r.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+}
+
 // GetFinishedTaskStatusLen used for unit test
 func (r *planReplayerDumpTaskStatus) GetFinishedTaskStatusLen() int {
 	r.finishedTaskMu.RLock()
@@ -520,6 +527,7 @@ type PlanReplayerDumpTask struct {
 	TblStats   map[int64]interface{}
 
 	// variables used to dump the plan
+	StartTS         uint64
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
 	SessionVars     *variable.SessionVars

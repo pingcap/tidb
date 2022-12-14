@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample",
+		"match", "until", "placement", "tablesample", "failedLoginAttempts", "passwordLockTime",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -1602,6 +1602,8 @@ func TestBuiltin(t *testing.T) {
 		{"select cast('2000' as year);", true, "SELECT CAST(_UTF8MB4'2000' AS YEAR)"},
 		{"select cast(time '2000' as year);", true, "SELECT CAST(TIME '2000' AS YEAR)"},
 
+		{"select cast(b as signed array);", true, "SELECT CAST(`b` AS SIGNED ARRAY)"},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
 		{"SELECT last_insert_id(1);", true, "SELECT LAST_INSERT_ID(1)"},
@@ -2143,6 +2145,13 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT '{}'->>'$.a' FROM t`, false, ""},
 		{`SELECT a->3 FROM t`, false, ""},
 		{`SELECT a->>3 FROM t`, false, ""},
+
+		{`SELECT 1 member of (a)`, true, "SELECT 1 MEMBER OF (`a`)"},
+		{`SELECT 1 member of a`, false, ""},
+		{`SELECT 1 member a`, false, ""},
+		{`SELECT 1 not member of a`, false, ""},
+		{`SELECT 1 member of (1+1)`, false, ""},
+		{`SELECT concat('a') member of (cast(1 as char(1)))`, true, "SELECT CONCAT(_UTF8MB4'a') MEMBER OF (CAST(1 AS CHAR(1)))"},
 
 		// Test that quoted identifier can be a function name.
 		{"SELECT `uuid`()", true, "SELECT UUID()"},
@@ -4451,6 +4460,11 @@ func TestPrivilege(t *testing.T) {
 		{"create user 'test@localhost' password expire never;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
 		{"create user 'test@localhost' password expire default;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE DEFAULT"},
 		{"create user 'test@localhost' password expire interval 3 day;", true, "CREATE USER `test@localhost`@`%` PASSWORD EXPIRE INTERVAL 3 DAY"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3 password_lock_time 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3 password_lock_time unbounded;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"},
+		{"create user 'test@localhost' identified by 'password' failed_login_attempts 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' FAILED_LOGIN_ATTEMPTS 3"},
+		{"create user 'test@localhost' identified by 'password' password_lock_time 3;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' PASSWORD_LOCK_TIME 3"},
+		{"create user 'test@localhost' identified by 'password' password_lock_time unbounded;", true, "CREATE USER `test@localhost`@`%` IDENTIFIED BY 'password' PASSWORD_LOCK_TIME UNBOUNDED"},
 		{"CREATE USER 'sha_test'@'localhost' IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'", true, "CREATE USER `sha_test`@`localhost` IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'"},
 		{"CREATE USER 'sha_test3'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS 0x24412430303524255B03496C662C1055127B3B654A2F04207D01485276703644704B76303247474564416A516662346C5868646D32764C6B514F43585A473779565947514F34", true, "CREATE USER `sha_test3`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
 		{"CREATE USER 'sha_test4'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'", true, "CREATE USER `sha_test4`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
@@ -7043,8 +7057,6 @@ func TestIntervalPartition(t *testing.T) {
 }
 
 func TestTTLTableOption(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	table := []testCase{
 		// create table with various temporal interval
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 3.1415 YEAR"},
@@ -7068,24 +7080,6 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
-	}
-
-	RunTest(t, table, false)
-}
-
-func TestTTLFeatureGate(t *testing.T) {
-	parser.TTLFeatureGate = false
-
-	table := []testCase{
-		{"create table t (created_at datetime) TTL = created_at + INTERVAL 3.1415 YEAR", false, ""},
-		{"create table t (created_at datetime) TTL_ENABLE = 'OFF'", false, ""},
-		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", false, ""},
-		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH", false, ""},
-		{"alter table t TTL_ENABLE = 'ON'", false, ""},
-		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", false, ""},
-		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", false, ""},
-		{"alter table t remove ttl", false, ""},
 	}
 
 	RunTest(t, table, false)

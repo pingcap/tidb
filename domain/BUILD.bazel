@@ -48,6 +48,7 @@ go_library(
         "//statistics",
         "//statistics/handle",
         "//telemetry",
+        "//ttl/ttlworker",
         "//types",
         "//util",
         "//util/chunk",

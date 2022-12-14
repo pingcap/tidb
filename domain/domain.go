@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -70,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -120,6 +122,7 @@ type Domain struct {
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 	historicalStatsWorker   *HistoricalStatsWorker
+	ttlJobManager           *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1058,6 +1061,10 @@ func (do *Domain) Init(
 		return err
 	}
 
+	do.wg.Run(func() {
+		do.runTTLJobManager(ctx)
+	})
+
 	return nil
 }
 
@@ -1410,6 +1417,64 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+			}
+		}
+	}()
+	return nil
+}
+
+// WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
+// TODO: tiflashComputeNodeKey is not put to etcd yet(finish this when AutoScaler is done)
+//
+//	store cache will only be invalidated every 30 seconds.
+func (do *Domain) WatchTiFlashComputeNodeChange() error {
+	var watchCh clientv3.WatchChan
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
+	}
+	do.wg.Add(1)
+	duration := 10 * time.Second
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
+			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
+		}()
+
+		var count int
+		var logCount int
+		for {
+			ok := true
+			var watched bool
+			select {
+			case <-do.exit:
+				return
+			case _, ok = <-watchCh:
+				watched = true
+			case <-time.After(duration):
+			}
+			if !ok {
+				logutil.BgLogger().Error("WatchTiFlashComputeNodeChange watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+			count = 0
+			switch s := do.store.(type) {
+			case tikv.Storage:
+				logCount++
+				s.GetRegionCache().InvalidateTiFlashComputeStores()
+				if logCount == 60 {
+					// Print log every 60*duration seconds.
+					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
+					logCount = 0
+				}
+			default:
+				logutil.BgLogger().Debug("No need to watch tiflash_compute store cache for non-tikv store")
+				return
 			}
 		}
 	}()
@@ -2082,8 +2147,9 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 }
 
 const (
-	privilegeKey   = "/tidb/privilege"
-	sysVarCacheKey = "/tidb/sysvars"
+	privilegeKey          = "/tidb/privilege"
+	sysVarCacheKey        = "/tidb/sysvars"
+	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
@@ -2388,6 +2454,25 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+func (do *Domain) runTTLJobManager(ctx context.Context) {
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+	ttlJobManager.Start()
+	do.ttlJobManager = ttlJobManager
+
+	<-do.exit
+
+	ttlJobManager.Stop()
+	err := ttlJobManager.WaitStopped(ctx, 30*time.Second)
+	if err != nil {
+		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+	}
+}
+
+// TTLJobManager returns the ttl job manager on this domain
+func (do *Domain) TTLJobManager() *ttlworker.JobManager {
+	return do.ttlJobManager
 }
 
 func init() {
