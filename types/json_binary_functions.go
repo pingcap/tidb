@@ -1106,6 +1106,48 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 	}
 }
 
+// OverlapsBinaryJSON is similar with ContainsBinaryJSON, but it checks the `OR` relationship.
+func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
+	if obj.TypeCode != JSONTypeCodeArray && target.TypeCode == JSONTypeCodeArray {
+		obj, target = target, obj
+	}
+	switch obj.TypeCode {
+	case JSONTypeCodeObject:
+		if target.TypeCode == JSONTypeCodeObject {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				key := target.objectGetKey(i)
+				val := target.objectGetVal(i)
+				if exp, exists := obj.objectSearchKey(key); exists && CompareBinaryJSON(exp, val) == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	case JSONTypeCodeArray:
+		if target.TypeCode == JSONTypeCodeArray {
+			for i := 0; i < obj.GetElemCount(); i++ {
+				o := obj.arrayGetElem(i)
+				for j := 0; j < target.GetElemCount(); j++ {
+					if CompareBinaryJSON(o, target.arrayGetElem(j)) == 0 {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		elemCount := obj.GetElemCount()
+		for i := 0; i < elemCount; i++ {
+			if CompareBinaryJSON(obj.arrayGetElem(i), target) == 0 {
+				return true
+			}
+		}
+		return false
+	default:
+		return CompareBinaryJSON(obj, target) == 0
+	}
+}
+
 // GetElemDepth for JSON_DEPTH
 // Returns the maximum depth of a JSON document
 // rules referenced by MySQL JSON_DEPTH function
