@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -391,12 +392,12 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
 	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
-		Do: dom,
-	}
-	onJobUpdatedBefore := func(job *model.Job) {
+	callback := &ddl.TestDDLCallback{Do: dom}
+
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -406,7 +407,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	}
-
 	ddl.MergeTmpIdxBackfillTxnHookForTest = &ddl.MergeTmpIdxBackfillTxnHook{
 		BeforeTxnBegin: func() {
 			_, err := tk2.Exec("begin pessimistic;")
@@ -415,14 +415,26 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 		},
 		AfterTxnCommit: func() {
-			_, err := tk2.Exec("commit;")
-			assert.NoError(t, err)
+
 		},
 	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedBefore)
 	dom.DDL().SetHook(callback)
-	tk.MustExec("alter table t add index idx(a);")
+	afterCommit := make(chan struct{}, 1)
+	go func() {
+		tk.MustExec("alter table t add index idx(a);")
+		afterCommit <- struct{}{}
+	}()
+	timer := time.NewTimer(300 * time.Millisecond)
+	select {
+	case <-timer.C:
+		break
+	case <-afterCommit:
+		require.Fail(t, "should be blocked by the pessimistic txn")
+	}
+	tk2.MustExec("rollback;")
+	<-afterCommit
 	dom.DDL().SetHook(originHook)
 	tk.MustExec("admin check table t;")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+
 }

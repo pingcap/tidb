@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -77,6 +76,7 @@ type temporaryIndexRecord struct {
 	delete   bool
 	unique   bool
 	distinct bool
+	rowKey   kv.Key
 }
 
 type mergeIndexWorker struct {
@@ -145,22 +145,21 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 				continue
 			}
 
-			//err := txn.LockKeys(context.Background(), new(kv.LockCtx), w.originIdxKeys[i])
-			//if err != nil {
-			//	return errors.Trace(err)
-			//}
+			// Lock the corresponding row keys so that it doesn't modify the index KVs
+			// that are changing by a pessimistic transaction.
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.rowKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			if idxRecord.delete {
 				if idxRecord.unique {
 					err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
 				} else {
 					err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
 				}
-				logutil.BgLogger().Info("delete index", zap.String("index", w.index.Meta().Name.L),
-					zap.String("key", hex.EncodeToString(w.originIdxKeys[i])))
 			} else {
 				err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
-				logutil.BgLogger().Info("create index", zap.String("index", w.index.Meta().Name.L),
-					zap.String("key", hex.EncodeToString(w.originIdxKeys[i])))
 			}
 			if err != nil {
 				return err
@@ -191,6 +190,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
+	isCommonHandle := w.table.Meta().IsCommonHandle
 	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
@@ -207,35 +207,37 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				return false, nil
 			}
 
-			isDelete := false
-			unique := false
-			length := len(rawValue)
-			keyVer := rawValue[length-1]
+			originVal, handle, isDelete, unique, keyVer := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
 			if keyVer == tables.TempIndexKeyTypeMerge || keyVer == tables.TempIndexKeyTypeDelete {
 				// For 'm' version kvs, they are double-written.
 				// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
 				return true, nil
 			}
-			rawValue = rawValue[:length-1]
-			if bytes.Equal(rawValue, tables.DeleteMarker) {
-				isDelete = true
-			} else if bytes.Equal(rawValue, tables.DeleteMarkerUnique) {
-				isDelete = true
-				unique = true
+
+			if handle == nil {
+				// If the handle is not found in the value of the temp index, it means
+				// 1) This is not a deletion marker, the handle is in the key or the origin value.
+				// 2) This is a deletion marker, but the handle is in the key of temp index.
+				handle, err = tablecodec.DecodeIndexHandle(indexKey, originVal, len(w.index.Meta().Columns))
+				if err != nil {
+					return false, err
+				}
 			}
+			rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), handle)
 
 			originIdxKey := make([]byte, len(indexKey))
 			copy(originIdxKey, indexKey)
 			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
 
 			idxRecord := &temporaryIndexRecord{
+				rowKey: rowKey,
 				delete: isDelete,
 				unique: unique,
 				skip:   false,
 			}
 			if !isDelete {
-				idxRecord.vals = rawValue
-				idxRecord.distinct = tablecodec.IndexKVIsUnique(rawValue)
+				idxRecord.vals = originVal
+				idxRecord.distinct = tablecodec.IndexKVIsUnique(originVal)
 			}
 			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
 			w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
