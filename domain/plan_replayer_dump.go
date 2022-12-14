@@ -147,7 +147,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |-sql_meta.toml
  |-meta.txt
  |-schema
- |   |-schema_meta.txt
+ |	 |-schema_meta.txt
  |	 |-db1.table1.schema.txt
  |	 |-db2.table2.schema.txt
  |	 |-....
