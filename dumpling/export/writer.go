@@ -213,9 +213,13 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			return
 		}
 		if conf.SQL != "" {
-			meta, err = setTableMetaFromRows(w.conf.ServerInfo.ServerType, ir.RawRows())
+			rows := ir.RawRows()
+			meta, err = setTableMetaFromRows(w.conf.ServerInfo.ServerType, rows)
 			if err != nil {
 				return err
+			}
+			if err = rows.Err(); err != nil {
+				return errors.Trace(err)
 			}
 		}
 		defer func() {
