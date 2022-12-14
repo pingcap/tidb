@@ -39,10 +39,11 @@ func TestSessionRunInTxn(t *testing.T) {
 	}))
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10"))
 
-	require.NoError(t, se.RunInTxn(context.TODO(), func() error {
+	err := se.RunInTxn(context.TODO(), func() error {
 		tk.MustExec("insert into t values (2, 20)")
-		return errors.New("err")
-	}))
+		return errors.New("mockErr")
+	})
+	require.EqualError(t, err, "mockErr")
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10"))
 
 	require.NoError(t, se.RunInTxn(context.TODO(), func() error {

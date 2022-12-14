@@ -107,8 +107,8 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 	success := false
 	defer func() {
 		if !success {
-			_, err = s.ExecuteSQL(ctx, "ROLLBACK")
-			terror.Log(err)
+			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			terror.Log(rollbackErr)
 		}
 	}()
 
