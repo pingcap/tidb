@@ -496,9 +496,6 @@ const (
 		current_job_state text DEFAULT NULL,
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
-
-	// AddSourceColumnToStatsMetaHistoryTable adds source column to mysql.stats_meta_history
-	AddSourceColumnToStatsMetaHistoryTable = "ALTER TABLE mysql.stats_meta_history ADD COLUMN `source` varchar(16) after `version`;"
 )
 
 // bootstrap initiates system DB for a store.
@@ -2200,7 +2197,7 @@ func upgradeToVer109(s Session, ver int64) {
 	if ver >= version109 {
 		return
 	}
-	doReentrantDDL(s, AddSourceColumnToStatsMetaHistoryTable)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN `source` varchar(16) after `version`;")
 }
 
 func writeOOMAction(s Session) {
@@ -2309,8 +2306,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
-	// Add source column to stats_meta_history
-	mustExecute(s, AddSourceColumnToStatsMetaHistoryTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
