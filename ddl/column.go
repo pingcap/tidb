@@ -807,7 +807,11 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs), false)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -834,7 +838,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			// If timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
-		if kv.IsTxnRetryableError(err) {
+		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -1124,6 +1128,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
+			w.getReorgCtx(reorgInfo.Job).setNextKey(reorgInfo.StartKey)
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.

@@ -1417,12 +1417,14 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		probeWorkers:          make([]*probeWorker, v.Concurrency),
 		buildWorker:           &buildWorker{},
 		hashJoinCtx: &hashJoinCtx{
+			sessCtx:         b.ctx,
 			isOuterJoin:     v.JoinType.IsOuterJoin(),
 			useOuterToBuild: v.UseOuterToBuild,
 			joinType:        v.JoinType,
 			concurrency:     v.Concurrency,
 		},
 	}
+	e.hashJoinCtx.allocPool = e.AllocPool
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.InnerChildIdx == 1 {
@@ -1494,13 +1496,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.probeWorkers[i] = &probeWorker{
 			hashJoinCtx:      e.hashJoinCtx,
 			workerID:         i,
-			sessCtx:          e.ctx,
 			joiner:           newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			probeKeyColIdx:   probeKeyColIdx,
 			probeNAKeyColIdx: probeNAKeColIdx,
 		}
 	}
-	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec = buildKeyColIdx, buildNAKeyColIdx, buildSideExec
+	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec, e.buildWorker.hashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.hashJoinCtx
 	e.hashJoinCtx.isNullAware = isNAJoin
 	executorCountHashJoinExec.Inc()
 
@@ -3284,7 +3285,11 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 }
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) Executor {
-	e := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin)).(*IndexLookUpJoin)
+	join := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin))
+	if b.err != nil {
+		return nil
+	}
+	e := join.(*IndexLookUpJoin)
 	idxHash := &IndexNestedLoopHashJoin{
 		IndexLookUpJoin: *e,
 		keepOuterOrder:  v.KeepOuterOrder,
@@ -4815,7 +4820,9 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
+		source:       v.Source,
 		sqlDigest:    v.SQLDigest,
+		planDigest:   v.PlanDigest,
 	}
 	return e
 }

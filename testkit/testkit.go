@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,7 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
+	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -225,6 +228,17 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][2], "tiflash") {
 			return true
 		}
 	}

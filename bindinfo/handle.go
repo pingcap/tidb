@@ -971,12 +971,12 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool, defaultDB string) string {
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
 	}
-	if !captured {
+	if !skipCheckIfHasParam {
 		paramChecker := &paramMarkerChecker{}
 		stmtNode.Accept(paramChecker)
 		// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,

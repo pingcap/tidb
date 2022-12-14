@@ -1529,7 +1529,7 @@ func TestCreateTableWithTTL(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 5 DAY TTL_ENABLE = 'ON'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */"))
 	tk.MustExec("DROP TABLE t")
 
 	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY", "[ddl:8148]Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
@@ -1538,7 +1538,7 @@ func TestCreateTableWithTTL(t *testing.T) {
 
 	// when multiple ttl and ttl_enable configs are submitted, only the last one will be handled
 	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */"))
 	tk.MustExec("DROP TABLE t")
 }
 
@@ -1549,10 +1549,10 @@ func TestAlterTTLInfo(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY")
 	tk.MustExec("ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'ON'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */"))
 
 	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
 
@@ -1562,13 +1562,13 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustGetErrMsg("ALTER TABLE t CHANGE updated_at updated_at_new INT", "[ddl:8148]Field 'updated_at_new' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
 
 	tk.MustExec("ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_2` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */"))
 
 	tk.MustExec("ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */"))
 
 	tk.MustExec("ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 3 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL", "[ddl:8200]Unsupported multi schema change for alter table ttl")
 
@@ -1576,4 +1576,36 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+}
+
+func TestDisableTTLForTempTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustGetDBError("CREATE TEMPORARY TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY", dbterror.ErrTempTableNotAllowedWithTTL)
+}
+
+func TestDisableTTLForFKParentTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// alter ttl for a FK parent table is not allowed
+	tk.MustExec("set global tidb_enable_foreign_key='ON'")
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime)")
+	tk.MustExec("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))")
+	tk.MustGetDBError("ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
+
+	// refuse to reference TTL key when create table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustGetDBError("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t")
+
+	// refuse to add foreign key reference TTL table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustExec("CREATE TABLE t_1 (t_id int)")
+	tk.MustGetDBError("ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id)", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
 }

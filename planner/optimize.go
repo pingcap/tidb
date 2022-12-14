@@ -73,23 +73,23 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 	return bindRecord, scope, true
 }
 
-// getPlanFromGeneralPlanCache tries to get an available cached plan from the General Plan Cache for this stmt.
-func getPlanFromGeneralPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (core.Plan, types.NameSlice, bool, error) {
+// getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
+func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (core.Plan, types.NameSlice, bool, error) {
 	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		!core.GeneralPlanCacheableWithCtx(sctx, stmt, is) {
+		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) {
 		return nil, nil, false, nil
 	}
 	paramSQL, params, err := core.ParameterizeAST(sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	val := sctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
+	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	if val == nil {
 		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		sctx.GetSessionVars().AddGeneralPlanCacheStmt(paramSQL, cachedStmt)
+		sctx.GetSessionVars().AddNonPreparedPlanCacheStmt(paramSQL, cachedStmt)
 		val = cachedStmt
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
@@ -176,11 +176,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		node = stmtNode
 	}
 
-	// try to get Plan from the General Plan Cache
-	if sctx.GetSessionVars().EnableGeneralPlanCache &&
+	// try to get Plan from the NonPrepared Plan Cache
+	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
 		isStmtNode &&
 		!useBinding { // TODO: support binding
-		cachedPlan, names, ok, err := getPlanFromGeneralPlanCache(ctx, sctx, stmtNode, is)
+		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -287,6 +287,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	return bestPlan, names, nil
+}
+
+// OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
+// The node must be prepared first.
+// Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
+// doesn't consider plan cache and plan binding, also doesn't do privilege check.
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	builder.Init(sctx, is, hintProcessor)
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
@@ -417,7 +436,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if !ok {
 		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, execAst.FromGeneralStmt, is, exec.PrepStmt, exec.Params)
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, false, is, exec.PrepStmt, exec.Params)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -428,11 +447,9 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	if !sctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
-		sctx.GetSessionVars().PlanID = 0
-		sctx.GetSessionVars().PlanColumnID = 0
-		sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
-	}
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec

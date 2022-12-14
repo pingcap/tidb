@@ -458,6 +458,33 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	return nil
 }
 
+type RestoreFunc func() error
+
+// KeepGcDisabled keeps GC disabled and return a function that used to gc enabled.
+// gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
+func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	oldRatio, err := utils.GetGcRatio(execCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	newRatio := "-1.0"
+	err = utils.SetGcRatio(execCtx, newRatio)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return func() error {
+		return utils.SetGcRatio(execCtx, oldRatio)
+	}, nil
+}
+
 // RunStreamCommand run all kinds of `stream task`
 func RunStreamCommand(
 	ctx context.Context,
@@ -1142,6 +1169,18 @@ func restoreStream(
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
+
+	// It need disable GC in TiKV when PiTR.
+	// because the process of PITR is concurrent and kv events isn't sorted by tso.
+	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = restoreGc(); err != nil {
+			log.Error("failed to set gc enabled", zap.Error(err))
+		}
+	}()
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
