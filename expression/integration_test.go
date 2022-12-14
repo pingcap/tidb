@@ -1228,8 +1228,7 @@ func TestDatetimeOverflow(t *testing.T) {
 	}
 
 	for _, sql := range overflowSQLs {
-		_, err := tk.Exec(sql)
-		require.Error(t, err, "[types:1441]Datetime function: datetime field overflow")
+		tk.MustGetErrMsg(sql, "[types:1441]Datetime function: datetime field overflow")
 	}
 
 	tk.MustExec("set sql_mode=''")
@@ -1716,8 +1715,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
 
-	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
-	require.True(t, terror.ErrorEqual(err, expression.ErrDivisionByZero))
+	tk.MustGetDBError("INSERT INTO t VALUE(12 MOD 0);", expression.ErrDivisionByZero)
 
 	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12"))
 	tk.MustExec("drop table if exists t")
@@ -1960,8 +1958,7 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 13:59:28"))
 	// insert an nonexistent time
 	tk.MustExec("set time_zone = 'America/Los_Angeles'")
-	_, err := tk.Exec("insert into t value('2011-03-13 02:00:00')")
-	require.Error(t, err)
+	tk.MustExecToErr("insert into t value('2011-03-13 02:00:00')")
 	// reset timezone to a +8 offset
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 12:59:28"))
@@ -2125,11 +2122,9 @@ func TestAggregationBuiltinGroupConcat(t *testing.T) {
 	result.Check(testkit.Rows("hello,h"))
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 
-	_, err := tk.Exec("insert into d select group_concat(a) from t")
-	require.Equal(t, errors.ErrCode(mysql.ErrCutValueGroupConcat), errors.Cause(err).(*terror.Error).Code())
+	tk.MustGetErrCode("insert into d select group_concat(a) from t", mysql.ErrCutValueGroupConcat)
 
-	_, err = tk.Exec("set sql_mode=''")
-	require.NoError(t, err)
+	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into d select group_concat(a) from t")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
@@ -2374,23 +2369,18 @@ func TestDateBuiltin(t *testing.T) {
 	r = tk.MustQuery("select date'731124', date '011124'")
 	r.Check(testkit.Rows("1973-11-24 2001-11-24"))
 
-	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
+	err = tk.ExecToErr("select date '0000-00-00 00:00:00';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, "0000-00-00 00:00:00")))
 
-	_, err = tk.Exec("select date '2017-99-99';")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue), "err: %v", err)
+	tk.MustGetDBError("select date '2017-99-99';", types.ErrWrongValue)
+	tk.MustGetDBError("select date '2017-2-31';", types.ErrWrongValue)
 
-	_, err = tk.Exec("select date '2017-2-31';")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue), "err: %v", err)
-
-	_, err = tk.Exec("select date '201712-31';")
+	err = tk.ExecToErr("select date '201712-31';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, "201712-31")), "err: %v", err)
 
-	_, err = tk.Exec("select date 'abcdefg';")
+	err = tk.ExecToErr("select date 'abcdefg';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, "abcdefg")), "err: %v", err)
 }
@@ -2402,8 +2392,7 @@ func TestJSONBuiltin(t *testing.T) {
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`))")
-	_, err := tk.Exec("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
-	require.Error(t, err)
+	tk.MustExecToErr("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
 
 	r := tk.MustQuery("select json_valid(null);")
 	r.Check(testkit.Rows("<nil>"))
@@ -2479,20 +2468,19 @@ func TestTimeLiteral(t *testing.T) {
 	r = tk.MustQuery("select time '20 20:20';")
 	r.Check(testkit.Rows("500:20:00"))
 
-	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
+	err := tk.ExecToErr("select time '2017-01-01 00:00:00';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, "2017-01-01 00:00:00")))
 
-	_, err = tk.Exec("select time '071231235959.999999';")
+	err = tk.ExecToErr("select time '071231235959.999999';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, "071231235959.999999")))
 
-	_, err = tk.Exec("select time '20171231235959.999999';")
+	err = tk.ExecToErr("select time '20171231235959.999999';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, "20171231235959.999999")))
 
-	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
-	require.NoError(t, err)
+	tk.MustExec("select ADDDATE('2008-01-34', -1);")
 	tk.MustQuery("Show warnings;").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '2008-01-34'"))
 }
@@ -2522,15 +2510,15 @@ func TestTimestampLiteral(t *testing.T) {
 	r = tk.MustQuery("select timestamp '2017@01@0001 00~00~00.333';")
 	r.Check(testkit.Rows("2017-01-01 00:00:00.333"))
 
-	_, err := tk.Exec("select timestamp '00:00:00';")
+	err := tk.ExecToErr("select timestamp '00:00:00';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, "00:00:00")))
 
-	_, err = tk.Exec("select timestamp '1992-01-03';")
+	err = tk.ExecToErr("select timestamp '1992-01-03';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, "1992-01-03")))
 
-	_, err = tk.Exec("select timestamp '20171231235959.999999';")
+	err = tk.ExecToErr("select timestamp '20171231235959.999999';")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, "20171231235959.999999")))
 }
@@ -3840,7 +3828,7 @@ func TestInvalidEndingStatement(t *testing.T) {
 	errMsgLen := len(parseErrMsg)
 
 	assertParseErr := func(sql string) {
-		_, err := tk.Exec(sql)
+		err := tk.ExecToErr(sql)
 		require.Error(t, err)
 		require.Equal(t, err.Error()[:errMsgLen], parseErrMsg)
 	}
@@ -4159,23 +4147,17 @@ func TestNotExistFunc(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	// current db is empty
-	_, err := tk.Exec("SELECT xxx(1)")
-	require.Error(t, err, "[planner:1046]No database selected")
+	tk.MustGetErrMsg("SELECT xxx(1)", "[planner:1046]No database selected")
 
-	_, err = tk.Exec("SELECT yyy()")
-	require.Error(t, err, "[planner:1046]No database selected")
+	tk.MustGetErrMsg("SELECT yyy()", "[planner:1046]No database selected")
 
 	// current db is not empty
 	tk.MustExec("use test")
-	_, err = tk.Exec("SELECT xxx(1)")
-	require.Error(t, err, "[expression:1305]FUNCTION test.xxx does not exist")
-
-	_, err = tk.Exec("SELECT yyy()")
-	require.Error(t, err, "[expression:1305]FUNCTION test.yyy does not exist")
+	tk.MustGetErrMsg("SELECT xxx(1)", "[expression:1305]FUNCTION test.xxx does not exist")
+	tk.MustGetErrMsg("SELECT yyy()", "[expression:1305]FUNCTION test.yyy does not exist")
 
 	tk.MustExec("use test")
-	_, err = tk.Exec("SELECT timestampliteral(rand())")
-	require.Error(t, err, "[expression:1305]FUNCTION test.timestampliteral does not exist")
+	tk.MustGetErrMsg("SELECT timestampliteral(rand())", "[expression:1305]FUNCTION test.timestampliteral does not exist")
 }
 
 func TestDecodetoChunkReuse(t *testing.T) {
@@ -5958,8 +5940,7 @@ func TestSecurityEnhancedMode(t *testing.T) {
 
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
-	_, err := tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
-	require.Error(t, err, "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
+	tk.MustGetErrMsg("SELECT 1 INTO OUTFILE '/tmp/aaaa'", "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
 }
 
 func TestIssue23925(t *testing.T) {
@@ -7152,29 +7133,25 @@ func TestIssue29708(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
-	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
-	require.NotNil(t, err)
+	tk.MustExecToErr("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
 	tk.MustQuery("select * from t1").Check(nil)
 
 	// test vectorized build-in function
 	tk.MustExec("insert into t1 (a) values ('a'),('b');")
-	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
-	require.NotNil(t, err)
+	tk.MustExecToErr("insert into t1 select REPEAT(a,200000000) from t1;")
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{"a"},
 		{"b"},
 	})
 
 	// test cast
-	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
-	require.NotNil(t, err)
+	tk.MustExecToErr(`insert into t1 values  (cast("a" as binary(4294967295)));`)
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{"a"},
 		{"b"},
 	})
 
-	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	require.NoError(t, err)
+	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
