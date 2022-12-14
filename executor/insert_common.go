@@ -1008,7 +1008,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	currentShard := e.ctx.GetSessionVars().TxnCtx.GetCurrentShard(1)
+	currentShard := e.ctx.GetSessionVars().GetCurrentShard(1)
 	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 

@@ -3285,7 +3285,11 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 }
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) Executor {
-	e := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin)).(*IndexLookUpJoin)
+	join := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin))
+	if b.err != nil {
+		return nil
+	}
+	e := join.(*IndexLookUpJoin)
 	idxHash := &IndexNestedLoopHashJoin{
 		IndexLookUpJoin: *e,
 		keepOuterOrder:  v.KeepOuterOrder,

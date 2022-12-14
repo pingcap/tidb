@@ -263,7 +263,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 	for _, c := range cases {
 		invokes = 0
-		retryRows := c.task.doDelete(context.TODO(), s)
+		retryRows := c.task.doDelete(context.Background(), s)
 		require.Equal(t, 4, invokes)
 		if c.retryRows == nil {
 			require.Nil(t, retryRows)

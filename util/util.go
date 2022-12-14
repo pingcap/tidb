@@ -18,7 +18,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +63,8 @@ func StringsToInterfaces(strs []string) []interface{} {
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
+//
+// nolint:unused
 func GetJSON(client *http.Client, url string, v interface{}) error {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -69,7 +73,7 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,7 +183,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b >= 0 && b < 32 || b > 127 {
+	if b < 32 || b > 127 {
 		return false
 	}
 
@@ -201,4 +205,31 @@ func FmtNonASCIIPrintableCharToHex(str string) string {
 		b.WriteString(fmt.Sprintf("%02X", str[i]))
 	}
 	return b.String()
+}
+
+// TCPConnWithIOCounter is a wrapper of net.TCPConn with counter that accumulates
+// the bytes this connection reads/writes.
+type TCPConnWithIOCounter struct {
+	*net.TCPConn
+	c *atomic.Uint64
+}
+
+// NewTCPConnWithIOCounter creates a new TCPConnWithIOCounter.
+func NewTCPConnWithIOCounter(conn *net.TCPConn, c *atomic.Uint64) net.Conn {
+	return &TCPConnWithIOCounter{
+		TCPConn: conn,
+		c:       c,
+	}
+}
+
+func (t *TCPConnWithIOCounter) Read(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Read(b)
+	t.c.Add(uint64(n))
+	return n, err
+}
+
+func (t *TCPConnWithIOCounter) Write(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Write(b)
+	t.c.Add(uint64(n))
+	return n, err
 }
