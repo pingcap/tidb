@@ -17,6 +17,7 @@ package cache
 import (
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,7 +41,7 @@ func NewInfoSchemaCache(updateInterval time.Duration) *InfoSchemaCache {
 
 // Update updates the info schema cache
 func (isc *InfoSchemaCache) Update(se session.Session) error {
-	is := se.SessionInfoSchema()
+	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
 
 	if isc.schemaVer == is.SchemaMetaVersion() {
 		return nil

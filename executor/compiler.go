@@ -158,17 +158,22 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
+		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+		if err != nil {
+			return nil, err
+		}
+		checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
-			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode)
+			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
 		} else {
-			checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 		}
 	}
 
 	return stmt, nil
 }
 
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
 	dom := domain.GetDomain(sctx)
 	if dom == nil {
 		return
@@ -187,14 +192,14 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	for _, task := range tasks {
 		if task.SQLDigest == sqlDigest.String() {
 			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				sendPlanReplayerDumpTask(key, sctx, stmtNode, false)
+				sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
 				return
 			}
 		}
 	}
 }
 
-func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode) {
+func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
 	dom := domain.GetDomain(sctx)
 	if dom == nil {
 		return
@@ -213,15 +218,17 @@ func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.Stm
 	if existed {
 		return
 	}
-	sendPlanReplayerDumpTask(key, sctx, stmtNode, true)
+	sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
 	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
 }
 
-func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode, isContinuesCapture bool) {
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
+	startTS uint64, isContinuesCapture bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
+		StartTS:             startTS,
 		EncodePlan:          GetEncodedPlan,
 		TblStats:            stmtCtx.TableStats,
 		SessionBindings:     handle.GetAllBindRecord(),

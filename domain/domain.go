@@ -2457,10 +2457,6 @@ func (do *Domain) runTTLJobManager(ctx context.Context) {
 	ttlJobManager.Start()
 	do.ttlJobManager = ttlJobManager
 
-	// TODO: read the worker count from `do.sysVarCache` and resize the workers
-	ttlworker.ScanWorkersCount.Store(4)
-	ttlworker.DeleteWorkerCount.Store(4)
-
 	<-do.exit
 
 	ttlJobManager.Stop()

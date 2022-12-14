@@ -516,6 +516,7 @@ type PlanReplayerDumpTask struct {
 	TblStats   map[int64]interface{}
 
 	// variables used to dump the plan
+	StartTS         uint64
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
 	SessionVars     *variable.SessionVars
