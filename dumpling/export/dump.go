@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -45,6 +46,10 @@ import (
 var openDBFunc = openDB
 
 var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
+
+// After TiDB v6.2.0 we always enable tidb_enable_paging by default.
+// see https://docs.pingcap.com/zh/tidb/dev/system-variables#tidb_enable_paging-%E4%BB%8E-v540-%E7%89%88%E6%9C%AC%E5%BC%80%E5%A7%8B%E5%BC%95%E5%85%A5
+var enablePagingVersion = semver.New("6.2.0")
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -1535,6 +1540,19 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 		case <-tctx.Done():
 			return
 		case <-tick.C:
+		}
+	}
+}
+
+// setDefaultSessionParams is a step to set default params for session params.
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]interface{}) {
+	defaultSessionParams := map[string]interface{}{}
+	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
+		defaultSessionParams["tidb_enable_paging"] = "ON"
+	}
+	for k, v := range defaultSessionParams {
+		if _, ok := sessionParams[k]; !ok {
+			sessionParams[k] = v
 		}
 	}
 }
