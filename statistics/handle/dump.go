@@ -347,7 +347,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -356,7 +356,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -365,7 +365,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
+	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.

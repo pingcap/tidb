@@ -59,7 +59,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 			worker.errCh <- errors.Trace(ErrQueryInterrupted)
 			return
 		}
-		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
+		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot, handle.StatsMetaHistorySourceAnalyze)
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(worker.sctx, results.Job, err)
