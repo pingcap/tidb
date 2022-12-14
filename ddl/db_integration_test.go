@@ -2378,6 +2378,7 @@ func TestParserIssue284(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
 	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
 	require.NoError(t, err)

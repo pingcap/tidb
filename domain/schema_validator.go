@@ -149,11 +149,10 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			actionTypes = change.ActionTypes
 		}
 		for idx, ac := range actionTypes {
-			// NOTE: ac is not an action type, it is (1 << action type).
-			if ac == 1<<model.ActionUnlockTable {
+			if ac == uint64(model.ActionUnlockTable) {
 				s.do.Store().GetMemCache().Delete(tblIDs[idx])
 			}
-			if ac == 1<<model.ActionFlashbackCluster {
+			if ac == uint64(model.ActionFlashbackCluster) {
 				s.do.InfoSyncer().GetSessionManager().KillNonFlashbackClusterConn()
 			}
 		}
@@ -187,7 +186,8 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		for i, tblID := range item.relatedIDs {
 			for _, relatedTblID := range tableIDs {
 				if tblID == relatedTblID {
-					changedTblMap[tblID] |= item.relatedActions[i]
+					// if actionType >= 64, the value of left shift equals 0, and it will not impact amend txn
+					changedTblMap[tblID] |= 1 << item.relatedActions[i]
 					affected = true
 				}
 			}

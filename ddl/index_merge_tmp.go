@@ -186,8 +186,9 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			unique := false
 			length := len(rawValue)
 			keyVer := rawValue[length-1]
-			if keyVer == tables.TempIndexKeyTypeMerge {
-				// The kv is written in the merging state. It has been written to the origin index, we can skip it.
+			if keyVer == tables.TempIndexKeyTypeMerge || keyVer == tables.TempIndexKeyTypeDelete {
+				// For 'm' version kvs, they are double-written.
+				// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
 				return true, nil
 			}
 			rawValue = rawValue[:length-1]

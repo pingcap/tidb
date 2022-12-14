@@ -677,6 +677,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -867,7 +870,11 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -963,6 +970,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
 			job.Args[0] = indexInfo.ID
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
@@ -1256,7 +1266,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 				failpoint.Return(nil, errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("index",
 					errors.New("mock can't decode record error"))))
 			case "modifyColumnNotOwnerErr":
-				if idxInfo.Name.O == "_Idx$_idx" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
+				if idxInfo.Name.O == "_Idx$_idx_0" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
 					failpoint.Return(nil, errors.Trace(dbterror.ErrNotOwner))
 				}
 			case "addIdxNotOwnerErr":

@@ -382,15 +382,17 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 		log.Debug("No tasks yet, skipping advancing.")
 		return nil
 	}
+	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
+	defer cancel()
 
 	threshold := c.Config().GetDefaultStartPollThreshold()
-	if err := c.subscribeTick(ctx); err != nil {
+	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
 		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
 	}
 
-	err := c.advanceCheckpointBy(ctx, func(ctx context.Context) (uint64, error) {
-		return c.CalculateGlobalCheckpointLight(ctx, threshold)
+	err := c.advanceCheckpointBy(cx, func(cx context.Context) (uint64, error) {
+		return c.CalculateGlobalCheckpointLight(cx, threshold)
 	})
 	if err != nil {
 		return err

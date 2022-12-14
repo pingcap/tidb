@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -210,8 +209,9 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead k
 	if err != nil {
 		return nil, err
 	}
+	// fallback to non-batch path
 	if rpcContext == nil {
-		return nil, errors.Errorf("region %s missing", task.region.String())
+		return nil, nil
 	}
 	return &batchedCopTask{
 		task: task,

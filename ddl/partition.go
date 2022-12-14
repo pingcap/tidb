@@ -1780,6 +1780,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		dbInfo, err := t.GetDatabase(job.SchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// If table has global indexes, we need reorg to clean up them.
 		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
@@ -1790,7 +1794,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				}
 			}
 			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl.(table.PartitionedTable), physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2519,7 +2523,11 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
-	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, partTbl, physTblIDs, elements)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
