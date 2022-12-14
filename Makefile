@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint generate-testmarker-data
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint regenerate-testmarker-data
 
 default: server buildsucc
 
@@ -44,7 +44,8 @@ check-file-perm:
 	@echo "check file permission"
 	./tools/check/check-file-perm.sh
 
-generate-testmarker-data:
+regenerate-testmarker-data:
+	@echo "because the change of the maker data may cause the bazel cache to become invalid, and expired data will not have a significant impact, there is no need to execute it frequently"
 	./build/linter/testmarker/generate-data.sh
 
 gogenerate:

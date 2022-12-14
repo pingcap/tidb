@@ -30,7 +30,8 @@ type MarkInfo struct {
 	// File records the file where the test case is defined
 	File string `yaml:"file"`
 	// TestName is the name of the test method
-	TestName string `yaml:"test_name"`
+	TestName string    `yaml:"test_name"`
+	Pos      token.Pos `yaml:"-"`
 }
 
 // FeatureMarkInfo describes the data structure of the feature mapping of a test case
@@ -70,7 +71,7 @@ func WalkTestFile(f *ast.File, filename string) []*MarkInfo {
 			}
 			markInfo := walkTestFuncDeclBody(body, filename, testname, localpkg)
 			if markInfo != nil {
-				markInfo.TestName = e.Name.Name
+				markInfo.Pos = e.Pos()
 				ret = append(ret, markInfo)
 			}
 			return false
@@ -131,6 +132,7 @@ func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg s
 			return
 		}
 		var feature FeatureMarkInfo
+		callExpr.Pos()
 		for i := 2; i < len(callExpr.Args); i++ {
 			switch e := callExpr.Args[i].(type) {
 			case *ast.BasicLit:

@@ -40,6 +40,7 @@ func TestWalker(t *testing.T) {
 		}},
 		TestName: "TestMarkAsFeature",
 		File:     "marker_test.go",
+		Pos:      680,
 	}, {
 		Issues: []markerpkg.IssueMarkInfo{{
 			ID:       12345,
@@ -47,6 +48,7 @@ func TestWalker(t *testing.T) {
 		}},
 		TestName: "TestMarkAsIssue",
 		File:     "marker_test.go",
+		Pos:      784,
 	}, {
 		Features: []markerpkg.FeatureMarkInfo{
 			{
@@ -70,5 +72,6 @@ func TestWalker(t *testing.T) {
 		},
 		TestName: "TestMarkMixes",
 		File:     "marker_test.go",
+		Pos:      859,
 	}}, mis)
 }

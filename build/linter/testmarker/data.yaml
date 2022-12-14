@@ -23,10 +23,6 @@
 - file: bindinfo/bind_test.go
   test_name: TestCaptureBaselinesScope
 - file: bindinfo/bind_test.go
-  test_name: TestCreateBindingForPrepareFromHistory
-- file: bindinfo/bind_test.go
-  test_name: TestCreateBindingFromHistory
-- file: bindinfo/bind_test.go
   test_name: TestDMLEvolveBaselines
 - file: bindinfo/bind_test.go
   test_name: TestDMLIndexHintBind
@@ -38,8 +34,6 @@
   test_name: TestDropBindBySQLDigest
 - file: bindinfo/bind_test.go
   test_name: TestErrorBind
-- file: bindinfo/bind_test.go
-  test_name: TestErrorCasesCreateBindingFromHistory
 - file: bindinfo/bind_test.go
   test_name: TestExplain
 - file: bindinfo/bind_test.go
@@ -58,7 +52,12 @@
   test_name: TestInvisibleIndex
 - file: bindinfo/bind_test.go
   test_name: TestNotEvolvePlanForReadStorageHint
-- file: bindinfo/bind_test.go
+- features:
+  - id: FD-2022
+  issues:
+  - id: 20221214
+    url: https://github.com/pingcap/tidb/issues/20221214
+  file: bindinfo/bind_test.go
   test_name: TestPrepareCacheWithBinding
 - file: bindinfo/bind_test.go
   test_name: TestPrivileges
@@ -2226,66 +2225,6 @@
   test_name: TestModifyColumn
 - file: ddl/ddl_test.go
   test_name: TestNotifyDDLJob
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestAlterDatabaseBasic
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestAlterDatabaseErrorGrammar
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestSetPlacementRuleFail
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestSetPlacementRuleNormal
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestSetPlacementRuleWithGCWorker
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashAvailableAfterAddPartition
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashAvailableAfterResetReplica
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBackoff
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBackoffer
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBatchAddVariables
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBatchKill
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBatchRateLimiter
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashBatchUnsupported
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashDropPartition
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashFailTruncatePartition
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashGroupIndexWhenStartup
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashMassiveReplicaAvailable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashNoRedundantPDRules
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashPartitionNotAvailable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgress
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgressAfterAvailable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgressAfterAvailableForPartitionTable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgressAvailableList
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgressCache
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashProgressForPartitionTable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashReplicaAvailable
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashReplicaPartitionTableBlock
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashReplicaPartitionTableNormal
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashTruncatePartition
-- file: ddl/ddl_tiflash_test.go
-  test_name: TestTiFlashTruncateTable
 - file: ddl/ddl_worker_test.go
   test_name: TestAddBatchJobError
 - file: ddl/ddl_worker_test.go
@@ -2469,9 +2408,9 @@
 - file: ddl/integration_test.go
   test_name: TestDefaultValueIsBinaryString
 - file: ddl/job_table_test.go
-  test_name: TestAlwaysChoiceProcessingJob
-- file: ddl/job_table_test.go
   test_name: TestDDLScheduling
+- file: ddl/job_table_test.go
+  test_name: TestSimpleExecBackfillJobs
 - file: ddl/label/attributes_test.go
   test_name: TestAddLabels
 - file: ddl/label/attributes_test.go
@@ -2962,6 +2901,66 @@
   test_name: TestSkipSchemaChecker
 - file: ddl/tiflash_replica_test.go
   test_name: TestTruncateTable2
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestAlterDatabaseBasic
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestAlterDatabaseErrorGrammar
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestSetPlacementRuleFail
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestSetPlacementRuleNormal
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestSetPlacementRuleWithGCWorker
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashAvailableAfterAddPartition
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashAvailableAfterResetReplica
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBackoff
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBackoffer
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBatchAddVariables
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBatchKill
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBatchRateLimiter
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashBatchUnsupported
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashDropPartition
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashFailTruncatePartition
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashGroupIndexWhenStartup
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashMassiveReplicaAvailable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashNoRedundantPDRules
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashPartitionNotAvailable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgress
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgressAfterAvailable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgressAfterAvailableForPartitionTable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgressAvailableList
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgressCache
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashProgressForPartitionTable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashReplicaAvailable
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashReplicaPartitionTableBlock
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashReplicaPartitionTableNormal
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashTruncatePartition
+- file: ddl/tiflashtest/ddl_tiflash_test.go
+  test_name: TestTiFlashTruncateTable
 - file: ddl/ttl_test.go
   test_name: Test_getTTLInfoInOptions
 - file: distsql/bench_test.go
@@ -3090,6 +3089,8 @@
   test_name: TestDumpTableMeta
 - file: dumpling/export/dump_test.go
   test_name: TestGetListTableTypeByConf
+- file: dumpling/export/dump_test.go
+  test_name: TestSetDefaultSessionParams
 - file: dumpling/export/dump_test.go
   test_name: TestUnregisterMetrics
 - file: dumpling/export/ir_impl_test.go
@@ -4386,6 +4387,8 @@
   test_name: TestHashRowContainer
 - file: executor/historical_stats_test.go
   test_name: TestGCHistoryStatsAfterDropTable
+- file: executor/historical_stats_test.go
+  test_name: TestGCOutdatedHistoryStats
 - file: executor/historical_stats_test.go
   test_name: TestRecordHistoryStatsAfterAnalyze
 - file: executor/historical_stats_test.go
@@ -5754,8 +5757,6 @@
   test_name: TestAggPushDownCountStar
 - file: executor/tiflashtest/tiflash_test.go
   test_name: TestAvgOverflow
-- file: executor/tiflashtest/tiflash_test.go
-  test_name: TestBindingFromHistoryWithTiFlashBindable
 - file: executor/tiflashtest/tiflash_test.go
   test_name: TestCancelMppTasks
 - file: executor/tiflashtest/tiflash_test.go
@@ -7517,6 +7518,14 @@
 - file: infoschema/cache_test.go
   test_name: TestNewCache
 - file: infoschema/cluster_tables_test.go
+  test_name: TestBindingFromHistoryWithTiFlashBindable
+- file: infoschema/cluster_tables_test.go
+  test_name: TestCreateBindingForPrepareFromHistory
+- file: infoschema/cluster_tables_test.go
+  test_name: TestCreateBindingFromHistory
+- file: infoschema/cluster_tables_test.go
+  test_name: TestErrorCasesCreateBindingFromHistory
+- file: infoschema/cluster_tables_test.go
   test_name: TestForClusterServerInfo
 - file: infoschema/cluster_tables_test.go
   test_name: TestIssue26379
@@ -7562,6 +7571,8 @@
   test_name: TestSessionVariables
 - file: infoschema/perfschema/tables_test.go
   test_name: TestTiKVProfileCPU
+- file: infoschema/tables_test.go
+  test_name: TestAddFieldsForBinding
 - file: infoschema/tables_test.go
   test_name: TestAttributes
 - file: infoschema/tables_test.go
@@ -8015,6 +8026,8 @@
 - file: parser/lexer_test.go
   test_name: TestVersionDigits
 - file: parser/model/ddl_test.go
+  test_name: TestBackfillMetaCodec
+- file: parser/model/ddl_test.go
   test_name: TestJobClone
 - file: parser/model/ddl_test.go
   test_name: TestJobSize
@@ -8203,8 +8216,6 @@
 - file: parser/parser_test.go
   test_name: TestSubquery
 - file: parser/parser_test.go
-  test_name: TestTTLFeatureGate
-- file: parser/parser_test.go
   test_name: TestTTLTableOption
 - file: parser/parser_test.go
   test_name: TestTablePartition
@@ -8368,6 +8379,8 @@
   test_name: TestEstimation
 - file: planner/core/cbo_test.go
   test_name: TestExplainAnalyze
+- file: planner/core/cbo_test.go
+  test_name: TestExplainCostTrace
 - file: planner/core/cbo_test.go
   test_name: TestInconsistentEstimation
 - file: planner/core/cbo_test.go
@@ -9407,8 +9420,6 @@
 - file: planner/core/plan_cache_param_test.go
   test_name: TestParameterize
 - file: planner/core/plan_cache_test.go
-  test_name: TestGeneralPlanCacheBasically
-- file: planner/core/plan_cache_test.go
   test_name: TestInitLRUWithSystemVar
 - file: planner/core/plan_cache_test.go
   test_name: TestIssue38269
@@ -9417,13 +9428,15 @@
 - file: planner/core/plan_cache_test.go
   test_name: TestIssue38710
 - file: planner/core/plan_cache_test.go
+  test_name: TestNonPreparedPlanCacheBasically
+- file: planner/core/plan_cache_test.go
   test_name: TestPlanCacheDiagInfo
 - file: planner/core/plan_cache_utils_test.go
   test_name: TestCacheKey
 - file: planner/core/plan_cacheable_checker_test.go
   test_name: TestCacheable
 - file: planner/core/plan_cacheable_checker_test.go
-  test_name: TestGeneralPlanCacheable
+  test_name: TestNonPreparedPlanCacheable
 - file: planner/core/plan_cost_detail_test.go
   test_name: TestPlanCostDetail
 - file: planner/core/plan_cost_ver1_test.go
@@ -10807,13 +10820,13 @@
 - file: sessionctx/variable/session_test.go
   test_name: TestAllocMPPID
 - file: sessionctx/variable/session_test.go
-  test_name: TestGeneralPlanCacheStmt
-- file: sessionctx/variable/session_test.go
   test_name: TestGetReuseChunk
 - file: sessionctx/variable/session_test.go
   test_name: TestHookContext
 - file: sessionctx/variable/session_test.go
   test_name: TestIsolationRead
+- file: sessionctx/variable/session_test.go
+  test_name: TestNonPreparedPlanCacheStmt
 - file: sessionctx/variable/session_test.go
   test_name: TestSession
 - file: sessionctx/variable/session_test.go
@@ -10866,6 +10879,8 @@
   test_name: TestSessionGetterFuncs
 - file: sessionctx/variable/sysvar_test.go
   test_name: TestSetAggPushDownGlobally
+- file: sessionctx/variable/sysvar_test.go
+  test_name: TestSetJobScheduleWindow
 - file: sessionctx/variable/sysvar_test.go
   test_name: TestSetTIDBDiskQuota
 - file: sessionctx/variable/sysvar_test.go
@@ -11017,6 +11032,8 @@
 - file: sessiontxn/isolation/repeatable_read_test.go
   test_name: TestPessimisticRRErrorHandle
 - file: sessiontxn/isolation/repeatable_read_test.go
+  test_name: TestRRWaitTSTimeInSlowLog
+- file: sessiontxn/isolation/repeatable_read_test.go
   test_name: TestRepeatableReadProviderInitialize
 - file: sessiontxn/isolation/repeatable_read_test.go
   test_name: TestRepeatableReadProviderTS
@@ -11098,6 +11115,8 @@
   test_name: TestRcTSOCmdCountForTextSQLExecuteExtra
 - file: sessiontxn/txn_rc_tso_optimize_test.go
   test_name: TestRcTSOCmdCountForTextSQLExecuteNormal
+- file: sessiontxn/txn_rc_tso_optimize_test.go
+  test_name: TestRcWaitTSInSlowLog
 - file: statistics/cmsketch_test.go
   test_name: TestCMSketch
 - file: statistics/cmsketch_test.go
@@ -12434,6 +12453,8 @@
   test_name: TestNewTTLTable
 - file: ttl/cache/ttlstatus_test.go
   test_name: TestTTLStatusCache
+- file: ttl/metrics/metrics_test.go
+  test_name: TestPhaseTracer
 - file: ttl/session/session_test.go
   test_name: TestSessionResetTimeZone
 - file: ttl/session/session_test.go
@@ -12464,12 +12485,30 @@
   test_name: TestTTLDeleteTaskDoDelete
 - file: ttl/ttlworker/del_test.go
   test_name: TestTTLDeleteTaskWorker
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestCheckFinishedJob
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestLocalJobs
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestLockNewTable
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestReadyForNewJobTables
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestRescheduleJobs
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestRescheduleJobsOutOfWindow
+- file: ttl/ttlworker/job_manager_test.go
+  test_name: TestResizeWorkers
+- file: ttl/ttlworker/job_test.go
+  test_name: TestIterScanTask
 - file: ttl/ttlworker/scan_test.go
   test_name: TestScanTaskDoScan
 - file: ttl/ttlworker/scan_test.go
   test_name: TestScanWorkerSchedule
 - file: ttl/ttlworker/scan_test.go
   test_name: TestScanWorkerScheduleWithFailedTask
+- file: ttl/ttlworker/scan_test.go
+  test_name: TestTTLStatisticsMarshalJSON
 - file: ttl/ttlworker/session_test.go
   test_name: TestExecuteSQLWithCheck
 - file: ttl/ttlworker/session_test.go

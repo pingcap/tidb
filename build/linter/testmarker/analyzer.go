@@ -16,7 +16,6 @@ package testmarker
 
 import (
 	_ "embed"
-	"reflect"
 	"strings"
 
 	markutil "github.com/pingcap/tidb/tests/testmarker/pkg"
@@ -45,21 +44,17 @@ func run(pass *analysis.Pass) (any, error) {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
 		if strings.HasSuffix(pos.Filename, "_test.go") {
 			markers := markutil.WalkTestFile(f, pos.Filename)
-
 			for _, marker := range markers {
-				record, exist := tryGetFromRecords(marker.File, marker.TestName)
-				if !exist {
+				_, exist := tryGetFromRecords(marker.TestName)
+				if !exist && len(marker.Features) == 0 && len(marker.Issues) == 0 {
 					pass.Report(analysis.Diagnostic{
-						Pos:     1,
-						Message: "the file build/linter/testmarker/data.yaml is out of date, please run `make generate-testmarker-data` to update",
+						Pos: marker.Pos,
+						Message: `add a marker at the start of incremental test, please.
+  1) Marking the test is for a feature:
+    marker.As(t, marker.Feature, "FD-$ID", "the description...")
+  2) Or mark it for an issue:
+    marker.As(t, marker.Issue, issue-id)`,
 					})
-				} else {
-					if !reflect.DeepEqual(marker.Features, record.Features) || !reflect.DeepEqual(marker.Issues, record.Issues) {
-						pass.Report(analysis.Diagnostic{
-							Pos:     1,
-							Message: "the file build/linter/testmarker/data.yaml is out of date, please run `make generate-testmarker-data` to update",
-						})
-					}
 				}
 			}
 		}
@@ -67,10 +62,11 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-func tryGetFromRecords(file, testName string) (*markutil.MarkInfo, bool) {
+// tryGetFromRecords tries to get the markInfo from the records according to the test name, if not found, return nil
+// here we assume the test name is usually unique, and ignoring the file name can reduce the extra mark burden of migration test cases
+func tryGetFromRecords(testName string) (*markutil.MarkInfo, bool) {
 	for _, info := range markInfo {
-		// file is the full path on the bazel sandbox, we check the suffix to make sure it's the same file
-		if info.TestName == testName && strings.HasSuffix(file, info.File) {
+		if info.TestName == testName {
 			return info, true
 		}
 	}
