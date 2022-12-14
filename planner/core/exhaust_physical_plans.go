@@ -1957,6 +1957,21 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
 			joins = append(joins, mppJoins...)
 		}
+	} else {
+		hasMppHints := false
+		var errMsg string
+		if (p.preferJoinType & preferShuffleJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+			hasMppHints = true
+		}
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+			hasMppHints = true
+		}
+		if hasMppHints {
+			warning := ErrInternal.GenWithStack(errMsg)
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if prop.IsFlashProp() {
 		return joins, true, nil
@@ -2855,6 +2870,21 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
+	} else {
+		hasMppHints := false
+		var errMsg string
+		if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+			errMsg = "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
+			hasMppHints = true
+		}
+		if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+			errMsg = "The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
+			hasMppHints = true
+		}
+		if hasMppHints {
+			warning := ErrInternal.GenWithStack(errMsg)
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
