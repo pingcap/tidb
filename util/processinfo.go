@@ -197,6 +197,8 @@ type SessionManager interface {
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
+	// GetMinStartTS returns the minimum timestamp holden by sessions.
+	GetMinStartTS(lowerBound uint64) uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

@@ -1328,6 +1328,12 @@ type SessionVars struct {
 
 	// Resource group name
 	ResourceGroupName string
+
+	// protectedTSList holds a list of timestamps that should delay GC.
+	protectedTSList struct {
+		sync.Mutex
+		items map[uint64]int
+	}
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -3156,4 +3162,48 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// HoldTS holds the timestamp to prevent its data from being GCed.
+func (s *SessionVars) HoldTS(ts uint64) (unhold func()) {
+	s.protectedTSList.Lock()
+	if s.protectedTSList.items == nil {
+		s.protectedTSList.items = map[uint64]int{}
+	}
+	s.protectedTSList.items[ts] += 1
+	s.protectedTSList.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.protectedTSList.Lock()
+			if s.protectedTSList.items != nil {
+				if s.protectedTSList.items[ts] > 1 {
+					s.protectedTSList.items[ts] -= 1
+				} else {
+					delete(s.protectedTSList.items, ts)
+				}
+			}
+			s.protectedTSList.Unlock()
+		})
+	}
+}
+
+// GetMinProtectedTS returns the minimum protected timestamps.
+func (s *SessionVars) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	s.protectedTSList.Lock()
+	for k, v := range s.protectedTSList.items {
+		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
+			ts = k
+		}
+	}
+	s.protectedTSList.Unlock()
+	return
+}
+
+// GetProtectedTSCount returns the number of protected timestamps (mainly used for test).
+func (s *SessionVars) GetProtectedTSCount() (count int) {
+	s.protectedTSList.Lock()
+	count = len(s.protectedTSList.items)
+	s.protectedTSList.Unlock()
+	return
 }

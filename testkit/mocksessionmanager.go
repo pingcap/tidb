@@ -133,11 +133,40 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 	}
 }
 
-// CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
+// CheckOldRunningTxn implement SessionManager interface.
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	msm.mu.Lock()
 	for _, se := range msm.conn {
 		session.RemoveLockDDLJobs(se, job2ver, job2ids)
 	}
 	msm.mu.Unlock()
+}
+
+// GetMinStartTS implements SessionManager interface.
+func (msm *MockSessionManager) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	var usingPS bool
+	msm.PSMu.RLock()
+	defer msm.PSMu.RUnlock()
+	if len(msm.PS) > 0 {
+		for _, pi := range msm.PS {
+			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
+				ts = pi.CurTxnStartTS
+			}
+		}
+		usingPS = true
+	}
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	for _, s := range msm.conn {
+		if !usingPS {
+			pi := s.ShowProcess()
+			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
+				ts = pi.CurTxnStartTS
+			}
+		}
+		if minTS := s.GetSessionVars().GetMinProtectedTS(lowerBound); minTS > lowerBound && (minTS < ts || ts == 0) {
+			ts = minTS
+		}
+	}
+	return
 }

@@ -486,3 +486,57 @@ func TestGetReuseChunk(t *testing.T) {
 	require.NotEqual(t, allocpool.Alloc, alloc)
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }
+
+func TestPretectedTS(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+
+	// empty set
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, 0, sessVars.GetProtectedTSCount())
+
+	// hold 1
+	unhold1 := sessVars.HoldTS(1)
+	require.Equal(t, uint64(1), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(1))
+
+	// hold 2 twice
+	unhold2a := sessVars.HoldTS(2)
+	unhold2b := sessVars.HoldTS(2)
+	require.Equal(t, uint64(1), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(2))
+	require.Equal(t, 2, sessVars.GetProtectedTSCount())
+
+	// unhold 2a
+	unhold2a()
+	require.Equal(t, uint64(1), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(2))
+	require.Equal(t, 2, sessVars.GetProtectedTSCount())
+	// unhold 2a again
+	unhold2a()
+	require.Equal(t, uint64(1), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(2))
+	require.Equal(t, 2, sessVars.GetProtectedTSCount())
+
+	// unhold 1
+	unhold1()
+	require.Equal(t, uint64(2), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(2))
+	require.Equal(t, 1, sessVars.GetProtectedTSCount())
+
+	// unhold 2b
+	unhold2b()
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, 0, sessVars.GetProtectedTSCount())
+
+	// unhold 2b again
+	unhold2b()
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), sessVars.GetMinProtectedTS(1))
+	require.Equal(t, 0, sessVars.GetProtectedTSCount())
+}
