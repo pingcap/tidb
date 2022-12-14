@@ -3055,22 +3055,21 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
+type tableBasicInfo struct {
+	SQL string
+	id  int64
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []struct {
-		SQL string
-		id  int64
-	}{
+	DDLJobTables = []tableBasicInfo{
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
-	BackfillTables = []struct {
-		SQL string
-		id  int64
-	}{
+	BackfillTables = []tableBasicInfo{
 		{ddl.BackfillTableSQL, ddl.BackfillTableID},
 		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
@@ -3091,7 +3090,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg, tidb_ddl_history, tidb_ddl_backfill and tidb_ddl_backfill_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -3103,39 +3102,54 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
-		tables := append(DDLJobTables, BackfillTables...)
 		if exists {
-			tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
-			if err != nil || tblExist {
-				return errors.Trace(err)
-			}
-			tables = BackfillTables
+			return initBackfillJobTables(store, t, dbID)
 		}
-		tableIDs := make([]int64, 0, len(tables))
-		for _, tbl := range tables {
-			tableIDs = append(tableIDs, tbl.id)
+
+		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+			return err
 		}
-		splitAndScatterTable(store, tableIDs)
-		p := parser.New()
-		for _, tbl := range tables {
-			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo.State = model.StatePublic
-			tblInfo.ID = tbl.id
-			tblInfo.UpdateTS = t.StartTS
-			err = t.CreateTableOrView(dbID, tblInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if err = initBackfillJobTables(store, t, dbID); err != nil {
+			return err
 		}
 		return t.SetDDLTables()
 	})
+}
+
+// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
+func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
+	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+	if err != nil || tblExist {
+		return errors.Trace(err)
+	}
+	return createAndSplitTables(store, t, dbID, BackfillTables)
+}
+
+func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
+	tableIDs := make([]int64, 0, len(tables))
+	for _, tbl := range tables {
+		tableIDs = append(tableIDs, tbl.id)
+	}
+	splitAndScatterTable(store, tableIDs)
+	p := parser.New()
+	for _, tbl := range tables {
+		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = tbl.id
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.

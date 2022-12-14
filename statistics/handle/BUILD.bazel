@@ -9,6 +9,7 @@ go_library(
         "gc.go",
         "handle.go",
         "handle_hist.go",
+        "historical_stats_handler.go",
         "lru_cache.go",
         "statscache.go",
         "update.go",
