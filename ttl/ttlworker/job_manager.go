@@ -602,6 +602,11 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session) er
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// also updates some internal state for this job
+		err = job.updateState(ctx, se)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to update state of the job", zap.String("jobID", job.id))
+		}
 	}
 	return nil
 }

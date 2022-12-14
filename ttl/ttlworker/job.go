@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -83,11 +85,11 @@ func (job *ttlJob) changeStatus(ctx context.Context, se session.Session, status 
 }
 
 func (job *ttlJob) updateState(ctx context.Context, se session.Session) error {
-	jsonStatistics, err := job.statistics.MarshalJSON()
+	summary, err := job.summary()
 	if err != nil {
-		return err
+		logutil.Logger(job.ctx).Warn("fail to generate summary for ttl job", zap.Error(err))
 	}
-	_, err = se.ExecuteSQL(ctx, updateJobState(job.tbl.ID, job.id, string(jsonStatistics), job.ownerID))
+	_, err = se.ExecuteSQL(ctx, updateJobState(job.tbl.ID, job.id, summary, job.ownerID))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -107,13 +109,13 @@ func (job *ttlJob) nextScanTask() {
 
 // finish turns current job into last job, and update the error message and statistics summary
 func (job *ttlJob) finish(se session.Session, now time.Time) {
-	summary := job.statistics.String()
-	if job.scanTaskErr != nil {
-		summary = fmt.Sprintf("Scan Error: %s, Statistics: %s", job.scanTaskErr.Error(), summary)
+	summary, err := job.summary()
+	if err != nil {
+		logutil.Logger(job.ctx).Warn("fail to generate summary for ttl job", zap.Error(err))
 	}
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
-	_, err := se.ExecuteSQL(context.TODO(), finishJobSQL(job.tbl.ID, now, summary, job.id))
+	_, err = se.ExecuteSQL(context.TODO(), finishJobSQL(job.tbl.ID, now, summary, job.id))
 	if err != nil {
 		logutil.Logger(job.ctx).Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id))
 	}
@@ -167,4 +169,39 @@ func findJobWithTableID(jobs []*ttlJob, id int64) *ttlJob {
 	}
 
 	return nil
+}
+
+type ttlSummary struct {
+	TotalRows   uint64 `json:"total_rows"`
+	SuccessRows uint64 `json:"success_rows"`
+	ErrorRows   uint64 `json:"error_rows"`
+
+	TotalScanTask     int `json:"total_scan_task"`
+	ScheduledScanTask int `json:"scheduled_scan_task"`
+	FinishedScanTask  int `json:"finished_scan_task"`
+
+	ScanTaskErr string `json:"scan_task_err,omitempty"`
+}
+
+func (job *ttlJob) summary() (string, error) {
+	summary := &ttlSummary{
+		TotalRows:   job.statistics.TotalRows.Load(),
+		SuccessRows: job.statistics.SuccessRows.Load(),
+		ErrorRows:   job.statistics.ErrorRows.Load(),
+
+		TotalScanTask:     len(job.tasks),
+		ScheduledScanTask: job.taskIter,
+		FinishedScanTask:  job.finishedScanTaskCounter,
+	}
+
+	if job.scanTaskErr != nil {
+		summary.ScanTaskErr = job.scanTaskErr.Error()
+	}
+
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+
+	return string(hack.String(summaryJSON)), nil
 }
