@@ -451,10 +451,57 @@ func removeVAndHash(v string) string {
 }
 
 // CheckTiKVVersion is used to check the tikv version.
-func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
+func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
+	for _, s := range stores {
+		// empty version means the store is a mock store. Don't require tiflash version either.
+		if s.Version == "" || engine.IsTiFlash(s) {
+			continue
+		}
+		ver, err := semver.NewVersion(removeVAndHash(s.Version))
+		if err != nil {
+			return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
+		}
+		v := ver.Compare(minVersion)
+		if v < 0 {
+			return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+		}
+	}
+	return nil
+}
+
+func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) error {
+	mppClient := store.GetMPPClient()
+	mppVersionV1StoreVersion := *semver.New(kv.MppVersionV1StoreVersion)
+
+	// check TiFlash store info
+	for _, s := range stores {
+		// empty version means the store is a mock store.
+		if s.Version == "" {
+			continue
+		}
+		// use TiKV & TiFlash version to detect the minimal one.
+		ver, err := semver.NewVersion(removeVAndHash(s.Version))
+		if err != nil {
+			return errors.Trace(errors.Annotate(err, "invalid TiFlash version"))
+		}
+		v := ver.Compare(mppVersionV1StoreVersion)
+		v = 0
+		if v < 0 {
+			// kv.ClusterMinMppVersion.Store(kv.MppVersionV0)
+			if mppClient != nil {
+				mppClient.GetClusterMinMppVersion().Store(kv.MppVersionV0)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func GetClusterStores(store kv.Storage) ([]*metapb.Store, error) {
+	var stores []*metapb.Store
+
 	if store, ok := store.(kv.StorageWithPD); ok {
 		pdClient := store.GetPDClient()
-		var stores []*metapb.Store
 		var err error
 		// Wait at most 3 second to make sure pd has updated the store information.
 		for i := 0; i < 60; i++ {
@@ -466,26 +513,12 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 		}
 
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-
-		for _, s := range stores {
-			// empty version means the store is a mock store. Don't require tiflash version either.
-			if s.Version == "" || engine.IsTiFlash(s) {
-				continue
-			}
-			ver, err := semver.NewVersion(removeVAndHash(s.Version))
-			if err != nil {
-				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
-			}
-			v := ver.Compare(minVersion)
-			if v < 0 {
-				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
-			}
-		}
+		return stores, nil
 	}
 
-	return nil
+	return stores, nil
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {

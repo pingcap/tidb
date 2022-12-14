@@ -306,7 +306,11 @@ func createStoreAndDomain() (kv.Storage, *domain.Domain) {
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
-	err = infosync.CheckTiKVVersion(storage, *semver.New(versioninfo.TiKVMinVersion))
+	stores, err := infosync.GetClusterStores(storage)
+	terror.MustNil(err)
+	err = infosync.CheckTiKVVersion(stores, *semver.New(versioninfo.TiKVMinVersion))
+	terror.MustNil(err)
+	err = infosync.CheckAndInitTiFlashStoreInfo(storage, stores)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)

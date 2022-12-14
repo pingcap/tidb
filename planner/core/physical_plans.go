@@ -17,9 +17,12 @@ package core
 import (
 	"fmt"
 	"strconv"
+	// "sync/atomic"
 	"unsafe"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -1493,6 +1496,8 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
+// var GlobalTZGCount atomic.Int64 = atomic.Int64{}
+
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
@@ -1501,7 +1506,10 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks []*kv.MPPTask
+	Tasks              []*kv.MPPTask
+	MppVersion         int64
+	ExchangeSenderMeta *mpp.ExchangeSenderMeta
+	TZGID              int64
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1514,6 +1522,9 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
+	np.MppVersion = p.MppVersion
+	np.ExchangeSenderMeta = proto.Clone(p.ExchangeSenderMeta).(*mpp.ExchangeSenderMeta)
+	np.TZGID = p.TZGID
 	return np, nil
 }
 

@@ -325,12 +325,20 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-		logutil.BgLogger().Info("detecting available mpp stores")
 		// decide the available stores
 		stores := cache.RegionCache.GetTiFlashStores()
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
+		logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("original store count", len(stores)))
+		defer func() {
+			var cnt int
+			mu.Lock()
+			cnt = len(storeTaskMap)
+			mu.Unlock()
+			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt))
+		}()
+
 		cur := time.Now()
 		for i := range stores {
 			go func(idx int) {

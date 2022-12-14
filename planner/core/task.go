@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -2134,7 +2135,11 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
+		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
+
+	sender.MppVersion = ctx.GetMPPClient().GetClusterMinMppVersion().Load()
+
 	sender.SetChildren(t.p)
 
 	p := PhysicalTableReader{
@@ -2196,7 +2201,19 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	sender := PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
+		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
+
+	{
+		minMppVersion := ctx.GetMPPClient().GetClusterMinMppVersion().Load()
+		sender.MppVersion = minMppVersion
+		if sender.MppVersion != kv.MppVersionV0 {
+			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
+				Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
+			}
+		}
+	}
+
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)

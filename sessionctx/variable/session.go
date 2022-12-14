@@ -1039,6 +1039,8 @@ type SessionVars struct {
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
 
+	MppExchangeCompressMethod kv.ExchangeCompressMethod
+
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
@@ -1682,6 +1684,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		MppExchangeCompressMethod:     kv.UNSPECIFIED,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

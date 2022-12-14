@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,7 +45,12 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *kvStore
+	store                *kvStore
+	clusterMinMppVersion *atomicutil.Int64
+}
+
+func (c *MPPClient) GetClusterMinMppVersion() *atomicutil.Int64 {
+	return c.clusterMinMppVersion
 }
 
 // GetAddress returns the network address.
@@ -220,15 +226,16 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}
 
 	// meta for current task.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress()}
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress(), MppVersion: req.MppVersion}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:   60,
-		SchemaVer: req.SchemaVar,
-		Regions:   regionInfos,
+		Timeout:            60,
+		SchemaVer:          req.SchemaVar,
+		Regions:            regionInfos,
+		ExchangeSenderMeta: req.ExchangeSenderMeta,
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions

@@ -3397,11 +3397,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		b.err = err
 		return nil
 	}
+
+	sender := v.GetTablePlan().(*plannercore.PhysicalExchangeSender)
+
 	gather := &MPPGather{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		is:           b.is,
-		originalPlan: v.GetTablePlan(),
-		startTS:      startTs,
+		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		is:                 b.is,
+		originalPlan:       v.GetTablePlan(),
+		startTS:            startTs,
+		MppVersion:         sender.MppVersion,
+		// ExchangeSenderMeta: sender.ExchangeSenderMeta,
 	}
 	return gather
 }
