@@ -17,6 +17,16 @@ package domain
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
+
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -71,15 +81,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
-	"math"
-	"math/rand"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unsafe"
 )
 
 // NewMockDomain is only used for test
