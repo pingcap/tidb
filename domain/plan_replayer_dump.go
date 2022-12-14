@@ -41,8 +41,8 @@ import (
 )
 
 const (
-	// planReplayerSQLMetaFile indicates sql meta path for plan replayer
-	planReplayerSQLMetaFile = "sql_meta.toml"
+	// PlanReplayerSQLMetaFile indicates sql meta path for plan replayer
+	PlanReplayerSQLMetaFile = "sql_meta.toml"
 	// PlanReplayerConfigFile indicates config file path for plan replayer
 	PlanReplayerConfigFile = "config.toml"
 	// PlanReplayerMetaFile meta file path for plan replayer
@@ -291,7 +291,7 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
-	cf, err := zw.Create(planReplayerSQLMetaFile)
+	cf, err := zw.Create(PlanReplayerSQLMetaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
