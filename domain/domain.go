@@ -2121,12 +2121,21 @@ func (do *Domain) cleanAnalyzeJobWorker(owner owner.Manager) {
 				}
 			}
 		case <-handleZombieTicker.C:
-			err := do.StatsHandle().HandleMyZombieAnalyzeJobs()
-			if err != nil {
-				logutil.BgLogger().Error("handle my zombie analyze jobs failed", zap.Error(err))
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm != nil {
+				analyzeProcessIDs := make(map[uint64]struct{}, 8)
+				for _, process := range sm.ShowProcessList() {
+					if strings.HasPrefix(strings.ToLower(process.Info), "analyze table") {
+						analyzeProcessIDs[process.ID] = struct{}{}
+					}
+				}
+				err := do.StatsHandle().HandleMyZombieAnalyzeJobs(analyzeProcessIDs)
+				if err != nil {
+					logutil.BgLogger().Error("handle my zombie analyze jobs failed", zap.Error(err))
+				}
 			}
 			if owner.IsOwner() {
-				err = do.StatsHandle().HandleOtherZombieAnalyzeJobs()
+				err := do.StatsHandle().HandleOtherZombieAnalyzeJobs()
 				if err != nil {
 					logutil.BgLogger().Error("handle other servers' zombie analyze jobs failed", zap.Error(err))
 				}

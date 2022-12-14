@@ -2727,29 +2727,15 @@ func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return err
 }
 
-func (h *Handle) getLiveAnalyzeProcessIDs() map[uint64]struct{} {
-	analyzeProcessIDs := make(map[uint64]struct{}, 8)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	processes := h.mu.ctx.GetSessionManager().ShowProcessList()
-	for _, process := range processes {
-		if strings.HasPrefix(strings.ToLower(process.Info), "analyze table") {
-			analyzeProcessIDs[process.ID] = struct{}{}
-		}
-	}
-	return analyzeProcessIDs
-}
-
 // HandleMyZombieAnalyzeJobs updates the server's own analyze jobs which are terminated by server down.
-func (h *Handle) HandleMyZombieAnalyzeJobs() error {
-	analyzeProcessIDs := h.getLiveAnalyzeProcessIDs()
+func (h *Handle) HandleMyZombieAnalyzeJobs(analyzeProcessIDs map[uint64]struct{}) error {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	instance := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id, process_id FROM mysql.analyze_jobs WHERE instance = %? AND status IN ('pending', 'running')", instance)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id, process_id FROM mysql.analyze_jobs WHERE instance = %? AND state IN ('pending', 'running') AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10", instance)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2760,7 +2746,7 @@ func (h *Handle) HandleMyZombieAnalyzeJobs() error {
 		}
 		processID := row.GetUint64(1)
 		if _, ok := analyzeProcessIDs[processID]; !ok {
-			_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL SET WHERE id = %?", jobID)
+			_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL WHERE id = %?", jobID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2780,13 +2766,13 @@ func (h *Handle) HandleOtherZombieAnalyzeJobs() error {
 		instances = append(instances, fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port))
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id FROM mysql.analyze_jobs WHERE instance NOT IN (%?) AND status IN ('pending', 'running') AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10", instances)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id FROM mysql.analyze_jobs WHERE instance NOT IN (%?) AND state IN ('pending', 'running') AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10", instances)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
 		jobID := row.GetUint64(0)
-		_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL SET WHERE id = %?", jobID)
+		_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL WHERE id = %?", jobID)
 		if err != nil {
 			return errors.Trace(err)
 		}
