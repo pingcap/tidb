@@ -4474,8 +4474,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-        sum = "h1:7mTAgkunk3fr4GAloyyCasadO6h9zSsQZbwvcaIciV4=",
-        version = "v0.4.0",
+        sum = "h1:SrNbZl6ECOS1qFzgTdQfWXZM9XBkiA6tkFrH9YSTPHM=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "org_golang_x_xerrors",
