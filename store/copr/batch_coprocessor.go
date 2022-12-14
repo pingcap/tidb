@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -331,45 +330,20 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
-		cur := time.Now()
 		for i := range stores {
 			go func(idx int) {
 				defer wg.Done()
 				s := stores[idx]
 
-				var lastAny any
-				var ok bool
-				mu.Lock()
-				if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
-					// The interval time is so short that may happen in a same query, so we needn't to check again.
-					mu.Unlock()
-					return
-				} else if !ok {
-					lastAny = time.Time{}
-				}
-				mu.Unlock()
-
-				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
-					Type:    tikvrpc.CmdMPPAlive,
-					StoreTp: tikvrpc.TiFlash,
-					Req:     &mpp.IsAliveRequest{},
-					Context: kvrpcpb.Context{},
-				}, 2*time.Second)
-
-				if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
-					errMsg := "store not ready to serve"
-					if err != nil {
-						errMsg = err.Error()
-					}
-					logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
-					mu.Lock()
-					mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
-					mu.Unlock()
+				// check if store is failed already.
+				ok := globalMPPFailedStoreProbe.IsRecovery(ctx, s.GetAddr(), ttl)
+				if !ok {
 					return
 				}
 
-				if cur.Sub(lastAny.(time.Time)) < ttl {
-					logutil.BgLogger().Warn("Cannot detect store's availability because the current time has not reached MPPStoreLastFailTime + MPPStoreFailTTL", zap.String("store address", s.GetAddr()), zap.Time("last fail time", lastAny.(time.Time)))
+				err := detectMPPStore(ctx, kvStore.GetTiKVClient(), s.GetAddr())
+				if err != nil {
+					globalMPPFailedStoreProbe.Add(ctx, s.GetAddr(), kvStore)
 					return
 				}
 

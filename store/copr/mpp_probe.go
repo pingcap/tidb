@@ -75,6 +75,11 @@ func (t *MPPSotreState) detect(ctx context.Context) {
 func (t *MPPSotreState) isRecovery(ctx context.Context, recoveryTTL time.Duration) bool {
 	t.lastLookupTime = time.Now()
 	if !t.recoveryTime.IsZero() && time.Since(t.recoveryTime) > recoveryTTL {
+		logutil.Logger(ctx).Debug("Cannot detect store's availability"+
+			"because the current time has not reached recoveryTime + mppStoreFailTTL",
+			zap.String("store address", t.address),
+			zap.Time("recovery time", t.recoveryTime),
+			zap.Duration("MPPStoreFailTTL", recoveryTTL))
 		return true
 	}
 	return false
