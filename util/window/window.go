@@ -98,7 +98,7 @@ func (w *Window[T]) Append(offset int, val T) {
 	w.buckets[offset%w.size].Append(val)
 }
 
-// Add adds the given value to the latest point within bucket where index equals the given offset.
+// Add adds the given value to the first point within bucket where index equals the given offset.
 func (w *Window[T]) Add(offset int, val T) {
 	offset %= w.size
 	if w.buckets[offset].Count == 0 {
