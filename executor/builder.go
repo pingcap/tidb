@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -111,6 +112,8 @@ type executorBuilder struct {
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
+	queryTS              uint64
+	localQueryID         uint64
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -130,6 +133,8 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
+		queryTS:          uint64(time.Now().UnixNano()),
+		localQueryID:     core.AllocMPPQueryID(),
 	}
 }
 
@@ -3402,6 +3407,8 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		queryTS:      b.queryTS,
+		localQueryID: b.localQueryID,
 	}
 	return gather
 }
@@ -3409,10 +3416,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if v.StoreType != kv.TiKV && b.isStaleness {
-		b.err = errors.New("stale requests require tikv backend")
-		return nil
-	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {

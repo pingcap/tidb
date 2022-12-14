@@ -30,10 +30,13 @@ type MPPTaskMeta interface {
 
 // MPPTask means the minimum execution unit of a mpp computation job.
 type MPPTask struct {
-	Meta    MPPTaskMeta // on which store this task will execute
-	ID      int64       // mppTaskID
-	StartTs uint64
-	TableID int64 // physical table id
+	Meta         MPPTaskMeta // on which store this task will execute
+	ID           int64       // mppTaskID
+	StartTs      uint64
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash miniTSO schedule
+	LocalQueryID uint64 // unique mpp query id in local tidb memory.
+	ServerID     uint64
+	TableID      int64 // physical table id
 
 	PartitionTableIDs []int64
 }
@@ -41,8 +44,11 @@ type MPPTask struct {
 // ToPB generates the pb structure.
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
-		StartTs: t.StartTs,
-		TaskId:  t.ID,
+		StartTs:      t.StartTs,
+		QueryTs:      t.QueryTs,
+		LocalQueryId: t.LocalQueryID,
+		ServerId:     t.ServerID,
+		TaskId:       t.ID,
 	}
 	if t.ID != -1 {
 		meta.Address = t.Meta.GetAddress()
@@ -71,10 +77,13 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar int64
-	StartTs   uint64
-	ID        int64 // identify a single task
-	State     MppTaskStates
+	SchemaVar    int64
+	StartTs      uint64
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash miniTSO schedule
+	LocalQueryID uint64
+	ServerID     uint64
+	ID           int64 // identify a single task
+	State        MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.
@@ -84,7 +93,7 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, rootDestinationTask *MPPTask) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

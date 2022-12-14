@@ -16,11 +16,13 @@ package core
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -79,29 +81,49 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx     sessionctx.Context
-	startTS uint64
-	is      infoschema.InfoSchema
-	frags   []*Fragment
-	cache   map[int]tasksAndFrags
+	ctx          sessionctx.Context
+	startTS      uint64
+	localQueryID uint64
+	queryTS      uint64
+	is           infoschema.InfoSchema
+	frags        []*Fragment
+	cache        map[int]tasksAndFrags
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, queryTs uint64, localQueryID uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
-		ctx:     ctx,
-		startTS: startTs,
-		is:      is,
-		cache:   make(map[int]tasksAndFrags),
+		ctx:          ctx,
+		startTS:      startTs,
+		queryTS:      queryTs,
+		localQueryID: localQueryID,
+		is:           is,
+		cache:        make(map[int]tasksAndFrags),
 	}
 	return g.generateMPPTasks(sender)
+}
+
+var mppTaskID int64 = 1
+
+// allocMPPTaskID allocates task id for mpp tasks.
+// In TiFlash, MPP task manager will use this MPPTaskID and MPPQueryID to distinguish mpp queries.
+func allocMPPTaskID() int64 {
+	return atomic.AddInt64(&mppTaskID, 1)
+}
+
+// AllocMPPQueryID allocates query id for mpp queries, just reuse mppTaskID.
+func AllocMPPQueryID() uint64 {
+	return uint64(atomic.AddInt64(&mppTaskID, 1))
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
 	tidbTask := &kv.MPPTask{
-		StartTs: e.startTS,
-		ID:      -1,
+		StartTs:      e.startTS,
+		QueryTs:      e.queryTS,
+		LocalQueryID: e.localQueryID,
+		ServerID:     domain.GetDomain(e.ctx).ServerID(),
+		ID:           -1,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
@@ -132,10 +154,13 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		_, ok := addressMap[addr]
 		if !ok {
 			mppTask := &kv.MPPTask{
-				Meta:    &mppAddr{addr: addr},
-				ID:      e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
-				StartTs: e.startTS,
-				TableID: -1,
+				Meta:         &mppAddr{addr: addr},
+				ID:           allocMPPTaskID(),
+				QueryTs:      e.queryTS,
+				LocalQueryID: e.localQueryID,
+				ServerID:     domain.GetDomain(e.ctx).ServerID(),
+				StartTs:      e.startTS,
+				TableID:      -1,
 			}
 			newTasks = append(newTasks, mppTask)
 			addressMap[addr] = struct{}{}
@@ -385,7 +410,14 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs}
+		task := &kv.MPPTask{Meta: meta,
+			ID:                allocMPPTaskID(),
+			StartTs:           e.startTS,
+			QueryTs:           e.queryTS,
+			LocalQueryID:      e.localQueryID,
+			ServerID:          domain.GetDomain(e.ctx).ServerID(),
+			TableID:           ts.Table.ID,
+			PartitionTableIDs: allPartitionsIDs}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil

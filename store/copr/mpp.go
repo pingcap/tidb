@@ -143,7 +143,8 @@ type mppIterator struct {
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
 
-	startTs uint64
+	startTs             uint64
+	rootDestinationTask *kv.MPPTask
 
 	respChan chan *mppResponse
 
@@ -220,7 +221,8 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}
 
 	// meta for current task.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress()}
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.QueryTs, LocalQueryId: req.LocalQueryID, TaskId: req.ID, ServerId: req.ServerID,
+		Address: req.Meta.GetAddress()}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
@@ -334,7 +336,7 @@ func (m *mppIterator) cancelMppTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: m.startTs},
+		Meta: &mpp.TaskMeta{StartTs: m.startTs, QueryTs: m.rootDestinationTask.QueryTs, LocalQueryId: m.rootDestinationTask.LocalQueryID, ServerId: m.rootDestinationTask.ServerID},
 	}
 
 	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
@@ -374,8 +376,11 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
-			StartTs: req.StartTs,
-			TaskId:  -1,
+			StartTs:      req.StartTs,
+			QueryTs:      m.rootDestinationTask.QueryTs,
+			LocalQueryId: m.rootDestinationTask.LocalQueryID,
+			ServerId:     m.rootDestinationTask.ServerID,
+			TaskId:       -1,
 		},
 	}
 
@@ -528,7 +533,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, rootDestinationTask *kv.MPPTask) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
@@ -539,6 +544,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		cancelFunc:                 cancelFunc,
 		respChan:                   make(chan *mppResponse),
 		startTs:                    startTs,
+		rootDestinationTask:        rootDestinationTask,
 		vars:                       vars,
 		needTriggerFallback:        needTriggerFallback,
 		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
