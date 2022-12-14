@@ -1614,27 +1614,20 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
-	tableID := results.TableID.GetStatisticsID()
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
-		}
-	}()
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot)
+	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot, source)
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer); err1 != nil {
+			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer, source); err1 != nil {
 				logutil.BgLogger().Error("record historical stats meta failed",
 					zap.Int64("table-id", tableID),
 					zap.Uint64("version", statsVer),
@@ -1809,11 +1802,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -1888,11 +1882,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -2098,7 +2092,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	slices.Sort(colIDs)
@@ -2169,7 +2163,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -2382,7 +2376,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	if extStats == nil || len(extStats.Stats) == 0 {
@@ -2641,56 +2635,6 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return checkHistoricalStatsEnable(h.mu.ctx)
-}
-
-func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64) error {
-	if tableID == 0 || version == 0 {
-		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
-	}
-	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
-	if err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
-	}
-	if !historicalStatsEnabled {
-		return nil
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := sctx.(sqlexec.SQLExecutor)
-	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return errors.New("no historical meta stats can be recorded")
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
-	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version)
-	if err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
-			zap.Uint64("version", version),
-			zap.Error(err))
-	}
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
