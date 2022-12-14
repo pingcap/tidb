@@ -52,12 +52,7 @@
   test_name: TestInvisibleIndex
 - file: bindinfo/bind_test.go
   test_name: TestNotEvolvePlanForReadStorageHint
-- features:
-  - id: FD-2022
-  issues:
-  - id: 20221214
-    url: https://github.com/pingcap/tidb/issues/20221214
-  file: bindinfo/bind_test.go
+- file: bindinfo/bind_test.go
   test_name: TestPrepareCacheWithBinding
 - file: bindinfo/bind_test.go
   test_name: TestPrivileges
@@ -6216,6 +6211,8 @@
 - file: expression/builtin_json_test.go
   test_name: TestJSONLength
 - file: expression/builtin_json_test.go
+  test_name: TestJSONMemberOf
+- file: expression/builtin_json_test.go
   test_name: TestJSONMerge
 - file: expression/builtin_json_test.go
   test_name: TestJSONMergePatch
@@ -6223,6 +6220,8 @@
   test_name: TestJSONMergePreserve
 - file: expression/builtin_json_test.go
   test_name: TestJSONObject
+- file: expression/builtin_json_test.go
+  test_name: TestJSONOverlaps
 - file: expression/builtin_json_test.go
   test_name: TestJSONPretty
 - file: expression/builtin_json_test.go
@@ -12485,6 +12484,8 @@
   test_name: TestTTLDeleteTaskDoDelete
 - file: ttl/ttlworker/del_test.go
   test_name: TestTTLDeleteTaskWorker
+- file: ttl/ttlworker/job_manager_integration_test.go
+  test_name: TestParallelLockNewJob
 - file: ttl/ttlworker/job_manager_test.go
   test_name: TestCheckFinishedJob
 - file: ttl/ttlworker/job_manager_test.go

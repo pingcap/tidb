@@ -127,6 +127,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	}
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
+	tk.MustQuery(fmt.Sprintf("select distinct source from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(testkit.Rows("flush stats"))
 
 	// assert delete
 	tk.MustExec("delete from test.t where test.t.a = 1")

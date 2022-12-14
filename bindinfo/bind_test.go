@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/marker"
 	"github.com/pingcap/tidb/util"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -36,9 +35,6 @@ import (
 )
 
 func TestPrepareCacheWithBinding(t *testing.T) {
-	marker.As(t, marker.Feature, "FD-2022")
-	marker.As(t, marker.Issue, 20221214)
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)

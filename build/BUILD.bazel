@@ -136,13 +136,13 @@ nogo(
                "//build/linter/predeclared:predeclared",
                "//build/linter/unconvert:unconvert",
                "//build/linter/rowserrcheck:rowserrcheck",
-               "//build/linter/testmarker:testmarker",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
                    "//build/linter/filepermission:filepermission",
                    "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
+                   "//build/linter/testmarker:testmarker",
                    "//build/linter/revive:revive",
                ],
                "//conditions:default": [],
