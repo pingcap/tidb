@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,15 +29,15 @@ func TestPlanReplayerGC(t *testing.T) {
 	startTime := time.Now()
 	time := startTime.UnixNano()
 	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
-	err := os.MkdirAll(GetPlanReplayerDirName(), os.ModePerm)
+	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
 	require.NoError(t, err)
-	path := filepath.Join(GetPlanReplayerDirName(), fileName)
+	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	zf, err := os.Create(path)
 	require.NoError(t, err)
 	zf.Close()
 
 	handler := &dumpFileGcChecker{
-		paths: []string{GetPlanReplayerDirName()},
+		paths: []string{replayer.GetPlanReplayerDirName()},
 	}
 	handler.gcDumpFiles(0)
 

@@ -81,6 +81,7 @@ go_library(
         "//util/memory",
         "//util/pdapi",
         "//util/printer",
+        "//util/replayer",
         "//util/sqlexec",
         "//util/sys/linux",
         "//util/timeutil",

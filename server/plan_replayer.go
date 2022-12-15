@@ -23,10 +23,10 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/replayer"
 	"go.uber.org/zap"
 )
 
@@ -53,7 +53,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	params := mux.Vars(req)
 	name := params[pFileName]
 	handler := downloadFileHandler{
-		filePath:           filepath.Join(domain.GetPlanReplayerDirName(), name),
+		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
 		fileName:           name,
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,

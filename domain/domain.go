@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -890,7 +891,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
@@ -1647,8 +1648,8 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 	taskCH := make(chan *PlanReplayerDumpTask, 16)
 	taskStatus := &planReplayerDumpTaskStatus{}
-	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
-	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.finishedTaskMu.finishedTask = map[replayer.PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[replayer.PlanReplayerTaskKey]struct{}{}
 
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
 		taskCH: taskCH,
