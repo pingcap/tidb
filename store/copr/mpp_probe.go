@@ -41,6 +41,7 @@ const (
 type MPPSotreState struct {
 	address string // MPPStore TiFlash address
 	store   *kvStore
+	lock    sync.Mutex
 
 	recoveryTime   time.Time
 	lastLookupTime time.Time
@@ -53,7 +54,12 @@ type MPPFailedStoreProbe struct {
 }
 
 func (t *MPPSotreState) detect(ctx context.Context) {
-	if time.Since(t.lastDetectTime) > DetectPeriod {
+	if !t.lock.TryLock() {
+		return
+	}
+	defer t.lock.Unlock()
+
+	if time.Since(t.lastDetectTime) < DetectPeriod {
 		return
 	}
 
@@ -75,30 +81,31 @@ func (t *MPPSotreState) detect(ctx context.Context) {
 func (t *MPPSotreState) isRecovery(ctx context.Context, recoveryTTL time.Duration) bool {
 	t.lastLookupTime = time.Now()
 	if !t.recoveryTime.IsZero() && time.Since(t.recoveryTime) > recoveryTTL {
-		logutil.Logger(ctx).Debug("Cannot detect store's availability"+
-			"because the current time has not reached recoveryTime + mppStoreFailTTL",
-			zap.String("store address", t.address),
-			zap.Time("recovery time", t.recoveryTime),
-			zap.Duration("MPPStoreFailTTL", recoveryTTL))
 		return true
 	}
+	logutil.Logger(ctx).Debug("Cannot detect store's availability "+
+		"because the current time has not recovery or wait mppStoreFailTTL",
+		zap.String("store address", t.address),
+		zap.Time("recovery time", t.recoveryTime),
+		zap.Duration("MPPStoreFailTTL", recoveryTTL))
 	return false
 }
 
 func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Warn("mpp failed store probe scan error", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("mpp failed store probe scan error,will restart", zap.Any("recover", r), zap.Stack("stack"))
 		}
 	}()
 
 	do := func(k, v any) {
 		address := fmt.Sprintln(k)
-		state, ok := v.(MPPSotreState)
+		state, ok := v.(*MPPSotreState)
 		if !ok {
-			logutil.BgLogger().Warn("MPPSotreState struct Deserialization exception",
+			logutil.BgLogger().Warn("MPPSotreState struct assert failed,will be clean",
 				zap.String("address", address),
 				zap.Any("state", v))
+			t.failedMPPStores.Delete(address)
 			return
 		}
 
@@ -127,28 +134,28 @@ func (t MPPFailedStoreProbe) Add(ctx context.Context, address string, store *kvS
 		address: address,
 		store:   store,
 	}
-	v, ok := t.failedMPPStores.LoadOrStore(address, state)
-	if !ok {
-		logutil.Logger(ctx).Debug("failed store repeat add", zap.String("address", address), zap.Any("state", v))
-	}
-
+	logutil.Logger(ctx).Debug("add mpp store to failed list", zap.String("address", address))
+	t.failedMPPStores.Store(address, &state)
 }
 
 // IsRecovery check whether the store is recovery
 func (t MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, recoveryTTL time.Duration) bool {
+	logutil.Logger(ctx).Debug("check failed store recovery", zap.String("address", address), zap.Duration("ttl", recoveryTTL))
 	v, ok := t.failedMPPStores.Load(address)
 	if !ok {
-		// store not failed map
+		// store not in failed map
 		return true
 	}
 
-	state, ok := v.(MPPSotreState)
+	state, ok := v.(*MPPSotreState)
 	if !ok {
-		logutil.Logger(ctx).Warn("MPPSotreState struct Deserialization exception",
+		logutil.BgLogger().Warn("MPPSotreState struct assert failed,will be clean",
 			zap.String("address", address),
 			zap.Any("state", v))
+		t.failedMPPStores.Delete(address)
 		return false
 	}
+
 	return state.isRecovery(ctx, recoveryTTL)
 }
 
@@ -157,7 +164,7 @@ func (t MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, rec
 func (t *MPPFailedStoreProbe) Run() {
 	for {
 		t.scan(context.Background())
-		time.Sleep(DetectPeriod)
+		time.Sleep(time.Second)
 	}
 }
 
@@ -185,4 +192,6 @@ func init() {
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores: &sync.Map{},
 	}
+	// run a background probe process
+	go globalMPPFailedStoreProbe.Run()
 }
