@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,8 +136,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
 		req.StoreBatchSize = 0
 	}
-	// TODO: support keep-order batch
-	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
+	if req.ReplicaRead != kv.ReplicaReadLeader {
 		// disable batch copr for follower read
 		req.StoreBatchSize = 0
 	}
@@ -150,9 +150,16 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		tasks []*copTask
 		err   error
 	)
+	buildOpt := &buildCopTaskOpt{
+		req:      req,
+		cache:    c.store.GetRegionCache(),
+		respChan: req.KeepOrder,
+		eventCb:  eventCb,
+	}
+	var headTask *copTask
 	buildTaskFunc := func(ranges []kv.KeyRange) error {
 		keyRanges := NewKeyRanges(ranges)
-		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		head, tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
 		}
@@ -163,12 +170,12 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		tasks = append(tasks, tasksFromRanges...)
 		return nil
 	}
+
 	// Here we build the task by partition, not directly by region.
 	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
 	// Keep it split by partition would be more safe.
 	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
 	// only batch store requests in first build.
-	req.StoreBatchSize = 0
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"
@@ -180,6 +187,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if err != nil {
 		return nil, copErrorResponse{err}
 	}
+	req.StoreBatchSize = 0
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -258,6 +266,8 @@ type copTask struct {
 	requestSource  util.RequestSource
 	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
 	batchTaskList  map[uint64]*batchedCopTask
+	// in keep-order mode, read copTasks like a linked list.
+	nextTask *copTask
 }
 
 type batchedCopTask struct {
@@ -292,11 +302,35 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
+type buildCopTaskOpt struct {
+	req      *kv.Request
+	cache    *RegionCache
+	eventCb  trxevents.EventCallback
+	respChan bool
+}
+
+// buildCopTasks accepts the given ranges and build the coprocessor tasks, it returns the head task, all tasks slice and error.
+// Head task is not nil when opt.respChan = true, which means the tasks should read in keep-order mode.
+// If head task is set, you should read from it first, then iterate over copTask.nextTask.
+// It's possible a task meets region split and got two responses, in this case, it's respChan is reused.
+/*
+ ┌───────┐  ┌───────┐  ┌───────┐
+ │ task1 ├─►│ task2 ├─►│ task3 │
+ └───────┘  └───▲───┘  └───────┘
+                │
+     send to task2.respChan
+                │
+    ┌─────────┐ │ ┌─────────┐
+    │ task2.1 ├─┴─┤ task2.2 │
+    └─────────┘   └─────────┘
+*/
+func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) (*copTask, []*copTask, error) {
+	req, cache, eventCb := opt.req, opt.cache, opt.eventCb
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
-		return buildTiDBMemCopTasks(ranges, req)
+		tasks, err := buildTiDBMemCopTasks(ranges, req)
+		return nil, tasks, err
 	}
 
 	rangesLen := ranges.Len()
@@ -304,7 +338,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	// Channel buffer is 2 for handling region split.
 	// In a common case, two region split tasks will not be blocked.
@@ -322,6 +356,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		builder = newLegacyTaskBuilder(len(locs))
 	}
 	origRangeIdx := 0
+	var (
+		headTask   *copTask
+		beforeTask *copTask
+	)
 	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
@@ -360,7 +398,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
 				ranges:        loc.Ranges.Slice(i, nextI),
-				respChan:      make(chan *copResponse, chanSize),
 				cmdType:       cmdType,
 				storeType:     req.StoreType,
 				eventCb:       eventCb,
@@ -369,10 +406,24 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
 			}
+			if opt.respChan {
+				task.respChan = make(chan *copResponse, chanSize)
+				if req.Desc {
+					task.nextTask = beforeTask
+					headTask = task
+				} else {
+					if beforeTask != nil {
+						beforeTask.nextTask = task
+					} else {
+						headTask = task
+					}
+				}
+			}
 			if err = builder.handle(task); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			i = nextI
+			beforeTask = task
 			if req.Paging.Enable {
 				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
 			}
@@ -390,7 +441,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			zap.Int("task len", len(tasks)))
 	}
 	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
-	return tasks, nil
+	return headTask, tasks, nil
 }
 
 type taskBuilder interface {
@@ -1221,7 +1272,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+			req:     worker.req,
+			cache:   worker.store.GetRegionCache(),
+			eventCb: task.eventCb,
+			// re-split tasks reuses origin resp chan.
+			respChan: false,
+		})
 		if err != nil {
 			return remains, err
 		}
@@ -1369,7 +1426,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:      worker.req,
+				cache:    worker.store.GetRegionCache(),
+				eventCb:  task.eventCb,
+				respChan: worker.req.KeepOrder,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -1407,7 +1469,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			return nil, errors.Trace(err)
 		}
 		// TODO: check OOM
-		worker.sendToRespCh(resp, ch, false)
+		if !worker.req.KeepOrder {
+			worker.sendToRespCh(resp, task.respChan, false)
+		} else {
+			worker.sendToRespCh(resp, ch, false)
+		}
+		close(task.respChan)
 	}
 	for _, t := range tasks {
 		task := t.task
@@ -1427,6 +1494,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		}
 		appendRemainTasks(t.task)
 	}
+	desc := worker.req.Desc
+	sort.Slice(remainTasks, func(i, j int) bool {
+		if desc {
+			return batchResps[i].TaskId > batchResps[j].TaskId
+		}
+		return batchResps[i].TaskId < batchResps[j].TaskId
+	})
 	return remainTasks, nil
 }
 
