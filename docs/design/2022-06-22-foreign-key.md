@@ -88,7 +88,7 @@ Create a table with foreign key, check the following conditions when a DDL job i
 - whether the user have `REFERENCES` privilege to the foreign key references table.
 - Corresponding columns in the foreign key and the referenced key must have similar data types. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
-- Indexes on foreign keys and referenced keys are required, because the foreign key check can be fast and do not require a table scan. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
+- Indexes on foreign keys and referenced keys are required, because the foreign key check can be fast and do not require a table scan.
 - Prefixed indexes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
 - Does not currently support foreign keys for tables with user-defined partitioning. This includes both reference and child tables.
 - A foreign key constraint cannot reference any virtual generated columns, but the stored generated columns are fine.
