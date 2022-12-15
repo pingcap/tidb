@@ -1065,6 +1065,11 @@ func (h *Handle) getAnalyzeSnapshot() (bool, error) {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
 	err := h.UpdateSessionVar()
 	if err != nil {
 		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
