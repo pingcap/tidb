@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -76,6 +77,8 @@ func isStatsTable(tableName string) bool {
 // we'd better use this function to drop cloud_admin user after volume-snapshot restore.
 func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) error {
 	sysDB := mysql.SystemDB
+	// skip check privilege for br restore
+	privileges.SkipWithGrant = true
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
