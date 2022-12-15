@@ -15,11 +15,8 @@
 package resourcemanager
 
 import (
-	"time"
-
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpu"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // GlobalResourceManager is a global resource manager
@@ -28,7 +25,6 @@ var GlobalResourceManager = NewResourceManger()
 // ResourceManager is a resource manager
 type ResourceManager struct {
 	cpuObserver *cpu.Observer
-	exitCh      chan struct{}
 	wg          tidbutil.WaitGroupWrapper
 }
 
@@ -36,30 +32,16 @@ type ResourceManager struct {
 func NewResourceManger() *ResourceManager {
 	return &ResourceManager{
 		cpuObserver: cpu.NewCPUObserver(),
-		exitCh:      make(chan struct{}),
 	}
 }
 
 // Start is to start resource manager
 func (r *ResourceManager) Start() {
 	r.wg.Run(r.cpuObserver.Start)
-	r.wg.Run(func() {
-		readMemTricker := time.NewTicker(memory.ReadMemInterval)
-		defer readMemTricker.Stop()
-		for {
-			select {
-			case <-readMemTricker.C:
-				memory.ForceReadMemStats()
-			case <-r.exitCh:
-				return
-			}
-		}
-	})
 }
 
 // Stop is to stop resource manager
 func (r *ResourceManager) Stop() {
 	r.cpuObserver.Stop()
-	close(r.exitCh)
 	r.wg.Done()
 }
