@@ -1010,11 +1010,13 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, er
 			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		}
-	} else {
+	} else if v.SQLDigest != "" {
 		p = &SQLBindPlan{
 			SQLBindOp: OpSetBindingStatusByDigest,
 			SQLDigest: v.SQLDigest,
 		}
+	} else {
+		return nil, errors.New("sql digest is empty")
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
