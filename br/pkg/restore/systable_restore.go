@@ -82,11 +82,10 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 		return nil
 	}
 
-	execSQL := func(sql string, tableName string) error {
+	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.se.Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
-				zap.String("table", tableName),
 				zap.Stringer("database", db.Name),
 				zap.String("sql", sql),
 				zap.Error(err),
@@ -94,7 +93,6 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", sql)
 		}
 		log.Info("successfully restore system database",
-			zap.String("table", tableName),
 			zap.Stringer("database", db.Name),
 			zap.String("sql", sql),
 		)
@@ -107,17 +105,15 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
 				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
 			log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
-			if err := execSQL(deleteSQL, tableName); err != nil {
+			if err := execSQL(deleteSQL); err != nil {
 				return err
 			}
 		}
 	}
 
 	// we need delete root user if user set before
-	whereClause := fmt.Sprintf("WHERE (user = 'root' and host = '%%')")
-	deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-		utils.EncloseDBAndTable(sysDB, sysUserTableName), whereClause)
-	return execSQL(deleteSQL, sysUserTableName)
+	deleteSQL := fmt.Sprintf("ALTER USER 'root'@'%%' IDENTIFIED BY '';")
+	return execSQL(deleteSQL)
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
