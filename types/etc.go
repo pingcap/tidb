@@ -90,6 +90,11 @@ func IsTypeNumeric(tp byte) bool {
 	return false
 }
 
+// IsTypeBit returns a boolean indicating whether the tp is bit type.
+func IsTypeBit(ft *FieldType) bool {
+	return ft.GetType() == mysql.TypeBit
+}
+
 // IsTemporalWithDate returns a boolean indicating
 // whether the tp is time type with date.
 func IsTemporalWithDate(tp byte) bool {

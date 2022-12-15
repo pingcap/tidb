@@ -117,7 +117,11 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
-		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		prepared.UseCache = cacheable
+		if !cacheable {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
+		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
@@ -155,21 +159,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, ParamCount, nil
-}
-
-func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key, paramTypes)
-	if !exist {
-		return nil, exist
-	}
-	candidate := val.(*PlanCacheValue)
-	return candidate, true
-}
-
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	cache.Put(key, plan, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.

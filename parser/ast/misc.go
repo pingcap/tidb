@@ -98,6 +98,7 @@ type AuthOption struct {
 	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
 	ByAuthString bool
 	AuthString   string
+	ByHashString bool
 	HashString   string
 	AuthPlugin   string
 }
@@ -112,7 +113,7 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	if n.ByAuthString {
 		ctx.WriteKeyWord(" BY ")
 		ctx.WriteString(n.AuthString)
-	} else if n.HashString != "" {
+	} else if n.ByHashString {
 		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
 	}
@@ -1506,11 +1507,19 @@ const (
 	PasswordExpireDefault
 	PasswordExpireNever
 	PasswordExpireInterval
+	PasswordHistory
+	PasswordHistoryDefault
+	PasswordReuseInterval
+	PasswordReuseDefault
 	Lock
 	Unlock
-
+	FailedLoginAttempts
+	PasswordLockTime
+	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
+
+	UserResourceGroupName
 )
 
 type PasswordOrLockOption struct {
@@ -1534,6 +1543,25 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ACCOUNT LOCK")
 	case Unlock:
 		ctx.WriteKeyWord("ACCOUNT UNLOCK")
+	case FailedLoginAttempts:
+		ctx.WriteKeyWord("FAILED_LOGIN_ATTEMPTS")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTime:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTimeUnbounded:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
+	case PasswordHistory:
+		ctx.WriteKeyWord("PASSWORD HISTORY")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordHistoryDefault:
+		ctx.WriteKeyWord("PASSWORD HISTORY DEFAULT")
+	case PasswordReuseInterval:
+		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL")
+		ctx.WritePlainf(" %d", p.Count)
+		ctx.WriteKeyWord(" DAY")
+	case PasswordReuseDefault:
+		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}
@@ -1556,6 +1584,19 @@ func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type ResourceGroupNameOption struct {
+	Type  int
+	Value string
+}
+
+func (c *ResourceGroupNameOption) Restore(ctx *format.RestoreCtx) error {
+	if c.Type == UserResourceGroupName {
+		ctx.WriteKeyWord(" RESOURCE GROUP ")
+		ctx.WriteString(c.Value)
+	}
+	return nil
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 type CreateUserStmt struct {
@@ -1568,6 +1609,7 @@ type CreateUserStmt struct {
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
+	ResourceGroupNameOption  *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1626,6 +1668,12 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
+	if n.ResourceGroupNameOption != nil {
+		if err := n.ResourceGroupNameOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.ResourceGroupNameOption")
+		}
+	}
+
 	return nil
 }
 
@@ -1662,6 +1710,7 @@ type AlterUserStmt struct {
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
+	ResourceGroupNameOption  *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1720,6 +1769,12 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.CommentOrAttributeOption != nil {
 		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
+		}
+	}
+
+	if n.ResourceGroupNameOption != nil {
+		if err := n.ResourceGroupNameOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.ResourceGroupNameOption")
 		}
 	}
 
@@ -1961,7 +2016,7 @@ func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DISABLED ")
 	}
 	ctx.WriteKeyWord("FOR ")
-	if n.SQLDigest != "" {
+	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
 		ctx.WriteString(n.SQLDigest)
 	} else {
@@ -1984,7 +2039,8 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
-	if n.SQLDigest == "" {
+	if n.OriginNode != nil {
+		// OriginNode is nil means we set binding stmt by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false

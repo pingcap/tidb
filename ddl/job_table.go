@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -494,6 +495,229 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+// AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
+func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
+	return addBackfillJobs(sess, BackfillTable, backfillJobs)
+}
+
+// AddBackfillHistoryJob adds the backfill jobs to the tidb_ddl_backfill_history table.
+func AddBackfillHistoryJob(sess *session, backfillJobs []*BackfillJob) error {
+	return addBackfillJobs(sess, BackfillHistoryTable, backfillJobs)
+}
+
+// addBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
+func addBackfillJobs(sess *session, tableName string, backfillJobs []*BackfillJob) error {
+	sqlPrefix := fmt.Sprintf(
+		"insert into mysql.%s(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values", tableName)
+	var sql string
+	label := fmt.Sprintf("add_%s_job", tableName)
+	// Do runInTxn to get StartTS.
+	return runInTxn(newSession(sess), func(se *session) error {
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		startTS := txn.StartTS()
+		for i, bj := range backfillJobs {
+			if tableName == BackfillTable {
+				bj.StartTS = startTS
+			}
+			if tableName == BackfillHistoryTable {
+				bj.FinishTS = startTS
+			}
+			mateByte, err := bj.Meta.Encode()
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if i == 0 {
+				sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
+					bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
+					bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
+				continue
+			}
+			sql += fmt.Sprintf(", (%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
+				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
+				bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
+		}
+		_, err = sess.execute(context.Background(), sql, label)
+		return errors.Trace(err)
+	})
+}
+
+// GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
+func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
+	eJobIDsBuilder := strings.Builder{}
+	for i, id := range excludedJobIDs {
+		if i == 0 {
+			eJobIDsBuilder.WriteString(" and ddl_job_id not in (")
+		}
+		eJobIDsBuilder.WriteString(strconv.Itoa(int(id)))
+		if i == len(excludedJobIDs)-1 {
+			eJobIDsBuilder.WriteString(")")
+		} else {
+			eJobIDsBuilder.WriteString(", ")
+		}
+	}
+
+	var err error
+	var bJobs []*BackfillJob
+	s := newSession(sess)
+	err = runInTxn(s, func(se *session) error {
+		currTime, err := GetOracleTime(s)
+		if err != nil {
+			return err
+		}
+
+		bJobs, err = GetBackfillJobs(sess, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), eJobIDsBuilder.String(), batch), "get_backfill_job")
+		return err
+	})
+	if err != nil || len(bJobs) == 0 {
+		return nil, err
+	}
+
+	validLen := 1
+	firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
+	for i := 1; i < len(bJobs); i++ {
+		if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
+			break
+		}
+		validLen++
+	}
+
+	return bJobs[:validLen], nil
+}
+
+// GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,
+// and update these jobs with instance ID and lease.
+func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
+	var validLen int
+	var bJobs []*BackfillJob
+	s := newSession(sess)
+	err := runInTxn(s, func(se *session) error {
+		currTime, err := GetOracleTime(se)
+		if err != nil {
+			return err
+		}
+
+		bJobs, err = GetBackfillJobs(sess, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
+		if err != nil {
+			return err
+		}
+		if len(bJobs) == 0 {
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout")
+		}
+
+		validLen = 0
+		firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
+		for i := 0; i < len(bJobs); i++ {
+			if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
+				break
+			}
+			validLen++
+
+			bJobs[i].InstanceID = uuid
+			bJobs[i].InstanceLease = GetLeaseGoTime(currTime, lease)
+			// TODO: batch update
+			if err = updateBackfillJob(sess, BackfillTable, bJobs[i], "get_mark_backfill_job"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if validLen == 0 {
+		return nil, err
+	}
+
+	return bJobs[:validLen], err
+}
+
+// GetInterruptedBackfillJobsForOneEle gets the interrupted backfill jobs in the tblName table that contains only one element.
+func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
+	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and (state = %d or state = %d)",
+		jobID, eleID, eleKey, model.JobStateRollingback, model.JobStateCancelling), "get_interrupt_backfill_job")
+	if err != nil || len(bJobs) == 0 {
+		return nil, err
+	}
+	return bJobs, nil
+}
+
+// GetBackfillJobCount gets the number of rows in the tblName table according to condition.
+func GetBackfillJobCount(sess *session, tblName, condition string, label string) (int, error) {
+	rows, err := sess.execute(context.Background(), fmt.Sprintf("select count(1) from mysql.%s where %s", tblName, condition), label)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get wrong result cnt:%d", len(rows)))
+	}
+
+	return int(rows[0].GetInt64(0)), nil
+}
+
+// GetBackfillJobs gets the backfill jobs in the tblName table according to condition.
+func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]*BackfillJob, error) {
+	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bJobs := make([]*BackfillJob, 0, len(rows))
+	for _, row := range rows {
+		bJob := BackfillJob{
+			ID:            row.GetInt64(0),
+			JobID:         row.GetInt64(1),
+			EleID:         row.GetInt64(2),
+			EleKey:        row.GetBytes(3),
+			StoreID:       row.GetInt64(4),
+			Tp:            backfillerType(row.GetInt64(5)),
+			InstanceID:    row.GetString(6),
+			InstanceLease: row.GetTime(7),
+			State:         model.JobState(row.GetInt64(8)),
+			CurrKey:       row.GetBytes(9),
+			StartKey:      row.GetBytes(10),
+			EndKey:        row.GetBytes(11),
+			StartTS:       row.GetUint64(12),
+			FinishTS:      row.GetUint64(13),
+			RowCount:      row.GetInt64(14),
+		}
+		bJob.Meta = &model.BackfillMeta{}
+		err = bJob.Meta.Decode(row.GetBytes(15))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bJobs = append(bJobs, &bJob)
+	}
+	return bJobs, nil
+}
+
+// RemoveBackfillJob removes the backfill jobs from the tidb_ddl_backfill table.
+// If isOneEle is true, removes all jobs with backfillJob's ddl_job_id, ele_id and ele_key. Otherwise, removes the backfillJob.
+func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_backfill where ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
+		backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey)
+	if !isOneEle {
+		sql += fmt.Sprintf(" and id = %d", backfillJob.ID)
+	}
+	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
+	return err
+}
+
+func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob, label string) error {
+	mate, err := backfillJob.Meta.Encode()
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, backfill_meta = '%s' where ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, mate, backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey, backfillJob.ID)
+	_, err = sess.execute(context.Background(), sql, label)
+	return err
 }
 
 // MoveJobFromQueue2Table move existing DDLs in queue to table.
