@@ -1722,7 +1722,11 @@ func (b *builtinCastJSONAsStringSig) evalString(row chunk.Row) (res string, isNu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	return val.String(), false, nil
+	s, err := types.ProduceStrWithSpecifiedTp(val.String(), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	if err != nil {
+		return res, false, err
+	}
+	return s, false, nil
 }
 
 type builtinCastJSONAsTimeSig struct {
