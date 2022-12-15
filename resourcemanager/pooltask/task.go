@@ -71,7 +71,7 @@ func (t *TaskBox[T, U, C, CT, TF]) ConstArgs() C {
 	return t.constArgs
 }
 
-// GetTaskCh is to get the pooltask channel.
+// GetTaskCh is to get the task channel.
 func (t *TaskBox[T, U, C, CT, TF]) GetTaskCh() chan Task[T] {
 	return t.task
 }
@@ -86,17 +86,17 @@ func (t *TaskBox[T, U, C, CT, TF]) GetContextFunc() TF {
 	return t.contextFunc
 }
 
-// GetStatus is to get the status of pooltask.
+// GetStatus is to get the status of task.
 func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
 	return t.status.Load()
 }
 
-// SetStatus is to set the status of pooltask.
+// SetStatus is to set the status of task.
 func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 	t.status.Store(s)
 }
 
-// Done is to set the pooltask status to complete.
+// Done is to set the task status to complete.
 func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
