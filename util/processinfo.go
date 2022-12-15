@@ -48,6 +48,7 @@ type OOMAlarmVariablesInfo struct {
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
+	ProtectedTSList
 	Time                  time.Time
 	ExpensiveLogTime      time.Time
 	Plan                  interface{}
@@ -73,7 +74,6 @@ type ProcessInfo struct {
 	State            uint16
 	Command          byte
 	RedactSQL        bool
-	ProtectedTSList
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
