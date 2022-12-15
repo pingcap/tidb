@@ -5,12 +5,12 @@
 
 ## Abstract
 
-This proposes an implementation of supporting foreign key constraint.
+This proposes an implementation of supporting foreign key constraints.
 
 ## DDL Technical Design
 
 ### Table Information Changes
-Table's foreign key information will be stored in `model.TableInfo`:
+The table's foreign key information will be stored in `model.TableInfo`:
 
 ```go
 // TableInfo provides meta data describing a DB table.
@@ -37,10 +37,10 @@ type FKInfo struct {
 }
 ```
 
-Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
-  - `Version`: uses to distinguish between old and new versions. The new version value is 1, the old version value is 0.
+Struct `FKInfo` uses for the child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
+- `Version`: uses to distinguish between old and new versions. The new version value is 1, the old version value is 0.
 
-Why `FKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when build `FKInfo`. Here is an example:
+Why `FKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when building `FKInfo`. Here is an example:
 
 ```sql
 >set @@foreign_key_checks=0;
@@ -55,13 +55,13 @@ Query OK, 0 rows affected
 (1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))')
 ```
 
-As you can see, the table `t2` is refer to table `t1`, and when create table `t2`, the table `t1` still not be created, so we can't know the id of table `t1`.
+As you can see, table `t2` refers to table `t1`, and when creating table `t2`, table `t1` still not be created, so we can't know the id of table `t1`.
 
 ### Create Table with Foreign Key
 
 #### Build TableInfo
 
-When build `TableInfo`, an index for the foreign key columns is created automatically if there is no index covering the foreign key columns. Here is an example:
+When building `TableInfo`, an index for the foreign key columns is created automatically if there is no index covering the foreign key columns. Here is an example:
 
 ```sql
 mysql> create table t (id int key, a int, foreign key fk(a) references t(id));
@@ -85,21 +85,21 @@ As you can see, the index `fk` is created automatically for the foreign key.
 
 Create a table with foreign key, check the following conditions when a DDL job is built and the DDL owner received a DDL job(aka Double-Check):
 
-- whether the user have `REFERENCES` privilege to the foreign key references table.
+- whether the user has `REFERENCES` privilege to the foreign key references table.
 - Corresponding columns in the foreign key and the referenced key must have similar data types. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
 - Indexes on foreign keys and referenced keys are required, because the foreign key check can be fast and do not require a table scan.
 - Prefixed indexes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
-- Does not currently support foreign keys for tables with user-defined partitioning. This includes both reference and child tables.
+- Does not currently support foreign keys for the partition table. This includes both reference and child tables.
 - A foreign key constraint cannot reference any virtual generated columns, but the stored generated columns are fine.
 
 #### Handle In DDL Owner
 
-When DDL Owner handle create table job, DDL owner need to create a new table.
+When the DDL Owner handle create table job, the DDL owner needs to create a new table.
 
-At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create new table and 
-update all reference tables in one schema version, since this may break foreign key constraint, such as delete reference table
-without foreign key constrain check in child table.
+At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create a new table and
+update all reference tables in one schema version, since this may break foreign key constraints, such as delete reference table
+without foreign key constraint check in the child table.
 
 ```sql
 -- In TiDB-1 and Schema Version is 1
@@ -109,17 +109,17 @@ insert into t_has_foreign_key values (1, 1);
 delete from t_reference where id = 1; --Since doesn't know foreign key information in old version, so doesn't do foreign key constrain check.
 ```
 
-So, when create a table with foreign key, we need multi-schema version change:
+So, when creating a table with foreign key, we need multi-schema version change:
 
-1. None -> Write Only: Create table with state is `write-only`.
+1. None -> Write Only: Create table with the state is `write-only`.
 2. Write Only -> Public: Update the created table state to `public`.
 
 #### Maintain ReferredFKInfo
 
-Why need to maintain `ReferredFKInfo` in reference table? When execute `UPDATE`/`DELETE` in reference table, we need the `ReferredFKInfo` of reference table to do foreign key check/cascade.
+Why need to maintain `ReferredFKInfo` in the reference table? When executing `UPDATE`/`DELETE` in the reference table, we need the `ReferredFKInfo` of the reference table to do a foreign key check/cascade.
 
-How to maintain `ReferredFKInfo` in reference table? When we create table with foreign key, we didn't add `ReferredFKInfo` into reference table, because the reference table may not have been created yet,
-when `foreign_key_checks` variable value is `OFF`, the user can create child table before reference table.
+How to maintain `ReferredFKInfo` in the reference table? When we create table with foreign key, we didn't add `ReferredFKInfo` into the reference table, because the reference table may not have been created yet,
+when `foreign_key_checks` variable value is `OFF`, the user can create a child table before the reference table.
 
 We decided to maintain `ReferredFKInfo` while TiDB loading schema. At first, `infoSchema` will record all table's `ReferredFKInfo`:
 
@@ -143,9 +143,9 @@ type infoSchema struct {
 
 Function `applyTableUpdate` uses `applyDropTable` to drop the old table, uses `applyCreateTable` to create the new table.
 
-In function `applyDropTable`, we will delete the table's foreign key information from `infoSchema.referredForeignKeyMap`.
+In the function `applyDropTable`, we will delete the table's foreign key information from `infoSchema.referredForeignKeyMap`.
 
-In function `applyCreateTable`, we will add the table's foreign key information into `infoSchema.referredForeignKeyMap` first, 
+In the function `applyCreateTable`, we will add the table's foreign key information into `infoSchema.referredForeignKeyMap` first,
 then get the table's `ReferredFKInfo` by schema name and table name, then store the `ReferredFKInfo` into `TableInfo.ReferredForeignKeys`.
 
 Then `applyTableUpdate` will also need to reload the old/new table's referred table information, also uses `applyDropTable` to drop the old reference table, use `applyCreateTable` to create new reference table.
@@ -162,26 +162,26 @@ create table t2 (id int key,a int);
 alter  table t2 add foreign key fk(a) references t1(id) ON DELETE CASCADE;
 ```
 
-Just like create table, we should validate first, and return error if the conditions for creating foreign keys are not met, and also need to do double-check.
+Just like create table, we should validate first, and return an error if the conditions for creating foreign keys are not met, and also need to double-check.
 
-When build `TableInfo`, we need to auto create an index for foreign key columns if there is no index cover foreign key columns.
-And this is divides the problem into two cases:
-- Case-1: No need to create index automatically, and only add foreign key constraint.
-- Case-2: Need auto create index for foreign key
+When building `TableInfo`, we need to auto-create an index for foreign key columns if there are no index cover foreign key columns.
+And this divides the problem into two cases:
+- Case-1: No need to create an index automatically, and only add the foreign key constraint.
+- Case-2: Need auto-create index for foreign key
 
 #### Case-1: Only add foreign key constrain
 
-The DDL owner handle add foreign key constrain step is:
+The DDL owner handle adds foreign key constrain step is:
 
-1. None -> Write Only: add foreign key constrain which state is `write-only` into table.
-3. Write Only - Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
+1. None -> Write Only: add foreign key constraint which state is `write-only` into the table.
+3. Write Only - Write Reorg: check all rows in the table whether has related foreign key exists in the reference table, we can use the following SQL to check:
    ```sql
    select 1 from t2 where t2.a is not null and t2.a not in (select id from t1) limit 1;
    ```
-   The expected result is `empty`, otherwise, an error is returned and cancel the ddl job.
-4. Write Reorg -> Public: update the foreign key constrain state to `public`.
+   The expected result is `empty`, otherwise, an error is returned and cancels the DDL job.
+4. Write Reorg -> Public: update the foreign key constraint state to `public`.
 
-A problem is, How the DML treat the foreign key with on delete/update cascade behaviour which state is non-public?
+A problem is, How the DML treat the foreign key on delete/update cascade behaviour in which state is non-public?
 Here is an example:
 
 ```sql
@@ -202,15 +202,15 @@ delete from t1 where id = 1;
 Then, TiDB shouldn't do cascade delete for foreign key `fk_1` in state `Write-Only`, since the `Add Foreign Key` DDL job maybe
 failed in `Write-Reorg` state and rollback the DDL job. But it is hard to rollback the cascade deleted executed before.
 
-So, when execute DML with `non-publick` foreign key, TiDB will do foreign key constraint check instead of foreign key cascade behaviour.
+So, when executing DML with `non-public` foreign key, TiDB will do a foreign key constraint check instead of foreign key cascade behaviour.
 
-#### Case-2: Auto create index for foreign key and add foreign key constrain
+#### Case-2: Auto-create index for foreign key and add foreign key constrain
 
-As TiDB support multi-schema change now, we create a `ActionMultiSchemaChange` job and contains following 2 sub-ddl job.
+As TiDB support multi-schema change now, we create an `ActionMultiSchemaChange` job that contains the following 2 sub-ddl job.
 - Add Index DDL job
-- Add Foreign Key Constrain DDL job
+- Add Foreign Key Constraint DDL job
 
-When TiDB add foreign key ddl job meet error, TiDB will rollback the `ActionMultiSchemaChange` job and the 2 sub-ddl job will also be rollback.
+When TiDB adds foreign key DDL job meet error, TiDB will rollback the `ActionMultiSchemaChange` job and the 2 sub-ddl job will also be rollback.
 
 ### Drop Table
 
@@ -223,7 +223,7 @@ If `foreign_key_checks` is `ON`, then drop the table which has foreign key refer
 
 ### Drop Database
 
-If `foreign_key_checks` is `ON`, then drop the database which has foreign key references by other database will be rejected.
+If `foreign_key_checks` is `ON`, then drop the database which has foreign key references by another database will be rejected.
 
 ```sql
 > drop database test;
@@ -232,10 +232,10 @@ If `foreign_key_checks` is `ON`, then drop the database which has foreign key re
 
 ### Drop Index
 
-Drop index which used by foreign key will be rejected.
+Drop index used by the foreign key will be rejected.
 
 ```sql
-> set @@foreign_key_checks=0; -- Even disable foreign_key_checks, you still can't drop the index which used for foreign key constrain.
+> set @@foreign_key_checks=0; -- Even disable foreign_key_checks, you still can't drop the index used for foreign key constrain.
 Query OK, 0 rows affected
 > alter table t2 drop index fk;
 (1553, "Cannot drop index 'fk': needed in a foreign key constraint")
@@ -243,7 +243,7 @@ Query OK, 0 rows affected
 
 ### Rename Column
 
-Rename column which has foreign key or references, should also need to update the related child/parent table info.
+Rename column which has foreign keys or references should also need to update the related child/parent table info.
 
 ```sql
 create table t1 (id int key,a int, index(a));
@@ -264,11 +264,11 @@ Create Table | CREATE TABLE `t2` (
 
 ### Truncate Table
 
-Truncate table which has foreign key or references, should also need to update the related child/parent table info.
+A truncate table which has foreign keys or references should also need to update the related child/parent table info.
 
 ### Modify Column
 
-Modify column which used by foreign key will be rejected.
+Modify column which used by the foreign key will be rejected.
 
 ```sql
 > alter table t1 change column id id1 bigint;
@@ -277,21 +277,21 @@ Modify column which used by foreign key will be rejected.
 
 MySQL modify column problem: https://www.percona.com/blog/2019/06/04/ddl-queries-foreign-key-columns-MySQL-pxc/
 
-What if the user really need to modify column type, such as from `INT` to `BIGINT`. Maybe we can offer an variable such as `alter-foreign-keys-method=auto`,
-then when user modify the column type, TiDB will auto modify the related foreign key column's type. For easy implementation and reduce risk, maybe only support modify column type which doesn't need to reorg table row data.
+What if the user really needs to modify column type, such as from `INT` to `BIGINT`. Maybe we can offer a variable such as `alter-foreign-keys-method=auto`,
+then when the user modifies the column type, TiDB will auto-modify the related foreign key column's type. For easy implementation and to reduce risk, maybe only support modifying column type which doesn't need to reorg table row data.
 
 ## DML Technical Design
 
 ### DML On Child Table
 
-On Child Table Insert Or Update, need to Find FK column value whether exist in reference table:
+On Child Table Insert Or Update, need to Find FK column value that exist in the reference table:
 
 1. Get reference table info by table name.
-2. Get related fk index of reference table.
-3. tiny optimize, check fk column value exist in reference table cache(map[string(index_key)]struct).
+2. Get the related fk index of the reference table.
+3. tiny optimize, check fk column value exists in reference table cache(map[string(index_key)]struct).
 3. Get related row in reference.
-  - Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
-    foreign key columns, use snapshot `Get` API.
+- Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
+  foreign key columns, use the snapshot `Get` API.
     - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
 5. If relate row exist in reference table, also need to add lock in the related row.
@@ -308,7 +308,7 @@ create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) r
 insert into t1 values (-1, 1, 1);
 ```
 
-Then, execute following SQL in 2 session:
+Then, execute the following SQL in 2 sessions:
 
 | Session 1                        | Session 2                                   |
 | -------------------------------- | ------------------------------------------- |
@@ -318,11 +318,11 @@ Then, execute following SQL in 2 session:
 | Commit                           |                                             |
 |                                  | ERROR: Cannot delete or update a parent row |
 
-So we need to add lock in reference table when insert/update child table.
+So we need to add lock in the reference table when insert/update child table.
 
 ##### In Pessimistic Transaction
 
-When TiDB add pessimistic locks, if relate row exist in reference table, also need to add lock in the related row.
+When TiDB add pessimistic locks, if related row exists in the reference table, also needs to add lock in the related row.
 
 ##### In Optimistic Transaction
 
@@ -330,13 +330,13 @@ Just like `SELECT FOR UPDATE` statement, need to use `doLockKeys` to lock the re
 
 ##### Issue
 
-TiDB current only support `lock for update`(aka write-lock, such as `select for update`), doesn't support `lock for share`(aka read-lock, such as `select for share`).
+TiDB currently only support `lock for update`(aka write-lock, such as `select for update`), and doesn't support `lock for share`(aka read-lock, such as `select for share`).
 
-So far we have to add `lock for update` in reference table when insert/update child table, then the performance will be poor. After TiDB support `lock for share`, we should use `lock for share` instead.
+So far we have to add `lock for update` in the reference table when insert/update child table, then the performance will be poor. After TiDB support `lock for share`, we should use `lock for share` instead.
 
 #### DML Load data
 
-Load data should also do foreign key check, but report warning instead error:
+Load data should also do foreign key check, but report a warning instead error:
 
 ```sql
 create table t1 (id int key,a int, index(a));
@@ -366,10 +366,10 @@ On reference Table Delete Or Update:
 1. modify related child table row by referential action:
 - `CASCADE`: update/delete related child table row.
 - `SET NULL`: set related child row's foreign key columns value to NULL.
-- `RESTRICT`, `NO ACTION`: If related row exist in child table, reject update/delete reference table.
+- `RESTRICT`, `NO ACTION`: If related row exist in child table, reject update/delete the reference table.
 - `SET DEFAULT`: just like `RESTRICT`.
 
-modify related child table row by following step:
+modify related child table rows by the following step:
 1. get child table info by name(in reference table info).
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
@@ -421,9 +421,9 @@ insert into t2 values (1, 1);
 +----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+-------------+
 ```
 
-From the plan, you can't see any information about the foreign key constrain which need to delete the related row in child table `t2`.
+From the plan, you can't see any information about the foreign key constraint which needs to delete the related row in child table `t2`.
 
-I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table. 
+I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related rows in the child table.
 
 Here is an example plan with foreign key:
 
@@ -554,17 +554,17 @@ Create Table | CREATE TABLE `t2` (
 
 #### TiCDC
 
-When sync table data to downstream TiDB, TiCDC should `set @@foreign_key_checks=0` in downstream TiDB.
+When syncing table data to downstream TiDB, TiCDC should `set @@foreign_key_checks=0` in downstream TiDB.
 
 #### DM
 
-When do full synchronization, DM should `set @@foreign_key_checks=0` in downstream TiDB.
+When doing full synchronization, DM should `set @@foreign_key_checks=0` in downstream TiDB.
 
-When do incremental synchronization, DM should set `foreign_key_checks` session variable according to MySQL binlog.
+When doing incremental synchronization, DM should set `foreign_key_checks` session variable according to MySQL binlog.
 
 #### BR
 
-When sync table data to downstream TiDB, TiCDC should `set @@foreign_key_checks=0` in downstream TiDB.
+When syncing table data to downstream TiDB, BR should `set @@foreign_key_checks=0` in downstream TiDB.
 
 ## Test Case
 
