@@ -144,28 +144,21 @@ func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2i
 
 // GetMinStartTS implements SessionManager interface.
 func (msm *MockSessionManager) GetMinStartTS(lowerBound uint64) (ts uint64) {
-	var usingPS bool
 	msm.PSMu.RLock()
 	defer msm.PSMu.RUnlock()
 	if len(msm.PS) > 0 {
 		for _, pi := range msm.PS {
-			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
-				ts = pi.CurTxnStartTS
+			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
 			}
 		}
-		usingPS = true
+		return
 	}
 	msm.mu.Lock()
 	defer msm.mu.Unlock()
 	for _, s := range msm.conn {
-		if !usingPS {
-			pi := s.ShowProcess()
-			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
-				ts = pi.CurTxnStartTS
-			}
-		}
-		if minTS := s.GetSessionVars().GetMinProtectedTS(lowerBound); minTS > lowerBound && (minTS < ts || ts == 0) {
-			ts = minTS
+		if thisTS := s.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+			ts = thisTS
 		}
 	}
 	return

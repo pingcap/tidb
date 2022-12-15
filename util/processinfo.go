@@ -31,6 +31,14 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// ProtectedTSList holds a list of timestamps that should delay GC.
+type ProtectedTSList interface {
+	// HoldTS holds the timestamp to prevent its data from being GCed.
+	HoldTS(ts uint64) (unhold func())
+	// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+	GetMinProtectedTS(lowerBound uint64) (ts uint64)
+}
+
 // OOMAlarmVariablesInfo is a struct for OOM alarm variables.
 type OOMAlarmVariablesInfo struct {
 	SessionAnalyzeVersion         int
@@ -65,6 +73,7 @@ type ProcessInfo struct {
 	State            uint16
 	Command          byte
 	RedactSQL        bool
+	ProtectedTSList
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -127,6 +136,23 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 		}
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
+}
+
+// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
+func (pi *ProcessInfo) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	if pi == nil {
+		return
+	}
+	if thisTS := pi.CurTxnStartTS; thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	if pi.ProtectedTSList == nil {
+		return
+	}
+	if thisTS := pi.GetMinProtectedTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	return
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
@@ -197,7 +223,7 @@ type SessionManager interface {
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
-	// GetMinStartTS returns the minimum timestamp holden by sessions.
+	// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
 	GetMinStartTS(lowerBound uint64) uint64
 }
 

@@ -273,44 +273,44 @@ func TestCursorReadHoldTS(t *testing.T) {
 
 	stmt, _, _, err := c.Context().Prepare("select * from t")
 	require.NoError(t, err)
-	require.Zero(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	ts := tk.Session().GetSessionVars().GetMinProtectedTS(0)
+	ts := tk.Session().ShowProcess().GetMinStartTS(0)
 	require.Positive(t, ts)
 	// should unhold ts when result set exhausted
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Equal(t, ts, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Equal(t, ts, tk.Session().ShowProcess().GetMinStartTS(0))
 	require.Equal(t, ts, srv.GetMinStartTS(0))
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Equal(t, ts, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Equal(t, ts, tk.Session().ShowProcess().GetMinStartTS(0))
 	require.Equal(t, ts, srv.GetMinStartTS(0))
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.Zero(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	require.Positive(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	// should unhold ts when stmt reset
 	require.NoError(t, c.Dispatch(ctx, appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID()))))
-	require.Zero(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	require.Positive(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	// should unhold ts when stmt closed
 	require.NoError(t, c.Dispatch(ctx, appendUint32([]byte{mysql.ComStmtClose}, uint32(stmt.ID()))))
-	require.Zero(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 
 	// create another 2 stmts and execute them
 	stmt1, _, _, err := c.Context().Prepare("select * from t")
@@ -319,7 +319,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt1.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	ts1 := tk.Session().GetSessionVars().GetMinProtectedTS(0)
+	ts1 := tk.Session().ShowProcess().GetMinStartTS(0)
 	require.Positive(t, ts1)
 	stmt2, _, _, err := c.Context().Prepare("select * from t")
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt2.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	ts2 := tk.Session().GetSessionVars().GetMinProtectedTS(ts1)
+	ts2 := tk.Session().ShowProcess().GetMinStartTS(ts1)
 	require.Positive(t, ts2)
 
 	require.Less(t, ts1, ts2)
@@ -337,6 +337,6 @@ func TestCursorReadHoldTS(t *testing.T) {
 
 	// should unhold all when session closed
 	c.Close()
-	require.Zero(t, tk.Session().GetSessionVars().GetMinProtectedTS(0))
+	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	require.Zero(t, srv.GetMinStartTS(0))
 }

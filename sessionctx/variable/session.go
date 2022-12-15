@@ -1329,11 +1329,8 @@ type SessionVars struct {
 	// Resource group name
 	ResourceGroupName string
 
-	// protectedTSList holds a list of timestamps that should delay GC.
-	protectedTSList struct {
-		sync.Mutex
-		items map[uint64]int
-	}
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -3164,46 +3161,52 @@ func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
 }
 
+// protectedTSList implements util/processinfo#ProtectedTSList
+type protectedTSList struct {
+	sync.Mutex
+	items map[uint64]int
+}
+
 // HoldTS holds the timestamp to prevent its data from being GCed.
-func (s *SessionVars) HoldTS(ts uint64) (unhold func()) {
-	s.protectedTSList.Lock()
-	if s.protectedTSList.items == nil {
-		s.protectedTSList.items = map[uint64]int{}
+func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
+	lst.Lock()
+	if lst.items == nil {
+		lst.items = map[uint64]int{}
 	}
-	s.protectedTSList.items[ts] += 1
-	s.protectedTSList.Unlock()
+	lst.items[ts] += 1
+	lst.Unlock()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			s.protectedTSList.Lock()
-			if s.protectedTSList.items != nil {
-				if s.protectedTSList.items[ts] > 1 {
-					s.protectedTSList.items[ts] -= 1
+			lst.Lock()
+			if lst.items != nil {
+				if lst.items[ts] > 1 {
+					lst.items[ts] -= 1
 				} else {
-					delete(s.protectedTSList.items, ts)
+					delete(lst.items, ts)
 				}
 			}
-			s.protectedTSList.Unlock()
+			lst.Unlock()
 		})
 	}
 }
 
-// GetMinProtectedTS returns the minimum protected timestamps.
-func (s *SessionVars) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
-	s.protectedTSList.Lock()
-	for k, v := range s.protectedTSList.items {
+// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	lst.Lock()
+	for k, v := range lst.items {
 		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
 			ts = k
 		}
 	}
-	s.protectedTSList.Unlock()
+	lst.Unlock()
 	return
 }
 
-// GetProtectedTSCount returns the number of protected timestamps (mainly used for test).
-func (s *SessionVars) GetProtectedTSCount() (count int) {
-	s.protectedTSList.Lock()
-	count = len(s.protectedTSList.items)
-	s.protectedTSList.Unlock()
+// Size returns the number of protected timestamps (exported for test).
+func (lst *protectedTSList) Size() (size int) {
+	lst.Lock()
+	size = len(lst.items)
+	lst.Unlock()
 	return
 }

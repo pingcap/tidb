@@ -1599,15 +1599,15 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 	sm := se.GetSessionManager().(*testkit.MockSessionManager)
 	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: lowerLimit},
-		{CurTxnStartTS: validTS},
+		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: lowerLimit, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: validTS, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
 	}
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 
-	unhold := se.GetSessionVars().HoldTS(validTS - 1)
+	unhold := se.GetSessionVars().ProtectedTSList.HoldTS(validTS - 1)
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS-1, infoSyncer.GetMinStartTS())
 

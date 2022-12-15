@@ -976,8 +976,8 @@ func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
 	// sys processes
 	if s.dom != nil {
 		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
-				ts = pi.CurTxnStartTS
+			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
 			}
 		}
 	}
@@ -986,14 +986,8 @@ func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
 		s.rwlock.RLock()
 		defer s.rwlock.RUnlock()
 		for _, client := range s.clients {
-			pi := client.ctx.ShowProcess()
-			// start ts of current process
-			if pi != nil && pi.CurTxnStartTS > lowerBound && (pi.CurTxnStartTS < ts || ts == 0) {
-				ts = pi.CurTxnStartTS
-			}
-			// min protected timestamp of current session
-			if minTS := client.ctx.GetSessionVars().GetMinProtectedTS(lowerBound); minTS > lowerBound && (minTS < ts || ts == 0) {
-				ts = minTS
+			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
 			}
 		}
 	}()
