@@ -6268,6 +6268,11 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	rs := tk0.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
+
+	// There should be only one child tracker, auto-analyze session should have been detached.
+	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildren()
+	require.Len(t, childTrackers, 1)
+	require.Equal(t, tk0.Session().GetSessionVars().MemTracker, childTrackers[0])
 }
 
 func TestCompileOutOfMemoryQuota(t *testing.T) {
