@@ -310,12 +310,12 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 		var unfinishedVolumes []*string
 		for _, volume := range resp.Volumes {
 			if *volume.State == ec2.VolumeStateAvailable {
-				log.Info("volume is available", zap.String("id", *volume.SnapshotId))
+				log.Info("volume is available", zap.String("id", *volume.VolumeId))
 				totalVolumeSize += *volume.Size
 				progress.Inc()
 			} else {
 				log.Debug("volume creating...", zap.Stringer("volume", volume))
-				unfinishedVolumes = append(unfinishedVolumes, volume.SnapshotId)
+				unfinishedVolumes = append(unfinishedVolumes, volume.VolumeId)
 			}
 		}
 		pendingVolumes = unfinishedVolumes
