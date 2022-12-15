@@ -38,12 +38,12 @@ func NewValued(startKey, endKey []byte, value Value) Valued {
 	}
 }
 
-func (r Valued) String() string {
-	return fmt.Sprintf("(%s, %.2f MB)", logutil.StringifyRange(r.Key), float64(r.Value)/1024/1024)
+func (v Valued) String() string {
+	return fmt.Sprintf("(%s, %.2f MB)", logutil.StringifyRange(v.Key), float64(v.Value)/1024/1024)
 }
 
-func (r Valued) Less(other btree.Item) bool {
-	return bytes.Compare(r.Key.StartKey, other.(Valued).Key.StartKey) < 0
+func (v Valued) Less(other btree.Item) bool {
+	return bytes.Compare(v.Key.StartKey, other.(Valued).Key.StartKey) < 0
 }
 
 func (v Valued) GetStartKey() []byte {
@@ -162,7 +162,7 @@ func (f *SplitHelper) overlapped(k Span, result *[]Valued) {
 
 	f.inner.AscendGreaterOrEqual(Valued{Key: first}, func(item btree.Item) bool {
 		r := item.(Valued)
-		if !overlaps(r.Key, k) {
+		if !Overlaps(r.Key, k) {
 			return false
 		}
 		*result = append(*result, r)
@@ -171,7 +171,7 @@ func (f *SplitHelper) overlapped(k Span, result *[]Valued) {
 }
 
 // Overlaps checks whether two spans have overlapped part.
-func overlaps(a, append Span) bool {
+func Overlaps(a, append Span) bool {
 	if len(a.EndKey) == 0 {
 		return bytes.Compare(append.EndKey, a.StartKey) > 0
 	}

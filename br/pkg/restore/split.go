@@ -500,7 +500,7 @@ func splitRegionByPoints(
 	newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
 	if errSplit != nil {
 		log.Warn("failed split regions")
-		startKey := region.Region.StartKey
+		_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
 		ranges := make([]rtree.Range, 0)
 		for _, point := range splitPoints {
 			ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
@@ -690,7 +690,7 @@ type LogFilesIterWithSplitHelper struct {
 	next   int
 }
 
-const SplitFilesBufferSize = 10240
+const SplitFilesBufferSize = 2048
 
 func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, client split.SplitClient) LogIter {
 	return &LogFilesIterWithSplitHelper{
@@ -716,13 +716,15 @@ func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.
 			}
 		}
 		splitIter.next = 0
+		if len(splitIter.buffer) == 0 {
+			return iter.Done[*backuppb.DataFileInfo]()
+		}
+		log.Info("start to split the regions")
+		startTime := time.Now()
 		if err := splitIter.helper.Split(ctx); err != nil {
 			return iter.Throw[*backuppb.DataFileInfo](errors.Trace(err))
 		}
-	}
-
-	if splitIter.next >= len(splitIter.buffer) {
-		return iter.Done[*backuppb.DataFileInfo]()
+		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
 	}
 
 	res := iter.Emit(splitIter.buffer[splitIter.next])
