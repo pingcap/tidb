@@ -523,42 +523,32 @@ var statsHealthyGauges = []prometheus.Gauge{
 	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 }
 
-type statsHealthyChange struct {
-	bucketDelta [5]int
-}
-
-func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
-	var idx int
-	if statsHealthy < 50 {
-		idx = 0
-	} else if statsHealthy < 80 {
-		idx = 1
-	} else if statsHealthy < 100 {
-		idx = 2
-	} else {
-		idx = 3
+// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+func (h *Handle) UpdateStatsHealthyMetrics() {
+	v := h.statsCache.Load()
+	if v == nil {
+		return
 	}
-	lastIDX := len(c.bucketDelta) - 1
-	if add {
-		c.bucketDelta[idx]++
-		c.bucketDelta[lastIDX]++
-	} else {
-		c.bucketDelta[idx]--
-		c.bucketDelta[lastIDX]--
+
+	distribution := make([]int64, 5)
+	for _, tbl := range v.(statsCache).Values() {
+		healthy, ok := tbl.GetStatsHealthy()
+		if !ok {
+			continue
+		}
+		if healthy < 50 {
+			distribution[0] += 1
+		} else if healthy < 80 {
+			distribution[1] += 1
+		} else if healthy < 100 {
+			distribution[2] += 1
+		} else {
+			distribution[3] += 1
+		}
+		distribution[4] += 1
 	}
-}
-
-func (c *statsHealthyChange) drop(statsHealthy int64) {
-	c.update(false, statsHealthy)
-}
-
-func (c *statsHealthyChange) add(statsHealthy int64) {
-	c.update(true, statsHealthy)
-}
-
-func (c *statsHealthyChange) apply() {
-	for i, val := range c.bucketDelta {
-		statsHealthyGauges[i].Add(float64(val))
+	for i, val := range distribution {
+		statsHealthyGauges[i].Set(float64(val))
 	}
 }
 
@@ -582,7 +572,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	healthyChange := &statsHealthyChange{}
 	option := &tableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
@@ -604,8 +593,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		oldTbl, ok := oldCache.Get(physicalID)
-		if ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -613,9 +601,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
-		}
-		if oldHealthy, ok := oldTbl.GetStatsHealthy(); ok {
-			healthyChange.drop(oldHealthy)
 		}
 		if tbl == nil {
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -626,15 +611,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
-			healthyChange.add(newHealthy)
-		}
 		tables = append(tables, tbl)
 	}
-	updated := h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
-	if updated {
-		healthyChange.apply()
-	}
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
 	return nil
 }
 
