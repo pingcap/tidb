@@ -113,7 +113,12 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 
 	// we need delete root user if user set before
 	deleteSQL := fmt.Sprintf("ALTER USER 'root'@'%%' IDENTIFIED BY '';")
-	return execSQL(deleteSQL)
+	err := execSQL(deleteSQL)
+	if err != nil {
+		return err
+	}
+	flushSQL := fmt.Sprintf("FLUSH PRIVILEGES;")
+	return execSQL(flushSQL)
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
