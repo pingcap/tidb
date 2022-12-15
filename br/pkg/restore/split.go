@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
@@ -435,11 +436,15 @@ const SplitThreShold = 128 * 1024 * 1024 // 128 MB
 
 type LogSplitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
+	rules         map[int64]*RewriteRules
+	client        split.SplitClient
 }
 
-func NewLogSplitHelper() *LogSplitHelper {
+func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) *LogSplitHelper {
 	return &LogSplitHelper{
 		tableSplitter: make(map[int64]*split.SplitHelper),
+		rules:         rules,
+		client:        client,
 	}
 }
 
@@ -656,12 +661,10 @@ func SplitPoint(
 
 func (helper *LogSplitHelper) Split(
 	ctx context.Context,
-	client split.SplitClient,
-	rewriteRulesMap map[int64]*RewriteRules,
 ) error {
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
-		rewriteRule, exists := rewriteRulesMap[tableID]
+		rewriteRule, exists := helper.rules[tableID]
 		if !exists {
 			log.Info("no rule. pass.", zap.Int64("tableID", tableID))
 			continue
@@ -671,11 +674,58 @@ func (helper *LogSplitHelper) Split(
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
 		}
-		if err := SplitPoint(ctx, newTableID, splitter, client, rewriteRule, splitRegionByPoints); err != nil {
+		if err := SplitPoint(ctx, newTableID, splitter, helper.client, rewriteRule, splitRegionByPoints); err != nil {
 			return errors.Trace(err)
 		}
 
 	}
 
 	return nil
+}
+
+type LogFilesIterWithSplitHelper struct {
+	iter   LogIter
+	helper *LogSplitHelper
+	buffer []*backuppb.DataFileInfo
+	next   int
+}
+
+const SplitFilesBufferSize = 10240
+
+func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, client split.SplitClient) LogIter {
+	return &LogFilesIterWithSplitHelper{
+		iter:   iter,
+		helper: NewLogSplitHelper(rules, client),
+		buffer: nil,
+		next:   0,
+	}
+}
+
+func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*backuppb.DataFileInfo] {
+	if splitIter.next >= len(splitIter.buffer) {
+		splitIter.buffer = make([]*backuppb.DataFileInfo, 0, SplitFilesBufferSize)
+		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
+			if r.Err != nil {
+				return r
+			}
+			f := r.Item
+			splitIter.helper.Merge(f)
+			splitIter.buffer = append(splitIter.buffer, f)
+			if len(splitIter.buffer) >= SplitFilesBufferSize {
+				break
+			}
+		}
+		splitIter.next = 0
+		if err := splitIter.helper.Split(ctx); err != nil {
+			return iter.Throw[*backuppb.DataFileInfo](errors.Trace(err))
+		}
+	}
+
+	if splitIter.next >= len(splitIter.buffer) {
+		return iter.Done[*backuppb.DataFileInfo]()
+	}
+
+	res := iter.Emit(splitIter.buffer[splitIter.next])
+	splitIter.next += 1
+	return res
 }

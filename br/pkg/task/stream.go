@@ -1216,12 +1216,8 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	splitHelper := restore.NewLogSplitHelper()
 	dataFileCount := 0
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, func(f *backuppb.DataFileInfo) {
-		dataFileCount += 1
-		splitHelper.Merge(f)
-	})
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
 	if err != nil {
 		return err
 	}
@@ -1239,15 +1235,15 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
-	err = client.SplitByLogFiles(ctx, splitHelper, rewriteRules)
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	logFilesIter, err := client.LoadDMLFiles(ctx)
+	logFilesIterWithSplit := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIter, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")

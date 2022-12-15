@@ -212,17 +212,17 @@ func (rc *logFileManager) collectDDLFilesAndPrepareCache(
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
 // At the same time, if the `counter` isn't nil, counting the DML file needs to be restored into `counter`.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *logFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, fn func(*backuppb.DataFileInfo)) ([]Log, error) {
+func (rc *logFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
 	m, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if fn != nil {
+	if counter != nil {
 		m = iter.Tap(m, func(m Meta) {
 			for _, fg := range m.FileGroups {
 				for _, f := range fg.DataFilesInfo {
 					if !f.IsMeta && !rc.ShouldFilterOut(f) {
-						fn(f)
+						*counter += 1
 					}
 				}
 			}
