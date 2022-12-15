@@ -47,7 +47,6 @@ go_test(
     deps = [
         "//infoschema",
         "//kv",
-        "//parser",
         "//parser/model",
         "//server",
         "//store/helper",
