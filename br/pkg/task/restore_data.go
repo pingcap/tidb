@@ -161,9 +161,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	//TODO: restore volume type into origin type
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
-
 	// this is used for cloud restoration
-
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
