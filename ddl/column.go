@@ -811,7 +811,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1080,7 +1080,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
-				if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
+				if w.getReorgCtx(reorgInfo.Job.ID).isReorgCanceled() {
 					// Job is cancelled. So it can't be done.
 					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
@@ -1105,7 +1105,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job.ID), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1128,11 +1128,11 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
-			w.getReorgCtx(reorgInfo.Job).setNextKey(reorgInfo.StartKey)
+			w.getReorgCtx(reorgInfo.Job.ID).setNextKey(reorgInfo.StartKey)
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
-		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
+		w.getReorgCtx(reorgInfo.Job.ID).setCurrentElement(reorgInfo.elements[i+1])
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
@@ -1156,7 +1156,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 }
 
 type updateColumnWorker struct {
-	*backfillWorker
+	*backfillCtx
 	oldColInfo    *model.ColumnInfo
 	newColInfo    *model.ColumnInfo
 	metricCounter prometheus.Counter
@@ -1168,7 +1168,6 @@ type updateColumnWorker struct {
 	rowMap map[int64]types.Datum
 
 	// For SQL Mode and warnings.
-	sqlMode    mysql.SQLMode
 	jobContext *JobContext
 }
 
@@ -1188,19 +1187,38 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeUpdateColumnWorker),
-		oldColInfo:     oldCol,
-		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
-		rowDecoder:     rowDecoder,
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
-		jobContext:     jc,
+		backfillCtx:   newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		oldColInfo:    oldCol,
+		newColInfo:    newCol,
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
+		rowDecoder:    rowDecoder,
+		rowMap:        make(map[int64]types.Datum, len(decodeColMap)),
+		jobContext:    jc,
 	}
 }
 
 func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
+}
+
+func (w *updateColumnWorker) String() string {
+	return typeUpdateColumnWorker.String()
+}
+
+func (w *updateColumnWorker) GetTask() (*BackfillJob, error) {
+	panic("[ddl] update column worker GetTask function doesn't implement")
+}
+
+func (w *updateColumnWorker) UpdateTask(job *BackfillJob) error {
+	panic("[ddl] update column worker UpdateTask function doesn't implement")
+}
+
+func (w *updateColumnWorker) FinishTask(job *BackfillJob) error {
+	panic("[ddl] update column worker FinishTask function doesn't implement")
+}
+
+func (w *updateColumnWorker) GetCtx() *backfillCtx {
+	return w.backfillCtx
 }
 
 type rowRecord struct {
@@ -1228,8 +1246,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
-		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
+		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
@@ -1370,8 +1388,8 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
+		txn.SetOption(kv.Priority, handleRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 

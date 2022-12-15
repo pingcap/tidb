@@ -567,7 +567,7 @@ func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, 
 	var bJobs []*BackfillJob
 	s := newSession(sess)
 	err = runInTxn(s, func(se *session) error {
-		currTime, err := GetOracleTime(s)
+		currTime, err := GetOracleTimeWithTxn(s)
 		if err != nil {
 			return err
 		}
@@ -600,7 +600,7 @@ func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid
 	var bJobs []*BackfillJob
 	s := newSession(sess)
 	err := runInTxn(s, func(se *session) error {
-		currTime, err := GetOracleTime(se)
+		currTime, err := GetOracleTimeWithTxn(se)
 		if err != nil {
 			return err
 		}
@@ -660,6 +660,21 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 	}
 
 	return int(rows[0].GetInt64(0)), nil
+}
+
+func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string, error) {
+	sql := fmt.Sprintf("select sum(state = %d) as tmp, exec_id from mysql.tidb_ddl_backfill_history where ddl_job_id = %d group by exec_id having tmp = 0;",
+		model.JobStateSynced, jobID)
+	rows, err := sess.execute(context.Background(), sql, label)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	InstanceIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		InstanceID := row.GetString(1)
+		InstanceIDs = append(InstanceIDs, InstanceID)
+	}
+	return InstanceIDs, nil
 }
 
 // GetBackfillJobs gets the backfill jobs in the tblName table according to condition.

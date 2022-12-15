@@ -293,10 +293,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		expectJob = bjTestCases[5]
 	}
 	require.Equal(t, expectJob, bJobs[0])
-	previousTime, err := ddl.GetOracleTime(se)
+	previousTime, err := ddl.GetOracleTimeWithTxn(se)
 	require.EqualError(t, err, "[kv:8024]invalid transaction")
 	readInTxn(se, func(sessionctx.Context) {
-		previousTime, err = ddl.GetOracleTime(se)
+		previousTime, err = ddl.GetOracleTimeWithTxn(se)
 		require.NoError(t, err)
 	})
 
@@ -311,7 +311,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	equalBackfillJob(t, expectJob, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
 	var currTime time.Time
 	readInTxn(se, func(sessionctx.Context) {
-		currTime, err = ddl.GetOracleTime(se)
+		currTime, err = ddl.GetOracleTimeWithTxn(se)
 		require.NoError(t, err)
 	})
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
@@ -365,7 +365,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ------------------------
 	// 0      jobID2     eleID2
 	readInTxn(se, func(sessionctx.Context) {
-		currTime, err = ddl.GetOracleTime(se)
+		currTime, err = ddl.GetOracleTimeWithTxn(se)
 		require.NoError(t, err)
 	})
 	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d order by ddl_job_id", currTime.Add(-instanceLease), jobID1)
