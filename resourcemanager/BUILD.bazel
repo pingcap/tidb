@@ -8,6 +8,5 @@ go_library(
     deps = [
         "//util",
         "//util/cpu",
-        "//util/memory",
     ],
 )
