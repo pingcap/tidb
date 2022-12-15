@@ -1975,7 +1975,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
