@@ -52,6 +52,18 @@ func NewZero() *Constant {
 	}
 }
 
+// NewNumber stands for constant of a given number.
+func NewNumber(num int64) *Constant {
+	retT := types.NewFieldType(mysql.TypeLonglong)
+	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
+	retT.SetFlen(mysql.MaxIntWidth)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(num),
+		RetType: retT,
+	}
+}
+
 // NewNull stands for null constant.
 func NewNull() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)

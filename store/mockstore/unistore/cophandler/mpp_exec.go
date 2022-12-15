@@ -17,6 +17,7 @@ package cophandler
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/fnv"
 	"io"
 	"math"
 	"sort"
@@ -415,6 +416,112 @@ func (e *limitExec) next() (*chunk.Chunk, error) {
 	return chk, nil
 }
 
+// repeatSourceExec is the basic mock logic for repeat executor in uniStore,
+// with which we can validate the mpp plan correctness from explain result and result returned.
+type repeatSourceExec struct {
+	baseMPPExec
+
+	lastNum              int
+	lastChunk            *chunk.Chunk
+	groupingSets         expression.GroupingSets
+	groupingSetOffsetMap []map[int]struct{}
+	groupingSetScope     map[int]struct{}
+}
+
+func (e *repeatSourceExec) open() error {
+	var err error
+	err = e.children[0].open()
+	if err != nil {
+		return err
+	}
+	// building the quick finding map
+	e.groupingSetOffsetMap = make([]map[int]struct{}, 0, len(e.groupingSets))
+	e.groupingSetScope = make(map[int]struct{}, len(e.groupingSets))
+	for _, gs := range e.groupingSets {
+		tmp := make(map[int]struct{}, len(gs))
+		// for every grouping set, collect column offsets under this grouping set.
+		for _, groupingExprs := range gs {
+			for _, groupingExpr := range groupingExprs {
+				if col, ok := groupingExpr.(*expression.Column); !ok {
+					return errors.New("grouping set expr is not column ref")
+				} else {
+					tmp[col.Index] = struct{}{}
+					e.groupingSetScope[col.Index] = struct{}{}
+				}
+			}
+		}
+		e.groupingSetOffsetMap = append(e.groupingSetOffsetMap, tmp)
+	}
+	return nil
+}
+
+func (e *repeatSourceExec) isGroupingCol(index int) bool {
+	if _, ok := e.groupingSetScope[index]; ok {
+		return true
+	}
+	return false
+}
+
+func (e *repeatSourceExec) next() (*chunk.Chunk, error) {
+	var (
+		err error
+	)
+	if e.groupingSets.IsEmpty() {
+		return e.children[0].next()
+	}
+	resChk := chunk.NewChunkWithCapacity(e.getFieldTypes(), DefaultBatchSize)
+	for {
+		if e.lastChunk == nil || e.lastChunk.NumRows() == e.lastNum {
+			// fetch one chunk from children.
+			e.lastChunk, err = e.children[0].next()
+			if err != nil {
+				return nil, err
+			}
+			e.lastNum = 0
+			if e.lastChunk == nil || e.lastChunk.NumRows() == 0 {
+				break
+			}
+			e.execSummary.updateOnlyRows(e.lastChunk.NumRows())
+		}
+		numRows := e.lastChunk.NumRows()
+		numGroupingOffset := len(e.groupingSets)
+
+		for i := e.lastNum; i < numRows; i++ {
+			row := e.lastChunk.GetRow(i)
+			e.lastNum++
+			// for every grouping set, repeat the base row N times.
+			for g := 0; g < numGroupingOffset; g++ {
+				repeatRow := chunk.MutRowFromTypes(e.fieldTypes)
+				// for every targeted grouping set:
+				// 1: for every column in this grouping set, setting them as it was.
+				// 2: for every column in other target grouping set, setting them as null.
+				// 3: for every column not in any grouping set, setting them as it was.
+				//      * normal agg only aimed at one replica of them with groupingID = 1
+				// 		* so we don't need to change non-related column to be nullable.
+				//		* so we don't need to mutate the column to be null when groupingID > 1
+				for datumOffset, datumType := range e.fieldTypes[:len(e.fieldTypes)-1] {
+					if _, ok := e.groupingSetOffsetMap[g][datumOffset]; ok {
+						repeatRow.SetDatum(datumOffset, row.GetDatum(datumOffset, datumType))
+					} else if !e.isGroupingCol(datumOffset) {
+						repeatRow.SetDatum(datumOffset, row.GetDatum(datumOffset, datumType))
+					} else {
+						repeatRow.SetDatum(datumOffset, types.NewDatum(nil))
+					}
+				}
+				// the last one column should be groupingID col.
+				groupingID := g + 1
+				repeatRow.SetDatum(len(e.fieldTypes)-1, types.NewDatum(groupingID))
+				resChk.AppendRow(repeatRow.ToRow())
+			}
+			if DefaultBatchSize-resChk.NumRows() < numGroupingOffset {
+				// no enough room for another repeated N rows, return this chunk immediately.
+				return resChk, nil
+			}
+		}
+	}
+	return resChk, nil
+}
+
 type topNExec struct {
 	baseMPPExec
 
@@ -492,10 +599,11 @@ func (e *topNExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	tunnels       []*ExchangerTunnel
-	outputOffsets []uint32
-	exchangeTp    tipb.ExchangeType
-	hashKeyOffset int
+	tunnels        []*ExchangerTunnel
+	outputOffsets  []uint32
+	exchangeTp     tipb.ExchangeType
+	hashKeyOffsets []int
+	hashKeyTypes   []*types.FieldType
 }
 
 func (e *exchSenderExec) open() error {
@@ -548,15 +656,22 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				for i := 0; i < len(e.tunnels); i++ {
 					targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
 				}
+				hashVals := fnv.New64()
+				payload := make([]byte, 1)
 				for i := 0; i < rows; i++ {
 					row := chk.GetRow(i)
-					d := row.GetDatum(e.hashKeyOffset, e.fieldTypes[e.hashKeyOffset])
-					if d.IsNull() {
-						targetChunks[0].AppendRow(row)
-					} else {
-						hashKey := int(d.GetInt64() % int64(len(e.tunnels)))
-						targetChunks[hashKey].AppendRow(row)
+					hashVals.Reset()
+					// use hash values to get unique uint64 to mod.
+					// collect all the hash key datum.
+					err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+					if err != nil {
+						for _, tunnel := range e.tunnels {
+							tunnel.ErrCh <- err
+						}
+						return nil, nil
 					}
+					hashKey := hashVals.Sum64() % uint64(len(e.tunnels))
+					targetChunks[hashKey].AppendRow(row)
 				}
 				for i, tunnel := range e.tunnels {
 					if targetChunks[i].NumRows() > 0 {
@@ -618,6 +733,7 @@ func (e *exchRecvExec) init() error {
 		}
 		serverMetas = append(serverMetas, meta)
 	}
+	// for receiver: open conn worker for every receive meta.
 	for _, meta := range serverMetas {
 		e.wg.Add(1)
 		go e.runTunnelWorker(e.mppCtx.TaskHandler, meta)
@@ -668,6 +784,7 @@ func (e *exchRecvExec) EstablishConnAndReceiveData(h *MPPTaskHandler, meta *mpp.
 			}
 			return nil, errors.Trace(err)
 		}
+		// stream resp
 		if mppResponse == nil {
 			return ret, nil
 		}

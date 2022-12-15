@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -1495,7 +1496,61 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+// PhysicalRepeatSource is used to repeat underlying data sources to feed different grouping sets.
+type PhysicalRepeatSource struct {
+	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
+	physicalSchemaProducer
+
+	// generated grouping ID column itself.
+	GroupingIDCol *expression.Column
+
+	// GroupingSets is used to define what kind of group layout should the underlying data follow.
+	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
+	GroupingSets expression.GroupingSets
+}
+
+// Init only assigns type and context.
+func (p PhysicalRepeatSource) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalRepeatSource {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeRepeatSource, &p, offset)
+	p.stats = stats
+	return &p
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalRepeatSource) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalRepeatSource)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	// clone ID cols.
+	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
+
+	// clone grouping expressions.
+	clonedGroupingSets := make([]expression.GroupingSet, 0, len(p.GroupingSets))
+	for _, one := range p.GroupingSets {
+		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
+	}
+	np.GroupingSets = p.GroupingSets
+	return np, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalRepeatSource
+func (p *PhysicalRepeatSource) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice + int64(cap(p.GroupingSets))*size.SizeOfPointer
+	for _, gs := range p.GroupingSets {
+		sum += gs.MemoryUsage()
+	}
+	sum += p.GroupingIDCol.MemoryUsage()
+	return
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
@@ -1507,7 +1562,7 @@ type PhysicalExchangeSender struct {
 	CompressionMode kv.ExchangeCompressionMode
 }
 
-// Clone implment PhysicalPlan interface.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExchangeSender)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)

@@ -200,6 +200,63 @@ func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
 	return exec, nil
 }
 
+func (b *mppExecBuilder) buildRepeatSource(pb *tipb.RepeatSource) (mppExec, error) {
+	child, err := b.buildMPPExecutor(pb.Child)
+	if err != nil {
+		return nil, err
+	}
+	exec := &repeatSourceExec{
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, children: []mppExec{child}},
+	}
+
+	childFieldTypes := child.getFieldTypes()
+	// convert the grouping sets.
+	tidbGss := expression.GroupingSets{}
+	for _, gs := range pb.GroupingSets {
+		tidbGs := expression.GroupingSet{}
+		for _, groupingExprs := range gs.GroupingExprs {
+			tidbGroupingExprs, err := convertToExprs(b.sc, childFieldTypes, groupingExprs.GroupingExpr)
+			if err != nil {
+				return nil, err
+			}
+			tidbGs = append(tidbGs, tidbGroupingExprs)
+		}
+		tidbGss = append(tidbGss, tidbGs)
+	}
+	exec.groupingSets = tidbGss
+	inGroupingSetMap := make(map[int]struct{}, len(exec.groupingSets))
+	for _, gs := range exec.groupingSets {
+		// for every grouping set, collect column offsets under this grouping set.
+		for _, groupingExprs := range gs {
+			for _, groupingExpr := range groupingExprs {
+				if col, ok := groupingExpr.(*expression.Column); !ok {
+					return nil, errors.New("grouping set expr is not column ref")
+				} else {
+					inGroupingSetMap[col.Index] = struct{}{}
+				}
+			}
+		}
+	}
+	var mutatedFieldTypes []*types.FieldType
+	// change the field types return from children tobe nullable.
+	for offset, f := range childFieldTypes {
+		cf := f.Clone()
+		if _, ok := inGroupingSetMap[offset]; ok {
+			// remove the not null flag, make it nullable.
+			cf.SetFlag(cf.GetFlag() & ^mysql.NotNullFlag)
+		}
+		mutatedFieldTypes = append(mutatedFieldTypes, cf)
+	}
+
+	// adding groupingID uint64|not-null as last one field types.
+	groupingIDFieldType := types.NewFieldType(mysql.TypeLonglong)
+	groupingIDFieldType.SetFlag(mysql.NotNullFlag | mysql.UnsignedFlag)
+	mutatedFieldTypes = append(mutatedFieldTypes, groupingIDFieldType)
+
+	exec.fieldTypes = mutatedFieldTypes
+	return exec, nil
+}
+
 func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (mppExec, error) {
 	child, err := b.buildMPPExecutor(pb.Child)
 	if err != nil {
@@ -253,18 +310,19 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 		exchangeTp: pb.Tp,
 	}
 	if pb.Tp == tipb.ExchangeType_Hash {
-		if len(pb.PartitionKeys) != 1 {
-			return nil, errors.New("The number of hash key must be 1")
+		// remove the limitation of len(pb.PartitionKeys) == 1
+		for _, partitionKey := range pb.PartitionKeys {
+			expr, err := expression.PBToExpr(partitionKey, child.getFieldTypes(), b.sc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			col, ok := expr.(*expression.Column)
+			if !ok {
+				return nil, errors.New("Hash key must be column type")
+			}
+			e.hashKeyOffsets = append(e.hashKeyOffsets, col.Index)
+			e.hashKeyTypes = append(e.hashKeyTypes, e.fieldTypes[col.Index])
 		}
-		expr, err := expression.PBToExpr(pb.PartitionKeys[0], child.getFieldTypes(), b.sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		col, ok := expr.(*expression.Column)
-		if !ok {
-			return nil, errors.New("Hash key must be column type")
-		}
-		e.hashKeyOffset = col.Index
 	}
 
 	for _, taskMeta := range pb.EncodedTaskMeta {
@@ -493,6 +551,8 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypePartitionTableScan:
 		ts := exec.PartitionTableScan
 		return b.buildMPPPartitionTableScan(ts)
+	case tipb.ExecType_TypeRepeatSource:
+		return b.buildRepeatSource(exec.RepeatSource)
 	default:
 		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}
