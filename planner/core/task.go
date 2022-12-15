@@ -2139,6 +2139,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.statsInfo())
 
 	sender.MppVersion = ctx.GetMPPClient().GetClusterMinMppVersion().Load()
+	sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{Compress: mpp.CompressMethod_NONE}
 
 	sender.SetChildren(t.p)
 

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
@@ -307,6 +308,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	}
 	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
+	minMppVersion := int64(math.MaxInt64)
+	maxMppVersion := int64(math.MinInt64)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
 	// store id -> region signature -> region info. We can see it as store id -> region lists.
 	storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
@@ -336,7 +339,11 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			mu.Lock()
 			cnt = len(storeTaskMap)
 			mu.Unlock()
-			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt))
+			mpp_info := "none"
+			if cnt != 0 {
+				mpp_info = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
+			}
+			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt), zap.String("mpp info", mpp_info))
 		}()
 
 		cur := time.Now()
@@ -388,6 +395,9 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					cmdType:   originalTasks[0].cmdType,
 					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
 				}
+				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
+				minMppVersion = mathutil.Min(minMppVersion, mppVersion)
+				maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
 			}(i)
 		}
 		wg.Wait()
