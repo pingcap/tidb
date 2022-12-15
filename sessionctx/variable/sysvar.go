@@ -1182,6 +1182,15 @@ var defaultSysVars = []*SysVar{
 		}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuesCapture, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
