@@ -566,7 +566,7 @@ When doing incremental synchronization, DM should set `foreign_key_checks` sessi
 
 #### BR
 
-When syncing table data to downstream TiDB, BR should `set @@foreign_key_checks=0` in downstream TiDB.
+When restore data into TiDB, BR should `set @@foreign_key_checks=0` in TiDB.
 
 ## Test Case
 
