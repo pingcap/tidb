@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE DATABASE IF NOT EXISTS `imdbload`;
 USE `imdbload`;
 -- The table schema is converted from imdb dataset using IMDbPY

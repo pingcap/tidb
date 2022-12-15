@@ -43,6 +43,9 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -175,6 +178,12 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 				continue
 			}
 			return false, false, err
+		}
+		if tablecodec.IsTempIndexKey(uk.newKey) {
+			if tablecodec.CheckTempIndexValueIsDelete(val) {
+				continue
+			}
+			val = tablecodec.DecodeTempIndexOriginValue(val)
 		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {

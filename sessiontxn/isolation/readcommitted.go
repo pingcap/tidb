@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -131,6 +132,10 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("CallOnStmtRetry", func() {
+		sessiontxn.OnStmtRetryCountInc(p.sctx)
+	})
+	p.latestOracleTSValid = false
 	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
 }
@@ -182,9 +187,11 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	p.prepareStmtTS()
+	start := time.Now()
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
 	}
+	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
@@ -199,8 +206,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
-	p.latestOracleTSValid = false
-
 	rcReadCheckTSWriteConfilictCounter.Inc()
 
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
@@ -209,7 +214,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
-	p.latestOracleTSValid = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {

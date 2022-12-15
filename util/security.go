@@ -231,9 +231,21 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 			return err
 		}
 
+		intermediates := x509.NewCertPool()
+		for _, certBytes := range rawCerts[1:] {
+			c, err2 := x509.ParseCertificate(certBytes)
+			if err2 != nil {
+				return err2
+			}
+			intermediates.AddCert(c)
+		}
+
 		certPoolMu.RLock()
 		defer certPoolMu.RUnlock()
-		if _, err = cert.Verify(x509.VerifyOptions{Roots: certPool}); err != nil {
+		if _, err = cert.Verify(x509.VerifyOptions{
+			Roots:         certPool,
+			Intermediates: intermediates,
+		}); err != nil {
 			return errors.Wrap(err, "can't verify certificate, maybe different CA is used")
 		}
 		return nil

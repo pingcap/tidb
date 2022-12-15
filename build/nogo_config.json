@@ -198,22 +198,23 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "util/gctuner": "util/gctuner",
-      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
-      "executor/aggregate.go": "executor/aggregate.go",
-      "types/json_binary_functions.go": "types/json_binary_functions.go",
-      "types/json_binary_test.go": "types/json_binary_test.go",
-      "ddl/backfilling.go": "ddl/backfilling.go",
-      "ddl/column.go": "ddl/column.go",
-      "ddl/index.go": "ddl/index.go",
-      "ddl/ingest/": "ddl/ingest/",
-      "util/cgroup": "util/cgroup code",
-      "server/conn.go": "server/conn.go",
-      "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
-      "planner/core/plan.go": "planner/core/plan.go",
-      "errno/": "only table code"
+      "util/gctuner": "only for util/gctuner",
+      "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "only for br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "only for executor/aggregate.go",
+      "types/json_binary_functions.go": "only for types/json_binary_functions.go",
+      "types/json_binary_test.go": "only for types/json_binary_test.go",
+      "ddl/backfilling.go": "only for ddl/backfilling.go",
+      "ddl/column.go": "only for ddl/column.go",
+      "ddl/index.go": "only for ddl/index.go",
+      "ddl/ingest/": "only for ddl/ingest/",
+      "util/cgroup": "only for util/cgroup code",
+      "server/conn.go": "only for server/conn.go",
+      "server/conn_stmt.go": "only for server/conn_stmt.go",
+      "server/conn_test.go": "only for server/conn_test.go",
+      "planner/core/plan.go": "only for planner/core/plan.go",
+      "errno/": "only for errno/",
+      "extension/": "extension code"
     }
   },
   "gofmt": {
@@ -228,6 +229,7 @@
   },
   "gci": {
     "exclude_files": {
+      "external/": "no need to vet third party code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
@@ -316,7 +318,6 @@
   "nilness": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
-      "planner/core/physical_plan_test.go": "please fix it",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
     }
@@ -332,7 +333,8 @@
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
-      "planner/": "planner"
+      "planner/": "planner",
+      "extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -363,6 +365,8 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
+      "ddl/ttl.go": "ddl/ttl.go",
+      "ddl/ttl_test.go": "ddl/ttl_test.go",
       "ddl/ingest/": "ddl/ingest/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
@@ -382,7 +386,8 @@
       "planner/core": "planner code",
       "util/": "util code",
       "parser/": "parser code",
-      "meta/": "parser code"
+      "meta/": "parser code",
+      "extension/": "extension code"
     }
   },
   "shift": {
@@ -725,22 +730,25 @@
     "exclude_files": {
       "/build/": "no need to linter code",
       "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
+      "util/cgroup": "util/cgroup code",
+      "util/watcher": "util/watcher",
+      "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "enable to ddl",
-      "util/cgroup": "util/cgroup code",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go"
+      "server/conn_test.go": "server/conn_test.go",
+      "extension/": "extension code"
     }
   },
   "SA2000": {

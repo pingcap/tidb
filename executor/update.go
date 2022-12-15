@@ -68,6 +68,8 @@ type UpdateExec struct {
 	matches        []bool
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
+	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
+	fkCascades map[int64][]*FKCascadeExec
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -194,7 +196,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks)
+		fkCascades := e.fkCascades[content.TblID]
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -247,7 +250,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := newFirstChunk(e.children[0])
+	chk := tryNewCacheChunk(e.children[0])
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -431,6 +434,7 @@ func (e *UpdateExec) Close() error {
 		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return e.children[0].Close()
 }
@@ -460,7 +464,6 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}
@@ -542,4 +545,18 @@ func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
 		fkChecks = append(fkChecks, fkc...)
 	}
 	return fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
+	fkCascades := make([]*FKCascadeExec, 0, len(e.fkChecks))
+	for _, fkc := range e.fkCascades {
+		fkCascades = append(fkCascades, fkc...)
+	}
+	return fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *UpdateExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

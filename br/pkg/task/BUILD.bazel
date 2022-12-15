@@ -96,6 +96,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/errors",
         "//br/pkg/metautil",
         "//br/pkg/restore",
         "//br/pkg/storage",

@@ -16,6 +16,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -65,10 +66,10 @@ func TestPostSettings(t *testing.T) {
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
 	require.True(t, variable.ProcessGeneralLog.Load())
-	val, err := se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
+	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
 
@@ -84,10 +85,10 @@ func TestPostSettings(t *testing.T) {
 	require.False(t, variable.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
@@ -309,13 +310,13 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
 	require.Equal(t, false, data[0].Available)
 
-	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":184,"region_count":3,"flash_region_count":3}`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "[schema:1146]Table which ID = 84 does not exist.", string(body))
+	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
 	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
