@@ -174,12 +174,14 @@ And this divides the problem into two cases:
 The DDL owner handle adds foreign key constrain step is:
 
 1. None -> Write Only: add foreign key constraint which state is `write-only` into the table.
-3. Write Only - Write Reorg: check all rows in the table whether has related foreign key exists in the reference table, we can use the following SQL to check:
+2. Write Only -> Write Reorg: check all rows in the table whether has related foreign key exists in the reference table, we can use the following SQL to check:
+
    ```sql
    select 1 from t2 where t2.a is not null and t2.a not in (select id from t1) limit 1;
    ```
    The expected result is `empty`, otherwise, an error is returned and cancels the DDL job.
-4. Write Reorg -> Public: update the foreign key constraint state to `public`.
+
+3. Write Reorg -> Public: update the foreign key constraint state to `public`.
 
 A problem is, How the DML treat the foreign key on delete/update cascade behaviour in which state is non-public?
 Here is an example:
@@ -202,7 +204,7 @@ delete from t1 where id = 1;
 Then, TiDB shouldn't do cascade delete for foreign key `fk_1` in state `Write-Only`, since the `Add Foreign Key` DDL job maybe
 failed in `Write-Reorg` state and rollback the DDL job. But it is hard to rollback the cascade deleted executed before.
 
-So, when executing DML with `non-public` foreign key, TiDB will do a foreign key constraint check instead of foreign key cascade behaviour.
+So, when executing DML with `non-public` foreign key, TiDB will do foreign key constraint check instead of foreign key cascade behaviour.
 
 #### Case-2: Auto-create index for foreign key and add foreign key constrain
 
