@@ -202,7 +202,7 @@ delete from t1 where id = 1;
 Then, TiDB shouldn't do cascade delete for foreign key `fk_1` in state `Write-Only`, since the `Add Foreign Key` DDL job maybe
 failed in `Write-Reorg` state and rollback the DDL job. But it is hard to rollback the cascade deleted executed before.
 
-So, when execute DML with `non-publick` foreign key, TiDB will do foreign key constraint check instead of foreign key cascade behaviour.
+So, when execute DML with `non-public` foreign key, TiDB will do foreign key constraint check instead of foreign key cascade behaviour.
 
 #### Case-2: Auto create index for foreign key and add foreign key constrain
 
