@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"sync"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -31,6 +32,7 @@ type MockSessionManager struct {
 	PSMu    sync.RWMutex
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
+	DOM     *domain.Domain
 	conn    map[uint64]session.Session
 	mu      sync.Mutex
 }
@@ -84,6 +86,9 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 	defer msm.mu.Unlock()
 	if sess := msm.conn[id]; sess != nil {
 		return sess.ShowProcess(), true
+	}
+	if pinfo, ok := msm.DOM.SysProcTracker().GetSysProcessList()[id]; ok {
+		return pinfo, true
 	}
 	return &util.ProcessInfo{}, false
 }
