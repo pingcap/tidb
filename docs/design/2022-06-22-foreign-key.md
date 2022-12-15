@@ -174,7 +174,7 @@ And this is divides the problem into two cases:
 The DDL owner handle add foreign key constrain step is:
 
 1. None -> Write Only: add foreign key constrain which state is `write-only` into table.
-3. Write Only - Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
+3. Write Only -> Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
    ```sql
    select 1 from t2 where t2.a is not null and t2.a not in (select id from t1) limit 1;
    ```
