@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -6218,6 +6219,55 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	_, err := tk0.Exec(sql)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
+}
+
+func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+	tk0.MustExec("analyze table t with 1.0 samplerate;")
+
+	h := dom.StatsHandle()
+	originalVal1 := handle.AutoAnalyzeMinCnt
+	originalVal2 := tk0.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	tk0.MustExec("set global tidb_auto_analyze_ratio = 0.001")
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal1
+		tk0.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+	}()
+
+	sm := &testkit.MockSessionManager{
+		DOM: dom,
+		PS:  []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("insert into t values(4),(5),(6)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	err := h.Update(dom.InfoSchema())
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	}()
+	h.HandleAutoAnalyze(dom.InfoSchema())
+	rs := tk0.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
+	failReason := rs.Rows()[0][0].(string)
+	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
 }
 
 func TestCompileOutOfMemoryQuota(t *testing.T) {
