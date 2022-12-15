@@ -112,7 +112,7 @@ delete from t_reference where id = 1; --Since doesn't know foreign key informati
 So, when create a table with foreign key, we need multi-schema version change:
 
 1. None -> Write Only: Create table with state is `write-only`.
-2. Write Only -> Done: Update the created table state to `public`.
+2. Write Only -> Public: Update the created table state to `public`.
 
 #### Maintain ReferredFKInfo
 
