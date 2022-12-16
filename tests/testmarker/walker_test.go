@@ -32,7 +32,7 @@ func TestWalker(t *testing.T) {
 	f, err := parser.ParseFile(fset, "marker_test.go", markerTest, parser.ParseComments)
 	require.NoError(t, err)
 
-	mis := markerpkg.WalkTestFile(f, "marker_test.go")
+	mis := markerpkg.WalkTestFile(fset, f, "marker_test.go")
 	require.Equal(t, []*markerpkg.MarkInfo{{
 		Features: []markerpkg.FeatureMarkInfo{{
 			ID:          "FD-1",
@@ -73,5 +73,14 @@ func TestWalker(t *testing.T) {
 		TestName: "TestMarkMixes",
 		File:     "marker_test.go",
 		Pos:      859,
+	}, {
+		Features: []markerpkg.FeatureMarkInfo{
+			{
+				ID: "marker.NoID",
+			},
+		},
+		TestName: "TestMarkNoID",
+		File:     "marker_test.go",
+		Pos:      1329,
 	}}, mis)
 }

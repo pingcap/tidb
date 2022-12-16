@@ -25,6 +25,9 @@ const (
 	Feature markType = iota
 	// Issue marks a fix for an issue
 	Issue
+
+	// NoID is used to mark a feature or issue without ID
+	NoID = "noid"
 )
 
 // As marks feature or issue information, the args must be basic a string literal: https://go.dev/ref/spec#String_literals
@@ -33,7 +36,11 @@ const (
 //
 //	marker.As(t, marker.Feature, "FD-231", "GBK Support")
 //
-// And mark to test a fix for an issue: https://github.com/pingcap/tidb/issues/39688
+// If the feature has no a Jira FD ID, `maker.NoID` can be used:
+//
+//	marker.As(t, marker.Feature, marker.NoID)
+//
+// If the testcase is for covering a bug issue, please use `marker.Issue`:
 //
 //	marker.As(t, marker.Issue, 39688)
 func As(t *testing.T, marktype markType, args ...any) {}

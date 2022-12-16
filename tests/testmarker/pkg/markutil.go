@@ -15,8 +15,10 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
+	"go/printer"
 	"go/token"
 	"log"
 	"regexp"
@@ -47,7 +49,7 @@ type IssueMarkInfo struct {
 }
 
 // WalkTestFile walks the test file and returns the MarkInfo
-func WalkTestFile(f *ast.File, filename string) []*MarkInfo {
+func WalkTestFile(fset *token.FileSet, f *ast.File, filename string) []*MarkInfo {
 	var ret []*MarkInfo
 	var localpkg string
 	ast.Inspect(f, func(node ast.Node) bool {
@@ -69,7 +71,7 @@ func WalkTestFile(f *ast.File, filename string) []*MarkInfo {
 			if !ok {
 				return false
 			}
-			markInfo := walkTestFuncDeclBody(body, filename, testname, localpkg)
+			markInfo := walkTestFuncDeclBody(fset, body, filename, testname, localpkg)
 			if markInfo != nil {
 				markInfo.Pos = e.Pos()
 				ret = append(ret, markInfo)
@@ -102,7 +104,7 @@ func tryGetTestName(e *ast.FuncDecl) (string, bool) {
 	return "", false
 }
 
-func walkTestFuncDeclBody(body *ast.BlockStmt, filename, testname, localpkg string) *MarkInfo {
+func walkTestFuncDeclBody(fset *token.FileSet, body *ast.BlockStmt, filename, testname, localpkg string) *MarkInfo {
 	markInfo := &MarkInfo{File: filename, TestName: testname}
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch e := node.(type) {
@@ -112,7 +114,7 @@ func walkTestFuncDeclBody(body *ast.BlockStmt, filename, testname, localpkg stri
 			}
 			callExpr := e.X.(*ast.CallExpr)
 			if isMarkCall(callExpr, localpkg) {
-				walkerMarkAsCallExpr(callExpr, markInfo, localpkg)
+				walkerMarkAsCallExpr(fset, callExpr, markInfo, localpkg)
 			}
 			return false
 		}
@@ -121,7 +123,7 @@ func walkTestFuncDeclBody(body *ast.BlockStmt, filename, testname, localpkg stri
 	return markInfo
 }
 
-func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg string) {
+func walkerMarkAsCallExpr(fset *token.FileSet, callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg string) {
 	if len(callExpr.Args) == 0 {
 		return
 	}
@@ -134,14 +136,11 @@ func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg s
 		var feature FeatureMarkInfo
 		callExpr.Pos()
 		for i := 2; i < len(callExpr.Args); i++ {
-			switch e := callExpr.Args[i].(type) {
-			case *ast.BasicLit:
-				lit := parseBasicLit(e)
-				if i == 2 {
-					feature.ID = lit
-				} else {
-					feature.Description = append(feature.Description, lit)
-				}
+			arg := mustPrintArg(fset, callExpr.Args[i])
+			if i == 2 {
+				feature.ID = arg
+			} else {
+				feature.Description = append(feature.Description, arg)
 			}
 		}
 		appendFeatureMark(markInfo, feature)
@@ -150,17 +149,14 @@ func walkerMarkAsCallExpr(callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg s
 			return
 		}
 		var issue IssueMarkInfo
-		switch e := callExpr.Args[2].(type) {
-		case *ast.BasicLit:
-			lit := parseBasicLit(e)
-			id, err := strconv.ParseInt(lit, 10, 64)
-			if err != nil {
-				log.Fatalf("invalid issue id %s", lit)
-			}
-			issue.ID = int(id)
-			issue.IssueURL = fmt.Sprintf("https://github.com/pingcap/tidb/issues/%d", issue.ID)
-			appendIssueMark(markInfo, issue)
+		arg := mustPrintArg(fset, callExpr.Args[2])
+		id, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil {
+			log.Fatalf("invalid issue id %s", arg)
 		}
+		issue.ID = int(id)
+		issue.IssueURL = fmt.Sprintf("https://github.com/pingcap/tidb/issues/%d", issue.ID)
+		appendIssueMark(markInfo, issue)
 	default:
 		log.Fatalf("unknown mark type")
 	}
@@ -183,15 +179,20 @@ func appendIssueMark(markInfo *MarkInfo, issue IssueMarkInfo) {
 	markInfo.Issues = append(markInfo.Issues, issue)
 }
 
-func parseBasicLit(lit *ast.BasicLit) string {
-	switch lit.Kind {
-	case token.STRING:
-		//nolint: errcheck
-		lit, _ := strconv.Unquote(lit.Value)
-		return lit
-	default:
-		return lit.Value
+func mustPrintArg(fset *token.FileSet, arg ast.Expr) string {
+	buf := bytes.NewBuffer([]byte{})
+	err := printer.Fprint(buf, fset, arg)
+	if err != nil {
+		log.Fatal(err)
 	}
+	exprStr := buf.String()
+	if len(exprStr) > 1 && exprStr[0] == '`' || exprStr[0] == '"' || exprStr[0] == '\'' {
+		exprStr, err = strconv.Unquote(exprStr)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	return exprStr
 }
 
 func isMarkCall(callExpr *ast.CallExpr, localpkg string) bool {

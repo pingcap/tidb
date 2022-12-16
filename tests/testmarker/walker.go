@@ -54,7 +54,7 @@ func main() {
 			for _, f := range d {
 				for n, f := range f.Files {
 					if strings.HasSuffix(n, "_test.go") {
-						fms = append(fms, makerpkg.WalkTestFile(f, n)...)
+						fms = append(fms, makerpkg.WalkTestFile(fset, f, n)...)
 					}
 				}
 			}

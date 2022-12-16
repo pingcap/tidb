@@ -43,16 +43,18 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
 		if strings.HasSuffix(pos.Filename, "_test.go") {
-			markers := markutil.WalkTestFile(f, pos.Filename)
+			markers := markutil.WalkTestFile(pass.Fset, f, pos.Filename)
 			for _, marker := range markers {
 				_, exist := tryGetFromRecords(marker.TestName)
 				if !exist && len(marker.Features) == 0 && len(marker.Issues) == 0 {
 					pass.Report(analysis.Diagnostic{
 						Pos: marker.Pos,
 						Message: `add a marker at the start of incremental test, please.
-  1) Marking the test is for a feature:
+  1) Marking the test is for a feature if you know the feature id:
     marker.As(t, marker.Feature, "FD-$ID", "the description...")
-  2) Or mark it for an issue:
+  2) If you don't get the feature id, you could mark it as marker.NoID:
+    marker.As(t, marker.Feature, marker.NoID, "the description...")
+  3) Or mark it for a bug issue fix:
     marker.As(t, marker.Issue, issue-id)`,
 					})
 				}

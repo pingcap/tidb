@@ -44,3 +44,7 @@ func TestMarkMixes(t *testing.T) {
 	marker.As(t, marker.Issue, 12346)
 	t.Logf("fix issue 12346 testing")
 }
+
+func TestMarkNoID(t *testing.T) {
+	marker.As(t, marker.Feature, marker.NoID)
+}
