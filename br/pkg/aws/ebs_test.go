@@ -41,7 +41,22 @@ func TestEC2SessionExtractSnapProgress(t *testing.T) {
 
 func createVolume(snapshotId string, volumeId string, state string) *ec2.Volume {
 	return &ec2.Volume{
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, awsapi.Int64(1), awsapi.String(snapshotId), awsapi.String(state), nil, nil, awsapi.String(volumeId), nil,
+		Attachments:        nil,
+		AvailabilityZone:   awsapi.String("us-west-2"),
+		CreateTime:         nil,
+		Encrypted:          awsapi.Bool(true),
+		FastRestored:       awsapi.Bool(true),
+		Iops:               awsapi.Int64(3000),
+		KmsKeyId:           nil,
+		MultiAttachEnabled: awsapi.Bool(true),
+		OutpostArn:         awsapi.String("arn:12342"),
+		Size:               awsapi.Int64(1),
+		SnapshotId:         awsapi.String(snapshotId),
+		State:              awsapi.String(state),
+		Tags:               nil,
+		Throughput:         nil,
+		VolumeId:           awsapi.String(volumeId),
+		VolumeType:         awsapi.String("gp3"),
 	}
 }
 func TestHandleDescribeVolumesResponse(t *testing.T) {
