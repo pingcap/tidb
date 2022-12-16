@@ -1322,6 +1322,49 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+<<<<<<< HEAD
+=======
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
+
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -3150,4 +3193,54 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// protectedTSList implements util/processinfo#ProtectedTSList
+type protectedTSList struct {
+	sync.Mutex
+	items map[uint64]int
+}
+
+// HoldTS holds the timestamp to prevent its data from being GCed.
+func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
+	lst.Lock()
+	if lst.items == nil {
+		lst.items = map[uint64]int{}
+	}
+	lst.items[ts] += 1
+	lst.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lst.Lock()
+			if lst.items != nil {
+				if lst.items[ts] > 1 {
+					lst.items[ts] -= 1
+				} else {
+					delete(lst.items, ts)
+				}
+			}
+			lst.Unlock()
+		})
+	}
+}
+
+// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	lst.Lock()
+	for k, v := range lst.items {
+		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
+			ts = k
+		}
+	}
+	lst.Unlock()
+	return
+}
+
+// Size returns the number of protected timestamps (exported for test).
+func (lst *protectedTSList) Size() (size int) {
+	lst.Lock()
+	size = len(lst.items)
+	lst.Unlock()
+	return
 }
