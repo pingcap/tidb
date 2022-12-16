@@ -536,16 +536,20 @@ func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client) {
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func checkMDLInfo(jobID int64, pool *sessionPool) (bool, error) {
-	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
+func checkMDLInfo(jobID int64, pool *sessionPool) (bool, int64, error) {
+	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.get()
 	defer pool.put(sctx)
 	sess := newSession(sctx)
 	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return len(rows) > 0, nil
+	if len(rows) == 0 {
+		return false, 0, nil
+	}
+	ver := rows[0].GetInt64(0)
+	return true, ver, nil
 }
 
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
@@ -1375,6 +1379,21 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
+}
+
+// waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
+func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, waitTime time.Duration, latestSchemaVersion int64) {
+	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
+				panic("check down before update global version failed")
+			} else {
+				mockDDLErrOnce = -1
+			}
+		}
+	})
+
+	waitSchemaChanged(context.Background(), d, waitTime, latestSchemaVersion, job)
 }
 
 // waitSchemaSynced handles the following situation:
