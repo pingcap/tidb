@@ -6690,7 +6690,7 @@ func TestExplainAnalyzeDMLCommit(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/38295.
 func TestIssue38295(t *testing.T) {
-	tore, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
