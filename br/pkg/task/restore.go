@@ -62,7 +62,7 @@ const (
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
 
-	FlagFilterSysUsers  = "filter-sys-users"
+	FlagFilterSysUsers = "filter-sys-users"
 
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
@@ -126,7 +126,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
-	flags.StringArrayP(FlagFilterSysUsers, "", []string{"cloud_admin", "root"}, "whether ignore users to restore")
+	flags.StringArrayP(FlagFilterSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	_ = flags.MarkHidden(FlagFilterSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)

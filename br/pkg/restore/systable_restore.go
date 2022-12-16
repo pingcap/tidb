@@ -5,7 +5,6 @@ package restore
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -21,11 +20,10 @@ import (
 )
 
 const (
-	rootUser = "root"
+	rootUser         = "root"
 	sysUserTableName = "user"
-	cloudAdminUser = "cloud_admin"
+	cloudAdminUser   = "cloud_admin"
 )
-
 
 var statsTables = map[string]struct{}{
 	"stats_buckets":    {},
@@ -82,8 +80,6 @@ func isStatsTable(tableName string) bool {
 // we'd better use this function to drop cloud_admin user after volume-snapshot restore.
 func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) error {
 	sysDB := mysql.SystemDB
-	// skip check privilege for br restore
-	privileges.SkipWithGrant = true
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
@@ -279,7 +275,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		whereNotClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereNotClause = fmt.Sprintf("WHERE NOT " + sysPrivilegeTableMap[tableName], cloudAdminUser)
+			whereNotClause = fmt.Sprintf("WHERE NOT "+sysPrivilegeTableMap[tableName], cloudAdminUser)
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",

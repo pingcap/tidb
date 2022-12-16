@@ -1006,8 +1006,6 @@ func (do *Domain) Init(
 		}
 	}
 
-	logutil.BgLogger().Info("start register to pd")
-
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -1015,17 +1013,11 @@ func (do *Domain) Init(
 		return err
 	}
 
-	logutil.BgLogger().Info("start get pd client")
-
 	var pdClient pd.Client
 	if store, ok := do.store.(kv.StorageWithPD); ok {
 		pdClient = store.GetPDClient()
 	}
-	logutil.BgLogger().Info("start get global config syncer")
-
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdClient)
-
-	logutil.BgLogger().Info("start init schema syncer")
 
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1033,15 +1025,10 @@ func (do *Domain) Init(
 	}
 	// step 2: domain reload the infoSchema.
 	err = do.Reload()
-
-	logutil.BgLogger().Info("start reload domain")
-
 	if err != nil {
 		return err
 	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	logutil.BgLogger().Info("start ddl")
-
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
@@ -1054,8 +1041,6 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	logutil.BgLogger().Info("start mdl check loop")
-
 	do.wg.Run(do.mdlCheckLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
@@ -1069,8 +1054,6 @@ func (do *Domain) Init(
 		do.wg.Add(1)
 		go do.closestReplicaReadCheckLoop(ctx, pdClient)
 	}
-	logutil.BgLogger().Info("start init log backup")
-
 	err = do.initLogBackup(ctx, pdClient)
 	if err != nil {
 		return err
