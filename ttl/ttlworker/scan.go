@@ -16,7 +16,6 @@ package ttlworker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -70,20 +69,6 @@ func (s *ttlStatistics) Reset() {
 
 func (s *ttlStatistics) String() string {
 	return fmt.Sprintf("Total Rows: %d, Success Rows: %d, Error Rows: %d", s.TotalRows.Load(), s.SuccessRows.Load(), s.ErrorRows.Load())
-}
-
-func (s *ttlStatistics) MarshalJSON() ([]byte, error) {
-	type jsonStatistics struct {
-		TotalRows   uint64 `json:"total_rows"`
-		SuccessRows uint64 `json:"success_rows"`
-		ErrorRows   uint64 `json:"error_rows"`
-	}
-
-	return json.Marshal(jsonStatistics{
-		TotalRows:   s.TotalRows.Load(),
-		SuccessRows: s.SuccessRows.Load(),
-		ErrorRows:   s.ErrorRows.Load(),
-	})
 }
 
 type ttlScanTask struct {

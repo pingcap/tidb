@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -1320,6 +1321,13 @@ type SessionVars struct {
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
 
+	// EnablePlanReplayedContinuesCapture indicates whether enabled plan replayer continues capture
+	EnablePlanReplayedContinuesCapture bool
+
+	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
+	// duplicate task in plan replayer continues capture
+	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
@@ -1328,6 +1336,37 @@ type SessionVars struct {
 
 	// Resource group name
 	ResourceGroupName string
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -2058,11 +2097,7 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
-		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
-		if err != nil {
-			maxPreparedStmtCount = DefMaxPreparedStmtCount
-		}
+		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&PreparedStmtCount, -1)
