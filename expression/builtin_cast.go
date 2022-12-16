@@ -23,6 +23,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -405,6 +406,121 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 		panic("unsupported types.EvalType in castAsDurationFunctionClass")
 	}
 	return sig, nil
+}
+
+type castAsArrayFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+
+	if args[0].GetType().EvalType() != types.ETJson {
+		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "cast_as_array")
+	}
+
+	return nil
+}
+
+func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	arrayType := c.tp.ArrayType()
+	switch arrayType.GetType() {
+	case mysql.TypeYear, mysql.TypeJSON:
+		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
+	}
+	if arrayType.GetCharset() != charset.CharsetUTF8MB4 || arrayType.GetCharset() != charset.CharsetBin {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index", arrayType.String())
+	}
+
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	if err != nil {
+		return nil, err
+	}
+	sig = &castJSONAsArrayFunctionSig{bf}
+	return sig, nil
+}
+
+type castJSONAsArrayFunctionSig struct {
+	baseBuiltinFunc
+}
+
+func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
+	newSig := &castJSONAsArrayFunctionSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	if val.TypeCode != types.JSONTypeCodeArray {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
+	}
+
+	arrayVals := make([]any, 0, len(b.args))
+
+	tp := b.tp.ArrayType()
+	for i := 0; i < val.GetElemCount(); i++ {
+		arrayElem := val.ArrayGetElem(i)
+		switch tp.EvalType() {
+		case types.ETInt:
+			switch arrayElem.TypeCode {
+			case types.JSONTypeCodeInt64, types.JSONTypeCodeUint64:
+				v, err := types.ConvertJSONToInt(b.ctx.GetSessionVars().StmtCtx, arrayElem, mysql.HasUnsignedFlag(b.tp.GetFlag()), b.tp.ArrayType().GetType())
+				if err != nil {
+					return types.BinaryJSON{}, false, errIncorrectArgs
+				}
+				if mysql.HasUnsignedFlag(b.tp.GetFlag()) {
+					arrayVals = append(arrayVals, uint64(v))
+				} else {
+					arrayVals = append(arrayVals, v)
+				}
+			default:
+				return types.BinaryJSON{}, false, errIncorrectArgs
+			}
+		case types.ETDecimal:
+			//types.ConvertJSONToDecimal()
+		case types.ETReal:
+			switch arrayElem.TypeCode {
+			case types.JSONTypeCodeFloat64, types.JSONTypeCodeInt64, types.JSONTypeCodeUint64:
+				v, err := types.ConvertJSONToFloat(b.ctx.GetSessionVars().StmtCtx, arrayElem)
+				if err != nil {
+					return types.BinaryJSON{}, false, errIncorrectArgs
+				}
+				arrayVals = append(arrayVals, v)
+			default:
+				return types.BinaryJSON{}, false, errIncorrectArgs
+			}
+		case types.ETDatetime, types.ETTimestamp:
+
+		case types.ETDuration:
+		case types.ETString:
+			switch arrayElem.TypeCode {
+			case types.JSONTypeCodeString:
+				s, err := types.ProduceStrWithSpecifiedTp(string(arrayElem.GetString()), tp, b.ctx.GetSessionVars().StmtCtx, false)
+				if err != nil {
+					return types.BinaryJSON{}, false, err
+				}
+				arrayVals = append(arrayVals, s)
+			default:
+				return types.BinaryJSON{}, false, errIncorrectArgs
+			}
+		default:
+			return types.BinaryJSON{}, false, errIncorrectArgs
+		}
+	}
+
+	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
 type castAsJSONFunctionClass struct {
@@ -1933,7 +2049,11 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	case types.ETDuration:
 		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETJson:
-		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		if tp.IsArray() {
+			fc = &castAsArrayFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		} else {
+			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		}
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		if expr.GetType().GetType() == mysql.TypeBit {
