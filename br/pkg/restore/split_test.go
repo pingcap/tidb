@@ -764,7 +764,7 @@ func TestSplitPoint(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
-	err := restore.SplitPoint(ctx, tableID, splitHelper, client, rewriteRules, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) ([]*split.RegionInfo, error) {
+	_, err := restore.SplitPoint(ctx, tableID, splitHelper, client, rewriteRules, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) ([]*split.RegionInfo, error) {
 		require.Equal(t, u, uint64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
 		require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "f"))
@@ -820,7 +820,7 @@ func TestSplitPoint2(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "o"), keyWithTablePrefix(tableID+1, "a"))
 
 	firstSplit := true
-	err := restore.SplitPoint(ctx, tableID, splitHelper, client, rewriteRules, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) ([]*split.RegionInfo, error) {
+	_, err := restore.SplitPoint(ctx, tableID, splitHelper, client, rewriteRules, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) ([]*split.RegionInfo, error) {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))

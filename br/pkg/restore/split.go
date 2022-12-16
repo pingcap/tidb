@@ -554,7 +554,7 @@ func SplitPoint(
 
 		// scatterRegions is the region array that will be scattered
 		scatterRegions []*split.RegionInfo = make([]*split.RegionInfo, 0)
-		regionSplitter                     = NewRegionSplitter(client)
+		regionSplitter *RegionSplitter     = NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
