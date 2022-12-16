@@ -43,8 +43,14 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
 		if strings.HasSuffix(pos.Filename, "_test.go") {
-			markers := markutil.WalkTestFile(pass.Fset, f, pos.Filename)
-			for _, marker := range markers {
+			checkResult := markutil.WalkTestFile(pass.Fset, f, pos.Filename)
+			for _, err := range checkResult.Err {
+				pass.Report(analysis.Diagnostic{
+					Pos:     err.Pos,
+					Message: err.Message,
+				})
+			}
+			for _, marker := range checkResult.Data {
 				_, exist := tryGetFromRecords(marker.TestName)
 				if !exist && len(marker.Features) == 0 && len(marker.Issues) == 0 {
 					pass.Report(analysis.Diagnostic{

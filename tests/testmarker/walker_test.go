@@ -32,55 +32,59 @@ func TestWalker(t *testing.T) {
 	f, err := parser.ParseFile(fset, "marker_test.go", markerTest, parser.ParseComments)
 	require.NoError(t, err)
 
-	mis := markerpkg.WalkTestFile(fset, f, "marker_test.go")
-	require.Equal(t, []*markerpkg.MarkInfo{{
-		Features: []markerpkg.FeatureMarkInfo{{
-			ID:          "FD-1",
-			Description: []string{"FD-1 feature testing"},
-		}},
-		TestName: "TestMarkAsFeature",
-		File:     "marker_test.go",
-		Pos:      680,
-	}, {
-		Issues: []markerpkg.IssueMarkInfo{{
-			ID:       12345,
-			IssueURL: "https://github.com/pingcap/tidb/issues/12345",
-		}},
-		TestName: "TestMarkAsIssue",
-		File:     "marker_test.go",
-		Pos:      784,
-	}, {
-		Features: []markerpkg.FeatureMarkInfo{
+	result := markerpkg.WalkTestFile(fset, f, "marker_test.go")
+	require.Equal(t, markerpkg.CheckResult{
+		Data: []*markerpkg.MarkInfo{
 			{
-				ID:          "FD-1",
-				Description: []string{"FD-1 feature testing"},
-			},
-			{
-				ID:          "FD-2",
-				Description: []string{"FD-2 feature testing"},
+				Features: []markerpkg.FeatureMarkInfo{{
+					ID:          "FD-1",
+					Description: []string{"FD-1 feature testing"},
+				}},
+				TestName: "TestMarkAsFeature",
+				File:     "marker_test.go",
+				Pos:      680,
+			}, {
+				Issues: []markerpkg.IssueMarkInfo{{
+					ID:       12345,
+					IssueURL: "https://github.com/pingcap/tidb/issues/12345",
+				}},
+				TestName: "TestMarkAsIssue",
+				File:     "marker_test.go",
+				Pos:      784,
+			}, {
+				Features: []markerpkg.FeatureMarkInfo{
+					{
+						ID:          "FD-1",
+						Description: []string{"FD-1 feature testing"},
+					},
+					{
+						ID:          "FD-2",
+						Description: []string{"FD-2 feature testing"},
+					},
+				},
+				Issues: []markerpkg.IssueMarkInfo{
+					{
+						ID:       12345,
+						IssueURL: "https://github.com/pingcap/tidb/issues/12345",
+					},
+					{
+						ID:       12346,
+						IssueURL: "https://github.com/pingcap/tidb/issues/12346",
+					},
+				},
+				TestName: "TestMarkMixes",
+				File:     "marker_test.go",
+				Pos:      859,
+			}, {
+				Features: []markerpkg.FeatureMarkInfo{
+					{
+						ID: "marker.NoID",
+					},
+				},
+				TestName: "TestMarkNoID",
+				File:     "marker_test.go",
+				Pos:      1329,
 			},
 		},
-		Issues: []markerpkg.IssueMarkInfo{
-			{
-				ID:       12345,
-				IssueURL: "https://github.com/pingcap/tidb/issues/12345",
-			},
-			{
-				ID:       12346,
-				IssueURL: "https://github.com/pingcap/tidb/issues/12346",
-			},
-		},
-		TestName: "TestMarkMixes",
-		File:     "marker_test.go",
-		Pos:      859,
-	}, {
-		Features: []markerpkg.FeatureMarkInfo{
-			{
-				ID: "marker.NoID",
-			},
-		},
-		TestName: "TestMarkNoID",
-		File:     "marker_test.go",
-		Pos:      1329,
-	}}, mis)
+	}, result)
 }

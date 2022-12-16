@@ -48,9 +48,20 @@ type IssueMarkInfo struct {
 	IssueURL string `yaml:"url"`
 }
 
+type checkError struct {
+	Pos     token.Pos
+	Message string
+}
+
+// CheckResult records the result of the check
+type CheckResult struct {
+	Data []*MarkInfo
+	Err  []*checkError
+}
+
 // WalkTestFile walks the test file and returns the MarkInfo
-func WalkTestFile(fset *token.FileSet, f *ast.File, filename string) []*MarkInfo {
-	var ret []*MarkInfo
+func WalkTestFile(fset *token.FileSet, f *ast.File, filename string) CheckResult {
+	var result CheckResult
 	var localpkg string
 	ast.Inspect(f, func(node ast.Node) bool {
 		switch e := node.(type) {
@@ -71,16 +82,18 @@ func WalkTestFile(fset *token.FileSet, f *ast.File, filename string) []*MarkInfo
 			if !ok {
 				return false
 			}
-			markInfo := walkTestFuncDeclBody(fset, body, filename, testname, localpkg)
-			if markInfo != nil {
-				markInfo.Pos = e.Pos()
-				ret = append(ret, markInfo)
+			markInfo := &MarkInfo{File: filename, TestName: testname, Pos: e.Pos()}
+			checkErr := walkTestFuncDeclBody(fset, body, markInfo, localpkg)
+			if len(checkErr) != 0 {
+				result.Err = append(result.Err, checkErr...)
+			} else {
+				result.Data = append(result.Data, markInfo)
 			}
 			return false
 		}
 		return true
 	})
-	return ret
+	return result
 }
 
 func tryGetTestName(e *ast.FuncDecl) (string, bool) {
@@ -104,8 +117,8 @@ func tryGetTestName(e *ast.FuncDecl) (string, bool) {
 	return "", false
 }
 
-func walkTestFuncDeclBody(fset *token.FileSet, body *ast.BlockStmt, filename, testname, localpkg string) *MarkInfo {
-	markInfo := &MarkInfo{File: filename, TestName: testname}
+func walkTestFuncDeclBody(fset *token.FileSet, body *ast.BlockStmt, markInfo *MarkInfo, localpkg string) []*checkError {
+	var checkErr []*checkError
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch e := node.(type) {
 		case *ast.ExprStmt:
@@ -114,24 +127,27 @@ func walkTestFuncDeclBody(fset *token.FileSet, body *ast.BlockStmt, filename, te
 			}
 			callExpr := e.X.(*ast.CallExpr)
 			if isMarkCall(callExpr, localpkg) {
-				walkerMarkAsCallExpr(fset, callExpr, markInfo, localpkg)
+				err := walkerMarkAsCallExpr(fset, callExpr, markInfo, localpkg)
+				if err != nil {
+					checkErr = append(checkErr, err)
+				}
 			}
 			return false
 		}
 		return true
 	})
-	return markInfo
+	return checkErr
 }
 
-func walkerMarkAsCallExpr(fset *token.FileSet, callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg string) {
+func walkerMarkAsCallExpr(fset *token.FileSet, callExpr *ast.CallExpr, markInfo *MarkInfo, localpkg string) *checkError {
 	if len(callExpr.Args) == 0 {
-		return
+		return nil
 	}
 	marktype := parseMarkType(callExpr.Args[1], localpkg)
 	switch marktype {
 	case "Feature":
 		if len(callExpr.Args) < 3 {
-			return
+			return &checkError{Pos: callExpr.Pos(), Message: "should have at least 3 arguments"}
 		}
 		var feature FeatureMarkInfo
 		callExpr.Pos()
@@ -146,20 +162,21 @@ func walkerMarkAsCallExpr(fset *token.FileSet, callExpr *ast.CallExpr, markInfo 
 		appendFeatureMark(markInfo, feature)
 	case "Issue":
 		if len(callExpr.Args) < 3 {
-			return
+			return &checkError{Pos: callExpr.Pos(), Message: "should have at least 3 arguments"}
 		}
 		var issue IssueMarkInfo
 		arg := mustPrintArg(fset, callExpr.Args[2])
 		id, err := strconv.ParseInt(arg, 10, 64)
 		if err != nil {
-			log.Fatalf("invalid issue id %s", arg)
+			return &checkError{Pos: callExpr.Pos(), Message: fmt.Sprintf("invalid issue id %s", arg)}
 		}
 		issue.ID = int(id)
 		issue.IssueURL = fmt.Sprintf("https://github.com/pingcap/tidb/issues/%d", issue.ID)
 		appendIssueMark(markInfo, issue)
 	default:
-		log.Fatalf("unknown mark type")
+		return &checkError{Pos: callExpr.Pos(), Message: fmt.Sprintf("unknown mark type: %s", marktype)}
 	}
+	return nil
 }
 
 func appendFeatureMark(markInfo *MarkInfo, feature FeatureMarkInfo) {

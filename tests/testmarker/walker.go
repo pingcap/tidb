@@ -21,6 +21,7 @@ import (
 	"go/token"
 	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,15 +29,6 @@ import (
 	makerpkg "github.com/pingcap/tidb/tests/testmarker/pkg"
 	"gopkg.in/yaml.v2"
 )
-
-// Config describes the data structure of the mapping spec
-type Config struct {
-	OnlyFiles    []string `yaml:"only_files"`
-	ExcludeFiles []string `yaml:"exclude_files"`
-
-	// onlyFiles    []*regexp.Regexp `yaml:"-"`
-	// excludeFiles []*regexp.Regexp `yaml:"-"`
-}
 
 func main() {
 	fset := token.NewFileSet()
@@ -54,7 +46,14 @@ func main() {
 			for _, f := range d {
 				for n, f := range f.Files {
 					if strings.HasSuffix(n, "_test.go") {
-						fms = append(fms, makerpkg.WalkTestFile(fset, f, n)...)
+						result := makerpkg.WalkTestFile(fset, f, n)
+						if len(result.Err) != 0 {
+							for _, err := range result.Err {
+								log.Printf("%s:%d: %s\n", n, fset.File(err.Pos).Line(err.Pos), err.Message)
+							}
+							os.Exit(1)
+						}
+						fms = append(fms, result.Data...)
 					}
 				}
 			}
