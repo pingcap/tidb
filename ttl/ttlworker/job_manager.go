@@ -90,6 +90,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.store = store
 	manager.sessPool = sessPool
 	manager.delCh = make(chan *ttlDeleteTask)
+	manager.notifyStateCh = make(chan interface{}, 1)
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")

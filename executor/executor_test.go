@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -81,6 +82,7 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"schema/schema_meta.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
 		"session_bindings.sql",
@@ -182,6 +184,23 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
 	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+}
+
+func TestPlanReplayerContinuesCapture(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prHandle := dom.GetPlanReplayerHandle()
+	tk.MustExec("delete from mysql.plan_replayer_status;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("set @@tidb_enable_plan_replayer_continues_capture = 'ON'")
+	tk.MustQuery("select * from t;")
+	task := prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
+	require.True(t, success)
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
 func TestShow(t *testing.T) {
@@ -1570,7 +1589,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
+	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {
