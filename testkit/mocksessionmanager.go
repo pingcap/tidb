@@ -70,6 +70,11 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 		ret[connID] = pi.ShowProcess()
 	}
 	msm.mu.Unlock()
+	if msm.Dom != nil {
+		for connID, pi := range msm.Dom.SysProcTracker().GetSysProcessList() {
+			ret[connID] = pi
+		}
+	}
 	return ret
 }
 
