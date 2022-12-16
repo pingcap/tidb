@@ -20,7 +20,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const sysUserTableName = "user"
+const (
+	rootUser = "root"
+	sysUserTableName = "user"
+)
+
 
 var statsTables = map[string]struct{}{
 	"stats_buckets":    {},
@@ -52,14 +56,14 @@ var unRecoverableTable = map[string]struct{}{
 // skip clearing or restoring 'cloud_admin'@'%' which is a special
 // user on TiDB Cloud
 var sysPrivilegeTableMap = map[string]string{
-	"user":          "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"db":            "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"tables_priv":   "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"columns_priv":  "(user = 'cloud_admin' and host = '%')",       // since v1.0.0
-	"default_roles": "(user = 'cloud_admin' and host = '%')",       // since v3.0.0
-	"role_edges":    "(to_user = 'cloud_admin' and to_host = '%')", // since v3.0.0
-	"global_priv":   "(user = 'cloud_admin' and host = '%')",       // since v3.0.8
-	"global_grants": "(user = 'cloud_admin' and host = '%')",       // since v5.0.3
+	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
+	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
+	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
+	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
+	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
+	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
+	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
+	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -101,28 +105,33 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 		)
 		return nil
 	}
-
 	for tableName := range db.ExistingTables {
 		if sysPrivilegeTableMap[tableName] != "" {
-			whereClause := fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
-			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
-			log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
-			if err := execSQL(deleteSQL); err != nil {
-				return err
+			for _, name := range filterUsers {
+				if strings.ToLower(name) == rootUser {
+					// we cannot directly remove root account. instead, we reset its password. and let cloud_admin control it lately.
+					updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string=''," +
+						" Shutdown_priv='Y'," +
+						" Config_priv='Y'" +
+						" WHERE USER='root' AND Host='%%';",
+						sysDB, sysUserTableName)
+					err := execSQL(updateSQL)
+					if err != nil {
+						return err
+					}
+					// continue for next user
+					continue
+				} else {
+					whereClause := fmt.Sprintf("WHERE"+sysPrivilegeTableMap[tableName], name)
+					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
+						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+					log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
+					if err := execSQL(deleteSQL); err != nil {
+						return err
+					}
+				}
 			}
 		}
-	}
-
-	// we need delete root user if user set before
-	deleteSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string=''," +
-		" Shutdown_priv='Y'," +
-		" Config_priv='Y'" +
-		" WHERE USER='root' AND Host='%%';",
-		sysDB, sysUserTableName)
-	err := execSQL(deleteSQL)
-	if err != nil {
-		return err
 	}
 	return nil
 }
