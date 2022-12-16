@@ -950,10 +950,182 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
+<<<<<<< HEAD
 	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
 		data [2]stmtctx.StatementContext
+=======
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
+
+	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
+	Rng *mathutil.MysqlRng
+
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
+
+	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
+	// scope variable. The default is TRUE.
+	EnableLegacyInstanceScope bool
+
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
+
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait int64
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
+	CostModelVersion int
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
+	// When set to false, returns immediately when it meets the first error.
+	NonTransactionalIgnoreError bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
+
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
+
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
+	PreparedPlanCacheSize uint64
+
+	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
+
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
+
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
+
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
+	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker *memory.Tracker
+	// MemDBDBFootprint tracks the memory footprint of memdb, and is attached to `MemTracker`
+	MemDBFootprint *memory.Tracker
+	DiskTracker    *memory.Tracker
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
+
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool ReuseChunkPool
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
+	EnableReuseCheck bool
+
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
+	preUseChunkAlloc bool
+
+	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
+	EnablePlanReplayerCapture bool
+
+	// EnablePlanReplayedContinuesCapture indicates whether enabled plan replayer continues capture
+	EnablePlanReplayedContinuesCapture bool
+
+	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
+	// duplicate task in plan replayer continues capture
+	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
+
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 	}
 }
 
@@ -2331,3 +2503,99 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	}
 	return s.seekFactor
 }
+<<<<<<< HEAD
+=======
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note: 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
+}
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+// Note:
+//
+//	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	keep the default selectivity of like/regexp and not like/regexp all 0.8.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
+}
+
+// EnableForceInlineCTE returns the session variable enableForceInlineCTE
+func (s *SessionVars) EnableForceInlineCTE() bool {
+	return s.enableForceInlineCTE
+}
+
+// protectedTSList implements util/processinfo#ProtectedTSList
+type protectedTSList struct {
+	sync.Mutex
+	items map[uint64]int
+}
+
+// HoldTS holds the timestamp to prevent its data from being GCed.
+func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
+	lst.Lock()
+	if lst.items == nil {
+		lst.items = map[uint64]int{}
+	}
+	lst.items[ts] += 1
+	lst.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lst.Lock()
+			if lst.items != nil {
+				if lst.items[ts] > 1 {
+					lst.items[ts] -= 1
+				} else {
+					delete(lst.items, ts)
+				}
+			}
+			lst.Unlock()
+		})
+	}
+}
+
+// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	lst.Lock()
+	for k, v := range lst.items {
+		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
+			ts = k
+		}
+	}
+	lst.Unlock()
+	return
+}
+
+// Size returns the number of protected timestamps (exported for test).
+func (lst *protectedTSList) Size() (size int) {
+	lst.Lock()
+	size = len(lst.items)
+	lst.Unlock()
+	return
+}
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
