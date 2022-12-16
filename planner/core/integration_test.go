@@ -6690,7 +6690,7 @@ func TestExplainAnalyzeDMLCommit(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/38295.
 func TestIssue38295(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	tore, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -6700,4 +6700,16 @@ func TestIssue38295(t *testing.T) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c2);")
 	tk.MustGetErrCode("SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));", errno.ErrFieldNotInGroupBy)
 	tk.MustExec("UPDATE t0 SET c2=1413;")
+}
+
+func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		id INTEGER NOT NULL AUTO_INCREMENT,
+		CHECK (id IN (0, 1)),
+		KEY idx_autoinc_id (id)
+	)`)
 }
