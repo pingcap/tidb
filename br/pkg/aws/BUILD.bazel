@@ -27,6 +27,7 @@ go_test(
     embed = [":aws"],
     deps = [
         "//br/pkg/gluetidb",
+        "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//service/ec2",
         "@com_github_stretchr_testify//require",
     ],

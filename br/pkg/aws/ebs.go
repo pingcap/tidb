@@ -350,7 +350,7 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesRespose(resp *ec2.DescribeVolumesOutput, progress glue.Progress) (int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, progress glue.Progress) (int64, []*string) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
