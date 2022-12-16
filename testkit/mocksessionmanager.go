@@ -32,7 +32,7 @@ type MockSessionManager struct {
 	PSMu    sync.RWMutex
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
-	DOM     *domain.Domain
+	Dom     *domain.Domain
 	conn    map[uint64]session.Session
 	mu      sync.Mutex
 }
@@ -87,8 +87,10 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 	if sess := msm.conn[id]; sess != nil {
 		return sess.ShowProcess(), true
 	}
-	if pinfo, ok := msm.DOM.SysProcTracker().GetSysProcessList()[id]; ok {
-		return pinfo, true
+	if msm.Dom != nil {
+		if pinfo, ok := msm.Dom.SysProcTracker().GetSysProcessList()[id]; ok {
+			return pinfo, true
+		}
 	}
 	return &util.ProcessInfo{}, false
 }

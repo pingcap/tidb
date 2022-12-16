@@ -6247,7 +6247,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	}()
 
 	sm := &testkit.MockSessionManager{
-		DOM: dom,
+		Dom: dom,
 		PS:  []*util.ProcessInfo{tk0.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
@@ -6270,7 +6270,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
 
 	// There should be only one child tracker, auto-analyze session should have been detached.
-	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildren()
+	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 1)
 	require.Equal(t, tk0.Session().GetSessionVars().MemTracker, childTrackers[0])
 }
