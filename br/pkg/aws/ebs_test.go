@@ -46,7 +46,7 @@ func createVolume(snapshotId string, volumeId string, state string) *ec2.Volume 
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, aws.Int64(1), aws.String(snapshotId), aws.String(state), nil, nil, aws.String(volumeId), nil,
 	}
 }
-func TesHandleDescribeVolumesRespose(t *testing.T) {
+func TestHandleDescribeVolumesResponse(t *testing.T) {
 
 	curentVolumesStates := &ec2.DescribeVolumesOutput{
 		NextToken: aws.String("fake token"),
