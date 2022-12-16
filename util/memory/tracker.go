@@ -762,8 +762,8 @@ func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 	return trackerMemUseMap
 }
 
-// GetChildren returns children trackers
-func (t *Tracker) GetChildren() []*Tracker {
+// GetChildrenForTest returns children trackers
+func (t *Tracker) GetChildrenForTest() []*Tracker {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	trackers := make([]*Tracker, 0)

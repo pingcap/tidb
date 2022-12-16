@@ -733,8 +733,10 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
 	if !ok {
-		if pinfo, ok2 := s.dom.SysProcTracker().GetSysProcessList()[id]; ok2 {
-			return pinfo, true
+		if s.dom != nil {
+			if pinfo, ok2 := s.dom.SysProcTracker().GetSysProcessList()[id]; ok2 {
+				return pinfo, true
+			}
 		}
 		return &util.ProcessInfo{}, false
 	}
