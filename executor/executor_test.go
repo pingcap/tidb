@@ -6268,10 +6268,8 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
 
-	// There should be only one child tracker, auto-analyze session should have been detached.
 	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 1)
-	require.Equal(t, tk0.Session().GetSessionVars().MemTracker, childTrackers[0])
+	require.Len(t, childTrackers, 0)
 }
 
 func TestCompileOutOfMemoryQuota(t *testing.T) {
