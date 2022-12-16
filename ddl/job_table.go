@@ -236,7 +236,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		// check if this ddl job is synced to all servers.
 		if !d.isSynced(job) || d.once.Load() {
 			if variable.EnableMDL.Load() {
-				exist, err := checkMDLInfo(job.ID, d.sessPool)
+				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
 					logutil.BgLogger().Warn("[ddl] check MDL info failed", zap.Error(err), zap.String("job", job.String()))
 					// Release the worker resource.
@@ -245,12 +245,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				} else if exist {
 					// Release the worker resource.
 					pool.put(wk)
-					err = waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-					if err != nil {
-						logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
-						time.Sleep(time.Second)
-						return
-					}
+					waitSchemaSyncedForMDL(d.ddlCtx, job, 2*d.lease, version)
 					d.once.Store(false)
 					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 					// Don't have a worker now.
