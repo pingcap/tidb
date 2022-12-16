@@ -113,6 +113,8 @@ func (s *Store) GetClient() kv.Client {
 
 // GetMPPClient gets a mpp client instance.
 func (s *Store) GetMPPClient() kv.MPPClient {
+	// run a background probe process,if not start
+	globalMPPFailedStoreProbe.Run()
 	return &MPPClient{
 		store: s.kvStore,
 	}

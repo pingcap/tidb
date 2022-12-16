@@ -32,10 +32,10 @@ import (
 var globalMPPFailedStoreProbe *MPPFailedStoreProbe
 
 const (
-	// DetectTimeoutLimit detect timeout
-	DetectTimeoutLimit = 2 * time.Second
 	// DetectPeriod detect period
 	DetectPeriod = 3 * time.Second
+	// DetectTimeoutLimit detect timeout
+	DetectTimeoutLimit = 2 * time.Second
 	// MaxRecoveryTimeLimit wait TiFlash recovery,more than MPPStoreFailTTL
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
@@ -44,9 +44,10 @@ const (
 
 // MPPSotreState the state for MPPStore.
 type MPPSotreState struct {
-	address string // MPPStore TiFlash address
-	store   *kvStore
-	lock    sync.Mutex
+	address    string // MPPStore TiFlash address
+	tikvClient tikv.Client
+
+	lock sync.Mutex
 
 	recoveryTime   time.Time
 	lastLookupTime time.Time
@@ -57,21 +58,26 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
+
+	detectPeriod         time.Duration
+	detectTimeoutLimit   time.Duration
+	maxRecoveryTimeLimit time.Duration
+	maxObsoletTimeLimit  time.Duration
 }
 
-func (t *MPPSotreState) detect(ctx context.Context) {
+func (t *MPPSotreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
 	if !t.lock.TryLock() {
 		return
 	}
 	defer t.lock.Unlock()
 
-	if time.Since(t.lastDetectTime) < DetectPeriod {
+	if time.Since(t.lastDetectTime) < detectPeriod {
 		return
 	}
 
 	defer func() { t.lastDetectTime = time.Now() }()
 	metrics.TiFlashFailedMPPStoreState.WithLabelValues(t.address).Set(0)
-	err := detectMPPStore(ctx, t.store.GetTiKVClient(), t.address)
+	err := detectMPPStore(ctx, t.tikvClient, t.address, detectTimeoutLimit)
 	if err != nil {
 		metrics.TiFlashFailedMPPStoreState.WithLabelValues(t.address).Set(1)
 		t.recoveryTime = time.Time{} // if detect failed,reset recovery time to zero.
@@ -105,7 +111,7 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 	}()
 
 	do := func(k, v any) {
-		address := fmt.Sprintln(k)
+		address := fmt.Sprint(k)
 		state, ok := v.(*MPPSotreState)
 		if !ok {
 			logutil.BgLogger().Warn("MPPSotreState struct assert failed,will be clean",
@@ -115,13 +121,13 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 			return
 		}
 
-		state.detect(ctx)
+		state.detect(ctx, t.detectPeriod, t.detectTimeoutLimit)
 
 		// clean restored store
-		if !state.recoveryTime.IsZero() && time.Since(state.recoveryTime) > MaxRecoveryTimeLimit {
+		if !state.recoveryTime.IsZero() && time.Since(state.recoveryTime) > t.maxRecoveryTimeLimit {
 			t.Delete(address)
 			// clean store that may be obsolete
-		} else if !state.recoveryTime.IsZero() && time.Since(state.lastLookupTime) > MaxObsoletTimeLimit {
+		} else if state.recoveryTime.IsZero() && time.Since(state.lastLookupTime) > t.maxObsoletTimeLimit {
 			t.Delete(address)
 		}
 	}
@@ -135,13 +141,11 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 }
 
 // Add add a store when sync probe failed
-func (t *MPPFailedStoreProbe) Add(ctx context.Context, address string, store *kvStore) {
-	// run a background probe process,if not start
-	globalMPPFailedStoreProbe.Run()
-
+func (t *MPPFailedStoreProbe) Add(ctx context.Context, address string, tikvClient tikv.Client) {
 	state := MPPSotreState{
-		address: address,
-		store:   store,
+		address:        address,
+		tikvClient:     tikvClient,
+		lastLookupTime: time.Now(),
 	}
 	logutil.Logger(ctx).Debug("add mpp store to failed list", zap.String("address", address))
 	t.failedMPPStores.Store(address, &state)
@@ -188,17 +192,20 @@ func (t *MPPFailedStoreProbe) Run() {
 // Delete clean store from failed map
 func (t *MPPFailedStoreProbe) Delete(address string) {
 	metrics.TiFlashFailedMPPStoreState.DeleteLabelValues(address)
-	t.failedMPPStores.Delete(address)
+	_, ok := t.failedMPPStores.LoadAndDelete(address)
+	if !ok {
+		logutil.BgLogger().Warn("Store is deleted", zap.String("address", address), zap.Any("isok", ok))
+	}
 }
 
 // MPPStore detect function
-func detectMPPStore(ctx context.Context, client tikv.Client, address string) error {
+func detectMPPStore(ctx context.Context, client tikv.Client, address string, detectTimeoutLimit time.Duration) error {
 	resp, err := client.SendRequest(ctx, address, &tikvrpc.Request{
 		Type:    tikvrpc.CmdMPPAlive,
 		StoreTp: tikvrpc.TiFlash,
 		Req:     &mpp.IsAliveRequest{},
 		Context: kvrpcpb.Context{},
-	}, DetectTimeoutLimit)
+	}, detectTimeoutLimit)
 	if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
 		if err == nil {
 			err = fmt.Errorf("store not ready to serve")
@@ -213,7 +220,11 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string) err
 
 func init() {
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
-		failedMPPStores: &sync.Map{},
-		lock:            &sync.Mutex{},
+		failedMPPStores:      &sync.Map{},
+		lock:                 &sync.Mutex{},
+		detectPeriod:         DetectPeriod,
+		detectTimeoutLimit:   DetectTimeoutLimit,
+		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,
+		maxObsoletTimeLimit:  MaxObsoletTimeLimit,
 	}
 }

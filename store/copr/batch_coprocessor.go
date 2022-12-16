@@ -340,9 +340,10 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					return
 				}
 
-				err := detectMPPStore(ctx, kvStore.GetTiKVClient(), s.GetAddr())
+				tikvClient := kvStore.GetTiKVClient()
+				err := detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
 				if err != nil {
-					globalMPPFailedStoreProbe.Add(ctx, s.GetAddr(), kvStore)
+					globalMPPFailedStoreProbe.Add(ctx, s.GetAddr(), tikvClient)
 					return
 				}
 
