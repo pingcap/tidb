@@ -23,6 +23,7 @@ import (
 const (
 	rootUser = "root"
 	sysUserTableName = "user"
+	cloudAdminUser = "cloud_admin"
 )
 
 
@@ -105,24 +106,31 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 		)
 		return nil
 	}
+
+	for _, name := range filterUsers {
+		if strings.ToLower(name) == rootUser {
+			// we cannot directly remove root account. instead, we reset its password. and let cloud_admin control it lately.
+			updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
+				" Shutdown_priv='Y',"+
+				" Config_priv='Y'"+
+				" WHERE USER='root' AND Host='%%';",
+				sysDB, sysUserTableName)
+			log.Info("clear root user for cloud", zap.String("sql", updateSQL))
+			err := execSQL(updateSQL)
+			if err != nil {
+				return err
+			}
+			// we need treat the root account specially.
+			break
+		}
+	}
+
 	for tableName := range db.ExistingTables {
 		if sysPrivilegeTableMap[tableName] != "" {
 			for _, name := range filterUsers {
-				if strings.ToLower(name) == rootUser {
-					// we cannot directly remove root account. instead, we reset its password. and let cloud_admin control it lately.
-					updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string=''," +
-						" Shutdown_priv='Y'," +
-						" Config_priv='Y'" +
-						" WHERE USER='root' AND Host='%%';",
-						sysDB, sysUserTableName)
-					err := execSQL(updateSQL)
-					if err != nil {
-						return err
-					}
-					// continue for next user
-					continue
-				} else {
-					whereClause := fmt.Sprintf("WHERE"+sysPrivilegeTableMap[tableName], name)
+				// we already handle root account before.
+				if strings.ToLower(name) != rootUser {
+					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
 					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
 						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
 					log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
@@ -271,7 +279,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		whereNotClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereNotClause = fmt.Sprintf("WHERE NOT %s", sysPrivilegeTableMap[tableName])
+			whereNotClause = fmt.Sprintf("WHERE NOT " + sysPrivilegeTableMap[tableName], cloudAdminUser)
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
