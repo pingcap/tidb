@@ -115,7 +115,10 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 	}
 
 	// we need delete root user if user set before
-	deleteSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string=('') WHERE USER='root' AND Host='%%';",
+	deleteSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string=''," +
+		" Shutdown_priv='N'," +
+		" Config_priv='N'" +
+		" WHERE USER='root' AND Host='%%';",
 		sysDB, sysUserTableName)
 	err := execSQL(deleteSQL)
 	if err != nil {
