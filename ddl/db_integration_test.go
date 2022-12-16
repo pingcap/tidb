@@ -2395,6 +2395,8 @@ func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
 		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+	tk.MustGetErrCode("alter table t add index idx((lower(test.t1.a)))", errno.ErrBadField)
+
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("create table t(a int, b int as (lower(test1.t.a)))", errno.ErrWrongDBName)
 

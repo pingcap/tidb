@@ -6270,7 +6270,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		sb.Reset()
 		err := idxPart.Expr.Restore(restoreCtx)
@@ -6284,13 +6284,6 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		if _, ok := expr.(*expression.Column); ok {
 			return nil, dbterror.ErrFunctionalIndexOnField
-		}
-
-		newRestoreCtx := format.NewRestoreCtx(restoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName, &sb)
-		sb.Reset()
-		err = idxPart.Expr.Restore(newRestoreCtx)
-		if err != nil {
-			return nil, err
 		}
 
 		colInfo := &model.ColumnInfo{
