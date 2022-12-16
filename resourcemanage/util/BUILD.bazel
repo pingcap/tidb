@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = [
+        "fake_gpool.go",
+        "shard_pool_map.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanage/util",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
