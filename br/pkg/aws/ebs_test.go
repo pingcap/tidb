@@ -60,7 +60,6 @@ func createVolume(snapshotId string, volumeId string, state string) *ec2.Volume 
 	}
 }
 func TestHandleDescribeVolumesResponse(t *testing.T) {
-
 	curentVolumesStates := &ec2.DescribeVolumesOutput{
 		NextToken: awsapi.String("fake token"),
 		Volumes: []*ec2.Volume{
