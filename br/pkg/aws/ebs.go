@@ -307,7 +307,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesRespose(resp, progress)
+		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp, progress)
 
 		totalVolumeSize += createdVolumeSize
 		pendingVolumes = unfinishedVolumes
