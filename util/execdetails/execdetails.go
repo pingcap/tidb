@@ -382,7 +382,7 @@ type CopRuntimeStats struct {
 	// executed on each instance.
 	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
-	timeDetail *util.TimeDetail
+	timeDetail util.TimeDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
 	sync.Mutex
@@ -473,7 +473,7 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	}
-	if !isTiFlashCop && crs.timeDetail != nil {
+	if !isTiFlashCop {
 		detail := crs.timeDetail.String()
 		if detail != "" {
 			buf.WriteString(", ")
