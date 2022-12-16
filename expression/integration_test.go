@@ -2213,6 +2213,22 @@ func TestAggregationBuiltinJSONObjectAgg(t *testing.T) {
 	result.Check(testkit.Rows(`{"first": "json_objectagg_test"}`))
 	result = tk.MustQuery("select json_objectagg(a, null) from t group by a order by a;")
 	result.Check(testkit.Rows(`{"1": null}`))
+
+	// For issue: https://github.com/pingcap/tidb/issues/39806
+	// Optimization shouldn't rewrite the flag of `castStringAsJson`.
+	tk.MustQuery(`
+	select a from (
+		select JSON_OBJECT('number', number, 'name', name)  'a' from
+		(
+			select 1  as number, 'name-1' as name  union
+			(select 2, 'name-2' ) union
+			(select 3, 'name-3' ) union
+			(select 4, 'name-4' ) union
+			(select 5, 'name-5' ) union
+			(select 6, 'name-2' )
+		) temp1
+	) temp
+	where  a ->> '$.number' = 1`).Check(testkit.Rows(`{"name": "name-1", "number": 1}`))
 }
 
 func TestOtherBuiltin(t *testing.T) {
