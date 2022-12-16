@@ -544,7 +544,7 @@ func SplitPoint(
 	client split.SplitClient,
 	rewriteRules *RewriteRules,
 	splitF splitFunc,
-) error {
+) ([]*split.RegionInfo, error) {
 	// common status
 	var (
 		err       error  = nil
@@ -554,7 +554,7 @@ func SplitPoint(
 
 		// scatterRegions is the region array that will be scattered
 		scatterRegions []*split.RegionInfo = make([]*split.RegionInfo, 0)
-		regionSplitter *RegionSplitter     = NewRegionSplitter(client)
+		regionSplitter                     = NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
@@ -665,31 +665,24 @@ func SplitPoint(
 	})
 
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if len(regionValueds) > 0 {
 		// try to split the region
 		newRegions, err := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		scatterRegions = append(scatterRegions, newRegions...)
 	}
 
-	startTime := time.Now()
-	for _, region := range scatterRegions {
-		regionSplitter.waitForScatterRegion(ctx, region)
-		if time.Since(startTime) > split.ScatterWaitUpperInterval {
-			break
-		}
-	}
-
-	return nil
+	return scatterRegions, nil
 }
 
 func (helper *LogSplitHelper) Split(ctx context.Context) error {
 	var ectx context.Context
 	helper.eg, ectx = errgroup.WithContext(ctx)
+	scatterRegions := make([]*split.RegionInfo, 0)
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
 		rewriteRule, exists := helper.rules[tableID]
@@ -702,12 +695,24 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
 		}
-		if err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints); err != nil {
+		newRegions, err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		scatterRegions = append(scatterRegions, newRegions...)
 	}
+
 	if err := helper.eg.Wait(); err != nil {
 		return errors.Trace(err)
+	}
+
+	startTime := time.Now()
+	regionSplitter := NewRegionSplitter(helper.client)
+	for _, region := range scatterRegions {
+		regionSplitter.waitForScatterRegion(ctx, region)
+		if time.Since(startTime) > split.ScatterWaitUpperInterval {
+			break
+		}
 	}
 
 	return nil
