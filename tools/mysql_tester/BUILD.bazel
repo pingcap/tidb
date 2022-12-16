@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
-    name = "mysql-tester_lib",
+    name = "mysql_tester_lib",
     srcs = [
         "main.go",
         "query.go",
@@ -26,7 +26,7 @@ go_library(
 
 go_binary(
     name = "mysql_tester",
-    embed = [":mysql-tester_lib"],
+    embed = [":mysql_tester_lib"],
     visibility = ["//visibility:public"],
 )
 

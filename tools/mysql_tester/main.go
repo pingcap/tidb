@@ -535,7 +535,6 @@ func (t *tester) concurrentExecute(querys []query, wg *sync.WaitGroup, errOccure
 				errOccured <- struct{}{}
 				return
 			}
-
 		}
 	}
 }
@@ -631,7 +630,6 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 			return errors.Trace(errors.Errorf("run \"%v\" around line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 		}
 	}
-
 	return errors.Trace(err)
 }
 
