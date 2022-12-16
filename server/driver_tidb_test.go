@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,4 +95,28 @@ func TestConvertColumnInfo(t *testing.T) {
 	}
 	colInfo = convertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
+}
+
+func TestRSWithHooks(t *testing.T) {
+	closeCount := 0
+	rs := &rsWithHooks{
+		ResultSet: &tidbResultSet{recordSet: new(sqlexec.SimpleRecordSet)},
+		onClosed:  func() { closeCount++ },
+	}
+	require.Equal(t, 0, closeCount)
+	rs.Close()
+	require.Equal(t, 1, closeCount)
+	rs.Close()
+	require.Equal(t, 1, closeCount)
+}
+
+func TestUnwrapRS(t *testing.T) {
+	var nilRS ResultSet
+	require.Nil(t, unwrapResultSet(nilRS))
+	rs0 := new(tidbResultSet)
+	rs1 := &rsWithHooks{ResultSet: rs0}
+	rs2 := &rsWithHooks{ResultSet: rs1}
+	for _, rs := range []ResultSet{rs0, rs1, rs2} {
+		require.Equal(t, rs0, unwrapResultSet(rs))
+	}
 }

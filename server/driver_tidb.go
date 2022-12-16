@@ -480,6 +480,46 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	return trs.columns
 }
 
+// rsWithHooks wraps a ResultSet with some hooks (currently only onClosed).
+type rsWithHooks struct {
+	ResultSet
+	onClosed func()
+}
+
+// Close implements ResultSet#Close
+func (rs *rsWithHooks) Close() error {
+	closed := rs.IsClosed()
+	err := rs.ResultSet.Close()
+	if !closed && rs.onClosed != nil {
+		rs.onClosed()
+	}
+	return err
+}
+
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (rs *rsWithHooks) OnFetchReturned() {
+	if impl, ok := rs.ResultSet.(fetchNotifier); ok {
+		impl.OnFetchReturned()
+	}
+}
+
+// Unwrap returns the underlying result set
+func (rs *rsWithHooks) Unwrap() ResultSet {
+	return rs.ResultSet
+}
+
+// unwrapResultSet likes errors.Cause but for ResultSet
+func unwrapResultSet(rs ResultSet) ResultSet {
+	var unRS ResultSet
+	if u, ok := rs.(interface{ Unwrap() ResultSet }); ok {
+		unRS = u.Unwrap()
+	}
+	if unRS == nil {
+		return rs
+	}
+	return unwrapResultSet(unRS)
+}
+
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	ci = &ColumnInfo{
 		Name:    fld.ColumnAsName.O,
