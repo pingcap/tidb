@@ -1382,7 +1382,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 }
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
-func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, waitTime time.Duration, latestSchemaVersion int64) {
+func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -1393,7 +1393,18 @@ func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, waitTime time.Duration, l
 		}
 	})
 
-	waitSchemaChanged(context.Background(), d, waitTime, latestSchemaVersion, job)
+	timeStart := time.Now()
+	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err := d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
+	if err != nil {
+		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		return err
+	}
+	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
+		zap.Int64("ver", latestSchemaVersion),
+		zap.Duration("take time", time.Since(timeStart)),
+		zap.String("job", job.String()))
+	return nil
 }
 
 // waitSchemaSynced handles the following situation:

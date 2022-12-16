@@ -246,7 +246,10 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				} else if exist {
 					// Release the worker resource.
 					pool.put(wk)
-					waitSchemaSyncedForMDL(d.ddlCtx, job, 2*d.lease, version)
+					err = waitSchemaSyncedForMDL(d.ddlCtx, job, version)
+					if err != nil {
+						return
+					}
 					d.once.Store(false)
 					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 					// Don't have a worker now.
