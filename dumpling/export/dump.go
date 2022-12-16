@@ -1219,9 +1219,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		selectedField:    selectField,
 		selectedLen:      selectLen,
 		hasImplicitRowID: hasImplicitRowID,
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
+		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
 
 	if conf.NoSchemas {
