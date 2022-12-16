@@ -519,6 +519,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
 			return regionSplitter.Split(ctx, ranges, nil, false, func([][]byte) {})
 		})
+		return nil, nil
 	}
 	log.Info("split the region", zap.Uint64("region-id", region.Region.Id), zap.Int("split-point-number", len(splitPoints)))
 	return newRegions, nil
