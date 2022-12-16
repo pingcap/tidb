@@ -924,7 +924,7 @@
       "/external/": "no need to vet third party code"
     },
     "only_files": {
-      ".*_test\\.go$": "ignore test code"
+      "tests/testmarker/": "testmaker code"
     }
   }
 }
