@@ -307,8 +307,8 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp, progress)
-
+		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp)
+		progress.IncBy(int64(len(pendingVolumes) - len(unfinishedVolumes)))
 		totalVolumeSize += createdVolumeSize
 		pendingVolumes = unfinishedVolumes
 	}
@@ -350,7 +350,7 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, progress glue.Progress) (int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput) (int64, []*string) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
@@ -358,7 +358,6 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		if *volume.State == ec2.VolumeStateAvailable {
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
-			progress.Inc()
 		} else {
 			log.Debug("volume creating...", zap.Stringer("volume", volume))
 			unfinishedVolumes = append(unfinishedVolumes, volume.VolumeId)
