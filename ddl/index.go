@@ -1252,7 +1252,7 @@ func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
-func (w *baseIndexWorker) GetTask() (*BackfillJob, error) {
+func (*baseIndexWorker) GetTask() (*BackfillJob, error) {
 	return nil, nil
 }
 
@@ -1672,21 +1672,20 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			}
 		}
 	} else {
+		//nolint:forcetypeassert
+		phyTbl := t.(table.PhysicalTable)
 		// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
-		isDistReorg, err := w.sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBDDLEnableDistributeReorg)
-		if err != nil {
-			return err
-		}
-		if isDistReorg == variable.On && !reorgInfo.mergingTmpIdx {
+		loadDDLDistributeVars(w.ctx, w.sessPool)
+		isDistReorg := variable.DDLEnableDistributeReorg.Load()
+		if isDistReorg && !reorgInfo.mergingTmpIdx {
 			sCtx, err := w.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
 			}
 			defer w.sessPool.put(sCtx)
-			return w.controlWritePhysicalTableRecord(newSession(sCtx), t.(table.PhysicalTable), typeAddIndexWorker, reorgInfo)
+			return w.controlWritePhysicalTableRecord(newSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
 		}
-		//nolint:forcetypeassert
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), reorgInfo)
+		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -1800,7 +1799,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {

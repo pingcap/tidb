@@ -162,22 +162,22 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 	return
 }
 
-func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+func (*mergeIndexWorker) AddMetricInfo(float64) {
 }
 
-func (w *mergeIndexWorker) String() string {
+func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
 }
 
-func (w *mergeIndexWorker) GetTask() (*BackfillJob, error) {
+func (*mergeIndexWorker) GetTask() (*BackfillJob, error) {
 	panic("[ddl] merge index worker GetTask function doesn't implement")
 }
 
-func (w *mergeIndexWorker) UpdateTask(job *BackfillJob) error {
+func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
 	panic("[ddl] merge index worker UpdateTask function doesn't implement")
 }
 
-func (w *mergeIndexWorker) FinishTask(job *BackfillJob) error {
+func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
 	panic("[ddl] merge index worker FinishTask function doesn't implement")
 }
 

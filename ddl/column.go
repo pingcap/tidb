@@ -1171,7 +1171,7 @@ type updateColumnWorker struct {
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1201,19 +1201,19 @@ func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
-func (w *updateColumnWorker) String() string {
+func (*updateColumnWorker) String() string {
 	return typeUpdateColumnWorker.String()
 }
 
-func (w *updateColumnWorker) GetTask() (*BackfillJob, error) {
+func (*updateColumnWorker) GetTask() (*BackfillJob, error) {
 	panic("[ddl] update column worker GetTask function doesn't implement")
 }
 
-func (w *updateColumnWorker) UpdateTask(job *BackfillJob) error {
+func (*updateColumnWorker) UpdateTask(*BackfillJob) error {
 	panic("[ddl] update column worker UpdateTask function doesn't implement")
 }
 
-func (w *updateColumnWorker) FinishTask(job *BackfillJob) error {
+func (*updateColumnWorker) FinishTask(*BackfillJob) error {
 	panic("[ddl] update column worker FinishTask function doesn't implement")
 }
 
