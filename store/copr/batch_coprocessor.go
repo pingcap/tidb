@@ -336,11 +336,11 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("total store count", len(stores)))
 		defer func() {
 			var cnt int
-			{
+			func() {
 				mu.Lock()
 				defer mu.Unlock()
 				cnt = len(storeTaskMap)
-			}
+			}()
 			var mpp_info string
 			if cnt != 0 {
 				mpp_info = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
@@ -356,7 +356,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 
 				var lastAny any
 				var ok bool
-				{
+				func() {
 					mu.Lock()
 					defer mu.Unlock()
 
@@ -366,7 +366,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					} else if !ok {
 						lastAny = time.Time{}
 					}
-				}
+				}()
 
 				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
 					Type:    tikvrpc.CmdMPPAlive,
@@ -381,12 +381,12 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 						errMsg = err.Error()
 					}
 					logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
-					{
+					func() {
 						mu.Lock()
 						defer mu.Unlock()
 
 						mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
-					}
+					}()
 					return
 				}
 
@@ -397,7 +397,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 
 				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
 
-				{
+				func() {
 					mu.Lock()
 					defer mu.Unlock()
 
@@ -408,7 +408,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					}
 					minMppVersion = mathutil.Min(minMppVersion, mppVersion)
 					maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
-				}
+				}()
 			}(i)
 		}
 		wg.Wait()
