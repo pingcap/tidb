@@ -93,7 +93,6 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	success := worker.HandleTask(task)
 	require.True(t, success)
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
-	require.Equal(t, prHandle.GetTaskStatus().GetFinishedTaskStatusLen(), 1)
 	// assert memory task consumed
 	require.Len(t, prHandle.GetTasks(), 0)
 
@@ -117,7 +116,6 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	success = worker.HandleTask(task)
 	require.True(t, success)
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
-	require.Equal(t, prHandle.GetTaskStatus().GetFinishedTaskStatusLen(), 1)
 	// assert capture * task still remained
 	require.Len(t, prHandle.GetTasks(), 1)
 }
