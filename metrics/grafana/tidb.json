@@ -17891,7 +17891,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Panel Title",
+          "title": "GOGC",
           "tooltip": {
             "shared": true,
             "sort": 0,
