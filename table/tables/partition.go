@@ -962,6 +962,29 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 	return colNames
 }
 
+// GetPartitionColumnIDs returns the column IDs from the partition expression
+// TODO: refactor and have the column ids or a hash on PartitionInfo instead
+func (t *partitionedTable) GetPartitionColumnIDs() map[int64]struct{} {
+	var ids map[int64]struct{}
+	meta := t.Meta()
+	pi := meta.Partition
+	if len(pi.Columns) > 0 {
+		ids = make(map[int64]struct{}, len(pi.Columns))
+		for _, name := range pi.Columns {
+			col := table.FindColLowerCase(t.Cols(), name.L)
+			ids[col.ID] = struct{}{}
+		}
+		return ids
+	}
+
+	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
+	ids = make(map[int64]struct{}, len(partitionCols))
+	for _, col := range partitionCols {
+		ids[col.ID] = struct{}{}
+	}
+	return ids
+}
+
 // PartitionRecordKey is exported for test.
 func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
