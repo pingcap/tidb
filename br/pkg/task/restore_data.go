@@ -80,7 +80,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 
-
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
