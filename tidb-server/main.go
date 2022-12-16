@@ -46,6 +46,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -210,6 +211,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+	resourcemanager.GlobalResourceManager.Start()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -223,6 +225,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
+		resourcemanager.GlobalResourceManager.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
