@@ -25,5 +25,9 @@ go_test(
     name = "aws_test",
     srcs = ["ebs_test.go"],
     embed = [":aws"],
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_stretchr_testify//require",
+    ],
 )
