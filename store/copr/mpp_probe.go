@@ -32,10 +32,14 @@ import (
 var globalMPPFailedStoreProbe *MPPFailedStoreProbe
 
 const (
-	DetectTimeoutLimit   = 2 * time.Second
-	DetectPeriod         = 3 * time.Second
-	MaxRecoveryTimeLimit = 15 * time.Minute // wait TiFlash recovery,more than MPPStoreFailTTL
-	MaxObsoletTimeLimit  = 24 * time.Hour   // no request for a long time,that might be obsoleted
+	// DetectTimeoutLimit detect timeout
+	DetectTimeoutLimit = 2 * time.Second
+	// DetectPeriod detect period
+	DetectPeriod = 3 * time.Second
+	// MaxRecoveryTimeLimit wait TiFlash recovery,more than MPPStoreFailTTL
+	MaxRecoveryTimeLimit = 15 * time.Minute
+	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
+	MaxObsoletTimeLimit = 24 * time.Hour
 )
 
 // MPPSotreState the state for MPPStore.
@@ -78,7 +82,6 @@ func (t *MPPSotreState) detect(ctx context.Context) {
 	if t.recoveryTime.IsZero() {
 		t.recoveryTime = time.Now()
 	}
-
 }
 
 func (t *MPPSotreState) isRecovery(ctx context.Context, recoveryTTL time.Duration) bool {
@@ -180,9 +183,9 @@ func (t *MPPFailedStoreProbe) Run() {
 			time.Sleep(time.Second)
 		}
 	}()
-
 }
 
+// Delete clean store from failed map
 func (t *MPPFailedStoreProbe) Delete(address string) {
 	metrics.TiFlashFailedMPPStoreState.DeleteLabelValues(address)
 	t.failedMPPStores.Delete(address)
