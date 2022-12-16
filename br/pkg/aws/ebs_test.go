@@ -73,6 +73,6 @@ func TestHandleDescribeVolumesResponse(t *testing.T) {
 
 	e := &EC2Session{}
 	createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(curentVolumesStates)
-	require.Equal(t, 4, createdVolumeSize)
+	require.Equal(t, int64(4), createdVolumeSize)
 	require.Equal(t, 1, len(unfinishedVolumes))
 }
