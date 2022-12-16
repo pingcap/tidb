@@ -341,7 +341,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				defer mu.Unlock()
 				cnt = len(storeTaskMap)
 			}
-			mpp_info := "none"
+			var mpp_info string
 			if cnt != 0 {
 				mpp_info = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
 			}
@@ -356,15 +356,17 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 
 				var lastAny any
 				var ok bool
-				mu.Lock()
-				if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
-					// The interval time is so short that may happen in a same query, so we needn't to check again.
-					mu.Unlock()
-					return
-				} else if !ok {
-					lastAny = time.Time{}
+				{
+					mu.Lock()
+					defer mu.Unlock()
+
+					if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
+						// The interval time is so short that may happen in a same query, so we needn't to check again.
+						return
+					} else if !ok {
+						lastAny = time.Time{}
+					}
 				}
-				mu.Unlock()
 
 				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
 					Type:    tikvrpc.CmdMPPAlive,
@@ -379,9 +381,12 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 						errMsg = err.Error()
 					}
 					logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
-					mu.Lock()
-					mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
-					mu.Unlock()
+					{
+						mu.Lock()
+						defer mu.Unlock()
+
+						mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
+					}
 					return
 				}
 
@@ -392,15 +397,18 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 
 				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
 
-				mu.Lock()
-				defer mu.Unlock()
-				storeTaskMap[s.StoreID()] = &batchCopTask{
-					storeAddr: s.GetAddr(),
-					cmdType:   originalTasks[0].cmdType,
-					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+				{
+					mu.Lock()
+					defer mu.Unlock()
+
+					storeTaskMap[s.StoreID()] = &batchCopTask{
+						storeAddr: s.GetAddr(),
+						cmdType:   originalTasks[0].cmdType,
+						ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+					}
+					minMppVersion = mathutil.Min(minMppVersion, mppVersion)
+					maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
 				}
-				minMppVersion = mathutil.Min(minMppVersion, mppVersion)
-				maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
 			}(i)
 		}
 		wg.Wait()
