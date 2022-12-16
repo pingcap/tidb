@@ -333,12 +333,14 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
-		logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("original store count", len(stores)))
+		logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("total store count", len(stores)))
 		defer func() {
 			var cnt int
-			mu.Lock()
-			cnt = len(storeTaskMap)
-			mu.Unlock()
+			{
+				mu.Lock()
+				defer mu.Unlock()
+				cnt = len(storeTaskMap)
+			}
 			mpp_info := "none"
 			if cnt != 0 {
 				mpp_info = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
@@ -388,6 +390,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					return
 				}
 
+				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
+
 				mu.Lock()
 				defer mu.Unlock()
 				storeTaskMap[s.StoreID()] = &batchCopTask{
@@ -395,7 +399,6 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					cmdType:   originalTasks[0].cmdType,
 					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
 				}
-				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
 				minMppVersion = mathutil.Min(minMppVersion, mppVersion)
 				maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
 			}(i)

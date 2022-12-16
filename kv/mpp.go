@@ -30,7 +30,7 @@ const (
 
 	// MppVersionV1 supports TiFlash version [v6.6.0, ~]
 	// Features: data compression in exchange operator;
-	MppVersionV1             int64  = 1 << 10
+	MppVersionV1             int64  = 1000
 	MppVersionV1StoreVersion string = "6.6.0"
 
 	// MppVersionV2 int64 = MppVersionV1 * 2
