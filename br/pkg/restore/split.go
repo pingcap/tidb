@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -438,6 +439,8 @@ type LogSplitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*RewriteRules
 	client        split.SplitClient
+	pool          *utils.WorkerPool
+	eg            *errgroup.Group
 }
 
 func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) *LogSplitHelper {
@@ -445,17 +448,20 @@ func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) 
 		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
+		pool:          utils.NewWorkerPool(16, "split region"),
+		eg:            nil,
 	}
 }
 
 const splitFileThreshold = 1024 * 1024 // 1 MB
 
-func checkFile(file *backuppb.DataFileInfo) bool {
-	return !(file.Length < splitFileThreshold || file.IsMeta)
+func (helper *LogSplitHelper) skipFile(file *backuppb.DataFileInfo) bool {
+	_, exist := helper.rules[file.TableId]
+	return file.Length < splitFileThreshold || file.IsMeta || !exist
 }
 
 func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
-	if !checkFile(file) {
+	if helper.skipFile(file) {
 		return
 	}
 	splitHelper, exist := helper.tableSplitter[file.TableId]
@@ -475,7 +481,7 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 
 type splitFunc = func(context.Context, *RegionSplitter, uint64, *split.RegionInfo, []split.Valued) ([]*split.RegionInfo, error)
 
-func splitRegionByPoints(
+func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
 	regionSplitter *RegionSplitter,
 	initialLength uint64,
@@ -497,21 +503,28 @@ func splitRegionByPoints(
 		length += v.Value
 	}
 
+	if len(splitPoints) == 0 {
+		return nil, nil
+	}
+
 	newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
 	if errSplit != nil {
-		log.Warn("failed split regions")
+		log.Warn("failed to split regions by the scaned region, retry...")
 		_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
-		ranges := make([]rtree.Range, 0)
+		ranges := make([]rtree.Range, 0, len(splitPoints))
 		for _, point := range splitPoints {
 			ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
 			startKey = point
 		}
-		return nil, regionSplitter.Split(ctx, ranges, nil, false, func([][]byte) {})
+		helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
+			return regionSplitter.Split(ctx, ranges, nil, false, func([][]byte) {})
+		})
 	}
-
+	log.Info("split the region", zap.Uint64("region-id", region.Region.Id), zap.Int("split-point-number", len(splitPoints)))
 	return newRegions, nil
 }
 
+// GetRewriteTableID gets rewrite table id by the rewrite rule and original table id
 func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
 	tableKey := tablecodec.EncodeTablePrefix(tableID)
 	rule := matchOldPrefix(tableKey, rewriteRules)
@@ -522,6 +535,7 @@ func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
 	return tablecodec.DecodeTableID(tableKey)
 }
 
+// SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region
 func SplitPoint(
 	ctx context.Context,
 	tableID int64,
@@ -537,11 +551,13 @@ func SplitPoint(
 		vEndKey   []byte = nil
 		endKey    []byte = codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(tableID+1))
 
+		// scatterRegions is the region array that will be scattered
 		scatterRegions []*split.RegionInfo = make([]*split.RegionInfo, 0)
 		regionSplitter *RegionSplitter     = NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
+		// the region buffer of each scan
 		regions     []*split.RegionInfo = nil
 		regionIndex int                 = 0
 	)
@@ -549,14 +565,17 @@ func SplitPoint(
 	var (
 		// range span   +----------------+------+---+-------------+
 		// region span    +------------------------------------+
-		//                +initial length+          +end length+
+		//                +initial length+          +end valued+
+		// regionValueds is the ranges array overlapped with `regionInfo`
+		regionValueds []split.Valued = nil
+		// regionInfo is the region to be split
+		regionInfo *split.RegionInfo = nil
 		// intialLength is the length of the part of the first range overlapped with the region
-		regionValueds []split.Valued    = nil
-		regionInfo    *split.RegionInfo = nil
-		initialLength uint64            = 0
+		initialLength uint64 = 0
 	)
 	// range status
 	var (
+		// regionOverCount is the number of regions overlapped with the range
 		regionOverCount uint64 = 0
 	)
 
@@ -564,6 +583,7 @@ func SplitPoint(
 		if v.Value == 0 {
 			return true
 		}
+		// use `vStartKey` and `vEndKey` to compare with region's key
 		vStartKey, vEndKey, err = GetRewriteEncodedKeys(v, rewriteRules)
 		if err != nil {
 			return false
@@ -584,10 +604,13 @@ func SplitPoint(
 			if regionIndex >= len(regions) {
 				var startKey []byte
 				if len(regions) > 0 {
+					// has traversed over the region buffer, should scan from the last region's end-key of the region buffer
 					startKey = regions[len(regions)-1].Region.EndKey
 				} else {
+					// scan from the range's start-key
 					startKey = vStartKey
 				}
+				// scan at most 128 regions into the region buffer
 				regions, err = split.ScanRegionsWithRetry(ctx, client, startKey, endKey, 128)
 				if err != nil {
 					return false
@@ -598,7 +621,9 @@ func SplitPoint(
 			region := regions[regionIndex]
 			// this region must be overlapped with the range
 			regionOverCount++
-			// 1. over the value key
+			// the region is the last one overlapped with the range,
+			// should split the last recorded region,
+			// and then record this region as the region to be split
 			if bytes.Compare(vEndKey, region.Region.EndKey) < 0 {
 				endLength := v.Value / regionOverCount
 				if len(regionValueds) > 0 && regionInfo != region {
@@ -616,6 +641,7 @@ func SplitPoint(
 					regionValueds = make([]split.Valued, 0)
 				}
 				if regionOverCount == 1 {
+					// the region completely contains the range
 					regionValueds = append(regionValueds, split.Valued{
 						Key: split.Span{
 							StartKey: vStartKey,
@@ -624,6 +650,7 @@ func SplitPoint(
 						Value: v.Value,
 					})
 				} else {
+					// the region is overlapped with the last part of the range
 					initialLength = endLength
 				}
 				regionInfo = region
@@ -659,14 +686,14 @@ func SplitPoint(
 	return nil
 }
 
-func (helper *LogSplitHelper) Split(
-	ctx context.Context,
-) error {
+func (helper *LogSplitHelper) Split(ctx context.Context) error {
+	var ectx context.Context
+	helper.eg, ectx = errgroup.WithContext(ctx)
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
 		rewriteRule, exists := helper.rules[tableID]
 		if !exists {
-			log.Info("no rule. pass.", zap.Int64("tableID", tableID))
+			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
 			continue
 		}
 		newTableID := GetRewriteTableID(tableID, rewriteRule)
@@ -674,10 +701,12 @@ func (helper *LogSplitHelper) Split(
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
 		}
-		if err := SplitPoint(ctx, newTableID, splitter, helper.client, rewriteRule, splitRegionByPoints); err != nil {
+		if err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints); err != nil {
 			return errors.Trace(err)
 		}
-
+	}
+	if err := helper.eg.Wait(); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil

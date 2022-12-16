@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 package split
 
 import (
@@ -46,10 +46,12 @@ func (v Valued) Less(other btree.Item) bool {
 	return bytes.Compare(v.Key.StartKey, other.(Valued).Key.StartKey) < 0
 }
 
+// implement for `AppliedFile`
 func (v Valued) GetStartKey() []byte {
 	return v.Key.StartKey
 }
 
+// implement for `AppliedFile`
 func (v Valued) GetEndKey() []byte {
 	return v.Key.EndKey
 }
@@ -59,26 +61,23 @@ type SplitHelper struct {
 	inner *btree.BTree
 }
 
-// NewFullWith creates a set of a subset of spans.
+// NewSplitHelper creates a set of a subset of spans, with the full key space as initial status
 func NewSplitHelper() *SplitHelper {
 	t := btree.New(16)
 	t.ReplaceOrInsert(Valued{Value: 0, Key: Span{StartKey: []byte(""), EndKey: []byte("")}})
 	return &SplitHelper{inner: t}
 }
 
-func (f *SplitHelper) Len() int {
-	return f.inner.Len()
-}
-
 func (f *SplitHelper) Merge(val Valued) {
 	if len(val.Key.StartKey) == 0 || len(val.Key.EndKey) == 0 {
 		return
 	}
-	overlaps := make([]Valued, 0, 16)
+	overlaps := make([]Valued, 0, 8)
 	f.overlapped(val.Key, &overlaps)
 	f.mergeWithOverlap(val, overlaps)
 }
 
+// traverse the items in ascend order
 func (f *SplitHelper) Traverse(m func(Valued) bool) {
 	f.inner.Ascend(func(item btree.Item) bool {
 		return m(item.(Valued))
@@ -94,13 +93,19 @@ func (f *SplitHelper) mergeWithOverlap(val Valued, overlapped []Valued) {
 
 	for _, r := range overlapped {
 		f.inner.Delete(r)
-		// Assert All overlapped ranges are deleted.
 	}
+	// Assert All overlapped ranges are deleted.
 
+	// the new valued item's Value is equally dividedd into `len(overlapped)` shares
 	appendSize := val.Value / uint64(len(overlapped))
 	var (
-		rightTrail      *Valued
-		leftTrail       *Valued
+		rightTrail *Valued
+		leftTrail  *Valued
+		// overlapped ranges   +-------------+----------+
+		// new valued item             +-------------+
+		//                     a       b     c       d  e
+		// the part [a,b] is `standalone` because it is not overlapped with the new valued item
+		// the part [a,b] and [b,c] are `split` because they are from range [a,c]
 		emitToCollected = func(rng Valued, standalone bool, split bool) {
 			merged := rng.Value
 			if split {
@@ -131,6 +136,12 @@ func (f *SplitHelper) mergeWithOverlap(val Valued, overlapped []Valued) {
 		}
 		overlapped[len(overlapped)-1].Key.EndKey = val.Key.EndKey
 		if len(overlapped) == 1 && leftTrail != nil {
+			//                      (split)   (split)     (split)
+			// overlapped ranges   +-----------------------------+
+			// new valued item             +-------------+
+			//                     a       b             c       d
+			// now the overlapped range should be divided into 3 equal parts
+			// so modify the value to the 2/3x to be compatible with function `emitToCollected`
 			val := rightTrail.Value * 2 / 3
 			leftTrail.Value = val
 			overlapped[0].Value = val
@@ -162,7 +173,7 @@ func (f *SplitHelper) overlapped(k Span, result *[]Valued) {
 
 	f.inner.AscendGreaterOrEqual(Valued{Key: first}, func(item btree.Item) bool {
 		r := item.(Valued)
-		if !Overlaps(r.Key, k) {
+		if !checkOverlaps(r.Key, k) {
 			return false
 		}
 		*result = append(*result, r)
@@ -170,10 +181,11 @@ func (f *SplitHelper) overlapped(k Span, result *[]Valued) {
 	})
 }
 
-// Overlaps checks whether two spans have overlapped part.
-func Overlaps(a, append Span) bool {
+// checkOverlaps checks whether two spans have overlapped part.
+// `ap` should be a finite range
+func checkOverlaps(a, ap Span) bool {
 	if len(a.EndKey) == 0 {
-		return bytes.Compare(append.EndKey, a.StartKey) > 0
+		return bytes.Compare(ap.EndKey, a.StartKey) > 0
 	}
-	return bytes.Compare(a.StartKey, append.EndKey) < 0 && bytes.Compare(append.StartKey, a.EndKey) < 0
+	return bytes.Compare(a.StartKey, ap.EndKey) < 0 && bytes.Compare(ap.StartKey, a.EndKey) < 0
 }
