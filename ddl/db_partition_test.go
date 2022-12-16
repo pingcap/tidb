@@ -4610,6 +4610,7 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (30),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
+	tk.MustExec("admin check table t")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(10) unsigned NOT NULL,\n" +
