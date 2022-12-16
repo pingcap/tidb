@@ -14,28 +14,60 @@
 package aws
 
 import (
+	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/stretchr/testify/require"
 )
 
+func str2Ptr(str string) *string {
+	return &str
+}
+
 func TestEC2SessionExtractSnapProgress(t *testing.T) {
-	strPtr := func(s string) *string {
-		return &s
-	}
 	tests := []struct {
 		str  *string
 		want int64
 	}{
 		{nil, 0},
-		{strPtr("12.12%"), 12},
-		{strPtr("44.99%"), 44},
-		{strPtr("  89.89%  "), 89},
-		{strPtr("100%"), 100},
-		{strPtr("111111%"), 100},
+		{str2Ptr("12.12%"), 12},
+		{str2Ptr("44.99%"), 44},
+		{str2Ptr("  89.89%  "), 89},
+		{str2Ptr("100%"), 100},
+		{str2Ptr("111111%"), 100},
 	}
 	e := &EC2Session{}
 	for _, tt := range tests {
 		require.Equal(t, tt.want, e.extractSnapProgress(tt.str))
 	}
+}
+
+func createVolume(snapshotId string, volumeId string, state string) *ec2.Volume {
+	return &ec2.Volume{
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, str2Ptr(snapshotId), str2Ptr(state), nil, nil, str2Ptr(volumeId), nil,
+	}
+}
+func TesHandleDescribeVolumesRespose(t *testing.T) {
+
+	curentVolumesStates := &ec2.DescribeVolumesOutput{
+		NextToken: str2Ptr("fake token"),
+		Volumes: []*ec2.Volume{
+			createVolume("snap-0873674883", "vol-98768979", "available"),
+			createVolume("snap-0873674883", "vol-98768979", "creating"),
+			createVolume("snap-0873674883", "vol-98768979", "available"),
+			createVolume("snap-0873674883", "vol-98768979", "available"),
+			createVolume("snap-0873674883", "vol-98768979", "available"),
+		},
+	}
+
+	mockGlue := &gluetidb.MockGlue{}
+	ctx, _ := context.WithCancel(context.Background())
+	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(5), false)
+
+	e := &EC2Session{}
+	createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesRespose(curentVolumesStates, fakeProgress)
+	require.Equal(t, 4, createdVolumeSize)
+	require.Equal(t, 1, unfinishedVolumes)
 }
