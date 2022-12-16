@@ -14,12 +14,10 @@
 package aws
 
 import (
-	"context"
 	"testing"
 
 	awsapi "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,12 +57,8 @@ func TestHandleDescribeVolumesResponse(t *testing.T) {
 		},
 	}
 
-	mockGlue := &gluetidb.MockGlue{}
-	ctx, _ := context.WithCancel(context.Background())
-	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(5), false)
-
 	e := &EC2Session{}
-	createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(curentVolumesStates, fakeProgress)
+	createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(curentVolumesStates)
 	require.Equal(t, 4, createdVolumeSize)
 	require.Equal(t, 1, len(unfinishedVolumes))
 }
