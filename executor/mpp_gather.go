@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+
 	// "github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,10 +44,10 @@ func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader
 type MPPGather struct {
 	// following fields are construct needed
 	baseExecutor
-	is                 infoschema.InfoSchema
-	originalPlan       plannercore.PhysicalPlan
-	startTS            uint64
-	MppVersion         int64
+	is           infoschema.InfoSchema
+	originalPlan plannercore.PhysicalPlan
+	startTS      uint64
+	MppVersion   int64
 	// ExchangeSenderMeta *mpp.ExchangeSenderMeta
 
 	mppReqs []*kv.MPPDispatchRequest
@@ -80,11 +81,12 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
 			zap.Int64("mpp-version", mppTask.MppVersion),
-			zap.String("exchange-sender", pf.ExchangeSender.ExchangeSenderMeta.String()),
+			zap.String("exchange-compress-method", (pf.ExchangeSender.ExchangeSenderMeta.GetCompress().String())),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:               pbData,
@@ -95,7 +97,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			SchemaVar:          e.is.SchemaMetaVersion(),
 			StartTs:            e.startTS,
 			State:              kv.MppTaskReady,
-			MppVersion:         e.MppVersion,
+			MppVersion:         mppTask.MppVersion,
 			ExchangeSenderMeta: pf.ExchangeSender.ExchangeSenderMeta,
 		}
 		e.mppReqs = append(e.mppReqs, req)

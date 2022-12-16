@@ -2139,7 +2139,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.statsInfo())
 
 	sender.MppVersion = ctx.GetMPPClient().GetClusterMinMppVersion().Load()
-	sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{Compress: mpp.CompressMethod_NONE}
+	// sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{Compress: mpp.CompressMethod_NONE}
 
 	sender.SetChildren(t.p)
 
@@ -2209,8 +2209,10 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		minMppVersion := ctx.GetMPPClient().GetClusterMinMppVersion().Load()
 		sender.MppVersion = minMppVersion
 		if sender.MppVersion != kv.MppVersionV0 {
-			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
-				Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
+			if sender.ExchangeType == tipb.ExchangeType_Hash {
+				sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
+					Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
+				}
 			}
 		}
 	}

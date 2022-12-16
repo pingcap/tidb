@@ -1509,7 +1509,7 @@ type PhysicalExchangeSender struct {
 	Tasks              []*kv.MPPTask
 	MppVersion         int64
 	ExchangeSenderMeta *mpp.ExchangeSenderMeta
-	TZGID              int64
+	// TZGID              int64
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1524,7 +1524,7 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.HashCols = p.HashCols
 	np.MppVersion = p.MppVersion
 	np.ExchangeSenderMeta = proto.Clone(p.ExchangeSenderMeta).(*mpp.ExchangeSenderMeta)
-	np.TZGID = p.TZGID
+	// np.TZGID = p.TZGID
 	return np, nil
 }
 
