@@ -17,7 +17,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
+	awsapi "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/stretchr/testify/require"
@@ -29,11 +29,11 @@ func TestEC2SessionExtractSnapProgress(t *testing.T) {
 		want int64
 	}{
 		{nil, 0},
-		{aws.String("12.12%"), 12},
-		{aws.String("44.99%"), 44},
-		{aws.String("  89.89%  "), 89},
-		{aws.String("100%"), 100},
-		{aws.String("111111%"), 100},
+		{awsapi.String("12.12%"), 12},
+		{awsapi.String("44.99%"), 44},
+		{awsapi.String("  89.89%  "), 89},
+		{awsapi.String("100%"), 100},
+		{awsapi.String("111111%"), 100},
 	}
 	e := &EC2Session{}
 	for _, tt := range tests {
@@ -43,13 +43,13 @@ func TestEC2SessionExtractSnapProgress(t *testing.T) {
 
 func createVolume(snapshotId string, volumeId string, state string) *ec2.Volume {
 	return &ec2.Volume{
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, aws.Int64(1), aws.String(snapshotId), aws.String(state), nil, nil, aws.String(volumeId), nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, awsapi.Int64(1), awsapi.String(snapshotId), awsapi.String(state), nil, nil, awsapi.String(volumeId), nil,
 	}
 }
 func TestHandleDescribeVolumesResponse(t *testing.T) {
 
 	curentVolumesStates := &ec2.DescribeVolumesOutput{
-		NextToken: aws.String("fake token"),
+		NextToken: awsapi.String("fake token"),
 		Volumes: []*ec2.Volume{
 			createVolume("snap-0873674883", "vol-98768979", "available"),
 			createVolume("snap-0873674883", "vol-98768979", "creating"),
