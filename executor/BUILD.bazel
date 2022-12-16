@@ -125,6 +125,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//parser/tidb",
         "//parser/types",
         "//planner",
         "//planner/core",
@@ -183,6 +184,7 @@ go_library(
         "//util/plancodec",
         "//util/printer",
         "//util/ranger",
+        "//util/replayer",
         "//util/resourcegrouptag",
         "//util/rowDecoder",
         "//util/rowcodec",
@@ -247,7 +249,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "long",
+    timeout = "moderate",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
@@ -410,6 +412,7 @@ go_test(
         "//util/pdapi",
         "//util/plancodec",
         "//util/ranger",
+        "//util/replayer",
         "//util/rowcodec",
         "//util/set",
         "//util/sqlexec",

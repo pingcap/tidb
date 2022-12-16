@@ -16,7 +16,9 @@ package variable
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -749,10 +751,10 @@ const (
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
-	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
-	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
-	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
-	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -780,6 +782,9 @@ const (
 
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
+
+	// TiDBEnablePlanReplayerContinuesCapture indicates whether to enable continues capture
+	TiDBEnablePlanReplayerContinuesCapture = "tidb_enable_plan_replayer_continues_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -879,10 +884,22 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
+	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
+	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
+	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowEndTime = "tidb_ttl_job_schedule_window_end_time"
+	// TiDBTTLScanWorkerCount indicates the count of the scan workers in each TiDB node
+	TiDBTTLScanWorkerCount = "tidb_ttl_scan_worker_count"
+	// TiDBTTLDeleteWorkerCount indicates the count of the delete workers in each TiDB node
+	TiDBTTLDeleteWorkerCount = "tidb_ttl_delete_worker_count"
 	// PasswordReuseHistory limit a few passwords to reuse.
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
 )
 
 // TiDB intentional limits
@@ -1100,8 +1117,8 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableGeneralPlanCache                  = false
-	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1131,13 +1148,19 @@ const (
 	DefTiDBTTLScanBatchSize                          = 500
 	DefTiDBTTLScanBatchMaxSize                       = 10240
 	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 500
+	DefTiDBTTLDeleteBatchSize                        = 100
 	DefTiDBTTLDeleteBatchMaxSize                     = 10240
 	DefTiDBTTLDeleteBatchMinSize                     = 1
 	DefTiDBTTLDeleteRateLimit                        = 0
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
+	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
 )
 
 // Process global variables.
@@ -1205,9 +1228,16 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
+	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
+	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 )
 
 var (
@@ -1239,4 +1269,22 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
+}
+
+func mustParseDuration(str string) time.Duration {
+	duration, err := time.ParseDuration(str)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not a duration", str))
+	}
+
+	return duration
+}
+
+func mustParseTime(layout string, str string) time.Time {
+	time, err := time.ParseInLocation(layout, str, time.UTC)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not in %s duration format", str, layout))
+	}
+
+	return time
 }
