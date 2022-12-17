@@ -734,8 +734,7 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 
 	// Note that auto_id_cache=1 use a different implementation, switch between them is not allowed.
 	// TODO: relax this restriction and update the test case.
-	_, err = tk.Exec("alter table t_473 auto_id_cache = 1")
-	require.Error(t, err)
+	tk.MustExecToErr("alter table t_473 auto_id_cache = 1")
 }
 
 func TestMockAutoIDServiceError(t *testing.T) {
@@ -762,8 +761,9 @@ func TestIssue39528(t *testing.T) {
 	ctx := context.Background()
 	var codeRun bool
 	ctx = context.WithValue(ctx, "testIssue39528", &codeRun)
-	_, err := tk.ExecWithContext(ctx, "insert into issue39528 values ()")
+	rs, err := tk.ExecWithContext(ctx, "insert into issue39528 values ()")
 	require.NoError(t, err)
 	// Make sure the code does not visit tikv on allocate path.
 	require.False(t, codeRun)
+	require.NoError(t, rs.Close())
 }
