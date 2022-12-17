@@ -1467,8 +1467,8 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 			case tikv.Storage:
 				logCount++
 				s.GetRegionCache().InvalidateTiFlashComputeStores()
-				if logCount == 60 {
-					// Print log every 60*duration seconds.
+				if logCount == 6 {
+					// Print log every 6*duration seconds.
 					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
 					logCount = 0
 				}
