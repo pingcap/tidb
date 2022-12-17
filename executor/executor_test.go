@@ -4852,15 +4852,11 @@ func TestSQLMode(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a tinyint not null)")
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
-	_, err := tk.Exec("insert t values ()")
-	require.Error(t, err)
-
-	_, err = tk.Exec("insert t values ('1000')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t values ()")
+	tk.ExecToErr("insert t values ('1000')")
 
 	tk.MustExec("create table if not exists tdouble (a double(3,2))")
-	_, err = tk.Exec("insert tdouble values (10.23)")
-	require.Error(t, err)
+	tk.ExecToErr("insert tdouble values (10.23)")
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
@@ -4888,8 +4884,7 @@ func TestSQLMode(t *testing.T) {
 	tk2.MustQuery("select * from t2").Check(testkit.Rows("abc"))
 
 	// session1 is still in strict mode.
-	_, err = tk.Exec("insert t2 values ('abcd')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t2 values ('abcd')")
 	// Restore original global strict mode.
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
