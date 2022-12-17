@@ -103,8 +103,9 @@ type bytesLimits struct {
 }
 
 // InitTracker initializes a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
 	t.mu.children = nil
@@ -122,8 +123,9 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 }
 
 // NewTracker creates a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
@@ -422,9 +424,16 @@ func (t *Tracker) Release(bytes int64) {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
+				defer func() {
+					if r := recover(); r != nil {
+						metrics.MemoryGCAwareCounter.WithLabelValues("panic").Inc()
+					}
+				}()
 				tracker.release(bytes)
+				metrics.MemoryGCAwareCounter.WithLabelValues("release").Inc()
 			})
 			tracker.recordRelease(bytes)
+			metrics.MemoryGCAwareCounter.WithLabelValues("record").Inc()
 			return
 		}
 	}

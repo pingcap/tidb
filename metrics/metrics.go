@@ -85,6 +85,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
 
 	prometheus.MustRegister(AutoAnalyzeCounter)
+	prometheus.MustRegister(MemoryGCAwareCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)

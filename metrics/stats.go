@@ -37,6 +37,14 @@ var (
 			Help:      "Counter of auto analyze.",
 		}, []string{LblType})
 
+	MemoryGCAwareCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "gcaware",
+			Help:      "Counter of gc aware memory record.",
+		}, []string{LblType})
+
 	StatsInaccuracyRate = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
