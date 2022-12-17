@@ -16,13 +16,16 @@ package session
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -36,18 +39,22 @@ type Session interface {
 	ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
 	RunInTxn(ctx context.Context, fn func() error) (err error)
+	// ResetWithGlobalTimeZone resets the session time zone to global time zone
+	ResetWithGlobalTimeZone(ctx context.Context) error
 	// Close closes the session
 	Close()
+	// Now returns the current time in location specified by session var
+	Now() time.Time
 }
 
 type session struct {
 	sessionctx.Context
 	sqlExec sqlexec.SQLExecutor
-	closeFn func()
+	closeFn func(Session)
 }
 
 // NewSession creates a new Session
-func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func()) Session {
+func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func(Session)) Session {
 	return &session{
 		Context: sctx,
 		sqlExec: sqlExec,
@@ -88,15 +95,20 @@ func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 
 // RunInTxn executes the specified function in a txn
 func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
-	if _, err = s.ExecuteSQL(ctx, "BEGIN"); err != nil {
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+
+	tracer.EnterPhase(metrics.PhaseBeginTxn)
+	if _, err = s.ExecuteSQL(ctx, "BEGIN OPTIMISTIC"); err != nil {
 		return err
 	}
+	tracer.EnterPhase(metrics.PhaseOther)
 
 	success := false
 	defer func() {
 		if !success {
-			_, err = s.ExecuteSQL(ctx, "ROLLBACK")
-			terror.Log(err)
+			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			terror.Log(rollbackErr)
 		}
 	}()
 
@@ -104,20 +116,48 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 		return err
 	}
 
+	tracer.EnterPhase(metrics.PhaseCommitTxn)
 	if _, err = s.ExecuteSQL(ctx, "COMMIT"); err != nil {
 		return err
 	}
+	tracer.EnterPhase(metrics.PhaseOther)
 
 	success = true
+	return err
+}
+
+// ResetWithGlobalTimeZone resets the session time zone to global time zone
+func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
+	sessVar := s.GetSessionVars()
+	globalTZ, err := sessVar.GetGlobalSystemVar(ctx, variable.TimeZone)
+	if err != nil {
+		return err
+	}
+
+	tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, variable.TimeZone)
+	if err != nil {
+		return err
+	}
+
+	if globalTZ == tz {
+		return nil
+	}
+
+	_, err = s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
 }
 
 // Close closes the session
 func (s *session) Close() {
 	if s.closeFn != nil {
-		s.closeFn()
+		s.closeFn(s)
 		s.Context = nil
 		s.sqlExec = nil
 		s.closeFn = nil
 	}
+}
+
+// Now returns the current time in the location of time_zone session var
+func (s *session) Now() time.Time {
+	return time.Now().In(s.Context.GetSessionVars().Location())
 }
