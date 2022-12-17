@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/replayer"
@@ -60,6 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
@@ -2104,6 +2106,11 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&PreparedStmtCount, -1)
+			detail := ""
+			for pID, pStmt := range s.PreparedStmts {
+				detail += fmt.Sprintf("\nID: %d, stmt: %v;", pID, pStmt)
+			}
+			logutil.BgLogger().Warn("ErrMaxPreparedStmtCountReached", zap.String("detail", detail), zap.Int64("newPreparedStmtCount", newPreparedStmtCount), zap.Int64("maxPreparedStmtCount", maxPreparedStmtCount))
 			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
 		}
 		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
