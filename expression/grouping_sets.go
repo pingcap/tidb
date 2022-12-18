@@ -24,6 +24,12 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+type GroupingSets []GroupingSet
+
+type GroupingSet []GroupingExprs
+
+type GroupingExprs []Expression
+
 // Merge function will explore the internal grouping expressions and try to find the minimum grouping sets. (prefix merging)
 func (gs GroupingSets) Merge() GroupingSets {
 	// for now, there is precondition that all grouping expressions are columns.
@@ -277,12 +283,6 @@ func newGroupingSet(oneGroupingExpr GroupingExprs) GroupingSet {
 	res = append(res, oneGroupingExpr)
 	return res
 }
-
-type GroupingSets []GroupingSet
-
-type GroupingSet []GroupingExprs
-
-type GroupingExprs []Expression
 
 func (g GroupingExprs) IsEmpty() bool {
 	return len(g) == 0
