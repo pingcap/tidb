@@ -143,12 +143,6 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 		p.SetChildren(v.p)
 		v.p = p
 	case *mppTask:
-		if v.attachTaskCallBack != nil {
-			v.attachTaskCallBack(p)
-		}
-		if p == nil || v == nil || v.p == nil {
-			fmt.Println(1)
-		}
 		p.SetChildren(v.p)
 		v.p = p
 	}
@@ -1888,6 +1882,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		MppRunMode:   p.MppRunMode,
 	}.initForHash(p.ctx, p.stats, p.blockOffset, prop)
 	finalAgg.schema = finalPref.Schema
+	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
 }
 
@@ -2142,6 +2137,97 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 	return mpp
 }
 
+// scaleStats4GroupingSets scale the derived stats because the lower source has been repeated.
+//
+//	 parent OP   <- logicalAgg   <- children OP    (derived stats)
+//	                    ｜
+//	                    v
+//	parent OP   <-  physicalAgg  <- children OP    (stats  used)
+//	                    |
+//	         +----------+----------+----------+
+//	       Final       Mid     Partial    Repeat
+//
+// physical agg stats is reasonable from the whole, because repeat operator is designed to facilitate
+// the Mid and Partial Agg, which means when leaving the Final, its output rowcount could be exactly
+// the same as what it derived(estimated) before entering physical optimization phase.
+//
+// From the cost model correctness, for these inserted sub-agg and even repeat source operator, we should
+// recompute the stats for them particularly.
+//
+// for example: grouping sets {<a>},{<b>}, group by items {a,b,c,groupingID}
+// after repeat source:
+//
+//	 a,   b,   c,  groupingID
+//	...  null  c    1   ---+
+//	...  null  c    1      +------- replica group 1
+//	...  null  c    1   ---+
+//	null  ...  c    2   ---+
+//	null  ...  c    2      +------- replica group 2
+//	null  ...  c    2   ---+
+//
+// since null value is seen the same when grouping data (groupingID in one replica is always the same):
+//   - so the num of group in replica 1 is equal to NDV(a,c)
+//   - so the num of group in replica 2 is equal to NDV(b,c)
+//
+// in a summary, the total num of group of all replica is equal to = Σ:NDV(each-grouping-set-cols, normal-group-cols)
+func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.GroupingSets, groupingIDCol *expression.Column,
+	childSchema *expression.Schema, childStats *property.StatsInfo) {
+	idSets := groupingSets.AllSetsColIDs()
+	normalGbyCols := make([]*expression.Column, 0, len(p.GroupByItems))
+	for _, gbyExpr := range p.GroupByItems {
+		cols := expression.ExtractColumns(gbyExpr)
+		for _, col := range cols {
+			if !idSets.Has(int(col.UniqueID)) && col.UniqueID != groupingIDCol.UniqueID {
+				normalGbyCols = append(normalGbyCols, col)
+			}
+		}
+	}
+	sumNDV := float64(0)
+	for _, groupingSet := range groupingSets {
+		// for every grouping set, pick its cols out, and combine with normal group cols to get the NDV.
+		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = append(groupingSetCols, normalGbyCols...)
+		NDV, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		sumNDV += NDV
+	}
+	// After group operator, all same rows are grouped into one row, that means all
+	// change the sub-agg's stats
+	if p.stats != nil {
+		// equivalence to a new cloned one. (cause finalAgg and partialAgg may share a same copy of stats)
+		cpStats := p.stats.Scale(1)
+		cpStats.RowCount = sumNDV
+		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
+		for k, _ := range cpStats.ColNDVs {
+			cpStats.ColNDVs[k] = sumNDV
+		}
+		// for old groupNDV, if it's containing one more grouping set cols, just plus the NDV where the col is excluded.
+		// for example: old grouping NDV(b,c), where b is in grouping sets {<a>},{<b>}. so when countering the new NDV:
+		// cases:
+		// new grouping NDV(b,c) := old NDV(b,c) + NDV(null, c) = old NDV(b,c) + DNV(c).
+		// new grouping NDV(a,b,c) := old NDV(a,b,c) + NDV(null,b,c) + NDV(a,null,c) = old NDV(a,b,c) + NDV(b,c) + NDV(a,c)
+		allGroupingSetsIDs := groupingSets.AllSetsColIDs()
+		for _, oneGNDV := range cpStats.GroupNDVs {
+			newGNDV := oneGNDV.NDV
+			intersectionIDs := make([]int64, 0, len(oneGNDV.Cols))
+			for i, id := range oneGNDV.Cols {
+				if allGroupingSetsIDs.Has(int(id)) {
+					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
+					beforeLen := len(intersectionIDs)
+					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
+					incrementNDV, _ := getColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					newGNDV += incrementNDV
+					// restore the before intersectionIDs slice.
+					intersectionIDs = intersectionIDs[:beforeLen]
+				}
+				// insert ids one by one.
+				intersectionIDs = append(intersectionIDs, id)
+			}
+			oneGNDV.NDV = newGNDV
+		}
+		p.stats = cpStats
+	}
+}
+
 func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan, canUse3StageAgg bool,
 	groupingSets expression.GroupingSets, mpp *mppTask) (final, mid, proj1, part, proj2 PhysicalPlan, _ error) {
 	// generate 3 stage aggregation for single/multi count distinct if applicable.
@@ -2160,9 +2246,9 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	//  HashAgg sum(#1), sum(#2), sum(#3)                                           -> final agg
 	//   +- Exchange Passthrough
 	//       +- HashAgg count(distinct a) #1, count(distinct b) #2, sum(#4) #3      -> middle agg
-	//           +- Exchange HashPartition by a
+	//           +- Exchange HashPartition by a,b,groupingID
 	//               +- HashAgg count(c) #4, group by a,b,groupingID                -> partial agg
-	//                   +- RepeatSource a, b                                       -> repeat source
+	//                   +- RepeatSource {<a>}, {<b>}                               -> repeat source
 	//                       +- TableScan foo
 	//
 	// set the default expression to constant 1 for the convenience to choose default group set data.
@@ -2173,26 +2259,25 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 		// single distinct agg mode can eliminate repeatSource op insertion.
 
 		// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
-		stats := mpp.p.statsInfo().Scale(float64(len(groupingSets)))
+		// scale(len(groupingSets)) will change the NDV, while Repeat doesn't change the NDV and groupNDV.
+		stats := mpp.p.statsInfo().Scale(float64(1))
+		stats.RowCount = stats.RowCount * float64(len(groupingSets))
 
 		physicalRepeatSource := PhysicalRepeatSource{
 			GroupingSets: groupingSets,
 		}.Init(p.ctx, stats, mpp.p.SelectBlockOffset())
 
 		// generate a new column as groupingID to identify which this row is targeting for.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
 		groupingIDCol = &expression.Column{
 			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			RetType:  tp,
 		}
 		// append the physical repeatSource op with groupingID column.
 		physicalRepeatSource.SetSchema(mpp.p.Schema().Clone())
 		physicalRepeatSource.schema.Append(groupingIDCol.(*expression.Column))
 		physicalRepeatSource.GroupingIDCol = groupingIDCol.(*expression.Column)
-
-		// set attach mpp task call back, aim to expand the input rowcount of stats for upper ops.
-		//mpp.attachTaskCallBack = func(p PhysicalPlan) {
-		//	p.statsInfo().RowCount = p.statsInfo().RowCount * float64(len(groupingSets))
-		//}
 
 		// attach PhysicalRepeatSource to mpp
 		attachPlan2Task(physicalRepeatSource, mpp)
@@ -2261,6 +2346,11 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
+			cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
+			// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
+			cloneHashAgg.basePlan = newBasePlan(cloneHashAgg.ctx, cloneHashAgg.tp, cloneHashAgg.blockOffset)
+			cloneHashAgg.stats = finalAgg.Stats() // reuse the final agg stats here.
+
 			// select count(distinct a), count(distinct b), count(c) from t
 			//  final agg   : sum(#1), sum(#2), sum(#3)
 			//                |         |        +--------------------------------------------+
@@ -2289,15 +2379,19 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.
 			// Since we may substitute the first arg of normal agg with case-when expression here, append a
 			// customized proj here rather than depend on postOptimize to insert a blunt one for us.
-			partialHashAgg := partialAgg.(*PhysicalHashAgg)
-			partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
-			partialHashAgg.schema.Append(groupingIDCol.(*expression.Column))
+			//
 			// proj4Partial output all the base col from lower op + caseWhen proj cols.
 			proj4Partial := new(PhysicalProjection).Init(p.ctx, mpp.p.statsInfo(), mpp.p.SelectBlockOffset())
 			for _, col := range mpp.p.Schema().Columns {
 				proj4Partial.Exprs = append(proj4Partial.Exprs, col)
 			}
 			proj4Partial.SetSchema(mpp.p.Schema().Clone())
+
+			partialHashAgg := partialAgg.(*PhysicalHashAgg)
+			partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
+			partialHashAgg.schema.Append(groupingIDCol.(*expression.Column))
+			// it will create a new stats for partial agg.
+			partialHashAgg.scaleStats4GroupingSets(groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.statsInfo())
 			for _, fun := range partialHashAgg.AggFuncs {
 				if !fun.HasDistinct {
 					// for normal agg phase1, we should also modify them to target for specified group data.
@@ -2314,11 +2408,12 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			}
 
 			// step2: adjust middle agg
-			middleHashAgg := clonedAgg.(*PhysicalHashAgg)
+			// proj4Middle output all the base col from lower op + caseWhen proj cols.（reuse partial agg stats）
+			proj4Middle := new(PhysicalProjection).Init(p.ctx, partialHashAgg.stats, partialHashAgg.SelectBlockOffset())
+			// middleHashAgg shared the same stats with the final agg does.
+			middleHashAgg := cloneHashAgg
 			middleSchema := expression.NewSchema()
 			schemaMap := make(map[int64]*expression.Column, len(middleHashAgg.AggFuncs))
-			// proj4Middle output all the base col from lower op + caseWhen proj cols.
-			proj4Middle := new(PhysicalProjection).Init(p.ctx, partialHashAgg.stats, partialHashAgg.SelectBlockOffset())
 			for _, col := range partialHashAgg.Schema().Columns {
 				proj4Middle.Exprs = append(proj4Middle.Exprs, col)
 			}
@@ -2603,10 +2698,6 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 type mppTask struct {
 	p PhysicalPlan
 
-	// derive stats is done before physical plan enumeration, which when repeat source is inserted,
-	// the all upper layer physical op's base stats should be changed.
-	attachTaskCallBack func(PhysicalPlan)
-
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
 
@@ -2700,8 +2791,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rt := &rootTask{
-		p:                  p,
-		attachTaskCallBack: t.attachTaskCallBack,
+		p: p,
 	}
 
 	if len(t.rootTaskConds) > 0 {

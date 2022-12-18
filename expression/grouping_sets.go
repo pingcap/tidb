@@ -29,7 +29,7 @@ func (gs GroupingSets) Merge() GroupingSets {
 	// for now, there is precondition that all grouping expressions are columns.
 	// for example: (a,b,c) and (a,b) and (a) will be merged as a one.
 	// Eg:
-	// before merging, there are 3 grouping sets.
+	// before merging, there are 4 grouping sets.
 	// GroupingSets:
 	//     [
 	//         [[a,b,c],]             // every set including a grouping Expressions for initial.
@@ -38,7 +38,7 @@ func (gs GroupingSets) Merge() GroupingSets {
 	//         [[e],]
 	//     ]
 	//
-	// after merging, there is only 1 grouping set.
+	// after merging, there is only 2 grouping set.
 	// GroupingSets:
 	//     [
 	//         [[a],[a,b],[a,b,c],]   // one set including 3 grouping Expressions after merging if possible.
@@ -80,7 +80,7 @@ func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 	//                                [a,b,c,d]
 	//        when adding [a,b,c,d] grouping expr here, since it's a super-set of current [a,b] with offset 1, take the offset as 1+1.
 	//
-	//     result grouping set:  [[b], [a,b], [a,b,c,d]]， expanding with step as two or more columns is acceptable and reasonable.
+	//     result grouping set:  [[b], [a,b], [a,b,c,d]]， expanding with step with two or more columns is acceptable and reasonable.
 	//                             ｜    ｜       ｜
 	//                              +----+-------+       every previous one is the subset of the latter one.
 	//
@@ -116,7 +116,7 @@ func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 	}
 	// here means we couldn't find even one GroupingSet to fill the targetOne, creating a new one.
 	gs = append(gs, newGroupingSet(targetOne))
-	// gs is a alias of slice [], we should return it back after being changed.
+	// gs is an alias of slice [], we should return it back after being changed.
 	return gs
 }
 
@@ -136,10 +136,11 @@ func (gs GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	// as null and groupingID as 1 to guarantee group<a,b,c,ID> operator can equate to group<a,b,null,1> which is equal to group<a,b>, that's what the upper layer
 	// distinct(a,b) want for. For distinct(c), the same is true.
 	//
-	// For normal agg you better choose your targeting group-set data, otherwise, all your get is endless null values filled by repeatSource operator.
+	// For normal agg you better choose your targeting group-set data, otherwise, otherwise your get is all groups，most of them is endless null values filled by
+	// repeatSource operator, and null value can also influence your non null-strict normal agg, although you don't want them to.
 	//
 	// here we only consider 1&2 since normal agg with multi col args is banned.
-	allGroupingColIDs := gs.allSetsColIDs()
+	allGroupingColIDs := gs.AllSetsColIDs()
 	for idx, groupingSet := range gs {
 		// diffCols are those columns being filled with null in the group row data of current grouping set.
 		diffCols := allGroupingColIDs.Difference(*groupingSet.allSetColIDs())
@@ -173,6 +174,16 @@ func (gs GroupingSet) allSetColIDs() *fd.FastIntSet {
 		}
 	}
 	return &res
+}
+
+func (gs GroupingSet) ExtractCols() []*Column {
+	cols := make([]*Column, 0, len(gs))
+	for _, groupingExprs := range gs {
+		for _, one := range groupingExprs {
+			cols = append(cols, one.(*Column))
+		}
+	}
+	return cols
 }
 
 func (gs GroupingSet) Clone() GroupingSet {
@@ -228,7 +239,7 @@ func (gss GroupingSets) IsEmpty() bool {
 	return true
 }
 
-func (gss GroupingSets) allSetsColIDs() *fd.FastIntSet {
+func (gss GroupingSets) AllSetsColIDs() *fd.FastIntSet {
 	res := fd.NewFastIntSet()
 	for _, groupingSet := range gss {
 		res.UnionWith(*groupingSet.allSetColIDs())
