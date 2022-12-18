@@ -50,5 +50,4 @@ func TestParseQueryies(t *testing.T) {
 	q = query{Query: "--abc select * from t;"}
 	_, err := ParseQueries(q)
 	assertEqual(t, err, ErrInvalidCommand, fmt.Sprintf("Expected: %v, got %v", ErrInvalidCommand, err))
-
 }

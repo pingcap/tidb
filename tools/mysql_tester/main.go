@@ -627,6 +627,7 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 		}
 
 		if !bytes.Equal(gotBuf, buf) {
+			//nolint:revive,all_revive
 			return errors.Trace(errors.Errorf("run \"%v\" around line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 		}
 	}
@@ -641,7 +642,6 @@ func syntaxError(err error) error {
 }
 
 func (t *tester) stmtExecute(query query, st ast.StmtNode) (err error) {
-
 	var qText string
 	if t.singleQuery {
 		qText = query.Query
@@ -687,15 +687,14 @@ func (t *tester) stmtExecute(query query, st ast.StmtNode) (err error) {
 		if err != nil {
 			t.rollback()
 			return err
-		} else {
-			commitErr := t.commit()
-			if err == nil && commitErr != nil {
-				err = commitErr
-			}
-			if commitErr != nil {
-				t.rollback()
-				return err
-			}
+		}
+		commitErr := t.commit()
+		if err == nil && commitErr != nil {
+			err = commitErr
+		}
+		if commitErr != nil {
+			t.rollback()
+			return err
 		}
 	}
 	return err
@@ -740,6 +739,7 @@ func (t *tester) execute(query query) error {
 			}
 
 			if !bytes.Equal(gotBuf, buf) {
+				//nolint:revive,all_revive
 				return errors.Trace(errors.Errorf("failed to run query \n\"%v\" \n around line %d, \nwe need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 			}
 		}
@@ -886,12 +886,11 @@ func (t *tester) executeStmt(query string) error {
 		}
 
 		return t.writeQueryResult(rows)
-	} else {
-		// TODO: rows affected and last insert id
-		_, err := t.tx.Exec(query)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	}
+	// TODO: rows affected and last insert id
+	_, err := t.tx.Exec(query)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -1147,7 +1146,6 @@ func main() {
 		}
 		// Can't delete this statement.
 		os.Exit(1)
-	} else {
-		println("Great, All tests passed")
 	}
+	println("Great, All tests passed")
 }
