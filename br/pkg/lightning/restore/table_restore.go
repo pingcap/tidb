@@ -250,7 +250,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := estimateCompactionThreshold(cp, int64(idxCnt))
+			threshold := estimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
 			idxEngineCfg.Local = &backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
@@ -1050,15 +1050,23 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 // Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
 // we set the upper bound to 32GB to avoid too long compression time.
 // factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) int64 {
+func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
 	totalRawFileSize := int64(0)
 	var lastFile string
+	fileSizeMap := make(map[string]int64, len(files))
+	for _, file := range files {
+		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+	}
+
 	for _, engineCp := range cp.Engines {
 		for _, chunk := range engineCp.Chunks {
 			if chunk.FileMeta.Path == lastFile {
 				continue
 			}
-			size := chunk.FileMeta.FileSize
+			size, ok := fileSizeMap[chunk.FileMeta.Path]
+			if !ok {
+				size = chunk.FileMeta.FileSize
+			}
 			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 				// parquet file is compressed, thus estimates with a factor of 2
 				size *= 2
