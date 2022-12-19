@@ -953,7 +953,8 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat &&
+						!cfg.CSV.Header && fileMeta.FileMeta.Compression == mydump.CompressionNone {
 						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount++

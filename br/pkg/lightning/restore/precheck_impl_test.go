@@ -381,7 +381,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	defer cancel()
 
 	s.cfg.TikvImporter.SortedKVDir = "/tmp/"
-	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter)
+	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
 	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
@@ -400,7 +400,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 		},
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
-	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter)
+	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
 	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
