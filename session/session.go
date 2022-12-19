@@ -2241,7 +2241,7 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
