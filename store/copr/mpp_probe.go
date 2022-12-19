@@ -137,6 +137,7 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 		return true
 	}
 
+	metrics.TiFlashFailedMPPStoreState.WithLabelValues("probe").Set(-1) //probe heartbeat
 	t.failedMPPStores.Range(f)
 }
 
@@ -181,10 +182,14 @@ func (t *MPPFailedStoreProbe) Run() {
 	}
 	go func() {
 		defer t.lock.Unlock()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
 		for {
-			metrics.TiFlashFailedMPPStoreState.WithLabelValues("probe").Set(-1) //probe heartbeat
-			t.scan(context.Background())
-			time.Sleep(time.Second)
+			select {
+			case <-ticker.C:
+				t.scan(context.Background())
+			}
 		}
 	}()
 }

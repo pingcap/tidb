@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -124,7 +125,7 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 
 func (e *PlanReplayerExec) createFile() error {
 	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = domain.GeneratePlanReplayerFile()
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile()
 	if err != nil {
 		return err
 	}
@@ -444,6 +445,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	// build schema and table first
 	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
 			err = createSchemaAndItems(e.Ctx, zipFile)

@@ -49,7 +49,6 @@ func (t *mockDetectClient) SendRequest(
 	req *tikvrpc.Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
-
 	if t.errortestype == Error {
 		return nil, errors.New("store error")
 	} else if t.errortestype == testimeout {
@@ -131,7 +130,6 @@ func testFlow(ctx context.Context, probetestest ProbeTest, test *testing.T, flow
 		cleanObsolet(2)
 		cleanRecover(0)
 	}
-
 }
 
 func TestMPPFailedStoreProbe(t *testing.T) {
@@ -160,5 +158,4 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 	testFlow(ctx, probetestest, t, testFlowFinallyRecover)
 	testFlowFinallyDesert := []string{Error, Normal, Normal, Error, Error}
 	testFlow(ctx, probetestest, t, testFlowFinallyDesert)
-
 }

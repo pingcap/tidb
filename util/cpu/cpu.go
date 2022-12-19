@@ -21,6 +21,7 @@ import (
 
 	"github.com/cloudfoundry/gosigar"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/atomic"
@@ -66,6 +67,7 @@ func (c *Observer) Start() {
 				curr := c.observe()
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
+				metrics.EMACPUUsageGauge.Set(c.cpu.Get())
 			case <-c.exit:
 				return
 			}
