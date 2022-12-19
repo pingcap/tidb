@@ -516,6 +516,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
+	newRs.totalTikvWallTime = s.totalTikvWallTime
 	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
 	return &newRs
 }
@@ -533,6 +534,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
+	s.totalTikvWallTime += other.totalTikvWallTime
 	s.rpcStat.Merge(other.rpcStat)
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 }
