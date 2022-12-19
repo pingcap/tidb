@@ -41,8 +41,8 @@ import (
 )
 
 const (
-	// planReplayerSQLMeta indicates sql meta path for plan replayer
-	planReplayerSQLMeta = "sql_meta.toml"
+	// PlanReplayerSQLMetaFile indicates sql meta path for plan replayer
+	PlanReplayerSQLMetaFile = "sql_meta.toml"
 	// PlanReplayerConfigFile indicates config file path for plan replayer
 	PlanReplayerConfigFile = "config.toml"
 	// PlanReplayerMetaFile meta file path for plan replayer
@@ -55,11 +55,17 @@ const (
 	PlanReplayerSessionBindingFile = "session_bindings.sql"
 	// PlanReplayerGlobalBindingFile indicates global binding file path for plan replayer
 	PlanReplayerGlobalBindingFile = "global_bindings.sql"
+	// PlanReplayerSchemaMetaFile indicates the schema meta
+	PlanReplayerSchemaMetaFile = "schema_meta.txt"
 )
 
 const (
 	// PlanReplayerSQLMetaStartTS indicates the startTS in plan replayer sql meta
 	PlanReplayerSQLMetaStartTS = "startTS"
+	// PlanReplayerTaskMetaIsCapture indicates whether this task is capture task
+	PlanReplayerTaskMetaIsCapture = "isCapture"
+	// PlanReplayerTaskMetaIsContinues indicates whether this task is continues task
+	PlanReplayerTaskMetaIsContinues = "isContinues"
 )
 
 type tableNamePair struct {
@@ -141,6 +147,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |-sql_meta.toml
  |-meta.txt
  |-schema
+ |	 |-schema_meta.txt
  |	 |-db1.table1.schema.txt
  |	 |-db2.table2.schema.txt
  |	 |-....
@@ -226,9 +233,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	// Dump stats
-	if err = dumpStats(zw, pairs, task.JSONTblStats, do); err != nil {
-		return err
+	// For continues capture, we don't dump stats
+	if !task.IsContinuesCapture {
+		// Dump stats
+		if err = dumpStats(zw, pairs, task.JSONTblStats, do); err != nil {
+			return err
+		}
 	}
 
 	// Dump variables
@@ -281,12 +291,14 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
-	cf, err := zw.Create(planReplayerSQLMeta)
+	cf, err := zw.Create(PlanReplayerSQLMetaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	varMap := make(map[string]string)
 	varMap[PlanReplayerSQLMetaStartTS] = strconv.FormatUint(task.StartTS, 10)
+	varMap[PlanReplayerTaskMetaIsCapture] = strconv.FormatBool(task.IsCapture)
+	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
@@ -342,8 +354,26 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 }
 
 func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+	tables := make(map[tableNamePair]struct{})
 	for pair := range pairs {
 		err := getShowCreateTable(pair, zw, ctx)
+		if err != nil {
+			return err
+		}
+		if !pair.IsView {
+			tables[pair] = struct{}{}
+		}
+	}
+	return dumpSchemaMeta(zw, tables)
+}
+
+func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
+	zf, err := zw.Create(fmt.Sprintf("schema/%v", PlanReplayerSchemaMetaFile))
+	if err != nil {
+		return err
+	}
+	for table := range tables {
+		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
 		if err != nil {
 			return err
 		}
