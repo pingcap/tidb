@@ -18,8 +18,6 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
-
-	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -43,19 +41,13 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	lastTuneTs atomicutil.Time
-	limiterTTL atomicutil.Time // it is relation with limiter
-	name       string
-	limit      atomic.Bool
-	generator  atomic.Uint64
+	name      string
+	generator atomic.Uint64
 }
 
 // NewBasePool is to create a new BasePool.
 func NewBasePool() BasePool {
-	return BasePool{
-		lastTuneTs: *atomicutil.NewTime(time.Now()),
-		limiterTTL: *atomicutil.NewTime(time.Now()),
-	}
+	return BasePool{}
 }
 
 // SetName is to set name.
@@ -71,35 +63,4 @@ func (p *BasePool) Name() string {
 // NewTaskID is to get a new task ID.
 func (p *BasePool) NewTaskID() uint64 {
 	return p.generator.Add(1)
-}
-
-// LastTunerTs returns the last time when the pool was tuned.
-func (p *BasePool) LastTunerTs() time.Time {
-	return p.lastTuneTs.Load()
-}
-
-// SetLastTuneTs sets the last time when the pool was tuned.
-func (p *BasePool) SetLastTuneTs(t time.Time) {
-	p.lastTuneTs.Store(t)
-}
-
-// OnLimit is to be in limit mode.
-func (p *BasePool) OnLimit() {
-	p.limit.Store(true)
-}
-
-// offLimit is to be in non-limit mode.
-func (p *BasePool) offLimit() {
-	p.limit.Store(false)
-}
-
-// IsLimit is to check if in limit mode.
-func (p *BasePool) IsLimit() bool {
-	if !p.limit.Load() {
-		if time.Now().Before(p.limiterTTL.Load()) {
-			return true
-		}
-		p.limit.Store(false)
-	}
-	return false
 }
