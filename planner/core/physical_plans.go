@@ -1496,8 +1496,8 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalRepeatSource is used to repeat underlying data sources to feed different grouping sets.
-type PhysicalRepeatSource struct {
+// PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
+type PhysicalExpand struct {
 	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
 	physicalSchemaProducer
 
@@ -1510,15 +1510,15 @@ type PhysicalRepeatSource struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalRepeatSource) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalRepeatSource {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeRepeatSource, &p, offset)
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.stats = stats
 	return &p
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalRepeatSource) Clone() (PhysicalPlan, error) {
-	np := new(PhysicalRepeatSource)
+func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExpand)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1536,8 +1536,8 @@ func (p *PhysicalRepeatSource) Clone() (PhysicalPlan, error) {
 	return np, nil
 }
 
-// MemoryUsage return the memory usage of PhysicalRepeatSource
-func (p *PhysicalRepeatSource) MemoryUsage() (sum int64) {
+// MemoryUsage return the memory usage of PhysicalExpand
+func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}

@@ -200,12 +200,12 @@ func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
 	return exec, nil
 }
 
-func (b *mppExecBuilder) buildRepeatSource(pb *tipb.RepeatSource) (mppExec, error) {
+func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 	child, err := b.buildMPPExecutor(pb.Child)
 	if err != nil {
 		return nil, err
 	}
-	exec := &repeatSourceExec{
+	exec := &expandExec{
 		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, children: []mppExec{child}},
 	}
 
@@ -551,8 +551,8 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypePartitionTableScan:
 		ts := exec.PartitionTableScan
 		return b.buildMPPPartitionTableScan(ts)
-	case tipb.ExecType_TypeRepeatSource:
-		return b.buildRepeatSource(exec.RepeatSource)
+	case tipb.ExecType_TypeExpand:
+		return b.buildExpand(exec.Expand)
 	default:
 		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}

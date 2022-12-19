@@ -143,7 +143,7 @@ func (gs GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	// distinct(a,b) want for. For distinct(c), the same is true.
 	//
 	// For normal agg you better choose your targeting group-set data, otherwise, otherwise your get is all groups，most of them is endless null values filled by
-	// repeatSource operator, and null value can also influence your non null-strict normal agg, although you don't want them to.
+	// Expand operator, and null value can also influence your non null-strict normal agg, although you don't want them to.
 	//
 	// here we only consider 1&2 since normal agg with multi col args is banned.
 	allGroupingColIDs := gs.AllSetsColIDs()

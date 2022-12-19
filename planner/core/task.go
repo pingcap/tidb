@@ -790,10 +790,6 @@ type rootTask struct {
 	p       PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
-
-	// derive stats is done before physical plan enumeration, which when repeat source is inserted,
-	// the all upper layer physical op's base stats should be changed.
-	attachTaskCallBack func(PhysicalPlan)
 }
 
 func (t *rootTask) copy() task {
@@ -2151,11 +2147,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 // the Mid and Partial Agg, which means when leaving the Final, its output rowcount could be exactly
 // the same as what it derived(estimated) before entering physical optimization phase.
 //
-// From the cost model correctness, for these inserted sub-agg and even repeat source operator, we should
+// From the cost model correctness, for these inserted sub-agg and even expand operator, we should
 // recompute the stats for them particularly.
 //
 // for example: grouping sets {<a>},{<b>}, group by items {a,b,c,groupingID}
-// after repeat source:
+// after expand:
 //
 //	 a,   b,   c,  groupingID
 //	...  null  c    1   ---+
@@ -2248,22 +2244,22 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	//       +- HashAgg count(distinct a) #1, count(distinct b) #2, sum(#4) #3      -> middle agg
 	//           +- Exchange HashPartition by a,b,groupingID
 	//               +- HashAgg count(c) #4, group by a,b,groupingID                -> partial agg
-	//                   +- RepeatSource {<a>}, {<b>}                               -> repeat source
+	//                   +- Expand {<a>}, {<b>}                                     -> expand
 	//                       +- TableScan foo
 	//
 	// set the default expression to constant 1 for the convenience to choose default group set data.
 	var groupingIDCol expression.Expression
 	groupingIDCol = expression.NewNumber(1)
 	if len(groupingSets) > 0 {
-		// enforce the repeatSource operator above the children.
-		// single distinct agg mode can eliminate repeatSource op insertion.
+		// enforce Expand operator above the children.
+		// single distinct agg mode can eliminate expand op insertion.
 
 		// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
 		// scale(len(groupingSets)) will change the NDV, while Repeat doesn't change the NDV and groupNDV.
 		stats := mpp.p.statsInfo().Scale(float64(1))
 		stats.RowCount = stats.RowCount * float64(len(groupingSets))
 
-		physicalRepeatSource := PhysicalRepeatSource{
+		physicalExpand := PhysicalExpand{
 			GroupingSets: groupingSets,
 		}.Init(p.ctx, stats, mpp.p.SelectBlockOffset())
 
@@ -2274,13 +2270,13 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  tp,
 		}
-		// append the physical repeatSource op with groupingID column.
-		physicalRepeatSource.SetSchema(mpp.p.Schema().Clone())
-		physicalRepeatSource.schema.Append(groupingIDCol.(*expression.Column))
-		physicalRepeatSource.GroupingIDCol = groupingIDCol.(*expression.Column)
+		// append the physical expand op with groupingID column.
+		physicalExpand.SetSchema(mpp.p.Schema().Clone())
+		physicalExpand.schema.Append(groupingIDCol.(*expression.Column))
+		physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
 
-		// attach PhysicalRepeatSource to mpp
-		attachPlan2Task(physicalRepeatSource, mpp)
+		// attach PhysicalExpand to mpp
+		attachPlan2Task(physicalExpand, mpp)
 	}
 
 	if partialAgg != nil && canUse3StageAgg {
@@ -2372,7 +2368,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			//                                         v
 			//  proj4Partial: a, b, c, groupingID, caseWhen4c            # caseWhen4c depend on groupingID and c
 			//
-			//  repeatSource: a, b, c, groupingID                 # appended groupingID to diff group set
+			//  expand: a, b, c, groupingID                        # appended groupingID to diff group set
 			//
 			//  lower source: a, b, c                       # don't care what the lower source is
 

@@ -416,9 +416,9 @@ func (e *limitExec) next() (*chunk.Chunk, error) {
 	return chk, nil
 }
 
-// repeatSourceExec is the basic mock logic for repeat executor in uniStore,
+// expandExec is the basic mock logic for expand executor in uniStore,
 // with which we can validate the mpp plan correctness from explain result and result returned.
-type repeatSourceExec struct {
+type expandExec struct {
 	baseMPPExec
 
 	lastNum              int
@@ -428,7 +428,7 @@ type repeatSourceExec struct {
 	groupingSetScope     map[int]struct{}
 }
 
-func (e *repeatSourceExec) open() error {
+func (e *expandExec) open() error {
 	var err error
 	err = e.children[0].open()
 	if err != nil {
@@ -455,14 +455,14 @@ func (e *repeatSourceExec) open() error {
 	return nil
 }
 
-func (e *repeatSourceExec) isGroupingCol(index int) bool {
+func (e *expandExec) isGroupingCol(index int) bool {
 	if _, ok := e.groupingSetScope[index]; ok {
 		return true
 	}
 	return false
 }
 
-func (e *repeatSourceExec) next() (*chunk.Chunk, error) {
+func (e *expandExec) next() (*chunk.Chunk, error) {
 	var (
 		err error
 	)
@@ -489,7 +489,7 @@ func (e *repeatSourceExec) next() (*chunk.Chunk, error) {
 		for i := e.lastNum; i < numRows; i++ {
 			row := e.lastChunk.GetRow(i)
 			e.lastNum++
-			// for every grouping set, repeat the base row N times.
+			// for every grouping set, expand the base row N times.
 			for g := 0; g < numGroupingOffset; g++ {
 				repeatRow := chunk.MutRowFromTypes(e.fieldTypes)
 				// for every targeted grouping set:

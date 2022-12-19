@@ -412,7 +412,7 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 }
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalRepeatSource) ResolveIndicesItself() error {
+func (p *PhysicalExpand) ResolveIndicesItself() error {
 	for _, gs := range p.GroupingSets {
 		for _, groupingExprs := range gs {
 			for k, groupingExpr := range groupingExprs {
@@ -428,7 +428,7 @@ func (p *PhysicalRepeatSource) ResolveIndicesItself() error {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalRepeatSource) ResolveIndices() (err error) {
+func (p *PhysicalExpand) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
