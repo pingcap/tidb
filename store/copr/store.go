@@ -84,6 +84,10 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// run a background probe process for mpp store
+	globalMPPFailedStoreProbe.run()
+
 	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
@@ -95,6 +99,7 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 // Close releases resources allocated for coprocessor.
 func (s *Store) Close() {
 	if s.coprCache != nil {
+		globalMPPFailedStoreProbe.stop()
 		s.coprCache.cache.Close()
 	}
 }
@@ -113,8 +118,6 @@ func (s *Store) GetClient() kv.Client {
 
 // GetMPPClient gets a mpp client instance.
 func (s *Store) GetMPPClient() kv.MPPClient {
-	// run a background probe process,if not start
-	globalMPPFailedStoreProbe.Run()
 	return &MPPClient{
 		store: s.kvStore,
 	}

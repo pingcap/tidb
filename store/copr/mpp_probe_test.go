@@ -56,7 +56,6 @@ func (t *mockDetectClient) SendRequest(
 	}
 
 	return &tikvrpc.Response{Resp: &mpp.IsAliveResponse{Available: true}}, nil
-
 }
 
 type ProbeTest map[string]*mockDetectClient
@@ -141,7 +140,7 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 	// Confirm that multiple tasks are not allowed
 	globalMPPFailedStoreProbe.lock.Lock()
-	globalMPPFailedStoreProbe.Run()
+	globalMPPFailedStoreProbe.run()
 
 	// check not exist address
 	ok := globalMPPFailedStoreProbe.IsRecovery(ctx, notExistAddress, 0)

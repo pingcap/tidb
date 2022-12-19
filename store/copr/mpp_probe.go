@@ -58,6 +58,8 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
 
 	detectPeriod         time.Duration
 	detectTimeoutLimit   time.Duration
@@ -176,10 +178,11 @@ func (t *MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, re
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProbe) Run() {
+func (t *MPPFailedStoreProbe) run() {
 	if !t.lock.TryLock() {
 		return
 	}
+
 	go func() {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
@@ -187,11 +190,17 @@ func (t *MPPFailedStoreProbe) Run() {
 
 		for {
 			select {
+			case <-t.ctx.Done():
+				return
 			case <-ticker.C:
 				t.scan(context.Background())
 			}
 		}
 	}()
+}
+
+func (t *MPPFailedStoreProbe) stop() {
+	t.cancel()
 }
 
 // Delete clean store from failed map
@@ -224,9 +233,12 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string, det
 }
 
 func init() {
+	ctx, cancel := context.WithCancel(context.Background())
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores:      &sync.Map{},
 		lock:                 &sync.Mutex{},
+		ctx:                  ctx,
+		cancel:               cancel,
 		detectPeriod:         DetectPeriod,
 		detectTimeoutLimit:   DetectTimeoutLimit,
 		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,
