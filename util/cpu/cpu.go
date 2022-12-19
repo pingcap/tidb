@@ -65,6 +65,7 @@ func (c *Observer) Start() {
 			select {
 			case <-ticker.C:
 				curr := c.observe()
+				log.Info("wwz current cpu uage", zap.Float64("cpu usage", curr))
 				metrics.EMACPUUsageGauge.Set(curr * 100)
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
