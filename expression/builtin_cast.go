@@ -420,7 +420,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
 	}
 
 	if args[0].GetType().EvalType() != types.ETJson {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "cast_as_array")
+		return types.ErrInvalidJSONData.GenWithStackByArgs("1", "cast_as_array")
 	}
 
 	return nil
@@ -435,7 +435,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	case mysql.TypeYear, mysql.TypeJSON:
 		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
 	}
-	if arrayType.GetCharset() != charset.CharsetUTF8MB4 || arrayType.GetCharset() != charset.CharsetBin {
+	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index", arrayType.String())
 	}
 
@@ -467,60 +467,9 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
 	}
 
-	arrayVals := make([]any, 0, len(b.args))
+	// TODO: impl the cast(... as ... array) function
 
-	tp := b.tp.ArrayType()
-	for i := 0; i < val.GetElemCount(); i++ {
-		arrayElem := val.ArrayGetElem(i)
-		switch tp.EvalType() {
-		case types.ETInt:
-			switch arrayElem.TypeCode {
-			case types.JSONTypeCodeInt64, types.JSONTypeCodeUint64:
-				v, err := types.ConvertJSONToInt(b.ctx.GetSessionVars().StmtCtx, arrayElem, mysql.HasUnsignedFlag(b.tp.GetFlag()), b.tp.ArrayType().GetType())
-				if err != nil {
-					return types.BinaryJSON{}, false, errIncorrectArgs
-				}
-				if mysql.HasUnsignedFlag(b.tp.GetFlag()) {
-					arrayVals = append(arrayVals, uint64(v))
-				} else {
-					arrayVals = append(arrayVals, v)
-				}
-			default:
-				return types.BinaryJSON{}, false, errIncorrectArgs
-			}
-		case types.ETDecimal:
-			//types.ConvertJSONToDecimal()
-		case types.ETReal:
-			switch arrayElem.TypeCode {
-			case types.JSONTypeCodeFloat64, types.JSONTypeCodeInt64, types.JSONTypeCodeUint64:
-				v, err := types.ConvertJSONToFloat(b.ctx.GetSessionVars().StmtCtx, arrayElem)
-				if err != nil {
-					return types.BinaryJSON{}, false, errIncorrectArgs
-				}
-				arrayVals = append(arrayVals, v)
-			default:
-				return types.BinaryJSON{}, false, errIncorrectArgs
-			}
-		case types.ETDatetime, types.ETTimestamp:
-
-		case types.ETDuration:
-		case types.ETString:
-			switch arrayElem.TypeCode {
-			case types.JSONTypeCodeString:
-				s, err := types.ProduceStrWithSpecifiedTp(string(arrayElem.GetString()), tp, b.ctx.GetSessionVars().StmtCtx, false)
-				if err != nil {
-					return types.BinaryJSON{}, false, err
-				}
-				arrayVals = append(arrayVals, s)
-			default:
-				return types.BinaryJSON{}, false, errIncorrectArgs
-			}
-		default:
-			return types.BinaryJSON{}, false, errIncorrectArgs
-		}
-	}
-
-	return types.CreateBinaryJSON(arrayVals), false, nil
+	return types.BinaryJSON{}, false, nil
 }
 
 type castAsJSONFunctionClass struct {
@@ -2030,6 +1979,19 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	terror.Log(err)
+	// We do not fold CAST if the eval type of this scalar function is ETJson
+	// since we may reset the flag of the field type of CastAsJson later which
+	// would affect the evaluation of it.
+	if tp.EvalType() != types.ETJson {
+		res = FoldConstant(res)
+	}
+	return res
+}
+
+// BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
+func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2061,19 +2023,12 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
-	terror.Log(err)
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
-	// We do not fold CAST if the eval type of this scalar function is ETJson
-	// since we may reset the flag of the field type of CastAsJson later which
-	// would affect the evaluation of it.
-	if tp.EvalType() != types.ETJson {
-		res = FoldConstant(res)
-	}
-	return res
+	return res, err
 }
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
