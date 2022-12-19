@@ -1570,4 +1570,7 @@ func TestTestMultiSchemaAddForeignKey(t *testing.T) {
 		"  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `test`.`t1` (`id`),\n" +
 		"  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t2")
+	tk.MustExec("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));")
+	tk.MustExec("alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
 }

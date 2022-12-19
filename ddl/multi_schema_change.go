@@ -327,21 +327,35 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
-	var droppingIndexes []*model.IndexInfo
+	var remainIndexes, droppingIndexes []*model.IndexInfo
 	tbInfo := t.Meta()
-	for _, name := range info.DropIndexes {
-		for _, idx := range tbInfo.Indices {
+	for _, idx := range tbInfo.Indices {
+		dropping := false
+		for _, name := range info.DropIndexes {
 			if name.L == idx.Name.L {
-				droppingIndexes = append(droppingIndexes, idx)
+				dropping = true
 				break
 			}
 		}
+		if dropping {
+			droppingIndexes = append(droppingIndexes, idx)
+		} else {
+			remainIndexes = append(remainIndexes, idx)
+		}
 	}
+
 	for _, fk := range info.AddForeignKeys {
-		for _, idx := range droppingIndexes {
-			if model.IsIndexPrefixCovered(tbInfo, idx, fk.Cols...) {
-				return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(idx.Name)
-			}
+		if droppingIdx := findIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && findIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
+			return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(droppingIdx.Name)
+		}
+	}
+	return nil
+}
+
+func findIndexByColumns(tbInfo *model.TableInfo, indexes []*model.IndexInfo, cols ...model.CIStr) *model.IndexInfo {
+	for _, index := range indexes {
+		if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
+			return index
 		}
 	}
 	return nil
