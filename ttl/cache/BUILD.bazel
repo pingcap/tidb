@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/cache",
     visibility = ["//visibility:public"],
     deps = [
+        "//infoschema",
         "//kv",
         "//parser/ast",
         "//parser/model",
@@ -46,7 +47,6 @@ go_test(
     deps = [
         "//infoschema",
         "//kv",
-        "//parser",
         "//parser/model",
         "//server",
         "//store/helper",

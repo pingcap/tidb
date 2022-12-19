@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -27,8 +26,6 @@ import (
 )
 
 func TestInfoSchemaCache(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 	sv.SetDomain(dom)
@@ -37,7 +34,7 @@ func TestInfoSchemaCache(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
 	tk := testkit.NewTestKitWithSession(t, store, sctx)
-	se := session.NewSession(sctx, sctx, func() {})
+	se := session.NewSession(sctx, sctx, func(_ session.Session) {})
 
 	isc := cache.NewInfoSchemaCache(time.Hour)
 

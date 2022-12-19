@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -234,6 +233,10 @@ func createTTLTable(t *testing.T, tk *testkit.TestKit, name string, option strin
 	return createTTLTableWithSQL(t, tk, name, fmt.Sprintf("create table test.%s(id %s primary key, t timestamp) TTL = `t` + interval 1 day", name, option))
 }
 
+func create2PKTTLTable(t *testing.T, tk *testkit.TestKit, name string, option string) *cache.PhysicalTable {
+	return createTTLTableWithSQL(t, tk, name, fmt.Sprintf("create table test.%s(id %s, id2 int, t timestamp, primary key(id, id2)) TTL = `t` + interval 1 day", name, option))
+}
+
 func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql string) *cache.PhysicalTable {
 	tk.MustExec(sql)
 	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -264,11 +267,6 @@ func checkRange(t *testing.T, r cache.ScanRange, start, end types.Datum) {
 }
 
 func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -279,6 +277,7 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 		createTTLTable(t, tk, "t4", "int"),
 		createTTLTable(t, tk, "t5", "bigint"),
 		createTTLTable(t, tk, "t6", ""), // no clustered
+		create2PKTTLTable(t, tk, "t7", "tinyint"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -331,11 +330,6 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 }
 
 func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -345,6 +339,7 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		createTTLTable(t, tk, "t3", "mediumint unsigned"),
 		createTTLTable(t, tk, "t4", "int unsigned"),
 		createTTLTable(t, tk, "t5", "bigint unsigned"),
+		create2PKTTLTable(t, tk, "t6", "tinyint unsigned"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -400,11 +395,6 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 }
 
 func TestSplitTTLScanRangesWithBytes(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -413,6 +403,7 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		createTTLTable(t, tk, "t2", "char(32) CHARACTER SET BINARY"),
 		createTTLTable(t, tk, "t3", "varchar(32) CHARACTER SET BINARY"),
 		createTTLTable(t, tk, "t4", "bit(32)"),
+		create2PKTTLTable(t, tk, "t5", "binary(32)"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -454,11 +445,6 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 }
 
 func TestNoTTLSplitSupportTables(t *testing.T) {
-	parser.TTLFeatureGate = true
-	defer func() {
-		parser.TTLFeatureGate = false
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -467,6 +453,7 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 		createTTLTable(t, tk, "t2", "varchar(32) CHARACTER SET UTF8MB4"),
 		createTTLTable(t, tk, "t3", "double"),
 		createTTLTable(t, tk, "t4", "decimal(32, 2)"),
+		create2PKTTLTable(t, tk, "t5", "char(32)  CHARACTER SET UTF8MB4"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -546,6 +533,14 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 		{
 			key:    buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 0}),
 			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 0},
+		},
+		{
+			key:    append(buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 0}), 0),
+			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 0, 0},
+		},
+		{
+			key:    append(buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 0}), 1),
+			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 0, 0},
 		},
 		{
 			key:    []byte{},
@@ -634,7 +629,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 				bs[len(bs)-10] = 254
 				return bs
 			},
-			result: []byte{1, 2, 3, 4, 5, 6, 7},
+			result: []byte{1, 2, 3, 4, 5, 6, 7, 0},
 		},
 		{
 			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 0, 253, 9, 0, 0, 0, 0, 0, 0, 0, 248]
@@ -738,6 +733,18 @@ func TestGetNextIntHandle(t *testing.T) {
 		{
 			key:    tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(math.MinInt64)),
 			result: math.MinInt64,
+		},
+		{
+			key:    append(tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(7)), 0),
+			result: 8,
+		},
+		{
+			key:    append(tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(math.MaxInt64)), 0),
+			isNull: true,
+		},
+		{
+			key:    append(tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(math.MinInt64)), 0),
+			result: math.MinInt64 + 1,
 		},
 		{
 			key:    []byte{},
