@@ -804,6 +804,12 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 			component: "split_check",
 			threshold: 0.9,
 		},
+		{
+			item:      "raftstore-async-io-count",
+			component: "raftstore_%",
+			configKey: "raftstore.store-io-pool-size",
+			threshold: 0.8,
+		},
 	}
 
 	condition := filter.timeRange.Condition()
