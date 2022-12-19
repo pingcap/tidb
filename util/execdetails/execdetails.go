@@ -829,10 +829,8 @@ func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail
 }
 
 // RecordScanDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordScanAndTimeDetail(planID int, storeType string,
-	scandetail *util.ScanDetail, timedetail *util.TimeDetail) {
+func (e *RuntimeStatsColl) RecordTimeDetail(planID int, storeType string, timedetail *util.TimeDetail) {
 	copStats := e.GetOrCreateCopStats(planID, storeType)
-	copStats.scanDetail.Merge(scandetail)
 	copStats.timeDetail.ProcessTime += timedetail.ProcessTime
 	copStats.timeDetail.WaitTime += timedetail.WaitTime
 	copStats.timeDetail.KvReadWallTimeMs += timedetail.KvReadWallTimeMs
