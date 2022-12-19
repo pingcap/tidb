@@ -284,7 +284,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		// will be set to sleep after fetch returned.
 		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
 			unhold := pi.HoldTS(pi.CurTxnStartTS)
-			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+			onClosed := unhold
+			if rc := pi.RefCountOfStmtCtx; rc != nil && rc.TryIncrease() {
+				onClosed = func() {
+					unhold()
+					rc.Decrease()
+				}
+			}
+			rs = &rsWithHooks{ResultSet: rs, onClosed: onClosed}
 		}
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
