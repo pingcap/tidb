@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
@@ -238,12 +239,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
 	if execPlan, ok := p.(*plannercore.Execute); ok {
+		failpoint.Inject("optimizeExecuteStmt", nil)
 		execID := execPlan.ExecID
 		if execPlan.Name != "" {
 			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
 		}
 		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+			// When plan cache is enabled, and it's a for-update read, use the latest schema to detect plan expired.
+			// Otherwise, do not update schema to avoid plan and execution use different schema versions.
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead &&
+				preparedObj.PreparedAst.UseCache {
 				is = domain.GetDomain(sctx).InfoSchema()
 			}
 		}
