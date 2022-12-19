@@ -160,6 +160,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	buildTaskFunc := func(ranges []kv.KeyRange) error {
 		keyRanges := NewKeyRanges(ranges)
 		head, tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
+		// If req.Desc, always replace headTask with the latest returned head,
+		// else, read from the first head.
+		if headTask == nil || req.Desc {
+			headTask = head
+		}
 		if err != nil {
 			return err
 		}
@@ -193,12 +198,13 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		req:             req,
 		concurrency:     req.Concurrency,
 		finishCh:        make(chan struct{}),
+		headTask:        headTask,
+		tasks:           tasks,
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       tikv.NewRPCanceller(),
 	}
-	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
@@ -297,6 +303,15 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 		})
 	}
 	return pbTasks
+}
+
+func (r *copTask) ReuseRespChan(tasks []*copTask) {
+	if r.respChan == nil {
+		return
+	}
+	for _, task := range tasks {
+		task.respChan = r.respChan
+	}
 }
 
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
@@ -616,10 +631,9 @@ type copIterator struct {
 	smallTaskConcurrency int
 	finishCh             chan struct{}
 
-	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
-	tasks []*copTask
-	// curr indicates the curr id of the finished copTask
-	curr int
+	// If keepOrder, results are stored in copTask.respChan, read them from headTask out one by one.
+	headTask *copTask
+	tasks    []*copTask
 
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *util.RateLimit
@@ -965,7 +979,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			}
 		}
 	})
-	// If data order matters, response should be returned in the same order as copTask slice.
+	// If data order matters, response should be returned in the same order as copIterator.headTask link list.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
 		// Get next fetched resp from chan
@@ -982,13 +996,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 	} else {
 		for {
-			if it.curr >= len(it.tasks) {
+			if it.headTask == nil {
 				// Resp will be nil if iterator is finishCh.
 				it.actionOnExceed.close()
 				return nil, nil
 			}
-			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+			resp, ok, closed = it.recvFromRespCh(ctx, it.headTask.respChan)
 			if closed {
 				// Close() is already called, so Next() is invalid.
 				return nil, nil
@@ -999,9 +1012,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
 				it.sendRate.PutToken()
 			})
-			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
+			it.headTask = it.headTask.nextTask
 		}
 	}
 
@@ -1272,7 +1283,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+		_, remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:     worker.req,
 			cache:   worker.store.GetRegionCache(),
 			eventCb: task.eventCb,
@@ -1282,6 +1293,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return remains, err
 		}
+		task.ReuseRespChan(remains)
 		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
@@ -1426,15 +1438,17 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-				req:      worker.req,
-				cache:    worker.store.GetRegionCache(),
-				eventCb:  task.eventCb,
-				respChan: worker.req.KeepOrder,
+			_, remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:     worker.req,
+				cache:   worker.store.GetRegionCache(),
+				eventCb: task.eventCb,
+				// re-split tasks reuses origin resp chan.
+				respChan: false,
 			})
 			if err != nil {
 				return nil, err
 			}
+			task.ReuseRespChan(remains)
 			appendRemainTasks(remains...)
 			continue
 		}
