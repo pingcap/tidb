@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2538,4 +2539,34 @@ func TestForeignKeyIssue39732(t *testing.T) {
 	tk.MustExec(`set @a = 1;`)
 	tk.MustExec("execute stmt1 using @a;")
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+}
+
+func TestForeignKeyLargeTxnErr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	defer func() {
+		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+	}()
+	// Set the limitation to a small value, make it easier to reach the limitation.
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 10240)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	// foreign key cascade behaviour will cause ErrTxnTooLarge.
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select id,pid from t1 where id<3 order by id").Check(testkit.Rows("1 <nil>", "2 1"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
 }
