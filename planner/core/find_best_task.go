@@ -2002,9 +2002,16 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				return invalidTask, nil
 			}
 		}
+
+		mppVersion := kv.ClusterMinMppVersion.Load()
+		if v := ds.SCtx().GetSessionVars().MppVersion; v != kv.MppVersionUnspecified {
+			mppVersion = v
+		}
+
 		mppTask := &mppTask{
-			p:      ts,
-			partTp: property.AnyType,
+			p:          ts,
+			partTp:     property.AnyType,
+			MppVersion: mppVersion,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
@@ -2225,7 +2232,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 	filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, filterCondition, ts.ctx.GetClient(), ts.StoreType)
 	rootTaskConds = append(rootTaskConds, newRootConds...)
 	if len(rootTaskConds) > 0 {
-		return &mppTask{}
+		return &mppTask{MppVersion: mpp.MppVersion}
 	}
 	ts.filterCondition = filterCondition
 	// Add filter condition to table plan now.

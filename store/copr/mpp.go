@@ -49,10 +49,6 @@ type MPPClient struct {
 	clusterMinMppVersion *atomicutil.Int64
 }
 
-func (c *MPPClient) GetClusterMinMppVersion() *atomicutil.Int64 {
-	return c.clusterMinMppVersion
-}
-
 // GetAddress returns the network address.
 func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr

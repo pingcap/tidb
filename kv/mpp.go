@@ -16,31 +16,34 @@ package kv
 
 import (
 	"context"
-	atomicutil "go.uber.org/atomic"
 	"sync"
 	"time"
+
+	atomicutil "go.uber.org/atomic"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
 const (
+	MppVersionUnspecified int64 = -1
+
 	// MppVersionV0 supports TiFlash version [~, v6.5.0]
 	// Used when cluster version <= v6.5.0
 	MppVersionV0 int64 = 0
 
 	// MppVersionV1 supports TiFlash version [v6.6.0, ~]
 	// Features: data compression in exchange operator;
-	MppVersionV1             int64  = 1000
-	MppVersionV1StoreVersion string = "6.6.0"
+	MppVersionV1             int64  = 1
+	MppVersionV1StoreVersion string = "6.7.0"
 
 	// MppVersionV2 int64 = MppVersionV1 * 2
 	// MppVersionV3 int64 = MppVersionV1 * 3
 
-	// CurMppVersion means the latest version used in MPP tasks
-	CurMppVersion int64 = MppVersionV1
+	// MaxMppVersion means the latest version used in MPP tasks
+	MaxMppVersion int64 = MppVersionV1
 )
 
-// var ClusterMinMppVersion = atomicutil.NewInt64(CurMppVersion)
+var ClusterMinMppVersion = atomicutil.NewInt64(MaxMppVersion)
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
 type MPPTaskMeta interface {
@@ -108,8 +111,6 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
-	//
-	GetClusterMinMppVersion() *atomicutil.Int64
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
@@ -124,29 +125,32 @@ type MPPBuildTasksRequest struct {
 type ExchangeCompressMethod int
 
 const (
-	NONE ExchangeCompressMethod = iota
-	LZ4
-	ZSTD
-	UNSPECIFIED = 255
+	ExchangeCompressMethodNONE ExchangeCompressMethod = iota
+	ExchangeCompressMethodLZ4
+	ExchangeCompressMethodZSTD
+
+	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodLZ4
 )
 
 func (t ExchangeCompressMethod) Name() string {
-	if t == NONE {
-		return "none"
-	} else if t == LZ4 {
-		return "lz4"
-	} else if t == ZSTD {
-		return "zstd"
+	return t.ToMppCompressMethod().String()
+}
+
+func ToExchangeCompressMethod(name string) (ExchangeCompressMethod, bool) {
+	value, ok := mpp.CompressMethod_value[name]
+	if ok {
+		return ExchangeCompressMethod(value), true
 	}
-	return "unspecified"
+	return DefaultExchangeCompressMethod, false
 }
 
 func (t ExchangeCompressMethod) ToMppCompressMethod() mpp.CompressMethod {
-	if t == NONE {
+	switch t {
+	case ExchangeCompressMethodNONE:
 		return mpp.CompressMethod_NONE
-	} else if t == LZ4 {
+	case ExchangeCompressMethodLZ4:
 		return mpp.CompressMethod_LZ4
-	} else if t == ZSTD {
+	case ExchangeCompressMethodZSTD:
 		return mpp.CompressMethod_ZSTD
 	}
 	return mpp.CompressMethod_LZ4

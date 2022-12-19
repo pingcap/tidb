@@ -16,10 +16,11 @@ package copr
 
 import (
 	"context"
-	atomicutil "go.uber.org/atomic"
 	"math/rand"
 	"sync/atomic"
 	"time"
+
+	atomicutil "go.uber.org/atomic"
 
 	"github.com/pingcap/errors"
 	tidb_config "github.com/pingcap/tidb/config"
@@ -91,7 +92,7 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 		kvStore:              &kvStore{store: s},
 		coprCache:            coprCache,
 		replicaReadSeed:      rand.Uint32(),
-		clusterMinMppVersion: atomicutil.NewInt64(kv.CurMppVersion),
+		clusterMinMppVersion: atomicutil.NewInt64(kv.MaxMppVersion),
 	}, nil
 }
 

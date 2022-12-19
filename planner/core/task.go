@@ -507,6 +507,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	if !lok || !rok {
 		return invalidTask
 	}
+	mppVersion := lTask.MppVersion
+	if mppVersion != rTask.MppVersion {
+		return invalidTask
+	}
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
@@ -537,9 +541,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		outerTask = rTask
 	}
 	task := &mppTask{
-		p:        p,
-		partTp:   outerTask.partTp,
-		hashCols: outerTask.hashCols,
+		p:          p,
+		partTp:     outerTask.partTp,
+		hashCols:   outerTask.hashCols,
+		MppVersion: mppVersion,
 	}
 	return task
 }
@@ -1142,8 +1147,8 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
-	t := &mppTask{p: p}
+func (p *PhysicalUnionAll) attach2MppTasks(mppVersion int64, tasks ...task) task {
+	t := &mppTask{p: p, MppVersion: mppVersion}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	for _, tk := range tasks {
 		if mpp, ok := tk.(*mppTask); ok && !tk.invalid() {
@@ -1163,8 +1168,8 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
-		if _, ok := t.(*mppTask); ok {
-			return p.attach2MppTasks(tasks...)
+		if x, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(x.MppVersion, tasks...)
 		}
 	}
 	t := &rootTask{p: p}
@@ -2066,8 +2071,9 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 type mppTask struct {
 	p PhysicalPlan
 
-	partTp   property.MPPPartitionType
-	hashCols []*property.MPPPartitionColumn
+	partTp     property.MPPPartitionType
+	hashCols   []*property.MPPPartitionColumn
+	MppVersion int64
 }
 
 func (t *mppTask) count() float64 {
@@ -2138,8 +2144,8 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
 
-	sender.MppVersion = ctx.GetMPPClient().GetClusterMinMppVersion().Load()
-	// sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{Compress: mpp.CompressMethod_NONE}
+	// no need to compress data in exchange operator when type is `PassThrough`
+	sender.MppVersion = t.MppVersion
 
 	sender.SetChildren(t.p)
 
@@ -2194,7 +2200,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		for _, col := range prop.MPPPartitionCols {
 			if types.IsString(col.Col.RetType.GetType()) {
 				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
-				return &mppTask{}
+				return &mppTask{MppVersion: t.MppVersion}
 			}
 		}
 	}
@@ -2205,14 +2211,13 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
 
-	{
-		minMppVersion := ctx.GetMPPClient().GetClusterMinMppVersion().Load()
-		sender.MppVersion = minMppVersion
-		if sender.MppVersion != kv.MppVersionV0 {
-			if sender.ExchangeType == tipb.ExchangeType_Hash {
-				sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
-					Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
-				}
+	sender.MppVersion = t.MppVersion
+
+	if sender.MppVersion != kv.MppVersionV0 {
+		// only use compress when exhancge tyoe is `Hash`
+		if sender.ExchangeType == tipb.ExchangeType_Hash {
+			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
+				Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
 			}
 		}
 	}
@@ -2221,8 +2226,9 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
 	return &mppTask{
-		p:        receiver,
-		partTp:   prop.MPPPartitionTp,
-		hashCols: prop.MPPPartitionCols,
+		p:          receiver,
+		partTp:     prop.MPPPartitionTp,
+		hashCols:   prop.MPPPartitionCols,
+		MppVersion: t.MppVersion,
 	}
 }

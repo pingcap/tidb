@@ -470,9 +470,7 @@ func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
 }
 
 func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) error {
-	mppClient := store.GetMPPClient()
 	mppVersionV1StoreVersion := *semver.New(kv.MppVersionV1StoreVersion)
-
 	// check TiFlash store info
 	for _, s := range stores {
 		// empty version means the store is a mock store.
@@ -485,12 +483,8 @@ func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) erro
 			return errors.Trace(errors.Annotate(err, "invalid TiFlash version"))
 		}
 		v := ver.Compare(mppVersionV1StoreVersion)
-		v = 0
 		if v < 0 {
-			// kv.ClusterMinMppVersion.Store(kv.MppVersionV0)
-			if mppClient != nil {
-				mppClient.GetClusterMinMppVersion().Store(kv.MppVersionV0)
-			}
+			kv.ClusterMinMppVersion.Store(kv.MppVersionV0)
 			break
 		}
 	}

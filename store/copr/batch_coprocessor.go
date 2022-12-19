@@ -341,11 +341,11 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				defer mu.Unlock()
 				cnt = len(storeTaskMap)
 			}()
-			var mpp_info string
+			var mppInfo string
 			if cnt != 0 {
-				mpp_info = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
+				mppInfo = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
 			}
-			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt), zap.String("mpp info", mpp_info))
+			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt), zap.String("mpp info", mppInfo))
 		}()
 
 		cur := time.Now()

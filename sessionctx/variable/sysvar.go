@@ -2174,6 +2174,29 @@ var defaultSysVars = []*SysVar{
 		val := TTLDeleteRateLimit.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressMethod, Type: TypeStr, Value: kv.DefaultExchangeCompressMethod.Name(),
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
+			if !ok {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppExchangeCompressMethod, originalValue)
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.MppExchangeCompressMethod, _ = kv.ToExchangeCompressMethod(strings.ToUpper(val))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: kv.MppVersionUnspecified, MaxValue: uint64(kv.MppVersionV1), Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
+		SetSession: func(s *SessionVars, val string) error {
+			version, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return err
+			}
+			s.MppVersion = version
+			return nil
+		},
+	},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
 		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
