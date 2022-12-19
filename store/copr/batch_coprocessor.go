@@ -634,7 +634,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 			continue
 		}
 		if len(rpcCtxs) != len(tasks) {
-			return nil, errors.Errorf("length should be equal", zap.Any("len(rpcCtxs)", len(rpcCtxs)), zap.Any("len(tasks)", len(tasks)))
+			return nil, errors.Errorf("length should be equal, len(rpcCtxs): %d, len(tasks): %d", len(rpcCtxs), len(tasks))
 		}
 		taskMap := make(map[string]*batchCopTask)
 		for i, rpcCtx := range rpcCtxs {
