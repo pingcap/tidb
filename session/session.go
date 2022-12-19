@@ -1990,6 +1990,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
 		s.sessionVars.MemTracker.Detach()
+		logutil.BgLogger().Info("Detach tracker for sys session 1.")
 	}, nil
 }
 
@@ -2052,6 +2053,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
 		se.sessionVars.MemTracker.Detach()
+		logutil.BgLogger().Info("Detach tracker for sys session 2.")
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
