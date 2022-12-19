@@ -114,11 +114,7 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 }
 
 // Tune changes the capacity of this pool, note that it is noneffective to the infinite or pre-allocation pool.
-func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
-	if isLimit {
-		p.OnLimit()
-		p.SetLastTuneTs(time.Now().Add(p.options.LimitDuration))
-	}
+func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	capacity := p.Cap()
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
@@ -169,10 +165,6 @@ func (p *Pool[T, U, C, CT, TF]) addRunning(delta int) {
 
 func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 	p.waiting.Add(int32(delta))
-}
-
-func (p *Pool[T, U, C, CT, TF]) isLimit() bool {
-	return p.IsLimit()
 }
 
 // Release closes this pool and releases the worker queue.
@@ -334,9 +326,6 @@ func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) 
 			return
 		}
 	retry:
-		if p.isLimit() {
-			goto retry
-		}
 		if p.options.MaxBlockingTasks != 0 && p.Waiting() >= p.options.MaxBlockingTasks {
 			p.lock.Unlock()
 			return

@@ -88,7 +88,7 @@ func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 	Release()
 
-	Tune(size int, isLimit bool)
+	Tune(size int)
 }
 
 // TaskController is a controller that can control or watch the pool.
