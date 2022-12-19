@@ -223,10 +223,24 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.GetSessionVars().StmtCtx.WarningCount()
 }
 
+func (tc *TiDBContext) checkSandBoxMode(stmt ast.StmtNode) error {
+	if !tc.Session.GetSessionVars().InRestrictedSQL && tc.InSandBoxMode() {
+		switch stmt.(type) {
+		case *ast.SetPwdStmt, *ast.AlterUserStmt:
+		default:
+			return errMustChangePassword.GenWithStackByArgs()
+		}
+	}
+	return nil
+}
+
 // ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
+	if err = tc.checkSandBoxMode(stmt); err != nil {
+		return nil, err
+	}
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {

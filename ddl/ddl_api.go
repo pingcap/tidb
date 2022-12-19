@@ -4681,6 +4681,9 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
+		if t.Meta().Partition != nil {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
+		}
 	}
 
 	// Check that the column change does not affect the partitioning column

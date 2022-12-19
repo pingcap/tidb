@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -330,4 +331,111 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "1 7", "2 7", "5 7", "8 8", "10 10"))
+}
+
+func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (a DATE NULL DEFAULT '1619-01-18', b BOOL NULL DEFAULT '0') CHARACTER SET 'utf8mb4' COLLATE 'utf8mb4_bin';`)
+	tk.MustExec(`INSERT INTO t SET b = '1';`)
+
+	updateSQLs := []string{
+		"UPDATE t SET a = '9432-05-10', b = '0';",
+		"UPDATE t SET a = '9432-05-10', b = '1';",
+	}
+
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
+	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
+
+	var checkErrs []error
+	originHook := dom.DDL().GetHook()
+	callback := &ddl.TestDDLCallback{
+		Do: dom,
+	}
+	onJobUpdatedBefore := func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			for _, sql := range updateSQLs {
+				_, err := tk2.Exec(sql)
+				if err != nil {
+					checkErrs = append(checkErrs, err)
+				}
+			}
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedBefore)
+	dom.DDL().SetHook(callback)
+	tk.MustExec("alter table t add index idx(b);")
+	dom.DDL().SetHook(originHook)
+	for _, err := range checkErrs {
+		require.NoError(t, err)
+	}
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (id int primary key, a int);`)
+	tk.MustExec(`INSERT INTO t VALUES (1, 1);`)
+
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
+
+	originHook := dom.DDL().GetHook()
+	callback := &ddl.TestDDLCallback{Do: dom}
+
+	runPessimisticTxn := false
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly {
+			// Write a record to the temp index.
+			_, err := tk2.Exec("update t set a = 2 where id = 1;")
+			assert.NoError(t, err)
+		}
+		if !runPessimisticTxn && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "test", "t", "idx")
+			if idx == nil {
+				return
+			}
+			if idx.BackfillState != model.BackfillStateReadyToMerge {
+				return
+			}
+			runPessimisticTxn = true
+			_, err := tk2.Exec("begin pessimistic;")
+			assert.NoError(t, err)
+			_, err = tk2.Exec("update t set a = 3 where id = 1;")
+			assert.NoError(t, err)
+		}
+	}
+	dom.DDL().SetHook(callback)
+	afterCommit := make(chan struct{}, 1)
+	go func() {
+		tk.MustExec("alter table t add index idx(a);")
+		afterCommit <- struct{}{}
+	}()
+	timer := time.NewTimer(300 * time.Millisecond)
+	select {
+	case <-timer.C:
+		break
+	case <-afterCommit:
+		require.Fail(t, "should be blocked by the pessimistic txn")
+	}
+	tk2.MustExec("rollback;")
+	<-afterCommit
+	dom.DDL().SetHook(originHook)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 }
