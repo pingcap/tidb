@@ -494,7 +494,8 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		length      uint64   = initialLength
 	)
 	for _, v := range valueds {
-		if length > SplitThreShold && !bytes.Equal(lastKey, v.GetStartKey()) {
+		// decode will discard ts behind the key, which results in the same key for consecutive ranges
+		if v.Value+length > SplitThreShold && !bytes.Equal(lastKey, v.GetStartKey()) {
 			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
 			splitPoints = append(splitPoints, rawKey)
 			length = 0
