@@ -677,6 +677,17 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create temporary table t2 (id int key, constraint fk foreign key (id) references t1(id));",
 			err:    "[schema:1215]Cannot add foreign key constraint",
 		},
+		// Test foreign key with partition table
+		{
+			refer:  "create table t1 (id int key) partition by hash(id) partitions 3;",
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(id));",
+			err:    "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
+		{
+			refer:  "create table t1 (id int key);",
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(id)) partition by hash(id) partitions 3;",
+			err:    "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
@@ -1441,6 +1452,23 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			},
 			alter: "alter  table t2 add constraint fk foreign key (b) references t1(id)",
 			err:   "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table",
+		},
+		// Test foreign key with partition table
+		{
+			prepares: []string{
+				"create table t1 (id int key) partition by hash(id) partitions 3;",
+				"create table t2 (id int key);",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (id) references t1(id)",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key);",
+				"create table t2 (id int key) partition by hash(id) partitions 3;;",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (id) references t1(id)",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
 		},
 	}
 	for i, ca := range cases {
