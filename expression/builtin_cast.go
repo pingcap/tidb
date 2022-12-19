@@ -1981,13 +1981,7 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
 	terror.Log(err)
-	// We do not fold CAST if the eval type of this scalar function is ETJson
-	// since we may reset the flag of the field type of CastAsJson later which
-	// would affect the evaluation of it.
-	if tp.EvalType() != types.ETJson {
-		res = FoldConstant(res)
-	}
-	return res
+	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
@@ -2027,6 +2021,12 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
+	}
+	// We do not fold CAST if the eval type of this scalar function is ETJson
+	// since we may reset the flag of the field type of CastAsJson later which
+	// would affect the evaluation of it.
+	if tp.EvalType() != types.ETJson && err == nil {
+		res = FoldConstant(res)
 	}
 	return res, err
 }
