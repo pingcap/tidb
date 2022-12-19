@@ -1429,6 +1429,14 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+		return invalidTask, nil
+	}
 	path := candidate.path
 	is := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &copTask{
