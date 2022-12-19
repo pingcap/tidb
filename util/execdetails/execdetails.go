@@ -479,7 +479,6 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString(", ")
 			buf.WriteString(detail)
 		}
-
 	}
 	if !isTiFlashCop && crs.scanDetail != nil {
 		detail := crs.scanDetail.String()
