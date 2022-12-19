@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -81,12 +82,14 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"schema/schema_meta.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
 		"session_bindings.sql",
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"sql_meta.toml",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
@@ -181,6 +184,23 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
 	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+}
+
+func TestPlanReplayerContinuesCapture(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prHandle := dom.GetPlanReplayerHandle()
+	tk.MustExec("delete from mysql.plan_replayer_status;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("set @@tidb_enable_plan_replayer_continues_capture = 'ON'")
+	tk.MustQuery("select * from t;")
+	task := prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
+	require.True(t, success)
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
 func TestShow(t *testing.T) {
@@ -1569,7 +1589,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
+	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {
@@ -4603,13 +4623,10 @@ func TestUnion2(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
 
-	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrWrongUsage), "err %v", err)
+	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannercore.ErrWrongUsage)
 
-	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
-	require.NoError(t, err)
-	_, err = tk.Exec("(select a from t order by a) union all select a from t order by a")
-	require.NoError(t, err)
+	tk.MustExec("(select a from t limit 1) union all select a from t limit 1")
+	tk.MustExec("(select a from t order by a) union all select a from t order by a")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4680,8 +4697,8 @@ func TestUnion2(t *testing.T) {
 	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
-	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
-	require.Equal(t, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause", err.Error())
+	tk.MustGetErrMsg("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b",
+		"[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 
 	// #issue 9900
 	tk.MustExec("drop table if exists t")
@@ -4835,15 +4852,11 @@ func TestSQLMode(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a tinyint not null)")
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
-	_, err := tk.Exec("insert t values ()")
-	require.Error(t, err)
-
-	_, err = tk.Exec("insert t values ('1000')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t values ()")
+	tk.ExecToErr("insert t values ('1000')")
 
 	tk.MustExec("create table if not exists tdouble (a double(3,2))")
-	_, err = tk.Exec("insert tdouble values (10.23)")
-	require.Error(t, err)
+	tk.ExecToErr("insert tdouble values (10.23)")
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
@@ -4871,8 +4884,7 @@ func TestSQLMode(t *testing.T) {
 	tk2.MustQuery("select * from t2").Check(testkit.Rows("abc"))
 
 	// session1 is still in strict mode.
-	_, err = tk.Exec("insert t2 values ('abcd')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t2 values ('abcd')")
 	// Restore original global strict mode.
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
