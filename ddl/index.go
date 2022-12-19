@@ -1675,7 +1675,9 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
 		// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
-		loadDDLDistributeVars(w.ctx, w.sessPool)
+		if err := loadDDLDistributeVars(w.ctx, w.sessPool); err != nil {
+			logutil.BgLogger().Error("[ddl] load DDL distribute variable failed", zap.Error(err))
+		}
 		isDistReorg := variable.DDLEnableDistributeReorg.Load()
 		if isDistReorg && !reorgInfo.mergingTmpIdx {
 			sCtx, err := w.sessPool.get()
