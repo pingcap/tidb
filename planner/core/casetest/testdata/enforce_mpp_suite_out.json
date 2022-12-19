@@ -1245,7 +1245,7 @@
           "              └─ExchangeReceiver_34 16000.00 mpp[tiflash]  ",
           "                └─ExchangeSender_33 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#13, collate: binary]",
           "                  └─HashAgg_26 16000.00 mpp[tiflash]  group by:Column#13, test.t.a, test.t.b, ",
-          "                    └─RepeatSource_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#13, [{<test.t.a>},{<test.t.b>}]",
+          "                    └─Expand_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#13, [{<test.t.a>},{<test.t.b>}]",
           "                      └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1272,7 +1272,7 @@
           "                └─ExchangeSender_33 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#18, collate: binary]",
           "                  └─HashAgg_26 16000.00 mpp[tiflash]  group by:Column#18, test.t.a, test.t.b, funcs:count(Column#19)->Column#17",
           "                    └─Projection_31 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#18, case(eq(Column#18, 1), test.t.c, <nil>)->Column#19",
-          "                      └─RepeatSource_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#18, [{<test.t.a>},{<test.t.b>}]",
+          "                      └─Expand_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#18, [{<test.t.a>},{<test.t.b>}]",
           "                        └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1300,7 +1300,7 @@
           "                  └─HashAgg_26 16000.00 mpp[tiflash]  group by:Column#26, Column#27, Column#28, funcs:sum(Column#25)->Column#17",
           "                    └─Projection_39 20000.00 mpp[tiflash]  cast(Column#19, decimal(10,0) BINARY)->Column#25, test.t.a, test.t.b, Column#18",
           "                      └─Projection_31 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#18, case(eq(Column#18, 1), test.t.c, <nil>)->Column#19",
-          "                        └─RepeatSource_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#18, [{<test.t.a>},{<test.t.b>}]",
+          "                        └─Expand_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#18, [{<test.t.a>},{<test.t.b>}]",
           "                          └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1328,7 +1328,7 @@
           "                  └─HashAgg_26 16000.00 mpp[tiflash]  group by:Column#34, Column#35, Column#36, funcs:count(Column#32)->Column#21, funcs:sum(Column#33)->Column#22",
           "                    └─Projection_39 20000.00 mpp[tiflash]  Column#24, cast(Column#25, decimal(10,0) BINARY)->Column#33, test.t.a, test.t.b, Column#23",
           "                      └─Projection_31 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.d, Column#23, case(eq(Column#23, 1), test.t.c, <nil>)->Column#24, case(eq(Column#23, 1), test.t.d, <nil>)->Column#25",
-          "                        └─RepeatSource_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#23, [{<test.t.a,test.t.b>},{<test.t.b>}]",
+          "                        └─Expand_29 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#23, [{<test.t.a,test.t.b>},{<test.t.b>}]",
           "                          └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
