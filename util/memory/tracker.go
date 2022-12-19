@@ -611,6 +611,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.FormatBytes(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"sessionID\": %s\n", indent, t.SessionID)
 
 	t.mu.Lock()
 	labels := make([]int, 0, len(t.mu.children))
