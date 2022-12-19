@@ -68,7 +68,7 @@ func (p *BasePool) Name() string {
 	return p.name
 }
 
-// NewTaskID is to get new task id.
+// NewTaskID is to get a new task ID.
 func (p *BasePool) NewTaskID() uint64 {
 	return p.generator.Add(1)
 }
