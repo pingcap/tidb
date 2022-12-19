@@ -49,6 +49,7 @@ go_library(
         "//util/mathutil",
         "//util/memory",
         "//util/paging",
+        "//util/replayer",
         "//util/rowcodec",
         "//util/size",
         "//util/stmtsummary",

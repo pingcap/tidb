@@ -54,7 +54,7 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
-		// offset is used as order in general plan cache.
+		// offset is used as order in non-prepared plan cache.
 		param := ast.NewParamMarkerExpr(len(pr.params) - 1)
 		return param, true
 	}
@@ -100,7 +100,7 @@ func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			pr.err = errors.New("failed to restore ast.Node")
 			return nil, true
 		}
-		// offset is used as order in general plan cache.
+		// offset is used as order in non-prepared plan cache.
 		return pr.params[n.Offset], true
 	}
 	if pr.err != nil {
