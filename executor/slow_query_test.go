@@ -158,7 +158,7 @@ select * from t;`
 		recordString += str
 	}
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
-		`405888132465033227,root,localhost,0,57,0.12,0.216905,` +
+		`405888132465033227,root,localhost,0,,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
@@ -181,7 +181,7 @@ select * from t;`
 		recordString += str
 	}
 	expectRecordString = `2019-04-28 15:24:04.309074,` +
-		`405888132465033227,root,localhost,0,57,0.12,0.216905,` +
+		`405888132465033227,root,localhost,0,,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
@@ -278,6 +278,35 @@ func TestSlowLogParseTime(t *testing.T) {
 	require.Equal(t, t1.Unix(), t2.Unix())
 	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
 	require.Equal(t, t1Format, t1Str)
+}
+
+func TestParseSlowLogRetryInfo(t *testing.T) {
+	ctx := mock.NewContext()
+	slowLog := bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Exec_retry_time: 0.12 Exec_retry_count: 57 Exec_retry_reason: [PessimisticRetry]
+select * from t;
+`)
+	reader := bufio.NewReader(slowLog)
+	rows, err := parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	t0Str, err := rows[0][5].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t0Str, "[PessimisticRetry]")
+
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Exec_retry_time: 0.12 Exec_retry_count: 57 Exec_retry_reason: [PessimisticRetry, RcCheckTS, DeadLock]
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	t0Str, err = rows[0][5].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t0Str, "[PessimisticRetry, RcCheckTS, DeadLock]")
 }
 
 // TestFixParseSlowLogFile bugfix

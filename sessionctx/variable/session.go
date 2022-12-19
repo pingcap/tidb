@@ -2760,6 +2760,8 @@ const (
 	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
+	// SlowLogExecRetryReason is the execution retry reason.
+	SlowLogExecRetryReason = "Exec_retry_reason"
 	// SlowLogBackoffDetail is the detail of backoff.
 	SlowLogBackoffDetail = "Backoff_Detail"
 	// SlowLogResultRows is the row count of the SQL result.
@@ -2809,6 +2811,7 @@ type SlowQueryLogItems struct {
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
+	ExecRetryReason   string
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
@@ -2861,6 +2864,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		buf.WriteString(SlowLogExecRetryCount)
 		buf.WriteString(SlowLogSpaceMarkStr)
 		buf.WriteString(strconv.Itoa(int(logItems.ExecRetryCount)))
+		buf.WriteString(" ")
+		buf.WriteString(SlowLogExecRetryReason)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(logItems.ExecRetryReason)
 		buf.WriteString("\n")
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))

@@ -250,6 +250,7 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 	retryStartTime    time.Time
+	retryReason       map[string]struct{}
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -1037,8 +1038,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
-	a.retryCount++
-	a.retryStartTime = time.Now()
+	a.setPessmiticLockRetryInfo(lockErr)
 
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
@@ -1072,6 +1072,35 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 	return e, nil
+}
+
+func (a *ExecStmt) setPessmiticLockRetryInfo(lockErr error) {
+	a.retryCount++
+	a.retryStartTime = time.Now()
+
+	if nil == a.retryReason {
+		a.retryReason = make(map[string]struct{})
+	}
+	reason := getPessiticLockRetryReason(lockErr)
+	if 0 == len(reason) {
+		return
+	}
+	if _, ok := a.retryReason[reason]; !ok {
+		a.retryReason[reason] = struct{}{}
+	}
+}
+
+func (a *ExecStmt) convertRetryReasonToString() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteByte('[')
+	for k := range a.retryReason {
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(k)
+	}
+	buf.WriteByte(']')
+	return buf.String()
 }
 
 type pessimisticTxn interface {
@@ -1537,6 +1566,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		slowItems.ExecRetryReason = a.convertRetryReasonToString()
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -1939,4 +1969,38 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 		r[tableName][itemName] = status
 	}
 	return r
+}
+
+func getPessiticLockRetryReason(lockError error) string {
+	ok := false
+	reason := ""
+	causedError := errors.Cause(lockError)
+	fmt.Println("================xxxxxxxxxxxxxxxxxx=======", lockError)
+
+	if nil == causedError {
+		log.Warn("get internal pessimistic lock error failed")
+		return ""
+	}
+
+	if _, ok = causedError.(*tikverr.ErrDeadlock); ok {
+		return "DeadLock"
+	}
+
+	if terror.ErrorEqual(kv.ErrWriteConflict, lockError) {
+		err, _ := causedError.(*errors.Error)
+		args := err.Args()
+		if len(args)-1 != kv.ConflictReasonPos {
+			log.Warn("the argument count of ErrWriteConflict is not correct", zap.Error(lockError))
+			return ""
+		}
+		reason, ok = args[kv.ConflictReasonPos].(string)
+		if !ok {
+			log.Warn("get the reason of pessimistic lock error failed")
+			reason = ""
+		}
+		return reason
+	}
+
+	log.Warn("It is a unexpected pessimistic error causing retry", zap.Error(lockError))
+	return reason
 }

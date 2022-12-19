@@ -26,6 +26,9 @@ import (
 // *WARNING*: changing this string will affect the backward compatibility.
 const TxnRetryableMark = "[try again later]"
 
+// ConflictReasonPos is the argument position for reason of ErrWriteConflict
+const ConflictReasonPos = 7
+
 var (
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
 	ErrNotExist = dbterror.ClassKV.NewStd(mysql.ErrNotExist)
