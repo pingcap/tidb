@@ -546,9 +546,6 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	reorgInfo := scheduler.reorgInfo
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		t = tbl.GetPartition(physicalTableID)
-	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
