@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/cpu",
     visibility = ["//visibility:public"],
     deps = [
+        "//metrics",
         "//util/cgroup",
         "//util/mathutil",
         "@com_github_cloudfoundry_gosigar//:gosigar",
