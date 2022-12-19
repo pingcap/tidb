@@ -215,6 +215,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLJobStatus)
 	prometheus.MustRegister(TTLPhaseTime)
 
+	prometheus.MustRegister(EMACPUUsageGauge)
+
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics

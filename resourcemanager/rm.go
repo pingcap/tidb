@@ -43,5 +43,5 @@ func (r *ResourceManager) Start() {
 // Stop is to stop resource manager
 func (r *ResourceManager) Stop() {
 	r.cpuObserver.Stop()
-	r.wg.Done()
+	r.wg.Wait()
 }
