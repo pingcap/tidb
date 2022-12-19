@@ -6845,6 +6845,24 @@ func TestCTEBindings(t *testing.T) {
 	}
 }
 
+func TestExplainStmtText(t *testing.T) {
+	for _, sql := range []string{
+		"explain select * from t, t2",
+		"explain format = verbose select * from t, t2",
+		`explain format = "verbose" select * from t, t2`,
+		"explain analyze select * from t, t2",
+		"explain analyze format = verbose select * from t, t2",
+		`explain analyze format = "verbose" select * from t, t2`,
+	} {
+		p := parser.New()
+		node, _, err := p.Parse(sql, "", "")
+		require.NoError(t, err)
+		explainNode := node[0].(*ast.ExplainStmt)
+		idx := strings.Index(sql, "select")
+		require.Equal(t, explainNode.Stmt.Text(), sql[idx:])
+	}
+}
+
 func TestPlanReplayer(t *testing.T) {
 	table := []testCase{
 		{"PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t", true, "PLAN REPLAYER DUMP EXPLAIN SELECT `a` FROM `t`"},

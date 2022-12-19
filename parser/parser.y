@@ -78,7 +78,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
-	array		  "ARRAY"
+	array             "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -460,7 +460,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
-	member		      "MEMBER"
+	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -989,7 +989,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
-	ArrayKwdOpt	  		       "Array options"
+	ArrayKwdOpt                            "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -4955,6 +4955,9 @@ ExplainStmt:
 	}
 |	ExplainSym ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$2.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
 			Format: "row",
@@ -4976,6 +4979,9 @@ ExplainStmt:
 	}
 |	ExplainSym "FORMAT" "=" stringLit ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$5.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:   $5,
 			Format: $4,
@@ -4990,6 +4996,9 @@ ExplainStmt:
 	}
 |	ExplainSym "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$5.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:   $5,
 			Format: $4,
@@ -4997,6 +5006,9 @@ ExplainStmt:
 	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$3.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:    $3,
 			Format:  "row",
@@ -5005,6 +5017,9 @@ ExplainStmt:
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
@@ -5013,6 +5028,9 @@ ExplainStmt:
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
 	{
+		stmtStartOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(parser.lexer.client, strings.TrimSpace(parser.src[stmtStartOffset:]))
+
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
@@ -7250,7 +7268,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
