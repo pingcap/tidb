@@ -2116,7 +2116,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 	}
 	if tbInfo.TTLInfo != nil {
-		if err := checkTTLInfoValid(ctx, tbInfo); err != nil {
+		if err := checkTTLInfoValid(ctx, s.Table.Schema, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4681,6 +4681,9 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
+		if t.Meta().Partition != nil {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
+		}
 	}
 
 	// Check that the column change does not affect the partitioning column
@@ -5368,7 +5371,7 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 	var job *model.Job
 	if ttlInfo != nil {
 		tblInfo.TTLInfo = ttlInfo
-		err = checkTTLInfoValid(ctx, tblInfo)
+		err = checkTTLInfoValid(ctx, ident.Schema, tblInfo)
 		if err != nil {
 			return err
 		}
