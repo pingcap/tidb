@@ -110,7 +110,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(partition.Name.O))
+				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, partition.Name)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -131,10 +131,12 @@ func TestNewTTLTable(t *testing.T) {
 			require.Same(t, timeColumn, ttlTbl.TimeColumn)
 
 			if tblInfo.Partition == nil {
+				require.Equal(t, ttlTbl.TableInfo.ID, ttlTbl.ID)
 				require.Equal(t, "", ttlTbl.Partition.L)
 				require.Nil(t, ttlTbl.PartitionDef)
 			} else {
 				def := tblInfo.Partition.Definitions[i]
+				require.Equal(t, def.ID, ttlTbl.ID)
 				require.Equal(t, def.Name.L, ttlTbl.Partition.L)
 				require.Equal(t, def, *(ttlTbl.PartitionDef))
 			}
