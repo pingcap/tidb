@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -45,18 +47,80 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
-type backfillWorkerType byte
+type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillWorkerType = 0
-	typeUpdateColumnWorker     backfillWorkerType = 1
-	typeCleanUpIndexWorker     backfillWorkerType = 2
-	typeAddIndexMergeTmpWorker backfillWorkerType = 3
+	typeAddIndexWorker         backfillerType = 0
+	typeUpdateColumnWorker     backfillerType = 1
+	typeCleanUpIndexWorker     backfillerType = 2
+	typeAddIndexMergeTmpWorker backfillerType = 3
+
+	// InstanceLease is the instance lease.
+	InstanceLease = 1 * time.Minute
 )
+
+func (bT backfillerType) String() string {
+	switch bT {
+	case typeAddIndexWorker:
+		return "add index"
+	case typeUpdateColumnWorker:
+		return "update column"
+	case typeCleanUpIndexWorker:
+		return "clean up index"
+	case typeAddIndexMergeTmpWorker:
+		return "merge temporary index"
+	default:
+		return "unknown"
+	}
+}
+
+// BackfillJob is for a tidb_ddl_backfill table's record.
+type BackfillJob struct {
+	ID            int64
+	JobID         int64
+	EleID         int64
+	EleKey        []byte
+	Tp            backfillerType
+	State         model.JobState
+	StoreID       int64
+	InstanceID    string
+	InstanceLease types.Time
+	// range info
+	CurrKey  []byte
+	StartKey []byte
+	EndKey   []byte
+
+	StartTS  uint64
+	FinishTS uint64
+	RowCount int64
+	Meta     *model.BackfillMeta
+}
+
+// AbbrStr returns the BackfillJob's info without the Meta info.
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
+}
+
+// GetOracleTime returns the current time from TS.
+func GetOracleTime(se *session) (time.Time, error) {
+	txn, err := se.Txn(true)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
+}
+
+// GetLeaseGoTime returns a types.Time by adding a lease.
+func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
+	leaseTime := currTime.Add(lease)
+	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
+}
 
 // By now the DDL jobs that need backfilling include:
 // 1: add-index
@@ -109,21 +173,6 @@ const (
 // For a single range, backfill worker doesn't backfill all the data in one kv transaction.
 // Instead, it is divided into batches, each time a kv transaction completes the backfilling
 // of a partial batch.
-
-func (bWT backfillWorkerType) String() string {
-	switch bWT {
-	case typeAddIndexWorker:
-		return "add index"
-	case typeUpdateColumnWorker:
-		return "update column"
-	case typeCleanUpIndexWorker:
-		return "clean up index"
-	case typeAddIndexMergeTmpWorker:
-		return "merge temporary index"
-	default:
-		return "unknown"
-	}
-}
 
 type backfiller interface {
 	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
@@ -191,13 +240,13 @@ type backfillWorker struct {
 	resultCh  chan *backfillResult
 	table     table.Table
 	priority  int
-	tp        backfillWorkerType
+	tp        backfillerType
 	ctx       context.Context
 	cancel    func()
 }
 
 func newBackfillWorker(ctx context.Context, sessCtx sessionctx.Context, id int, t table.PhysicalTable,
-	reorgInfo *reorgInfo, tp backfillWorkerType) *backfillWorker {
+	reorgInfo *reorgInfo, tp backfillerType) *backfillWorker {
 	bfCtx, cancel := context.WithCancel(ctx)
 	return &backfillWorker{
 		id:        id,
@@ -467,6 +516,12 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 			zap.String("task failed error", err.Error()),
 			zap.String("take time", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
+		failpoint.Inject("MockGetIndexRecordErr", func() {
+			// Make sure this job didn't failed because by the "Write conflict" error.
+			if dbterror.ErrNotOwner.Equal(err) {
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
 		return errors.Trace(err)
 	}
 
@@ -491,9 +546,6 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	reorgInfo := scheduler.reorgInfo
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		t = tbl.GetPartition(physicalTableID)
-	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
@@ -502,6 +554,7 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	// Build reorg tasks.
 	job := reorgInfo.Job
 	for i, keyRange := range kvRanges {
+		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
 		endK, err := getRangeEndKey(scheduler.jobCtx, dc.store, job.Priority, prefix, keyRange.StartKey, endKey)
 		if err != nil {
@@ -511,11 +564,17 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
+		if len(startKey) == 0 {
+			startKey = prefix
+		}
+		if len(endKey) == 0 {
+			endKey = prefix.PrefixNext()
+		}
 
 		task := &reorgBackfillTask{
 			id:              i,
 			physicalTableID: physicalTableID,
-			startKey:        keyRange.StartKey,
+			startKey:        startKey,
 			endKey:          endKey,
 			// If the boundaries overlap, we should ignore the preceding endKey.
 			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
@@ -564,8 +623,7 @@ func loadDDLReorgVars(ctx context.Context, sessPool *sessionPool) error {
 	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
 }
 
-func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
-	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
@@ -598,7 +656,7 @@ type backfillScheduler struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
 	sessPool     *sessionPool
-	tp           backfillWorkerType
+	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
 	jobCtx       *JobContext
@@ -615,7 +673,7 @@ type backfillScheduler struct {
 const backfillTaskChanSize = 1024
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
-	tp backfillWorkerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
+	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
 	jobCtx *JobContext) *backfillScheduler {
 	return &backfillScheduler{
 		ctx:          ctx,
@@ -792,13 +850,13 @@ func (b *backfillScheduler) Close() {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	sessCtx := newContext(reorgInfo.d.store)
-	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, reorgInfo.dbInfo.Name, t)
 	if err != nil {
 		return errors.Trace(err)
 	}

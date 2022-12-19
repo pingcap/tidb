@@ -412,6 +412,7 @@ const (
 		modify_count bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+    	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
@@ -730,13 +731,15 @@ const (
 	version106 = 106
 	// version107 add columns related to password expiration into mysql.user
 	version107 = 107
-	// version107 adds the table tidb_ttl_table_status
+	// version108 adds the table tidb_ttl_table_status
 	version108 = 108
+	// version109 add column source to mysql.stats_meta_history
+	version109 = 109
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version107
+var currentBootstrapVersion int64 = version109
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -849,6 +852,7 @@ var (
 		upgradeToVer106,
 		upgradeToVer107,
 		upgradeToVer108,
+		upgradeToVer109,
 	}
 )
 
@@ -2178,9 +2182,9 @@ func upgradeToVer107(s Session, ver int64) {
 	if ver >= version107 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
-		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),"+
-		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N'")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP()")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
 }
 
 func upgradeToVer108(s Session, ver int64) {
@@ -2188,6 +2192,13 @@ func upgradeToVer108(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTableStatus)
+}
+
+func upgradeToVer109(s Session, ver int64) {
+	if ver >= version109 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
 func writeOOMAction(s Session) {

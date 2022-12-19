@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -196,7 +197,6 @@ type TxnCtxNoNeedToRestore struct {
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
-	shardRand    *rand.Rand
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
@@ -246,21 +246,22 @@ type SavepointRecord struct {
 }
 
 // GetCurrentShard returns the shard for the next `count` IDs.
-func (tc *TransactionContext) GetCurrentShard(count int) int64 {
-	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
+func (s *SessionVars) GetCurrentShard(count int) int64 {
+	tc := s.TxnCtx
+	if s.shardRand == nil {
+		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
-		tc.updateShard()
+		tc.updateShard(s.shardRand)
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
 	return tc.currentShard
 }
 
-func (tc *TransactionContext) updateShard() {
+func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
@@ -638,8 +639,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
-	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
-	generalPlanCacheStmts *kvcache.SimpleLRUCache
+	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
+	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1255,17 +1256,17 @@ type SessionVars struct {
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
 	PreparedPlanCacheSize uint64
 
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
 
-	// EnableGeneralPlanCache indicates whether to enable general plan cache.
-	EnableGeneralPlanCache bool
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
 
-	// GeneralPlanCacheSize controls the size of general plan cache.
-	GeneralPlanCacheSize uint64
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
 
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
@@ -1320,8 +1321,55 @@ type SessionVars struct {
 	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
 	EnablePlanReplayerCapture bool
 
+	// EnablePlanReplayedContinuesCapture indicates whether enabled plan replayer continues capture
+	EnablePlanReplayedContinuesCapture bool
+
+	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
+	// duplicate task in plan replayer continues capture
+	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
+
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -2032,31 +2080,27 @@ func (k planCacheStmtKey) Hash() []byte {
 	return []byte(k)
 }
 
-// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
-func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
-	if s.generalPlanCacheStmts == nil {
-		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
+// AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
+func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
+	if s.nonPreparedPlanCacheStmts == nil {
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
 	}
-	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
 
-// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
-	if s.generalPlanCacheStmts == nil {
+// GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
+	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
-	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
-		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
-		if err != nil {
-			maxPreparedStmtCount = DefMaxPreparedStmtCount
-		}
+		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&PreparedStmtCount, -1)
@@ -3150,4 +3194,54 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// protectedTSList implements util/processinfo#ProtectedTSList
+type protectedTSList struct {
+	sync.Mutex
+	items map[uint64]int
+}
+
+// HoldTS holds the timestamp to prevent its data from being GCed.
+func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
+	lst.Lock()
+	if lst.items == nil {
+		lst.items = map[uint64]int{}
+	}
+	lst.items[ts] += 1
+	lst.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lst.Lock()
+			if lst.items != nil {
+				if lst.items[ts] > 1 {
+					lst.items[ts] -= 1
+				} else {
+					delete(lst.items, ts)
+				}
+			}
+			lst.Unlock()
+		})
+	}
+}
+
+// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	lst.Lock()
+	for k, v := range lst.items {
+		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
+			ts = k
+		}
+	}
+	lst.Unlock()
+	return
+}
+
+// Size returns the number of protected timestamps (exported for test).
+func (lst *protectedTSList) Size() (size int) {
+	lst.Lock()
+	size = len(lst.items)
+	lst.Unlock()
+	return
 }

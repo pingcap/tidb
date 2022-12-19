@@ -39,3 +39,7 @@ func (bc *baseCache) ShouldUpdate() bool {
 func (bc *baseCache) SetInterval(interval time.Duration) {
 	bc.interval = interval
 }
+
+func (bc *baseCache) GetInterval() time.Duration {
+	return bc.interval
+}

@@ -3,7 +3,7 @@
 ## Background
 
 We had some incompatibility issues in the past, which made BR cannot restore backed up data in some situations.
-So we need a test workflow to check the compatiblity.
+So we need a test workflow to check the compatibility.
 
 ## Goal
 

@@ -53,6 +53,7 @@ import (
 	identifier  "identifier"
 	asof        "AS OF"
 	toTimestamp "TO TIMESTAMP"
+	memberof    "MEMBER OF"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -77,6 +78,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
+	array		  "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -458,6 +460,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
+	member		      "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -636,6 +639,8 @@ import (
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
+	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
+	passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -984,6 +989,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
+	ArrayKwdOpt	  		       "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -1164,6 +1170,7 @@ import (
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
 	RequireListElement                     "require list element for tls option"
+	ResourceGroupNameOption                "resource group name for user"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -1786,10 +1793,6 @@ AlterTableSpecSingleOpt:
 	}
 |	"REMOVE" "TTL"
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableRemoveTTL,
 		}
@@ -5815,6 +5818,10 @@ PredicateExpr:
 	{
 		$$ = &ast.PatternRegexpExpr{Expr: $1, Pattern: $3, Not: !$2.(bool)}
 	}
+|	BitExpr memberof '(' SimpleExpr ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONMemberOf), Args: []ast.ExprNode{$1, $4}}
+	}
 |	BitExpr
 
 RegexpSym:
@@ -6334,6 +6341,7 @@ UnReservedKeyword:
 |	"ACCOUNT"
 |	"INCREMENTAL"
 |	"CPU"
+|	"MEMBER"
 |	"MEMORY"
 |	"BLOCK"
 |	"IO"
@@ -6458,6 +6466,8 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"FAILED_LOGIN_ATTEMPTS"
+|	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
 
@@ -7240,7 +7250,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -7251,6 +7261,7 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
+		tp.SetArray($6.(bool))
 		explicitCharset := parser.explicitCharset
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
@@ -7318,6 +7329,15 @@ SimpleExpr:
 		expr := ast.NewValueExpr($3, parser.charset, parser.collation)
 		extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{$1, expr}}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
+	}
+
+ArrayKwdOpt:
+	{
+		$$ = false
+	}
+|	"ARRAY"
+	{
+		$$ = true
 	}
 
 DistinctKwd:
@@ -11839,10 +11859,6 @@ TableOption:
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.TableOption{
 			Tp:            ast.TableOptionTTL,
 			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
@@ -11852,10 +11868,6 @@ TableOption:
 	}
 |	"TTL_ENABLE" EqOpt stringLit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		onOrOff := strings.ToLower($3)
 		if onOrOff == "on" {
 			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
@@ -12739,7 +12751,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -12752,6 +12764,9 @@ CreateUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12769,7 +12784,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -12780,6 +12795,9 @@ AlterUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12994,6 +13012,15 @@ CommentOrAttributeOption:
 		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
+ResourceGroupNameOption:
+	{
+		$$ = nil
+	}
+|	"RESOURCE" "GROUP" stringLit
+	{
+		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+	}
+
 PasswordOrLockOptions:
 	{
 		$$ = []*ast.PasswordOrLockOption{}
@@ -13077,6 +13104,26 @@ PasswordOrLockOption:
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
+		}
+	}
+|	"FAILED_LOGIN_ATTEMPTS" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.FailedLoginAttempts,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" Int64Num
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type:  ast.PasswordLockTime,
+			Count: $2.(int64),
+		}
+	}
+|	"PASSWORD_LOCK_TIME" "UNBOUNDED"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
 
@@ -13294,6 +13341,15 @@ SetBindingStmt:
 			BindingStatusType: $3.(ast.BindingStatusType),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			SQLDigest:         $7,
 		}
 
 		$$ = x
