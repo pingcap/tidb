@@ -120,6 +120,7 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -88,5 +89,50 @@ func TestFlashback(t *testing.T) {
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	}
+}
+
+func TestPrepareFlashbackFailed(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, index i(a))")
+		tk.MustExec("insert t values (1), (2), (3)")
+
+		time.Sleep(1 * time.Second)
+
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPrepareMeetsEpochNotMatch", `return(true)`))
+
+		tk.MustExec("insert t values (4), (5), (6)")
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		tk.MustExec("admin check table t")
+		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
+		require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
+
+		jobMeta := tk.MustQuery("select job_meta from mysql.tidb_ddl_history order by job_id desc limit 1").Rows()[0][0].(string)
+		job := model.Job{}
+		require.NoError(t, job.Decode([]byte(jobMeta)))
+		require.Equal(t, job.ErrorCount, int64(0))
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPrepareMeetsEpochNotMatch"))
 	}
 }
