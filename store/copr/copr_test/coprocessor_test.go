@@ -25,6 +25,14 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
+func flattenKeyRanges(ranges *copr.KeyRanges) []kv.KeyRange {
+	ret := make([]kv.KeyRange, 0, ranges.Len())
+	ranges.Do(func(ran *kv.KeyRange) {
+		ret = append(ret, *ran)
+	})
+	return ret
+}
+
 func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
@@ -130,6 +138,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, tasks[0].RowCountHint, 5)
 	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
 	require.Equal(t, tasks[1].RowCountHint, 9)
+	require.Nil(t, it.GetHeadTask())
 
 	req = &kv.Request{
 		Tp:                kv.ReqTypeDAG,
@@ -144,6 +153,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, len(tasks), 1)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
+	require.Nil(t, it.GetHeadTask())
 
 	// paging will disable store batch.
 	req = &kv.Request{
@@ -166,4 +176,67 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
+	require.Nil(t, it.GetHeadTask())
+
+	// keep order
+	req = &kv.Request{
+		Tp:                kv.ReqTypeDAG,
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
+		FixedRowCountHint: []int{1, 1, 3, 3},
+		Concurrency:       15,
+		StoreBatchSize:    1,
+		KeepOrder:         true,
+		Desc:              false,
+	}
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 2)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	require.Equal(t, tasks[0].RowCountHint, 5)
+	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
+	require.Equal(t, tasks[1].RowCountHint, 9)
+	taskRanges := [][]kv.KeyRange{
+		copr.BuildKeyRanges("a", "c", "d", "e"),
+		copr.BuildKeyRanges("h", "n"),
+		copr.BuildKeyRanges("n", "t"),
+		copr.BuildKeyRanges("t", "x", "y", "z"),
+	}
+	curTask := it.GetHeadTask()
+	for i := 0; i < len(taskRanges); i++ {
+		require.Equal(t, flattenKeyRanges(curTask.Ranges()), taskRanges[i])
+		curTask = curTask.GetNextTask()
+	}
+	require.Nil(t, curTask)
+
+	// keep order & desc
+	req = &kv.Request{
+		Tp:                kv.ReqTypeDAG,
+		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
+		FixedRowCountHint: []int{1, 1, 3, 3},
+		Concurrency:       15,
+		StoreBatchSize:    1,
+		KeepOrder:         true,
+		Desc:              true,
+	}
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 2)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	require.Equal(t, tasks[0].RowCountHint, 9)
+	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
+	require.Equal(t, tasks[1].RowCountHint, 5)
+	taskRanges = [][]kv.KeyRange{
+		copr.BuildKeyRanges("t", "x", "y", "z"),
+		copr.BuildKeyRanges("n", "t"),
+		copr.BuildKeyRanges("h", "n"),
+		copr.BuildKeyRanges("a", "c", "d", "e"),
+	}
+	curTask = it.GetHeadTask()
+	for i := 0; i < len(taskRanges); i++ {
+		require.Equal(t, flattenKeyRanges(curTask.Ranges()), taskRanges[i])
+		curTask = curTask.GetNextTask()
+	}
+	require.Nil(t, curTask)
 }

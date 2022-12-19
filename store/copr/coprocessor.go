@@ -288,6 +288,10 @@ func (r *copTask) String() string {
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
 }
 
+func (r *copTask) Ranges() *KeyRanges {
+	return r.ranges
+}
+
 func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	if len(r.batchTaskList) == 0 {
 		return nil
@@ -312,6 +316,10 @@ func (r *copTask) ReuseRespChan(tasks []*copTask) {
 	for _, task := range tasks {
 		task.respChan = r.respChan
 	}
+}
+
+func (r *copTask) GetNextTask() *copTask {
+	return r.nextTask
 }
 
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
@@ -915,6 +923,11 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 // GetTasks returns the built tasks.
 func (it *copIterator) GetTasks() []*copTask {
 	return it.tasks
+}
+
+// GetHeadTask returns the head task when keep-order reading.
+func (it *copIterator) GetHeadTask() *copTask {
+	return it.headTask
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *copTask) (exit bool) {
