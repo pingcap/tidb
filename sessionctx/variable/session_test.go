@@ -398,21 +398,21 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.Equal(t, 0, len(tc.Savepoints))
 }
 
-func TestGeneralPlanCacheStmt(t *testing.T) {
+func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	sessVars.GeneralPlanCacheSize = 100
+	sessVars.NonPreparedPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 }
 
 func TestHookContext(t *testing.T) {
@@ -485,4 +485,58 @@ func TestGetReuseChunk(t *testing.T) {
 	sessVars.ClearAlloc(&allocpool.Alloc, true)
 	require.NotEqual(t, allocpool.Alloc, alloc)
 	require.Nil(t, sessVars.ChunkPool.Alloc)
+}
+
+func TestPretectedTSList(t *testing.T) {
+	lst := &variable.NewSessionVars(nil).ProtectedTSList
+
+	// empty set
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// hold 1
+	unhold1 := lst.HoldTS(1)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+
+	// hold 2 twice
+	unhold2a := lst.HoldTS(2)
+	unhold2b := lst.HoldTS(2)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 2a
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+	// unhold 2a again
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 1
+	unhold1()
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 1, lst.Size())
+
+	// unhold 2b
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// unhold 2b again
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
 }

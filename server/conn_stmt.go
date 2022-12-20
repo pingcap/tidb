@@ -266,7 +266,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if rs == nil {
 		return false, cc.writeOK(ctx)
 	}
-	if result, ok := rs.(*tidbResultSet); ok {
+	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
+	// casting it to *tidbResultSet.
+	if result, ok := unwrapResultSet(rs).(*tidbResultSet); ok {
 		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 			result.preparedStmt = planCacheStmt
 		}
@@ -278,6 +280,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
+		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
+		// will be set to sleep after fetch returned.
+		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
+			unhold := pi.HoldTS(pi.CurTxnStartTS)
+			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+		}
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
