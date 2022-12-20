@@ -56,16 +56,17 @@ func NewCPUObserver() *Observer {
 
 // Start starts the cpu observer.
 func (c *Observer) Start() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
 	c.wg.Add(1)
 	go func() {
-		defer c.wg.Done()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer func() {
+			ticker.Stop()
+			c.wg.Done()
+		}()
 		for {
 			select {
 			case <-ticker.C:
 				curr := c.observe()
-				log.Info("wwz current cpu uage", zap.Float64("cpu usage", curr))
 				metrics.EMACPUUsageGauge.Set(curr * 100)
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
@@ -109,6 +110,5 @@ func getCPUTime() (userTimeMillis, sysTimeMillis int64, err error) {
 	if err := cpuTime.Get(pid); err != nil {
 		return 0, 0, err
 	}
-	log.Info("getCPUTime", zap.Int64("user", int64(cpuTime.User)), zap.Int64("sys", int64(cpuTime.Sys)))
 	return int64(cpuTime.User), int64(cpuTime.Sys), nil
 }
