@@ -210,7 +210,6 @@ func (t *MPPFailedStoreProbe) stop() {
 	logutil.BgLogger().Info("stop background task")
 	t.cancel()
 	t.wg.Wait()
-
 }
 
 // Delete clean store from failed map
