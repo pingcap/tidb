@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	tikverror "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -891,7 +892,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {
-		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) || tikverror.ErrGCTooEarly.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
@@ -1503,6 +1504,15 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			panic("panic test")
 		}
 	})
+	failpoint.Inject("errorMockGCTooEarly", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) {
+			errInTxn = tikverror.ErrGCTooEarly
+		}
+	})
+	if errInTxn != nil {
+		return taskCtx, errInTxn
+	}
 
 	needMergeTmpIdx := w.index.Meta().BackfillState != model.BackfillStateInapplicable
 

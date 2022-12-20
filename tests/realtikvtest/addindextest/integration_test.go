@@ -395,3 +395,20 @@ func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 	}
 	return tbl.Meta().FindIndexByName(idxName)
 }
+
+func TestAddIndexMergeGCTooEarly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (a int, b int, c int, index idx(a, b));`)
+	tk.MustExec(`INSERT INTO t VALUES (1, 1, 1);`)
+	tk.MustExec(`INSERT INTO t VALUES (2, 2, 2);`)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockGCTooEarly", `1*return(true)->return(false)`))
+	tk.MustExec("alter table t add index idx2(a, c);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockGCTooEarly"))
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
