@@ -194,7 +194,7 @@ func (t *MPPFailedStoreProbe) run() {
 		for {
 			select {
 			case <-t.ctx.Done():
-				logutil.BgLogger().Debug("ctx.done")
+				logutil.BgLogger().Info("ctx.done")
 				return
 			case <-ticker.C:
 				t.scan(context.Background())
