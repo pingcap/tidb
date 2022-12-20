@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -2569,4 +2570,34 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("update t1 set id=id+100000 where id=1")
 	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
+}
+
+func TestForeignKeyAndLockView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key, foreign key (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t2 set id=2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set id=2 where id=1")
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Millisecond * 200)
+	_, digest := parser.NormalizeDigest("update t1 set id=2 where id=1")
+	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
+	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
+	wg.Wait()
 }
