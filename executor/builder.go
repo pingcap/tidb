@@ -4164,7 +4164,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
 				for i, date := range content.keys {
-					// TODO: Add a test where partition column is not a prefix or out of order with source joined table
 					locateKey[content.keyCols[i]] = date
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
