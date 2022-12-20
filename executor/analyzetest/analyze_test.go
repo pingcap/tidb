@@ -3211,7 +3211,12 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
 
+	// clean child trackers
 	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	for _, tracker := range childTrackers {
+		tracker.Detach()
+	}
+	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
 	tk0.MustExec("analyze table t with 1.0 samplerate;")
