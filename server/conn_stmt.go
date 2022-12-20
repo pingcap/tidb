@@ -251,13 +251,17 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	vars := (&cc.ctx).GetSessionVars()
+	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
+	}
+	if useCursor {
+		vars.SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
@@ -284,14 +288,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		// will be set to sleep after fetch returned.
 		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
 			unhold := pi.HoldTS(pi.CurTxnStartTS)
-			onClosed := unhold
-			if rc := pi.RefCountOfStmtCtx; rc != nil && rc.TryIncrease() {
-				onClosed = func() {
-					unhold()
-					rc.Decrease()
-				}
-			}
-			rs = &rsWithHooks{ResultSet: rs, onClosed: onClosed}
+			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
 		}
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
