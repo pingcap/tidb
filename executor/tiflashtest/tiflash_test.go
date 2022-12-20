@@ -1037,7 +1037,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 }
 
-func TestForbidTiflashDuringStaleRead(t *testing.T) {
+func TestTiflashSupportStaleRead(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1069,8 +1069,8 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.NotContains(t, res, "tiflash")
-	require.Contains(t, res, "tikv")
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {

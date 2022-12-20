@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -130,14 +129,9 @@ func TestSession(t *testing.T) {
 }
 
 func TestAllocMPPID(t *testing.T) {
-	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
-	require.NotNil(t, seVar)
-
-	require.Equal(t, int64(1), core.AllocMPPTaskID())
-	require.Equal(t, int64(2), core.AllocMPPTaskID())
-	require.Equal(t, int64(3), core.AllocMPPTaskID())
+	require.Equal(t, int64(2), plannercore.AllocMPPTaskID())
+	require.Equal(t, int64(3), plannercore.AllocMPPTaskID())
+	require.Equal(t, int64(4), plannercore.AllocMPPTaskID())
 }
 
 func TestSlowLogFormat(t *testing.T) {
