@@ -3199,46 +3199,58 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk0 := testkit.NewTestKit(t, store)
-	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-	tk0.MustExec("use test")
-	tk0.MustExec("create table t(a int)")
-	tk0.MustExec("insert into t select 1")
-	for i := 1; i <= 8; i++ {
-		tk0.MustExec("insert into t select * from t") // 256 Lines
-	}
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0].(string)
+	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
+	//tk.MustExec("set global tidb_server_memory_limit = 512MB")
+	originalVal3 := tk.MustQuery("select @@global.tidb_server_memory_limit_sess_min_size").Rows()[0][0].(string)
+	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action = %v", originalVal1))
+		//tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit = %v", originalVal2))
+		tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit_sess_min_size = %v", originalVal3))
+	}()
 
 	// clean child trackers
-	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	for _, tracker := range childTrackers {
+	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	for _, tracker := range oldChildTrackers {
 		tracker.Detach()
 	}
-	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	defer func() {
+		for _, tracker := range oldChildTrackers {
+			tracker.AttachToGlobalTracker(executor.GlobalAnalyzeMemoryTracker)
+		}
+	}()
+	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
-	tk0.MustExec("analyze table t with 1.0 samplerate;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk.MustExec("insert into t select * from t") // 256 Lines
+	}
+	tk.MustExec("analyze table t with 1.0 samplerate;")
 
 	h := dom.StatsHandle()
-	originalVal1 := handle.AutoAnalyzeMinCnt
-	originalVal2 := tk0.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	originalVal4 := handle.AutoAnalyzeMinCnt
+	originalVal5 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	handle.AutoAnalyzeMinCnt = 0
-	tk0.MustExec("set global tidb_auto_analyze_ratio = 0.001")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal1
-		tk0.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+		handle.AutoAnalyzeMinCnt = originalVal4
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
 	}()
 
 	sm := &testkit.MockSessionManager{
 		Dom: dom,
-		PS:  []*util.ProcessInfo{tk0.Session().ShowProcess()},
+		PS:  []*util.ProcessInfo{tk.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
-	tk0.MustExec("insert into t values(4),(5),(6)")
+	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	err := h.Update(dom.InfoSchema())
 	require.NoError(t, err)
@@ -3249,12 +3261,12 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	}()
-	tk0.MustQuery("select 1")
+	tk.MustQuery("select 1")
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
 	h.HandleAutoAnalyze(dom.InfoSchema())
-	rs := tk0.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
+	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
 
