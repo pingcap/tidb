@@ -2194,7 +2194,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: kv.MppVersionUnspecified, MaxValue: uint64(kv.MaxMppVersion), Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			version, err := strconv.ParseInt(normalizedValue, 10, 64)
 			if err != nil {
