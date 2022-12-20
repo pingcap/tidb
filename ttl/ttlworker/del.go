@@ -86,6 +86,10 @@ type ttlDeleteTask struct {
 }
 
 func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum) {
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+	tracer.EnterPhase(metrics.PhaseOther)
+
 	leftRows := t.rows
 	se := newTableSession(rawSe, t.tbl, t.expire)
 	for len(leftRows) > 0 {
@@ -109,10 +113,12 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			)
 		}
 
+		tracer.EnterPhase(metrics.PhaseWaitToken)
 		if err = globalDelRateLimiter.Wait(ctx); err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
 			return
 		}
+		tracer.EnterPhase(metrics.PhaseOther)
 
 		sqlStart := time.Now()
 		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
