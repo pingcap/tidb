@@ -27,11 +27,11 @@ import (
 const (
 	MppVersionUnspecified int64 = -1
 
-	// MppVersionV0 supports TiFlash version [~, v6.5.0]
+	// MppVersionV0 supports TiFlash version [~, v6.6.0]
 	// Used when cluster version <= v6.5.0
 	MppVersionV0 int64 = 0
 
-	// MppVersionV1 supports TiFlash version [v6.6.0, ~]
+	// MppVersionV1 supports TiFlash version [v6.7.0, ~]
 	// Features: data compression in exchange operator;
 	MppVersionV1             int64  = 1
 	MppVersionV1StoreVersion string = "6.7.0"
