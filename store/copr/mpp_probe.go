@@ -192,12 +192,11 @@ func (t *MPPFailedStoreProbe) run() {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-
+		defer t.wg.Done()
 		for {
 			select {
 			case <-t.ctx.Done():
 				logutil.BgLogger().Info("ctx.done")
-				t.wg.Done()
 				return
 			case <-ticker.C:
 				t.scan(context.Background())
