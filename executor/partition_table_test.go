@@ -3090,10 +3090,8 @@ func (s *partitionTableSuite) TestIssue26251(c *C) {
 	}
 }
 
-func TestIssue39999(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *partitionTableSuite) TestIssue39999(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`create schema test39999`)
 	tk.MustExec(`use test39999`)
