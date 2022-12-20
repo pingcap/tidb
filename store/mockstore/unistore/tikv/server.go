@@ -594,7 +594,9 @@ func (svr *Server) StoreBatchCoprocessor(ctx context.Context, req *coprocessor.R
 		}
 		taskReq := &coprocessor.Request{}
 		// deep clone req
-		taskReq.Unmarshal(bytes)
+		if err = taskReq.Unmarshal(bytes); err != nil {
+			return
+		}
 		taskReq.Tasks = nil
 		taskReq.IsCacheEnabled = false
 		taskReq.Ranges = task.Ranges
