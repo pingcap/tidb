@@ -3191,11 +3191,11 @@ from
 	query += ` and c.serial_id = t.serial_id`
 	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
 	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(""+
-		`IndexJoin 0.80 root  inner join, inner:TableReader, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)`,
-		`├─TableReader(Build) 0.80 root  data:Selection`,
-		`│ └─Selection 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
-		`│   └─TableFullScan 1.00 cop[tikv] table:t keep order:false`,
-		`└─TableReader(Probe) 0.80 root partition:all data:Selection`,
-		`  └─Selection 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
-		`    └─TableRangeScan 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
+		"IndexJoin 0.80 root  inner join, inner:TableReader, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)",
+		"├─TableReader(Build) 0.80 root  data:Selection",
+		"│ └─Selection 0.80 cop[tikv]  eq(test39999.t.broker, \"0009\"), not(isnull(test39999.t.serial_id))",
+		"│   └─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+		"└─TableReader(Probe) 1.00 root partition:all data:Selection",
+		"  └─Selection 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)",
+		"    └─TableRangeScan 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id test39999.t.serial_id], keep order:false"))
 }
