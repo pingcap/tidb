@@ -109,5 +109,6 @@ func getCPUTime() (userTimeMillis, sysTimeMillis int64, err error) {
 	if err := cpuTime.Get(pid); err != nil {
 		return 0, 0, err
 	}
+	log.Info("getCPUTime", zap.Int64("user", int64(cpuTime.User)), zap.Int64("sys", int64(cpuTime.Sys)))
 	return int64(cpuTime.User), int64(cpuTime.Sys), nil
 }
