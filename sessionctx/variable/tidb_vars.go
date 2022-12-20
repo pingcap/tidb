@@ -16,7 +16,9 @@ package variable
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -868,6 +870,24 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
+	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
+	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
+	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
+	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
+	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
+	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
+	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
+	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
+	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowEndTime = "tidb_ttl_job_schedule_window_end_time"
+	// TiDBTTLScanWorkerCount indicates the count of the scan workers in each TiDB node
+	TiDBTTLScanWorkerCount = "tidb_ttl_scan_worker_count"
+	// TiDBTTLDeleteWorkerCount indicates the count of the delete workers in each TiDB node
+	TiDBTTLDeleteWorkerCount = "tidb_ttl_delete_worker_count"
 	// PasswordReuseHistory limit a few passwords to reuse.
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
@@ -1115,9 +1135,22 @@ const (
 	DefTiDBUseAlloc                                  = false
 	DefTiDBEnablePlanReplayerCapture                 = false
 	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
+	DefTiDBTTLJobEnable                              = true
+	DefTiDBTTLScanBatchSize                          = 500
+	DefTiDBTTLScanBatchMaxSize                       = 10240
+	DefTiDBTTLScanBatchMinSize                       = 1
+	DefTiDBTTLDeleteBatchSize                        = 500
+	DefTiDBTTLDeleteBatchMaxSize                     = 10240
+	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
 )
 
 // Process global variables.
@@ -1180,6 +1213,15 @@ var (
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
+	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
+	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
+	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
+	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
@@ -1214,4 +1256,22 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
+}
+
+func mustParseDuration(str string) time.Duration {
+	duration, err := time.ParseDuration(str)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not a duration", str))
+	}
+
+	return duration
+}
+
+func mustParseTime(layout string, str string) time.Time {
+	time, err := time.ParseInLocation(layout, str, time.UTC)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not in %s duration format", str, layout))
+	}
+
+	return time
 }

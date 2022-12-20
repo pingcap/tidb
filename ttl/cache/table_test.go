@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -29,8 +28,6 @@ import (
 )
 
 func TestNewTTLTable(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	cases := []struct {
 		db      string
 		tbl     string
@@ -110,7 +107,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, model.NewCIStr(partition.Name.O))
+				ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr(c.db), tblInfo, partition.Name)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -131,10 +128,12 @@ func TestNewTTLTable(t *testing.T) {
 			require.Same(t, timeColumn, ttlTbl.TimeColumn)
 
 			if tblInfo.Partition == nil {
+				require.Equal(t, ttlTbl.TableInfo.ID, ttlTbl.ID)
 				require.Equal(t, "", ttlTbl.Partition.L)
 				require.Nil(t, ttlTbl.PartitionDef)
 			} else {
 				def := tblInfo.Partition.Definitions[i]
+				require.Equal(t, def.ID, ttlTbl.ID)
 				require.Equal(t, def.Name.L, ttlTbl.Partition.L)
 				require.Equal(t, def, *(ttlTbl.PartitionDef))
 			}
@@ -164,8 +163,6 @@ func TestNewTTLTable(t *testing.T) {
 }
 
 func TestEvalTTLExpireTime(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 day")

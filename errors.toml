@@ -1216,6 +1216,16 @@ error = '''
 Cannot set TTL_ENABLE on a table without TTL config
 '''
 
+["ddl:8151"]
+error = '''
+Set TTL for temporary table is not allowed
+'''
+
+["ddl:8152"]
+error = '''
+Set TTL for a table referenced by foreign key is not allowed
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id

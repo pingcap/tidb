@@ -2127,11 +2127,114 @@ var defaultSysVars = []*SysVar{
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBTTLJobEnable, Value: BoolToOnOff(DefTiDBTTLJobEnable), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableTTLJob.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableTTLJob.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLScanBatchSize.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		val := TTLScanBatchSize.Load()
+		return strconv.FormatInt(val, 10), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLDeleteBatchSize, Value: strconv.Itoa(DefTiDBTTLDeleteBatchSize), Type: TypeInt, MinValue: DefTiDBTTLDeleteBatchMinSize, MaxValue: DefTiDBTTLDeleteBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLDeleteBatchSize.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		val := TTLDeleteBatchSize.Load()
+		return strconv.FormatInt(val, 10), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLDeleteRateLimit, Value: strconv.Itoa(DefTiDBTTLDeleteRateLimit), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLDeleteRateLimit.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		val := TTLDeleteRateLimit.Load()
+		return strconv.FormatInt(val, 10), nil
+	}},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
 		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
 			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
 			return nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLJobRunInterval, Value: DefTiDBTTLJobRunInterval, Type: TypeDuration, MinValue: int64(10 * time.Minute), MaxValue: uint64(8760 * time.Hour), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			interval, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			TTLJobRunInterval.Store(interval)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			interval := TTLJobRunInterval.Load()
+
+			return interval.String(), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			TTLJobScheduleWindowStartTime.Store(startTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			startTime := TTLJobScheduleWindowStartTime.Load()
+			return startTime.Format(FullDayTimeFormat), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowEndTime, Value: DefTiDBTTLJobScheduleWindowEndTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			endTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			TTLJobScheduleWindowEndTime.Store(endTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			endTime := TTLJobScheduleWindowEndTime.Load()
+			return endTime.Format(FullDayTimeFormat), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLScanWorkerCount, Value: strconv.Itoa(DefTiDBTTLScanWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLScanWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(TTLScanWorkerCount.Load())), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLDeleteWorkerCount, Value: strconv.Itoa(DefTiDBTTLDeleteWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLDeleteWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
 }
