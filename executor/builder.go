@@ -3145,17 +3145,39 @@ func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []ta
 	return nextRange, nil
 }
 
-func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.PartitionExpr) bool {
-	tmp := make(map[int]struct{}, len(keyColumns))
-	for _, offset := range keyColumns {
-		tmp[offset] = struct{}{}
+func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []int {
+	keyColOffsets := make([]int, len(keyColIDs))
+	for i, colID := range keyColIDs {
+		offset := -1
+		for j, col := range pt.Cols() {
+			if colID == col.ID {
+				offset = j
+				break
+			}
+		}
+		if offset == -1 {
+			return nil
+		}
+		keyColOffsets[i] = offset
+	}
+
+	pe, err := pt.(interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}).PartitionExpr()
+	if err != nil {
+		return nil
+	}
+
+	offsetMap := make(map[int]struct{})
+	for _, offset := range keyColOffsets {
+		offsetMap[offset] = struct{}{}
 	}
 	for _, offset := range pe.ColumnOffset {
-		if _, ok := tmp[offset]; !ok {
-			return false
+		if _, ok := offsetMap[offset]; !ok {
+			return nil
 		}
 	}
-	return true
+	return keyColOffsets
 }
 
 func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
@@ -3163,15 +3185,6 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	partitionTbl := tbl.(table.PartitionedTable)
 	// TODO: condition based pruning can be do in advance.
 	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-	if err != nil {
-		return nil, false, nil, err
-	}
-
-	// check whether can runtime prune.
-	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}
-	pe, err := tbl.(partitionExpr).PartitionExpr()
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -3184,6 +3197,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		return nil, false, nil,
 			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
 	}
+<<<<<<< HEAD
 	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
 	for i, colID := range lookUpContent[0].keyColIDs {
 		offset := -1
@@ -3208,6 +3222,11 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		if _, ok := offsetMap[offset]; !ok {
 			return condPruneResult, false, nil, nil
 		}
+=======
+	keyColOffsets := getPartitionKeyColOffsets(lookUpContent[0].keyColIDs, partitionTbl)
+	if len(keyColOffsets) == 0 {
+		return condPruneResult, false, nil, nil
+>>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
 	}
 
 	locateKey := make([]types.Datum, len(partitionTbl.Cols()))
@@ -3714,6 +3733,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
+<<<<<<< HEAD
 
 		tbl, _ := builder.is.TableByID(tbInfo.ID)
 		pt := tbl.(table.PartitionedTable)
@@ -3726,6 +3746,29 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		var kvRanges []kv.KeyRange
 		if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			// In this case we can use dynamic partition pruning.
+=======
+		handles, _ := dedupHandles(lookUpContents)
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+	tbl, _ := builder.is.TableByID(tbInfo.ID)
+	pt := tbl.(table.PartitionedTable)
+	partitionInfo := &v.PartitionInfo
+	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	usedPartitions := make(map[int64]table.PhysicalTable, len(usedPartitionList))
+	for _, p := range usedPartitionList {
+		usedPartitions[p.GetPhysicalID()] = p
+	}
+	var kvRanges []kv.KeyRange
+	var keyColOffsets []int
+	if len(lookUpContents) > 0 {
+		keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
+	}
+	if v.IsCommonHandle {
+		if len(keyColOffsets) > 0 {
+>>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			for _, content := range lookUpContents {
@@ -3770,6 +3813,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 
+<<<<<<< HEAD
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
 	pe, err := tbl.(interface {
@@ -3780,6 +3824,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	var kvRanges []kv.KeyRange
 	if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+=======
+	if len(keyColOffsets) > 0 {
+>>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
 		locateKey := make([]types.Datum, e.Schema().Len())
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {

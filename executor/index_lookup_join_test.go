@@ -349,8 +349,67 @@ func (s *testSuite5) TestIssue24547(c *C) {
 	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
 }
 
+<<<<<<< HEAD
 func (s *testSuite5) TestIssue27893(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestIssue27138(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
+	tk.MustExec("drop table if exists t1,t2")
+
+	tk.MustExec("set @old_tidb_partition_prune_mode=@@tidb_partition_prune_mode")
+	tk.MustExec("set @@tidb_partition_prune_mode=dynamic")
+	defer tk.MustExec("set @@tidb_partition_prune_mode=@old_tidb_partition_prune_mode")
+
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(10) unsigned NOT NULL,
+  pc int(10) unsigned NOT NULL,
+  PRIMARY KEY (id,pc) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY HASH( pc )
+PARTITIONS 1`)
+	defer tk.MustExec("drop table t1")
+
+	// Order of columns is also important to reproduce the bug!
+	tk.MustExec(`CREATE TABLE t2 (
+  prefiller bigint(20) NOT NULL,
+  pk tinyint(3) unsigned NOT NULL,
+  postfiller bigint(20) NOT NULL,
+  PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin `)
+	defer tk.MustExec("drop table t2")
+
+	// Why does the t2.prefiller need be at least 2^32 ? If smaller the bug will not appear!?!
+	tk.MustExec("insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0)")
+	tk.MustExec(`analyze table t1`)
+	tk.MustExec(`analyze table t2`)
+
+	// Why must it be = 1 and not 2?
+	tk.MustQuery("explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows(""+
+		`IndexJoin 1.25 root  inner join, inner:TableReader, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)`,
+		`├─HashAgg(Build) 1.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller`,
+		`│ └─TableReader 1.00 root  data:HashAgg`,
+		`│   └─HashAgg 1.00 cop[tikv]  group by:test.t2.prefiller, `,
+		`│     └─Selection 1.00 cop[tikv]  eq(test.t2.postfiller, 1)`,
+		`│       └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false`,
+		`└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan`,
+		`  └─TableRangeScan 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.id, test.t2.prefiller)], keep order:false, stats:pseudo`))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	// without fix it fails with: "runtime error: index out of range [0] with length 0"
+	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())
+}
+
+func TestIssue27893(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
