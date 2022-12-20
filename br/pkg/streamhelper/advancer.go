@@ -315,6 +315,19 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
+func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
+	if cp < c.lastCheckpoint {
+		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
+		return false
+	}
+	if cp <= c.lastCheckpoint {
+		return false
+	}
+	c.lastCheckpoint = cp
+	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
+	return true
+}
+
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
 func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
 	start := time.Now()
@@ -322,21 +335,14 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	if err != nil {
 		return err
 	}
-	log.Info("get checkpoint", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	if cp < c.lastCheckpoint {
-		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	}
-	if cp <= c.lastCheckpoint {
-		return nil
-	}
 
-	log.Info("uploading checkpoint for task",
-		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
-		zap.Uint64("checkpoint", cp),
-		zap.String("task", c.task.Name),
-		zap.Stringer("take", time.Since(start)))
-	c.lastCheckpoint = cp
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
+	if c.setCheckpoint(cp) {
+		log.Info("uploading checkpoint for task",
+			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
+			zap.Uint64("checkpoint", cp),
+			zap.String("task", c.task.Name),
+			zap.Stringer("take", time.Since(start)))
+	}
 	return nil
 }
 
@@ -385,6 +391,9 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
+	c.checkpointsMu.Lock()
+	c.setCheckpoint(c.checkpoints.MinValue())
+	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
