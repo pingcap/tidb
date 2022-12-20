@@ -2965,6 +2965,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogWarnings + SlowLogSpaceMarkStr)
 		jsonEncoder := json.NewEncoder(&buf)
 		jsonEncoder.SetEscapeHTML(false)
+		// Note that the Encode() will append a '\n' so we don't need to add another.
 		err := jsonEncoder.Encode(logItems.Warnings)
 		if err != nil {
 			buf.WriteString(err.Error())

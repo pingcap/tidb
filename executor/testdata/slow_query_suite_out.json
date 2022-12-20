@@ -7,6 +7,10 @@
         "Result": ""
       },
       {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ a/0 from t",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Division by 0\"}]"
+      },
+      {
         "SQL": "create binding for select * from t where c = 10 using select * from t use index (c_d_e) where c = 10",
         "Result": ""
       },
