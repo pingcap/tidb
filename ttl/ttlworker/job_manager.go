@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -89,6 +90,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.store = store
 	manager.sessPool = sessPool
 	manager.delCh = make(chan *ttlDeleteTask)
+	manager.notifyStateCh = make(chan interface{}, 1)
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")
@@ -118,6 +120,7 @@ func (m *JobManager) jobLoop() error {
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
 	for {
+		m.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -141,9 +144,13 @@ func (m *JobManager) jobLoop() error {
 			}
 			cancel()
 		case <-updateScanTaskStateTicker:
-			m.updateTaskState()
+			if m.updateTaskState() {
+				m.rescheduleJobs(se, now)
+			}
 		case <-m.notifyStateCh:
-			m.updateTaskState()
+			if m.updateTaskState() {
+				m.rescheduleJobs(se, now)
+			}
 		case <-jobCheckTicker:
 			m.checkFinishedJob(se, now)
 			m.checkNotOwnJob()
@@ -160,6 +167,20 @@ func (m *JobManager) jobLoop() error {
 			m.rescheduleJobs(se, now)
 		}
 	}
+}
+
+func (m *JobManager) reportMetrics() {
+	var runningJobs, cancellingJobs float64
+	for _, job := range m.runningJobs {
+		switch job.status {
+		case cache.JobStatusRunning:
+			runningJobs++
+		case cache.JobStatusCancelling:
+			cancellingJobs++
+		}
+	}
+	metrics.RunningJobsCnt.Set(runningJobs)
+	metrics.CancellingJobsCnt.Set(cancellingJobs)
 }
 
 func (m *JobManager) resizeScanWorkers(count int) error {
@@ -213,7 +234,8 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 	return workers, nil
 }
 
-func (m *JobManager) updateTaskState() {
+// updateTaskState polls the result from scan worker and returns whether there are result polled
+func (m *JobManager) updateTaskState() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
 		job := findJobWithTableID(m.runningJobs, result.task.tbl.ID)
@@ -224,6 +246,8 @@ func (m *JobManager) updateTaskState() {
 			job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
 		}
 	}
+
+	return len(results) > 0
 }
 
 func (m *JobManager) pollScanWorkerResults() []*ttlScanTaskExecResult {
