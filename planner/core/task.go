@@ -2141,7 +2141,6 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
-		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
 
 	// no need to compress data in exchange operator when type is `PassThrough`
@@ -2204,16 +2203,16 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 			}
 		}
 	}
+
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
-		// TZGID:        GlobalTZGCount.Add(1),
 	}.Init(ctx, t.p.statsInfo())
 
 	sender.MppVersion = t.MppVersion
 
-	if sender.MppVersion != kv.MppVersionV0 {
+	if sender.MppVersion >= kv.MppVersionV1 {
 		// only use compress when exhancge tyoe is `Hash`
 		if sender.ExchangeType == tipb.ExchangeType_Hash {
 			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{

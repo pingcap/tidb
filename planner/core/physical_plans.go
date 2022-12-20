@@ -1496,8 +1496,6 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
-// var GlobalTZGCount atomic.Int64 = atomic.Int64{}
-
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
