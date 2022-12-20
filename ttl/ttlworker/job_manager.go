@@ -90,6 +90,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.store = store
 	manager.sessPool = sessPool
 	manager.delCh = make(chan *ttlDeleteTask)
+	manager.notifyStateCh = make(chan interface{}, 1)
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")
@@ -601,6 +602,11 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session) er
 		_, err := se.ExecuteSQL(ctx, updateHeartBeatSQL(job.tbl.ID, now, m.id))
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// also updates some internal state for this job
+		err = job.updateState(ctx, se)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to update state of the job", zap.String("jobID", job.id))
 		}
 	}
 	return nil
