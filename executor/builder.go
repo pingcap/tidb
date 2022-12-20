@@ -3795,42 +3795,16 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
-<<<<<<< HEAD
 
 		tbl, _ := builder.is.TableByID(tbInfo.ID)
 		pt := tbl.(table.PartitionedTable)
-		pe, err := tbl.(interface {
-			PartitionExpr() (*tables.PartitionExpr, error)
-		}).PartitionExpr()
-		if err != nil {
-			return nil, err
-		}
 		var kvRanges []kv.KeyRange
-		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
-			// In this case we can use dynamic partition pruning.
-=======
-		handles, _ := dedupHandles(lookUpContents)
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
-	}
-	tbl, _ := builder.is.TableByID(tbInfo.ID)
-	pt := tbl.(table.PartitionedTable)
-	partitionInfo := &v.PartitionInfo
-	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-	if err != nil {
-		return nil, err
-	}
-	usedPartitions := make(map[int64]table.PhysicalTable, len(usedPartitionList))
-	for _, p := range usedPartitionList {
-		usedPartitions[p.GetPhysicalID()] = p
-	}
-	var kvRanges []kv.KeyRange
-	var keyColOffsets []int
-	if len(lookUpContents) > 0 {
-		keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
-	}
-	if v.IsCommonHandle {
+		var keyColOffsets []int
+		if len(lookUpContents) > 0 {
+			keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
+		}
 		if len(keyColOffsets) > 0 {
->>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
+			// In this case we can use dynamic partition pruning.
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			for _, content := range lookUpContents {
@@ -3875,20 +3849,14 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 
-<<<<<<< HEAD
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
-	pe, err := tbl.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}).PartitionExpr()
-	if err != nil {
-		return nil, err
-	}
 	var kvRanges []kv.KeyRange
-	if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
-=======
+	var keyColOffsets []int
+	if len(lookUpContents) > 0 {
+		keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
+	}
 	if len(keyColOffsets) > 0 {
->>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
 		locateKey := make([]types.Datum, e.Schema().Len())
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
