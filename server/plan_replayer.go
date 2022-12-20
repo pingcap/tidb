@@ -16,17 +16,17 @@ package server
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/replayer"
 	"go.uber.org/zap"
 )
 
@@ -53,7 +53,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	params := mux.Vars(req)
 	name := params[pFileName]
 	handler := downloadFileHandler{
-		filePath:           filepath.Join(domain.GetPlanReplayerDirName(), name),
+		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
 		fileName:           name,
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,
@@ -83,7 +83,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
-		content, err := ioutil.ReadAll(file)
+		content, err := io.ReadAll(file)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -137,7 +137,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 				zap.String("remote-addr", remoteAddr), zap.Int("status-code", resp.StatusCode))
 			continue
 		}
-		content, err := ioutil.ReadAll(resp.Body)
+		content, err := io.ReadAll(resp.Body)
 		if err != nil {
 			writeError(w, err)
 			return
