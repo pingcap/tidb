@@ -4152,9 +4152,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		usedPartitions[p.GetPhysicalID()] = p
 	}
 	var kvRanges []kv.KeyRange
-	keyColOffsets := getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
+	var keyColOffsets []int
+	if len(lookUpContents) > 0 {
+		keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].keyColIDs, pt)
+	}
 	if v.IsCommonHandle {
-		if len(lookUpContents) > 0 && len(keyColOffsets) > 0 {
+		if len(keyColOffsets) > 0 {
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
@@ -4201,12 +4204,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 
 	handles, lookUpContents := dedupHandles(lookUpContents)
 
-	if len(lookUpContents) > 0 && len(keyColOffsets) > 0 {
+	if len(keyColOffsets) > 0 {
 		locateKey := make([]types.Datum, e.Schema().Len())
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
 			for i, date := range content.keys {
-				// TODO: Add test to see if keyColIDs should be used instead?
 				locateKey[content.keyCols[i]] = date
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
