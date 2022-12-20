@@ -2203,10 +2203,10 @@ var defaultSysVars = []*SysVar{
 			if version >= kv.MppVersionUnspecified && version <= kv.MaxMppVersion {
 				return normalizedValue, nil
 			}
-			err_msg := fmt.Sprintf("incorrect value: `%s`. `%s` options: `%d` unspecified, `%d`, `%d` feature `%s`",
+			err = fmt.Errorf("incorrect value: `%s`. %s options: `%d` unspecified, `%d`, `%d` feature `%s`",
 				originalValue,
 				MppVersion, kv.MppVersionUnspecified, kv.MppVersionV0, kv.MppVersionV1, kv.MppVersionV1Feature)
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppVersion, err_msg)
+			return normalizedValue, err
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			version, err := strconv.ParseInt(val, 10, 64)
