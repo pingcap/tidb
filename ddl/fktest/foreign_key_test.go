@@ -1557,9 +1557,8 @@ func TestTestMultiSchemaAddForeignKey(t *testing.T) {
 	tk.MustExec("alter table t2 add foreign key (c) references t1(id), add foreign key (d) references t1(id), add index(c), add index(d)")
 	tk.MustExec("drop table t2")
 	tk.MustExec("create table t2 (a int, b int, index idx1(a), index idx2(b));")
-	err := tk.ExecToErr("alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint", err.Error())
+	tk.MustGetErrMsg("alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id)",
+		"[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
 	tk.MustExec("alter table t2 drop index idx1, drop index idx2")
 	tk.MustExec("alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
