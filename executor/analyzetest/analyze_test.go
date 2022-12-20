@@ -3108,6 +3108,10 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	for i := 1; i <= 8; i++ {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
+
+	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	require.Len(t, childTrackers, 0)
+
 	tk0.MustExec("analyze table t with 1.0 samplerate;")
 
 	h := dom.StatsHandle()
@@ -3138,11 +3142,15 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	}()
+	tk0.MustQuery("select 1")
+	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	require.Len(t, childTrackers, 0)
+
 	h.HandleAutoAnalyze(dom.InfoSchema())
 	rs := tk0.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
 
-	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 }
