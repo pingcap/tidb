@@ -3615,30 +3615,10 @@ func TestIssue35181(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`insert into t select * from t where a=3000`)
 }
-<<<<<<< HEAD
-=======
-
-func TestIssue21732(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	for _, mode := range []variable.PartitionPruneMode{variable.StaticOnly, variable.DynamicOnly} {
-		testkit.WithPruneMode(tk, mode, func() {
-			tk.MustExec("create database TestIssue21732")
-			tk.MustExec("use TestIssue21732")
-			tk.MustExec("drop table if exists p")
-			tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
-			tk.MustExec("alter table p add unique index idx (a, b);")
-			tk.MustExec("insert into p (a) values  (1),(2),(3);")
-			tk.MustExec("select * from p ignore index (idx);")
-			tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
-			tk.MustExec("drop database TestIssue21732")
-		})
-	}
-}
 
 func TestIssue39999(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3689,7 +3669,7 @@ from
 		"│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false",
 		"└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20",
 		"  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)",
-		"    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false"))
+		"    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id], keep order:false"))
 	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
 
 	// Add the missing partition key part.
@@ -3701,8 +3681,7 @@ from
 		`├─TableReader_25(Build) 0.80 root  data:Selection_24`,
 		`│ └─Selection_24 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
 		`│   └─TableFullScan_23 1.00 cop[tikv] table:t keep order:false`,
-		`└─TableReader_19(Probe) 0.80 root partition:all data:Selection_18`,
-		`  └─Selection_18 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
-		`    └─TableRangeScan_17 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
+		`└─TableReader_19(Probe) 1.00 root partition:all data:Selection_18`,
+		`  └─Selection_18 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
+		`    └─TableRangeScan_17 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id test39999.t.serial_id], keep order:false`))
 }
->>>>>>> 4a72171ffb (*: Fix issue 39999, used wrong column id list for checking partitions (#40003))
