@@ -836,6 +836,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByGeneratedColumn:                            mysql.Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             mysql.Message("Generated column '%s' cannot refer to auto-increment column.", nil),
 	ErrAccountHasBeenLocked:                                  mysql.Message("Access denied for user '%s'@'%s'. Account is locked.", nil),
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock:    mysql.Message("Access denied for user '%s'@'%s'. Account is blocked for %s day(s) (%s day(s) remaining) due to %d consecutive failed logins.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrForeignKeyCascadeDepthExceeded:                        mysql.Message("Foreign key cascade delete/update exceeds max depth of %v.", nil),
@@ -1034,6 +1035,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnsupportedColumnInTTLConfig:  mysql.Message("Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP", nil),
 	ErrTTLColumnCannotDrop:           mysql.Message("Cannot drop column '%-.192s': needed in TTL config", nil),
 	ErrSetTTLEnableForNonTTLTable:    mysql.Message("Cannot set TTL_ENABLE on a table without TTL config", nil),
+	ErrTempTableNotAllowedWithTTL:    mysql.Message("Set TTL for temporary table is not allowed", nil),
+	ErrUnsupportedTTLReferencedByFK:  mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
