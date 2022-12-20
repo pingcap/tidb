@@ -3134,13 +3134,13 @@ from
     and t.broker = '0009'
     and c.occur_trade_date = '2022-11-17'`
 	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows("" +
-		"[IndexJoin_22 1.00 root  inner join, inner:TableReader_21, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)]\n" +
-		"[├─TableReader_27(Build) 1.00 root  data:Selection_26]\n" +
-		"[│ └─Selection_26 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")]\n" +
-		"[│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false]\n" +
-		"[└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20]\n" +
-		"[  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)]\n" +
-		"[    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id], keep order:false]\n"))
+		"[IndexJoin 1.00 root  inner join, inner:TableReader, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)]\n" +
+		"[├─TableReader(Build) 1.00 root  data:Selection]\n" +
+		"[│ └─Selection 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")]\n" +
+		"[│   └─TableFullScan 1.00 cop[tikv] table:t keep order:false]\n" +
+		"[└─TableReader(Probe) 1.00 root partition:all data:Selection]\n" +
+		"[  └─Selection 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)]\n" +
+		"[    └─TableRangeScan 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id], keep order:false]\n"))
 	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
 
 	// Add the missing partition key part.
@@ -3148,11 +3148,11 @@ from
 	query += ` and c.serial_id = t.serial_id`
 	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
 	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(""+
-		`IndexJoin_20 0.80 root  inner join, inner:TableReader_19, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)`,
-		`├─TableReader_25(Build) 0.80 root  data:Selection_24`,
-		`│ └─Selection_24 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
-		`│   └─TableFullScan_23 1.00 cop[tikv] table:t keep order:false`,
-		`└─TableReader_19(Probe) 0.80 root partition:all data:Selection_18`,
-		`  └─Selection_18 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
-		`    └─TableRangeScan_17 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
+		`IndexJoin 0.80 root  inner join, inner:TableReader, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)`,
+		`├─TableReader(Build) 0.80 root  data:Selection`,
+		`│ └─Selection 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:t keep order:false`,
+		`└─TableReader(Probe) 0.80 root partition:all data:Selection`,
+		`  └─Selection 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
+		`    └─TableRangeScan 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
 }
