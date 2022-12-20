@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/tidb"
 	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -1227,24 +1228,38 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 
 	if tableInfo.TTLInfo != nil {
-		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
 
-		columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
-		timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+			timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+			restoreCtx.WriteKeyWord("TTL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteName(columnName.String())
+			restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+			return timeUnit.Restore(restoreCtx)
+		})
 
-		restoreCtx.WriteKeyWord(" TTL ")
-		restoreCtx.WritePlain("= ")
-		restoreCtx.WriteName(columnName.String())
-		restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
-		err = timeUnit.Restore(restoreCtx)
 		if err != nil {
 			return err
 		}
-		if tableInfo.TTLInfo.Enable {
-			fmt.Fprintf(buf, " TTL_ENABLE = 'ON'")
-		} else {
-			fmt.Fprintf(buf, " TTL_ENABLE = 'OFF'")
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_ENABLE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.TTLInfo.Enable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1512,8 +1527,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer,
-	    Password_reuse_history, Password_reuse_time  FROM %n.%n WHERE User=%? AND Host=%?`,
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
+        Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
+        user_attributes->>'$.Password_locking.failed_login_attempts',
+        user_attributes->>'$.Password_locking.password_lock_time_days'
+		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
@@ -1538,7 +1557,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	userAttributes := rows[0].GetString(2)
 	if len(userAttributes) > 0 {
-		userAttributes = " ATTRIBUTE " + userAttributes
+		userAttributes = fmt.Sprintf(" ATTRIBUTE '%s'", userAttributes)
 	}
 
 	tokenIssuer := rows[0].GetString(3)
@@ -1548,18 +1567,45 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	var passwordHistory string
 	if rows[0].IsNull(4) {
-		passwordHistory = "DEFALUT"
+		passwordHistory = "DEFAULT"
 	} else {
 		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
 	}
 
 	var passwordReuseInterval string
 	if rows[0].IsNull(5) {
-		passwordReuseInterval = "DEFALUT"
+		passwordReuseInterval = "DEFAULT"
 	} else {
 		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
 	}
 
+	passwordExpired := rows[0].GetEnum(6).String()
+	passwordLifetime := int64(-1)
+	if !rows[0].IsNull(7) {
+		passwordLifetime = rows[0].GetInt64(7)
+	}
+	passwordExpiredStr := "PASSWORD EXPIRE DEFAULT"
+	if passwordExpired == "Y" {
+		passwordExpiredStr = "PASSWORD EXPIRE"
+	} else if passwordLifetime == 0 {
+		passwordExpiredStr = "PASSWORD EXPIRE NEVER"
+	} else if passwordLifetime > 0 {
+		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
+	}
+
+	failedLoginAttempts := rows[0].GetString(8)
+	if len(failedLoginAttempts) > 0 {
+		failedLoginAttempts = " FAILED_LOGIN_ATTEMPTS " + failedLoginAttempts
+	}
+
+	passwordLockTimeDays := rows[0].GetString(9)
+	if len(passwordLockTimeDays) > 0 {
+		if passwordLockTimeDays == "-1" {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME UNBOUNDED"
+		} else {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
+		}
+	}
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1583,8 +1629,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes, passwordHistory, passwordReuseInterval)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
