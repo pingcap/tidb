@@ -76,9 +76,9 @@ func (t ProbeTest) reSetErrortestype(to string) {
 	}
 }
 
-func (t ProbeTest) judge(ctx context.Context, test *testing.T, recoverytesttestL time.Duration, need bool) {
+func (t ProbeTest) judge(ctx context.Context, test *testing.T, recoveryTTL time.Duration, need bool) {
 	for k := range t {
-		ok := globalMPPFailedStoreProbe.IsRecovery(ctx, k, recoverytesttestL)
+		ok := globalMPPFailedStoreProbe.IsRecovery(ctx, k, recoveryTTL)
 		require.Equal(test, need, ok)
 	}
 }
@@ -109,6 +109,7 @@ func testFlow(ctx context.Context, probetestest ProbeTest, test *testing.T, flow
 		probetestest.judge(ctx, test, 0, need)
 		probetestest.judge(ctx, test, time.Minute, false)
 	}
+
 	lastTo := flow[len(flow)-1]
 	cleanRecover := func(need int) {
 		globalMPPFailedStoreProbe.maxRecoveryTimeLimit = 0 - time.Second
@@ -140,7 +141,7 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 	// Confirm that multiple tasks are not allowed
 	globalMPPFailedStoreProbe.lock.Lock()
-	globalMPPFailedStoreProbe.run()
+	globalMPPFailedStoreProbe.run(ctx)
 
 	// check not exist address
 	ok := globalMPPFailedStoreProbe.IsRecovery(ctx, notExistAddress, 0)

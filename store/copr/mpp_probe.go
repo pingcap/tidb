@@ -58,8 +58,6 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
-	ctx             context.Context
-	cancel          context.CancelFunc
 
 	detectPeriod         time.Duration
 	detectTimeoutLimit   time.Duration
@@ -68,11 +66,6 @@ type MPPFailedStoreProbe struct {
 }
 
 func (t *MPPSotreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
-	if !t.lock.TryLock() {
-		return
-	}
-	defer t.lock.Unlock()
-
 	if time.Since(t.lastDetectTime) < detectPeriod {
 		return
 	}
@@ -93,6 +86,9 @@ func (t *MPPSotreState) detect(ctx context.Context, detectPeriod time.Duration, 
 }
 
 func (t *MPPSotreState) isRecovery(ctx context.Context, recoveryTTL time.Duration) bool {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
 	t.lastLookupTime = time.Now()
 	if !t.recoveryTime.IsZero() && time.Since(t.recoveryTime) > recoveryTTL {
 		return true
@@ -122,6 +118,11 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 			t.Delete(address)
 			return
 		}
+
+		if !state.lock.TryLock() {
+			return
+		}
+		defer state.lock.Unlock()
 
 		state.detect(ctx, t.detectPeriod, t.detectTimeoutLimit)
 
@@ -178,7 +179,7 @@ func (t *MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, re
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProbe) run() {
+func (t *MPPFailedStoreProbe) run(ctx context.Context) {
 	if !t.lock.TryLock() {
 		return
 	}
@@ -190,17 +191,13 @@ func (t *MPPFailedStoreProbe) run() {
 
 		for {
 			select {
-			case <-t.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				t.scan(context.Background())
 			}
 		}
 	}()
-}
-
-func (t *MPPFailedStoreProbe) stop() {
-	t.cancel()
 }
 
 // Delete clean store from failed map
@@ -233,12 +230,9 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string, det
 }
 
 func init() {
-	ctx, cancel := context.WithCancel(context.Background())
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores:      &sync.Map{},
 		lock:                 &sync.Mutex{},
-		ctx:                  ctx,
-		cancel:               cancel,
 		detectPeriod:         DetectPeriod,
 		detectTimeoutLimit:   DetectTimeoutLimit,
 		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,

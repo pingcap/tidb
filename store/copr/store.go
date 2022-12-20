@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"math/rand"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -85,21 +86,27 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 		return nil, errors.Trace(err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	// run a background probe process for mpp store
-	globalMPPFailedStoreProbe.run()
+	globalMPPFailedStoreProbe.run(ctx)
 
-	/* #nosec G404 */
-	return &Store{
+	store := &Store{
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
-	}, nil
+	}
+
+	runtime.SetFinalizer(store, func(s *Store) {
+		cancel()
+	})
+
+	/* #nosec G404 */
+	return store, nil
 }
 
 // Close releases resources allocated for coprocessor.
 func (s *Store) Close() {
 	if s.coprCache != nil {
-		globalMPPFailedStoreProbe.stop()
 		s.coprCache.cache.Close()
 	}
 }
