@@ -1419,6 +1419,7 @@ type IndexInfo struct {
 	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.
