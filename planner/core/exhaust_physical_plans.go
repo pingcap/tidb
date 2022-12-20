@@ -2730,8 +2730,11 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 		}
 	}
 	if hasUnsupportedDistinct {
+		warnErr := errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
 		if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-			la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct"))
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warnErr)
+		} else {
+			la.ctx.GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
