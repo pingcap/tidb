@@ -16,7 +16,6 @@ package ast_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
@@ -843,8 +842,6 @@ func TestFlashBackDatabaseRestore(t *testing.T) {
 }
 
 func TestTableOptionTTLRestore(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
 	sourceSQL2 := "alter table t ttl_enable = 'OFF'"
 	sourceSQL3 := "alter table t remove ttl"

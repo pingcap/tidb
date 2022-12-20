@@ -1742,10 +1742,6 @@ AlterTableSpecSingleOpt:
 	}
 |	"REMOVE" "TTL"
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableRemoveTTL,
 		}
@@ -11787,10 +11783,6 @@ TableOption:
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.TableOption{
 			Tp:            ast.TableOptionTTL,
 			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
@@ -11800,10 +11792,6 @@ TableOption:
 	}
 |	"TTL_ENABLE" EqOpt stringLit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		onOrOff := strings.ToLower($3)
 		if onOrOff == "on" {
 			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
