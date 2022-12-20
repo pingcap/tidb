@@ -35,6 +35,7 @@ const (
 	// Features: data compression in exchange operator;
 	MppVersionV1             int64  = 1
 	MppVersionV1StoreVersion string = "6.7.0"
+	MppVersionV1Feature      string = "exchange data compression"
 
 	// MppVersionV2 int64 = MppVersionV1 * 2
 	// MppVersionV3 int64 = MppVersionV1 * 3

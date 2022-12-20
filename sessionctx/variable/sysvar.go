@@ -2174,6 +2174,13 @@ var defaultSysVars = []*SysVar{
 		val := TTLDeleteRateLimit.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
+		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
+			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompress, Type: TypeStr, Value: kv.DefaultExchangeCompressMethod.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
@@ -2187,20 +2194,26 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: kv.MppVersionUnspecified, MaxValue: uint64(kv.MppVersionV1), Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: kv.MppVersionUnspecified, MaxValue: uint64(kv.MaxMppVersion), Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			version, err := strconv.ParseInt(normalizedValue, 10, 64)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if version >= kv.MppVersionUnspecified && version <= kv.MaxMppVersion {
+				return normalizedValue, nil
+			}
+			err_msg := fmt.Sprintf("incorrect value: `%s`. `%s` options: `%d` unspecified, `%d`, `%d` feature `%s`",
+				originalValue,
+				MppVersion, kv.MppVersionUnspecified, kv.MppVersionV0, kv.MppVersionV1, kv.MppVersionV1Feature)
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppVersion, err_msg)
+		},
 		SetSession: func(s *SessionVars, val string) error {
 			version, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
 				return err
 			}
 			s.MppVersion = version
-			return nil
-		},
-	},
-	{
-		Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreBatchSize, Value: strconv.FormatInt(DefTiDBStoreBatchSize, 10),
-		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
-			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
 			return nil
 		},
 	},
