@@ -64,7 +64,7 @@ var (
 	ErrKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrKeyDoesNotExist)
 	// ErrCannotAddForeign returns for foreign key exists.
 	ErrCannotAddForeign = dbterror.ClassSchema.NewStd(mysql.ErrCannotAddForeign)
-	// ErrCannotAddForeign returns for foreign key on partition table.
+	// ErrForeignKeyOnPartitioned returns for foreign key on partition table.
 	ErrForeignKeyOnPartitioned = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyOnPartitioned)
 	// ErrForeignKeyNotMatch returns for foreign key not match.
 	ErrForeignKeyNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrWrongFkDef)
