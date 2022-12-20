@@ -3176,14 +3176,14 @@ from
     join t on c.txt_account_id = t.txn_account_id
     and t.broker = '0009'
     and c.occur_trade_date = '2022-11-17'`
-	tk.MustQuery("explain " + query).Check(testkit.Rows(""+
-		"IndexJoin_22 1.00 root  inner join, inner:TableReader_21, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)",
-		"├─TableReader_27(Build) 1.00 root  data:Selection_26",
-		"│ └─Selection_26 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")",
-		"│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false",
-		"└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20",
-		"  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)",
-		"    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false"))
+	tk.MustQuery("explain " + query).Check(testkit.Rows("" +
+		"[IndexJoin_22 1.00 root  inner join, inner:TableReader_21, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)]\n" +
+		"[├─TableReader_27(Build) 1.00 root  data:Selection_26]\n" +
+		"[│ └─Selection_26 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")]\n" +
+		"[│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false]\n" +
+		"[└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20]\n" +
+		"[  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)]\n" +
+		"[    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id], keep order:false]\n"))
 	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
 
 	// Add the missing partition key part.
