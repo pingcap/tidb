@@ -762,6 +762,17 @@ func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 	return trackerMemUseMap
 }
 
+// GetChildrenForTest returns children trackers
+func (t *Tracker) GetChildrenForTest() []*Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	trackers := make([]*Tracker, 0)
+	for _, list := range t.mu.children {
+		trackers = append(trackers, list...)
+	}
+	return trackers
+}
+
 func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[string]int64) {
 	if len(familyTreeName) > 0 {
 		familyTreeName += " <- "

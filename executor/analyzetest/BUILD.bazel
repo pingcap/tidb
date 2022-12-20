@@ -8,7 +8,6 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//domain",
@@ -30,6 +29,7 @@ go_test(
         "//tablecodec",
         "//testkit",
         "//types",
+        "//util",
         "//util/codec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

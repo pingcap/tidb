@@ -6199,38 +6199,6 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	runtime.GC()
 }
 
-func TestGlobalMemoryControlForAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk0 := testkit.NewTestKit(t, store)
-	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-
-	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
-	}
-	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
-	go dom.ServerMemoryLimitHandle().Run()
-
-	tk0.MustExec("use test")
-	tk0.MustExec("create table t(a int)")
-	tk0.MustExec("insert into t select 1")
-	for i := 1; i <= 8; i++ {
-		tk0.MustExec("insert into t select * from t") // 256 Lines
-	}
-	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	}()
-	_, err := tk0.Exec(sql)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
-	runtime.GC()
-}
-
 func TestCompileOutOfMemoryQuota(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
