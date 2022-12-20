@@ -37,6 +37,7 @@ var (
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
 	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
+	ErrNotSupportedYet             = dbterror.ClassExpression.NewStd(mysql.ErrNotSupportedYet)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)

@@ -114,6 +114,12 @@ func (b *FieldTypeBuilder) SetElems(elems []string) *FieldTypeBuilder {
 	return b
 }
 
+// SetArray sets array of the ft
+func (b *FieldTypeBuilder) SetArray(x bool) *FieldTypeBuilder {
+	b.ft.SetArray(x)
+	return b
+}
+
 // Build returns the ft
 func (b *FieldTypeBuilder) Build() FieldType {
 	return b.ft
