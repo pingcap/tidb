@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -132,7 +133,7 @@ func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
 	return rows
 }
 
-var updateStatusSQL = "SELECT table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status"
+var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status"
 
 func (m *JobManager) SetScanWorkers4Test(workers []worker) {
 	m.scanWorkers = workers
@@ -305,7 +306,7 @@ func TestResizeWorkers(t *testing.T) {
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 	})
-	newWorkers, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
+	newWorkers, _, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
 		return scanWorker2
 	})
 	assert.NoError(t, err)
@@ -327,6 +328,24 @@ func TestResizeWorkers(t *testing.T) {
 
 	assert.NoError(t, m.resizeScanWorkers(1))
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
+
+	// shrink scan workers after job is run
+	scanWorker1 = newMockScanWorker(t)
+	scanWorker1.Start()
+	scanWorker2 = newMockScanWorker(t)
+	scanWorker2.Start()
+
+	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m.SetScanWorkers4Test([]worker{
+		scanWorker1,
+		scanWorker2,
+	})
+	m.runningJobs = append(m.runningJobs, &ttlJob{tbl: tbl})
+
+	scanWorker2.curTaskResult = &ttlScanTaskExecResult{task: &ttlScanTask{tbl: tbl}}
+	assert.NoError(t, m.resizeScanWorkers(1))
+	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
+	assert.Equal(t, m.runningJobs[0].finishedScanTaskCounter, 1)
 }
 
 func TestLocalJobs(t *testing.T) {
@@ -426,16 +445,18 @@ func TestRescheduleJobsOutOfWindow(t *testing.T) {
 		},
 	}
 	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusWaiting)}
-	savedttlJobScheduleWindowStartTime := ttlJobScheduleWindowStartTime
-	savedttlJobScheduleWindowEndTime := ttlJobScheduleWindowEndTime
-	ttlJobScheduleWindowStartTime, _ = time.Parse(timeFormat, "2022-12-06 12:00:00")
-	ttlJobScheduleWindowEndTime, _ = time.Parse(timeFormat, "2022-12-06 12:05:00")
+	savedttlJobScheduleWindowStartTime := variable.TTLJobScheduleWindowStartTime.Load()
+	savedttlJobScheduleWindowEndTime := variable.TTLJobScheduleWindowEndTime.Load()
+	ttlJobScheduleWindowStartTime, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:00 +0000", time.UTC)
+	variable.TTLJobScheduleWindowStartTime.Store(ttlJobScheduleWindowStartTime)
+	ttlJobScheduleWindowEndTime, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:05 +0000", time.UTC)
+	variable.TTLJobScheduleWindowEndTime.Store(ttlJobScheduleWindowEndTime)
 	defer func() {
-		ttlJobScheduleWindowStartTime = savedttlJobScheduleWindowStartTime
-		ttlJobScheduleWindowEndTime = savedttlJobScheduleWindowEndTime
+		variable.TTLJobScheduleWindowStartTime.Store(savedttlJobScheduleWindowStartTime)
+		variable.TTLJobScheduleWindowEndTime.Store(savedttlJobScheduleWindowEndTime)
 	}()
 
-	now, _ := time.Parse(timeFormat, "2022-12-06 12:06:00")
+	now, _ := time.ParseInLocation(variable.FullDayTimeFormat, "12:06 +0000", time.UTC)
 	m.rescheduleJobs(se, now)
 	scanWorker1.checkWorkerStatus(workerStatusRunning, true, nil)
 	scanWorker1.checkPollResult(false, "")
@@ -443,7 +464,7 @@ func TestRescheduleJobsOutOfWindow(t *testing.T) {
 	scanWorker2.checkPollResult(false, "")
 
 	// jobs will be scheduled within the time window
-	now, _ = time.Parse(timeFormat, "2022-12-06 12:02:00")
+	now, _ = time.ParseInLocation(variable.FullDayTimeFormat, "12:02 +0000", time.UTC)
 	m.rescheduleJobs(se, now)
 	scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
 	scanWorker1.checkPollResult(false, "")
