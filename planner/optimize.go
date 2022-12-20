@@ -85,7 +85,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	if val == nil {
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, paramSQL, stmt)
 		if err != nil {
 			return nil, nil, false, err
 		}

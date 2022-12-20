@@ -64,17 +64,19 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
+// paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
+// paramStmt is the Node of paramSQL.
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
-	stmt.Accept(&extractor)
+	paramStmt.Accept(&extractor)
 
 	// DDL Statements can not accept parameters
-	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
-	switch stmt.(type) {
+	switch paramStmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
 	}
@@ -86,7 +88,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{}
-	err := Preprocess(ctx, sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -103,8 +105,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:          stmt,
-		StmtType:      ast.GetStmtLabel(stmt),
+		Stmt:          paramStmt,
+		StmtType:      ast.GetStmtLabel(paramStmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
@@ -117,12 +119,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
-		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		cacheable, reason := CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
 		prepared.UseCache = cacheable
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""
@@ -138,7 +140,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
-	p, err = destBuilder.Build(ctx, stmt)
+	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -146,7 +148,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
-		StmtText:            stmt.Text(),
+		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
