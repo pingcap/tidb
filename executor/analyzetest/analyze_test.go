@@ -3203,7 +3203,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	originalVal1 := tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
-	//tk.MustExec("set global tidb_server_memory_limit = 512MB")
+	tk.MustExec("set global tidb_server_memory_limit = 512MB")
 	originalVal3 := tk.MustQuery("select @@global.tidb_server_memory_limit_sess_min_size").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 	defer func() {
@@ -3231,7 +3231,10 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	for i := 1; i <= 8; i++ {
 		tk.MustExec("insert into t select * from t") // 256 Lines
 	}
-	tk.MustExec("analyze table t with 1.0 samplerate;")
+	_, err0 := tk.Exec("analyze table t with 1.0 samplerate;")
+	require.NoError(t, err0)
+	rs0 := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
+	require.Len(t, rs0.Rows(), 0)
 
 	h := dom.StatsHandle()
 	originalVal4 := handle.AutoAnalyzeMinCnt
