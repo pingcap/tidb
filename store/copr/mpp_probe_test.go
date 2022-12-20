@@ -141,7 +141,7 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 	// Confirm that multiple tasks are not allowed
 	globalMPPFailedStoreProbe.lock.Lock()
-	globalMPPFailedStoreProbe.run(ctx)
+	globalMPPFailedStoreProbe.run()
 
 	// check not exist address
 	ok := globalMPPFailedStoreProbe.IsRecovery(ctx, notExistAddress, 0)

@@ -58,6 +58,8 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
 
 	detectPeriod         time.Duration
 	detectTimeoutLimit   time.Duration
@@ -179,7 +181,7 @@ func (t *MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, re
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProbe) run(ctx context.Context) {
+func (t *MPPFailedStoreProbe) run() {
 	if !t.lock.TryLock() {
 		return
 	}
@@ -191,13 +193,20 @@ func (t *MPPFailedStoreProbe) run(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-t.ctx.Done():
+				logutil.BgLogger().Debug("ctx.done")
 				return
 			case <-ticker.C:
 				t.scan(context.Background())
 			}
 		}
 	}()
+}
+
+// Delete clean store from failed map
+func (t *MPPFailedStoreProbe) stop() {
+	logutil.BgLogger().Debug("stop background task")
+	t.cancel()
 }
 
 // Delete clean store from failed map
@@ -230,9 +239,12 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string, det
 }
 
 func init() {
+	ctx, cancel := context.WithCancel(context.Background())
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores:      &sync.Map{},
 		lock:                 &sync.Mutex{},
+		ctx:                  ctx,
+		cancel:               cancel,
 		detectPeriod:         DetectPeriod,
 		detectTimeoutLimit:   DetectTimeoutLimit,
 		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,
