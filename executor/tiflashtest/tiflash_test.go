@@ -267,14 +267,8 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	ts := txn.StartTS()
-	taskID := tk.Session().GetSessionVars().AllocMPPTaskID(ts)
-	require.Equal(t, int64(6), taskID)
+
 	tk.MustExec("commit")
-	taskID = tk.Session().GetSessionVars().AllocMPPTaskID(ts + 1)
-	require.Equal(t, int64(1), taskID)
 
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.

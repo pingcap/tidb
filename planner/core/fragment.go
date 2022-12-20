@@ -105,9 +105,9 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, queryTs uint64
 
 var mppTaskID int64 = 1
 
-// allocMPPTaskID allocates task id for mpp tasks.
+// AllocMPPTaskID allocates task id for mpp tasks.
 // In TiFlash, MPP task manager will use this MPPTaskID and MPPQueryID to distinguish mpp queries.
-func allocMPPTaskID() int64 {
+func AllocMPPTaskID() int64 {
 	return atomic.AddInt64(&mppTaskID, 1)
 }
 
@@ -155,7 +155,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		if !ok {
 			mppTask := &kv.MPPTask{
 				Meta:         &mppAddr{addr: addr},
-				ID:           allocMPPTaskID(),
+				ID:           AllocMPPTaskID(),
 				QueryTs:      e.queryTS,
 				LocalQueryID: e.localQueryID,
 				ServerID:     domain.GetDomain(e.ctx).ServerID(),
@@ -411,7 +411,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
 		task := &kv.MPPTask{Meta: meta,
-			ID:                allocMPPTaskID(),
+			ID:                AllocMPPTaskID(),
 			StartTs:           e.startTS,
 			QueryTs:           e.queryTS,
 			LocalQueryID:      e.localQueryID,
