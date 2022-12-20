@@ -531,18 +531,166 @@ func TestSlowQuery(t *testing.T) {
 	slowLogFileName := "tidb_slow.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	expectedRes := [][]interface{}{
+		{"2019-02-12 19:33:56.571953",
+			"406315658548871171",
+			"root",
+			"localhost",
+			"6",
+			"57",
+			"0.12",
+			"4.895492",
+			"0.4",
+			"0.2",
+			"0.000000003",
+			"2",
+			"0.000000002",
+			"0.00000001",
+			"0.000000003",
+			"0.19",
+			"0.21",
+			"0.01",
+			"0",
+			"0.18",
+			"[txnLock]",
+			"0.03",
+			"0",
+			"15",
+			"480",
+			"1",
+			"8",
+			"0.3824278",
+			"0.161",
+			"0.101",
+			"0.092",
+			"1.71",
+			"1",
+			"100001",
+			"100000",
+			"100",
+			"10",
+			"10",
+			"10",
+			"100",
+			"test",
+			"",
+			"0",
+			"42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772",
+			"t1:1,t2:2",
+			"0.1",
+			"0.2",
+			"0.03",
+			"127.0.0.1:20160",
+			"0.05",
+			"0.6",
+			"0.8",
+			"0.0.0.0:20160",
+			"70724",
+			"65536",
+			"0",
+			"0",
+			"0",
+			"0",
+			"10",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"1",
+			"0",
+			"0",
+			"abcd",
+			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
+			"",
+			"update t set i = 2;",
+			"select * from t_slim;"},
+		{"2021-09-08 14:39:54.506967",
+			"427578666238083075",
+			"root",
+			"172.16.0.0",
+			"40507",
+			"0",
+			"0",
+			"25.571605962",
+			"0.002923536",
+			"0.006800973",
+			"0.002100764",
+			"0",
+			"0",
+			"0",
+			"0.000015801",
+			"25.542014572",
+			"0",
+			"0.002294647",
+			"0.000605473",
+			"12.483",
+			"[tikvRPC regionMiss tikvRPC regionMiss regionMiss]",
+			"0",
+			"0",
+			"624",
+			"172064",
+			"60",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"rtdb",
+			"",
+			"0",
+			"124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"856544",
+			"0",
+			"86.635049185",
+			"0.015486658",
+			"100.054",
+			"0",
+			"0",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"",
+			"",
+			"",
+			"",
+			"INSERT INTO ...;",
+		},
+	}
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	re.Check(expectedRes)
+
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	expectedRes[0][0] = "2019-02-12 11:33:56.571953"
+	expectedRes[1][0] = "2021-09-08 06:39:54.506967"
+	re.Check(expectedRes)
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -1656,4 +1804,34 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Equal(t, row[9], "")                                                                                                 // USER
 	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
 	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+}
+
+func TestAddFieldsForBinding(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("select /*+ ignore_index(t, a)*/ * from t where a = 1")
+	planDigest := "4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb"
+	rows := tk.MustQuery(fmt.Sprintf("select stmt_type, prepared, sample_user, schema_name, query_sample_text, charset, collation, plan_hint, digest_text "+
+		"from information_schema.cluster_statements_summary where plan_digest = '%s'", planDigest)).Rows()
+
+	require.Equal(t, rows[0][0], "Select")
+	require.Equal(t, rows[0][1], "0")
+	require.Equal(t, rows[0][2], "root")
+	require.Equal(t, rows[0][3], "test")
+	require.Equal(t, rows[0][4], "select /*+ ignore_index(t, a)*/ * from t where a = 1")
+	require.Equal(t, rows[0][5], "utf8mb4")
+	require.Equal(t, rows[0][6], "utf8mb4_bin")
+	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
+	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
 }

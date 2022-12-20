@@ -1965,6 +1965,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
@@ -2167,6 +2168,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+	vars.DurationWaitTS = 0
 	return
 }
 
