@@ -2174,11 +2174,11 @@ var defaultSysVars = []*SysVar{
 		val := TTLDeleteRateLimit.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressMethod, Type: TypeStr, Value: kv.DefaultExchangeCompressMethod.Name(),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompress, Type: TypeStr, Value: kv.DefaultExchangeCompressMethod.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
 			if !ok {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppExchangeCompressMethod, originalValue)
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppExchangeCompress, originalValue)
 			}
 			return normalizedValue, nil
 		},

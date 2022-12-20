@@ -257,8 +257,8 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	MppExchangeCompressMethod = "exchange_compress_method"
-	MppVersion                = "mpp_version"
+	MppExchangeCompress = "mpp_exchange_compress"
+	MppVersion          = "mpp_version"
 )
 
 // TiDB system variable names that both in session and global scope.
