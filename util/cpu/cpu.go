@@ -67,9 +67,9 @@ func (c *Observer) Start() {
 			select {
 			case <-ticker.C:
 				curr := c.observe()
-				metrics.EMACPUUsageGauge.Set(curr * 100)
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
+				metrics.EMACPUUsageGauge.Set(c.cpu.Get())
 			case <-c.exit:
 				return
 			}
