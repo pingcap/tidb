@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -94,9 +95,14 @@ func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...interface{
 
 // RunInTxn executes the specified function in a txn
 func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+
+	tracer.EnterPhase(metrics.PhaseBeginTxn)
 	if _, err = s.ExecuteSQL(ctx, "BEGIN"); err != nil {
 		return err
 	}
+	tracer.EnterPhase(metrics.PhaseOther)
 
 	success := false
 	defer func() {
@@ -110,9 +116,11 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 		return err
 	}
 
+	tracer.EnterPhase(metrics.PhaseCommitTxn)
 	if _, err = s.ExecuteSQL(ctx, "COMMIT"); err != nil {
 		return err
 	}
+	tracer.EnterPhase(metrics.PhaseOther)
 
 	success = true
 	return err
