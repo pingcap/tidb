@@ -34,7 +34,7 @@ func TestInfoSchemaCache(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
 	tk := testkit.NewTestKitWithSession(t, store, sctx)
-	se := session.NewSession(sctx, sctx, func() {})
+	se := session.NewSession(sctx, sctx, func(_ session.Session) {})
 
 	isc := cache.NewInfoSchemaCache(time.Hour)
 
