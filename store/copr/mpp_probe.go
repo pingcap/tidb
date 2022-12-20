@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -58,10 +59,10 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
+	isStop          *atomic.Bool
 	wg              *sync.WaitGroup
 	ctx             context.Context
 	cancel          context.CancelFunc
-	isRun           bool
 
 	detectPeriod         time.Duration
 	detectTimeoutLimit   time.Duration
@@ -187,10 +188,9 @@ func (t *MPPFailedStoreProbe) run() {
 	if !t.lock.TryLock() {
 		return
 	}
-	t.isRun = true
 	t.wg.Add(1)
+	t.isStop.Swap(false)
 	go func() {
-		defer func() { t.isRun = false }()
 		defer t.wg.Done()
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
@@ -202,7 +202,7 @@ func (t *MPPFailedStoreProbe) run() {
 				logutil.BgLogger().Info("ctx.done")
 				return
 			case <-ticker.C:
-				t.scan(context.Background())
+				t.scan(t.ctx)
 			}
 		}
 	}()
@@ -210,7 +210,7 @@ func (t *MPPFailedStoreProbe) run() {
 
 // Delete clean store from failed map
 func (t *MPPFailedStoreProbe) stop() {
-	if t.isRun == false {
+	if !t.isStop.CompareAndSwap(false, true) {
 		return
 	}
 	logutil.BgLogger().Info("stop background task")
@@ -249,9 +249,12 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string, det
 
 func init() {
 	ctx, cancel := context.WithCancel(context.Background())
+	isStop := atomic.Bool{}
+	isStop.Swap(true)
 	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores:      &sync.Map{},
 		lock:                 &sync.Mutex{},
+		isStop:               &isStop,
 		ctx:                  ctx,
 		cancel:               cancel,
 		wg:                   &sync.WaitGroup{},

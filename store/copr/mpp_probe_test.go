@@ -139,10 +139,6 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 	globalMPPFailedStoreProbe.detectPeriod = 0 - time.Second
 
-	// Confirm that multiple tasks are not allowed
-	globalMPPFailedStoreProbe.lock.Lock()
-	globalMPPFailedStoreProbe.run()
-
 	// check not exist address
 	ok := globalMPPFailedStoreProbe.IsRecovery(ctx, notExistAddress, 0)
 	require.True(t, ok)
@@ -158,4 +154,24 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 	testFlow(ctx, probetestest, t, testFlowFinallyRecover)
 	testFlowFinallyDesert := []string{Error, Normal, Normal, Error, Error}
 	testFlow(ctx, probetestest, t, testFlowFinallyDesert)
+}
+
+func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
+	// Confirm that multiple tasks are not allowed
+	globalMPPFailedStoreProbe.lock.Lock()
+	globalMPPFailedStoreProbe.run()
+	globalMPPFailedStoreProbe.lock.Unlock()
+
+	globalMPPFailedStoreProbe.run()
+	globalMPPFailedStoreProbe.stop()
+}
+
+func TestMPPFailedStoreAssertFailed(t *testing.T) {
+	ctx := context.Background()
+
+	globalMPPFailedStoreProbe.failedMPPStores.Store("errorinfo", nil)
+	globalMPPFailedStoreProbe.scan(ctx)
+
+	globalMPPFailedStoreProbe.failedMPPStores.Store("errorinfo", nil)
+	globalMPPFailedStoreProbe.IsRecovery(ctx, "errorinfo", 0)
 }
