@@ -3117,7 +3117,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	}
 	defer func() {
 		for _, tracker := range oldChildTrackers {
-			tracker.AttachToGlobalTracker(executor.GlobalAnalyzeMemoryTracker)
+			tracker.AttachTo(executor.GlobalAnalyzeMemoryTracker)
 		}
 	}()
 	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
