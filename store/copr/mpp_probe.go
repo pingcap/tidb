@@ -58,6 +58,7 @@ type MPPSotreState struct {
 type MPPFailedStoreProbe struct {
 	failedMPPStores *sync.Map
 	lock            *sync.Mutex
+	wg              *sync.WaitGroup
 	ctx             context.Context
 	cancel          context.CancelFunc
 
@@ -186,6 +187,7 @@ func (t *MPPFailedStoreProbe) run() {
 		return
 	}
 
+	t.wg.Add(1)
 	go func() {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
@@ -195,6 +197,7 @@ func (t *MPPFailedStoreProbe) run() {
 			select {
 			case <-t.ctx.Done():
 				logutil.BgLogger().Info("ctx.done")
+				t.wg.Done()
 				return
 			case <-ticker.C:
 				t.scan(context.Background())
@@ -205,8 +208,10 @@ func (t *MPPFailedStoreProbe) run() {
 
 // Delete clean store from failed map
 func (t *MPPFailedStoreProbe) stop() {
-	logutil.BgLogger().Debug("stop background task")
+	logutil.BgLogger().Info("stop background task")
 	t.cancel()
+	t.wg.Wait()
+
 }
 
 // Delete clean store from failed map
@@ -245,6 +250,7 @@ func init() {
 		lock:                 &sync.Mutex{},
 		ctx:                  ctx,
 		cancel:               cancel,
+		wg:                   &sync.WaitGroup{},
 		detectPeriod:         DetectPeriod,
 		detectTimeoutLimit:   DetectTimeoutLimit,
 		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,
