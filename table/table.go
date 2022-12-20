@@ -246,7 +246,6 @@ type PartitionedTable interface {
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	GetPartitionColumnIDs() map[int64]struct{}
 	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
 }
 
