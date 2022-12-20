@@ -1603,6 +1603,7 @@ func TestBuiltin(t *testing.T) {
 		{"select cast(time '2000' as year);", true, "SELECT CAST(TIME '2000' AS YEAR)"},
 
 		{"select cast(b as signed array);", true, "SELECT CAST(`b` AS SIGNED ARRAY)"},
+		{"select cast(b as char(10) array);", true, "SELECT CAST(`b` AS CHAR(10) ARRAY)"},
 
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
