@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -70,7 +71,7 @@ func (pr *paramReplacer) Reset() { pr.params = nil }
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 // NOTICE: this function may modify the input stmt.
-func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -81,7 +82,7 @@ func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL strin
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
-		err = RestoreASTWithParams(sctx, stmt, pr.params)
+		err = RestoreASTWithParams(ctx, sctx, stmt, pr.params) // keep the stmt unchanged if err
 		return "", nil, err
 	}
 	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
@@ -119,7 +120,11 @@ func (pr *paramRestorer) Reset() {
 
 // RestoreASTWithParams restore this parameterized AST with specific parameters.
 // e.g. `select * from t where a<? and b<?`, [10, 23] --> `select * from t where a<10 and b<23`.
-func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
+func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
+	if v := ctx.Value("____RestoreASTWithParamsErr"); v != nil {
+		return errors.New("____RestoreASTWithParamsErr")
+	}
+
 	pr := paramRestorerPool.Get().(*paramRestorer)
 	defer func() {
 		pr.Reset()
