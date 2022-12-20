@@ -189,10 +189,11 @@ func (t *MPPFailedStoreProbe) run() {
 
 	t.wg.Add(1)
 	go func() {
+		defer t.wg.Done()
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		defer t.wg.Done()
+
 		for {
 			select {
 			case <-t.ctx.Done():
