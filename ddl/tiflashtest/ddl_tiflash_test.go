@@ -21,7 +21,6 @@ package tiflashtest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/testkit/external"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
