@@ -59,7 +59,7 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
-var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -998,7 +998,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, false)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
