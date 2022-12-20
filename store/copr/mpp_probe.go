@@ -61,6 +61,7 @@ type MPPFailedStoreProbe struct {
 	wg              *sync.WaitGroup
 	ctx             context.Context
 	cancel          context.CancelFunc
+	isRun           bool
 
 	detectPeriod         time.Duration
 	detectTimeoutLimit   time.Duration
@@ -186,9 +187,10 @@ func (t *MPPFailedStoreProbe) run() {
 	if !t.lock.TryLock() {
 		return
 	}
-
+	t.isRun = true
 	t.wg.Add(1)
 	go func() {
+		defer func() { t.isRun = false }()
 		defer t.wg.Done()
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
@@ -208,6 +210,9 @@ func (t *MPPFailedStoreProbe) run() {
 
 // Delete clean store from failed map
 func (t *MPPFailedStoreProbe) stop() {
+	if t.isRun == false {
+		return
+	}
 	logutil.BgLogger().Info("stop background task")
 	t.cancel()
 	t.wg.Wait()

@@ -100,8 +100,9 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 
 // Close releases resources allocated for coprocessor.
 func (s *Store) Close() {
+	logutil.BgLogger().Info("store close")
+	globalMPPFailedStoreProbe.stop()
 	if s.coprCache != nil {
-		globalMPPFailedStoreProbe.stop()
 		s.coprCache.cache.Close()
 	}
 }
