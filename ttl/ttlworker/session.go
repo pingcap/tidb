@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -84,6 +85,10 @@ type ttlTableSession struct {
 }
 
 func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (rows []chunk.Row, shouldRetry bool, err error) {
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+
+	tracer.EnterPhase(metrics.PhaseOther)
 	if !variable.EnableTTLJob.Load() {
 		return nil, false, errors.New("global TTL job is disabled")
 	}
@@ -93,7 +98,10 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	}
 
 	err = s.RunInTxn(ctx, func() error {
+		tracer.EnterPhase(metrics.PhaseQuery)
+		defer tracer.EnterPhase(tracer.Phase())
 		rows, err = s.ExecuteSQL(ctx, sql)
+		tracer.EnterPhase(metrics.PhaseCheckTTL)
 		// We must check the configuration after ExecuteSQL because of MDL and the meta the current transaction used
 		// can only be determined after executed one query.
 		if validateErr := validateTTLWork(ctx, s.Session, s.tbl, s.expire); validateErr != nil {
