@@ -1969,7 +1969,8 @@
           "  └─TableRangeScan_8 3333.33 923531.15 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2014,7 +2015,8 @@
           "  └─TableRowIDScan_12(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2026,6 +2028,7 @@
           "└─TableRowIDScan_13(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
           "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
         ]
       }
