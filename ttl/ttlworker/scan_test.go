@@ -403,3 +403,13 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
 }
+
+func TestTTLStatisticsMarshalJSON(t *testing.T) {
+	statistics := &ttlStatistics{}
+	statistics.TotalRows.Store(1)
+	statistics.ErrorRows.Store(255)
+	statistics.SuccessRows.Store(128)
+	j, err := statistics.MarshalJSON()
+	require.NoError(t, err)
+	require.Equal(t, `{"total_rows":1,"success_rows":128,"error_rows":255}`, string(j))
+}
