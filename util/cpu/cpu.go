@@ -70,7 +70,6 @@ func (c *Observer) Start() {
 				metrics.EMACPUUsageGauge.Set(curr * 100)
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
-				//metrics.EMACPUUsageGauge.Set(c.cpu.Get() * 100)
 			case <-c.exit:
 				return
 			}
