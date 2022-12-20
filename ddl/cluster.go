@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -324,15 +325,36 @@ func SendPrepareFlashbackToVersionRPC(
 		if err != nil {
 			return taskStat, err
 		}
+		failpoint.Inject("mockPrepareMeetsEpochNotMatch", func(val failpoint.Value) {
+			if val.(bool) && bo.ErrorsNum() == 0 {
+				regionErr = &errorpb.Error{
+					Message:       "stale epoch",
+					EpochNotMatch: &errorpb.EpochNotMatch{},
+				}
+			}
+		})
 		if regionErr != nil {
-			return taskStat, errors.Errorf(regionErr.String())
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
 		}
 		if resp.Resp == nil {
-			return taskStat, errors.Errorf("prepare flashback missing resp body")
+			logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+			err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
 		}
 		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
 		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
-			return taskStat, errors.Errorf(err)
+			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(err))
+			if boErr != nil {
+				return taskStat, boErr
+			}
+			continue
 		}
 		taskStat.CompletedRegions++
 		if isLast {
