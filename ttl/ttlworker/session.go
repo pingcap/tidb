@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -26,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 type sessionPool interface {
@@ -57,9 +60,22 @@ func getSession(pool sessionPool) (session.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
 	}
 
-	se := session.NewSession(sctx, exec, func() {
+	originalRetryLimit := sctx.GetSessionVars().RetryLimit
+	se := session.NewSession(sctx, exec, func(se session.Session) {
+		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
+		if err != nil {
+			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+		}
+
 		pool.Put(resource)
 	})
+
+	// store and set the retry limit to 0
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
 
 	// Force rollback the session to guarantee the session is not in any explicit transaction
 	if _, err = se.ExecuteSQL(context.Background(), "ROLLBACK"); err != nil {
