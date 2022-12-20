@@ -113,8 +113,8 @@ func (bj *BackfillJob) AbbrStr() string {
 		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
 }
 
-// GetOracleTimeWithTxn returns the current time from TS with txn.
-func GetOracleTimeWithTxn(se *session) (time.Time, error) {
+// GetOracleTimeWithStartTS returns the current time with txn's startTS.
+func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
 	txn, err := se.Txn(true)
 	if err != nil {
 		return time.Time{}, err
@@ -308,33 +308,18 @@ func newBackfillWorker(ctx context.Context, id int, bf backfiller) *backfillWork
 	}
 }
 
-func (w *backfillWorker) updateLease(execID string, bJob *BackfillJob) error {
-	isDistReorg, err := w.GetCtx().sessCtx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBDDLEnableDistributeReorg)
-	if err != nil {
-		return err
-	}
-	if isDistReorg != variable.On {
-		return nil
-	}
-
+func (w *backfillWorker) updateLease(execID string, bJob *BackfillJob, nextKey kv.Key) error {
 	leaseTime, err := GetOracleTime(w.GetCtx().store)
 	if err != nil {
 		return err
 	}
+	bJob.CurrKey = nextKey
 	bJob.InstanceID = execID
 	bJob.InstanceLease = GetLeaseGoTime(leaseTime, InstanceLease)
 	return w.backfiller.UpdateTask(bJob)
 }
 
 func (w *backfillWorker) finishJob(bJob *BackfillJob) error {
-	isDistReorg, err := w.GetCtx().sessCtx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBDDLEnableDistributeReorg)
-	if err != nil {
-		return err
-	}
-	if isDistReorg != variable.On {
-		return nil
-	}
-
 	bJob.State = model.JobStateDone
 	return w.backfiller.FinishTask(bJob)
 }
@@ -429,8 +414,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 				continue
 			}
 			batchStartTime = time.Now()
-			task.bfJob.CurrKey = result.nextKey
-			if err := w.updateLease(w.GetCtx().uuid, task.bfJob); err != nil {
+			if err := w.updateLease(w.GetCtx().uuid, task.bfJob, result.nextKey); err != nil {
 				logutil.BgLogger().Info("[ddl] backfill worker handle task, update lease failed", zap.Stringer("worker", w),
 					zap.Stringer("task", task), zap.String("bj", task.bfJob.AbbrStr()), zap.Error(err))
 				result.err = err
