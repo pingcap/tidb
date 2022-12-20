@@ -577,6 +577,9 @@ type PlanBuilder struct {
 
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
+
+	// allowBuildCastArray indicates whether allow cast(... as ... array).
+	allowBuildCastArray bool
 }
 
 type handleColHelper struct {
@@ -695,6 +698,14 @@ type PlanBuilderOptNoExecution struct{}
 // Apply implements the interface PlanBuilderOpt.
 func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
+}
+
+// PlanBuilderOptAllowCastArray means the plan builder should allow build cast(... as ... array).
+type PlanBuilderOptAllowCastArray struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+	builder.allowBuildCastArray = true
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
