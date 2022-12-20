@@ -50,11 +50,11 @@ type Session interface {
 type session struct {
 	sessionctx.Context
 	sqlExec sqlexec.SQLExecutor
-	closeFn func()
+	closeFn func(Session)
 }
 
 // NewSession creates a new Session
-func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func()) Session {
+func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func(Session)) Session {
 	return &session{
 		Context: sctx,
 		sqlExec: sqlExec,
@@ -99,7 +99,7 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error) (err error) {
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseBeginTxn)
-	if _, err = s.ExecuteSQL(ctx, "BEGIN"); err != nil {
+	if _, err = s.ExecuteSQL(ctx, "BEGIN OPTIMISTIC"); err != nil {
 		return err
 	}
 	tracer.EnterPhase(metrics.PhaseOther)
@@ -150,7 +150,7 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 // Close closes the session
 func (s *session) Close() {
 	if s.closeFn != nil {
-		s.closeFn()
+		s.closeFn(s)
 		s.Context = nil
 		s.sqlExec = nil
 		s.closeFn = nil
