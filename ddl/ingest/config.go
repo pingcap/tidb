@@ -30,6 +30,8 @@ import (
 // ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
+const storeWriteBwLimit = 128 * size.MB
+
 func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config.Config, error) {
 	tidbCfg := tidbconf.GetGlobalConfig()
 	cfg := config.NewConfig()
@@ -51,6 +53,7 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	} else {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	}
+	cfg.TikvImporter.StoreWriteBWLimit = config.ByteSize(storeWriteBwLimit)
 	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
