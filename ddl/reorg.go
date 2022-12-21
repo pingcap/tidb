@@ -353,7 +353,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	var rows []chunk.Row
-	if len(tblInfo.Partition.DroppingDefinitions) > 0 {
+	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
 		// if Reorganize Partition, only select number of rows from the selected partitions!
 		defs := tblInfo.Partition.DroppingDefinitions
 		partIDs := make([]string, 0, len(defs))
