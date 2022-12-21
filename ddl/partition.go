@@ -2186,7 +2186,6 @@ func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []mode
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	// TODO: create fail point for internal testing
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
@@ -2202,7 +2201,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionData(tbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -2269,8 +2268,8 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		warningsMap := make(map[errors.ErrorID]*terror.Error)
+		warningsCountMap := make(map[errors.ErrorID]int64)
 		for _, prr := range rowRecords {
 			taskCtx.scanCount++
 
@@ -2409,29 +2408,11 @@ func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
-// updateCurrentElement update the current element for reorgInfo.
-func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
-	// TableIDs should already been assigned (todo: remove this note)
+func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// First copy all table data to the new partitions
-	// from each of the DroppingDefinitions partitions
-	// Create all indexes on the AddingDefinitions partitions
-
-	/*
-			failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
-			//nolint:forcetypeassert
-			if val.(bool) {
-				a := new(interface{})
-				TestReorgGoroutineRunning <- a
-				for {
-					time.Sleep(30 * time.Millisecond)
-					if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
-						// Job is cancelled. So it can't be done.
-						failpoint.Return(dbterror.ErrCancelledDDLJob)
-					}
-				}
-			}
-		})
-	*/
+	// from each of the DroppingDefinitions partitions.
+	// Then create all indexes on the AddingDefinitions partitions
+	// for each new index, one partition at a time.
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
@@ -2479,7 +2460,7 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// TODO: Can we improve this incase or a crash?
+		// TODO: Can we improve this in case of a crash?
 		// like where the regInfo PhysicalTableID and element is the same,
 		// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
 		// do not change the reorgInfo start/end key
