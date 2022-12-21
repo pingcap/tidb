@@ -247,7 +247,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 }
 
-func TestGeneralPlanCacheable(t *testing.T) {
+func TestNonPreparedPlanCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -297,12 +297,12 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.GeneralPlanCacheable(stmt, is))
+		require.False(t, core.NonPreparedPlanCacheable(stmt, is))
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.GeneralPlanCacheable(stmt, is))
+		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
 	}
 }
