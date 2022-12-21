@@ -86,6 +86,7 @@ go_library(
         "//statistics/handle",
         "//store/copr",
         "//store/driver/backoff",
+        "//store/driver/error",
         "//store/helper",
         "//table",
         "//table/tables",
