@@ -17,9 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 	"math"
 	"math/rand"
 	"sort"
@@ -81,6 +78,9 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // NewMockDomain is only used for test
