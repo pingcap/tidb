@@ -3543,3 +3543,42 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
 	require.Equal(t, int64(2), tbl2Stats2.Count)
 }
+
+func TestIssue39336(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+create table t1 (
+    a datetime(3) default null,
+    b int
+) partition by range (b) (
+    partition p0 values less than (1000),
+    partition p1 values less than (2000),
+    partition p3 values less than (maxvalue)
+)`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec(`
+insert into t1 values
+('2022-11-23 14:25:08.000', 1001),
+('1000-00-09 00:00:00.000', 1001),
+('1000-00-06 00:00:00.000', 1001),
+('1000-00-06 00:00:00.000', 1001),
+('2022-11-23 14:24:30.000',    1),
+('2022-11-23 14:24:32.000',    1),
+('2022-11-23 14:24:33.000',    1),
+('2022-11-23 14:24:35.000',    1),
+('1000-00-09 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('2022-11-23 14:25:11.000', 2001),
+('2022-11-23 14:25:16.000', 3001),
+('1000-00-09 00:00:00.000', 3001),
+('1000-00-09 00:00:00.000', 2001),
+('1000-00-06 00:00:00.000', 2001),
+('1000-00-09 00:00:00.000', 2001)`)
+	tk.MustExec("analyze table t1")
+	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "finished", rows[0][7])
+}
