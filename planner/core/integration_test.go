@@ -1324,6 +1324,43 @@ func TestReadFromStorageHint(t *testing.T) {
 	}
 }
 
+func TestKeepOrderHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(a int, b int, primary key(a));")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a), index idx_b(b));")
+
+	// If the optimizer can not generate the keep order plan, it will report error
+	err := tk.ExecToErr("explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	err = tk.ExecToErr("explain select /*+ keep_order(t, primary) */ * from t where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
 func TestViewHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

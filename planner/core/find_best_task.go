@@ -1976,6 +1976,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+		return invalidTask, nil
+	}
 	ts, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
