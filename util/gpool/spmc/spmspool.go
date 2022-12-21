@@ -15,12 +15,15 @@
 package spmc
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
+	"go.uber.org/zap"
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
@@ -214,7 +217,7 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 }
 
 // AddProduceBySlice is to add Produce by a slice.
-// Producer must deal with error by itself. If it returns an error, We'll take it as a mission accomplished signal
+// Producer need to return ErrProducerClosed when to exit.
 func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
@@ -239,6 +242,10 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		for {
 			tasks, err := producer()
 			if err != nil {
+				if errors.Is(err, gpool.ErrProducerClosed) {
+					return
+				}
+				log.Error("producer error", zap.Error(err))
 				return
 			}
 			for _, task := range tasks {
@@ -254,7 +261,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 }
 
 // AddProducer is to add producer.
-// Producer must deal with error by itself. If it returns an error, We'll take it as a mission accomplished signal
+// Producer need to return ErrProducerClosed when to exit.
 func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
@@ -279,6 +286,10 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		for {
 			task, err := producer()
 			if err != nil {
+				if errors.Is(err, gpool.ErrProducerClosed) {
+					return
+				}
+				log.Error("producer error", zap.Error(err))
 				return
 			}
 			wg.Add(1)

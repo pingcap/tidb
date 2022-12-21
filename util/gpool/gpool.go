@@ -37,6 +37,9 @@ var (
 
 	// ErrPoolOverload will be returned when the pool is full and no workers available.
 	ErrPoolOverload = errors.New("too many goroutines blocked on submit or Nonblocking is set")
+
+	// ErrProducerClosed will be returned when the producer is closed.
+	ErrProducerClosed = errors.New("this producer has been closed")
 )
 
 // BasePool is base class of pool
