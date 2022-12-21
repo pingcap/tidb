@@ -2293,10 +2293,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		} else {
 			sctx = w.sess.Context
 		}
-		// TODO: Remove these!
-		if sctx == nil {
-			panic("sctx is nil!")
-		}
 		if err = checkReorgPartitionDefs(sctx, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 			return ver, err
 		}
@@ -2643,7 +2639,6 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 	return
 }
 
-// Duplicate of updateColumnWorker fetchRowColVals TODO: combine!
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
