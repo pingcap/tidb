@@ -247,7 +247,11 @@ func (p *PhysicalTableScan) isFullScan() bool {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID().String()
+	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
+	if mppVersion := p.GetMppVersion(); mppVersion != kv.MppVersionUnspecified {
+		return fmt.Sprintf("MppVersion: %d, %s", mppVersion, tablePlanInfo)
+	}
+	return tablePlanInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
