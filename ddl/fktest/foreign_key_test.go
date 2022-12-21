@@ -319,6 +319,24 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk2.MustExec("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
 }
 
+func TestAlterTableWithForeignKeyPrivilegeCheck(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+	tk.MustExec("grant create,alter on *.* to 'u1'@'%';")
+	tk.MustExec("create table t1 (id int key);")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk2.MustExec("create table t2 (a int)")
+	err := tk2.ExecToErr("alter table t2 add foreign key (a) references t1 (id) on update cascade")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
+	tk2.MustExec("alter table t2 add foreign key (a) references t1 (id) on update cascade")
+}
+
 func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
