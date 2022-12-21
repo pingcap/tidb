@@ -3592,3 +3592,291 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	err := tk.ExecToErr("savepoint s1")
 	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }
+
+func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		defer func() { ch <- struct{}{} }()
+		tk.MustExec(sql, args...)
+	}()
+	return ch
+}
+
+func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan *testkit.Result {
+	ch := make(chan *testkit.Result)
+	go func() {
+		ch <- tk.MustQuery(sql, args...)
+	}()
+	return ch
+}
+
+func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
+	select {
+	case res := <-ch:
+		t.Fatalf("received signal when not expected: %v", res)
+	case <-time.After(timeout):
+	}
+}
+
+func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
+	select {
+	case <-time.After(time.Second):
+		t.Fatalf("signal not received after waiting for one second")
+	case res := <-ch:
+		return res
+	}
+}
+
+func TestAggressiveLockingBasic(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// TODO: Check aggressive locking is indeed used and the RPC is avoided when doing pessimistic retry.
+
+	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("create table t (id int primary key, k int unique, v int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+
+	// Woken up by a rolled back transaction.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	res := mustExecAsync(tk, "update t set v = v + 1 where id = 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("rollback")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2"))
+
+	// Woken up by a committed transaction.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	res = mustExecAsync(tk, "update t set v = v + 1 where id = 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 4"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 4"))
+
+	// Lock conflict occurs on the second LockKeys invocation in one statement.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	res = mustExecAsync(tk, "update t set v = v + 1 where k = 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 6"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 6"))
+
+	// Lock one key (the row key) in aggressive locking mode, and then falls back due to multiple keys needs to be
+	// locked then (the unique index keys, one deleted and one added).
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	tk2.MustQuery("select * from t where k = 2 for update").Check(testkit.Rows())
+	res = mustExecAsync(tk, "update t set k = k + 1 where id = 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 7"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 7"))
+
+	// Test consistency in the RC behavior of DMLs.
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("insert into t values (3, 3, 4), (4, 4, 4)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 3")
+	res = mustExecAsync(tk, "update t set v = v + 1 where id = (select v from t where id = 3 for update)")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk3.MustExec("insert into t values (5, 5, 5)")
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 7", "3 3 6", "4 4 4", "5 5 6"))
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("select * from t where id = 4 for update")
+	res = mustExecAsync(tk, "update t set v = v + 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk3.MustExec("insert into t values (6, 6, 6)")
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 8", "3 3 7", "4 4 5", "5 5 7", "6 6 7"))
+	tk.MustExec("commit")
+}
+
+func TestAggressiveLockingInsert(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 0")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 20)")
+	ch := make(chan struct{})
+	go func() {
+		tk2.MustGetErrCode("insert into t values (1, 10)", 1062)
+		ch <- struct{}{}
+	}()
+	mustTimeout(t, ch, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, ch)
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20"))
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t where id = 1")
+	res := mustExecAsync(tk, "insert into t values (1, 10)")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+}
+
+func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	// Avoid tk2 being affected by the failpoint (but the failpoint will still be triggered)..
+	tk2.Session().SetConnectionID(0)
+	tk2.MustExec("use test")
+
+	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	// It's not sure whether `tk`'s pessimistic lock response or `tk2`'s commit response arrives first, so inject twice.
+	require.NoError(t, failpoint.Enable("tikvclient/rpcFailOnRecv", "2*return"))
+	res := mustExecAsync(tk, "update t set v = v + 10 where id = 1")
+	mustTimeout(t, res, time.Millisecond*100)
+	tk2.MustExec("commit")
+	mustRecv(t, res)
+	require.NoError(t, failpoint.Disable("tikvclient/rpcFailOnRecv"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1  12"))
+}
+
+func TestAggressiveLockingRetry(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	mustBlocked := func(stmt string) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("begin pessimistic")
+		ch := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer func() {
+			cancel()
+			tk.MustExec("rollback")
+		}()
+		go func() {
+			tk.MustExecWithContext(ctx, stmt)
+			ch <- struct{}{}
+		}()
+		select {
+		case <-ch:
+			t.Fatalf("expected statement `%v` to be blocked but not", stmt)
+		case <-time.After(time.Millisecond * 100):
+		}
+	}
+
+	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("create table t3 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 10)")
+	tk.MustExec("insert into t2 values (10, 100), (11, 101)")
+	tk.MustExec("insert into t3 values (100, 100), (101, 200)")
+
+	// Test the case that the locks to acquire didn't change.
+	tk.MustExec("begin")
+	tk2.MustExec("begin")
+	tk2.MustExec("select * from t3 where id = 100 for update")
+	// It's rare that a statement causes multiple LockKeys invocation and each involves one single key, but it's
+	// theoretically possible. CTE makes it simple to construct this kind of test cases.
+	// Let t1's column `v` points to an `id` in t2, and so do t2 and t3.
+	// The update part is blocked.
+	res := mustExecAsync(tk, `
+		with
+			c1 as (select /*+ MERGE() */ * from t1 where id = 1),
+			c2 as (select /*+ MERGE() */ t2.* from  c1 join t2 on c1.v = t2.id for update)
+		update c2 join t3 on c2.v = t3.id set t3.v = t3.v + 1
+	`)
+	mustTimeout(t, res, time.Millisecond*50)
+
+	// Pause on pessimistic retry.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/pessimisticSelectForUpdateRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/pessimisticDMLRetry", "pause"))
+	tk2.MustExec("commit")
+	mustTimeout(t, res, time.Millisecond*50)
+
+	// Check that tk didn't release its lock at the time that the stmt retry begins.
+	mustBlocked("select * from t2 where id = 10 for update")
+
+	// Still locked after the retry.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticSelectForUpdateRetry"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticDMLRetry"))
+	mustRecv(t, res)
+	mustBlocked("select * from t2 where id = 10 for update")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101", "101, 200"))
+
+	// Test the case that the locks to acquire changes after retry. This is done be letting `tk2` update table `t1`
+	// which is not locked by the `tk`.
+	tk.MustExec("begin")
+	tk2.MustExec("begin")
+	tk2.MustExec("select * from t3 where id = 100 for update")
+	res = mustExecAsync(tk, `
+		with
+			c1 as (select /*+ MERGE() */ * from t1 where id = 1),
+			c2 as (select /*+ MERGE() */ t2.* from  c1 join t2 on c1.v = t2.id for update)
+		update c2 join t3 on c2.v = t3.id set t3.v = t3.v + 1
+	`)
+	mustTimeout(t, res, time.Millisecond*50)
+
+	tk2.MustExec("update t1 set v = 11 where id = 1")
+	// Pause on pessimistic retry.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/pessimisticSelectForUpdateRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/pessimisticDMLRetry", "pause"))
+	tk2.MustExec("commit")
+	mustTimeout(t, res, time.Millisecond*50)
+
+	// Check that tk didn't release its lock at the time that the stmt retry begins.
+	mustBlocked("select * from t2 where id = 10 for update")
+
+	// The lock is released after the pessimistic retry, but the other row is locked instead.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticSelectForUpdateRetry"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticDMLRetry"))
+	mustRecv(t, res)
+	tk2.MustExec("begin")
+	tk2.MustQuery("select * from t2 where id = 10 for update").Check(testkit.Rows("10 101"))
+	tk2.MustExec("rollback")
+	mustBlocked("select * from t2 where id = 11 for update")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101", "101, 201"))
+}

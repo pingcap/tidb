@@ -882,6 +882,8 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 			return rs, nil
 		}
 		retryAggressiveLockingIfNeeded(ctx, txn)
+
+		failpoint.Inject("pessimisticSelectForUpdateRetry", nil)
 	}
 }
 
@@ -986,6 +988,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	for {
 		if !isFirstAttempt {
 			retryAggressiveLockingIfNeeded(ctx, txn)
+			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
 		startTime := time.Now()
