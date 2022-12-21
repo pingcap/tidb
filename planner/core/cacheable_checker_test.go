@@ -52,7 +52,9 @@ func TestCacheable(t *testing.T) {
 
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
-	stmt = &ast.InsertStmt{Table: tableRefsClause}
+	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
+	require.False(t, core.Cacheable(stmt, is))
+	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
 	// test DeleteStmt
