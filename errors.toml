@@ -766,6 +766,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["ddl:1235"]
+error = '''
+This version of TiDB doesn't yet support '%s'
+'''
+
 ["ddl:1246"]
 error = '''
 Converting column '%s' from %s to %s

@@ -44,4 +44,15 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 	tk.MustGetErrCode("create table t(j json, gc json as (cast(j->'$[*]' as unsigned array)));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("create view v as select cast('[1,2,3]' as unsigned array);", errno.ErrNotSupportedYet)
 	tk.MustExec("create table t(a json, index idx((cast(a as signed array))));")
+
+	tk.MustExec("drop table t")
+	tk.MustGetErrCode("create table t(a json, b int, index idx(b, (cast(a as signed array)), (cast(a as signed array))));", errno.ErrNotSupportedYet)
+	tk.MustExec("create table t(a json, b int);")
+	tk.MustGetErrCode("create index idx on t (b, (cast(a as signed array)), (cast(a as signed array)))", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add index idx(b, (cast(a as signed array)), (cast(a as signed array)))", errno.ErrNotSupportedYet)
+	tk.MustExec("create index idx1 on t (b, (cast(a as signed array)))")
+	tk.MustExec("alter table t add index idx2(b, (cast(a as signed array)))")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a json, b int, index idx3(b, (cast(a as signed array))));")
 }

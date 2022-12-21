@@ -998,7 +998,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, false)
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

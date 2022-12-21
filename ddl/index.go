@@ -81,7 +81,12 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		if err := checkIndexColumn(ctx, col, ip.Length); err != nil {
 			return nil, false, err
 		}
-		mvIndex = mvIndex || col.FieldType.IsArray()
+		if col.FieldType.IsArray() {
+			if mvIndex {
+				return nil, false, dbterror.ErrNotSupportedYet.GenWithStack("'more than one multi-valued key part per index'")
+			}
+			mvIndex = true
+		}
 		indexColLen := ip.Length
 		indexColumnLength, err := getIndexColumnLength(col, ip.Length)
 		if err != nil {
