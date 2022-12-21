@@ -420,7 +420,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
 	}
 
 	if args[0].GetType().EvalType() != types.ETJson {
-		return types.ErrInvalidJSONData.GenWithStackByArgs("1", "cast_as_array")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "cast_as_array")
 	}
 
 	return nil
@@ -467,9 +467,61 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
 	}
 
-	// TODO: impl the cast(... as ... array) function
+	arrayVals := make([]any, 0, len(b.args))
+	f := convertJSON2Tp(b.tp.ArrayType())
+	originVal := b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning
+	b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = false
+	defer func() {
+		b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = originVal
+	}()
+	for i := 0; i < val.GetElemCount(); i++ {
+		item, err := f(b, val.ArrayGetElem(i))
+		if err != nil {
+			return types.BinaryJSON{}, false, err
+		}
+		arrayVals = append(arrayVals, item)
+	}
+	return types.CreateBinaryJSON(arrayVals), false, nil
+}
 
-	return types.BinaryJSON{}, false, nil
+func convertJSON2Tp(tp *types.FieldType) func(*castJSONAsArrayFunctionSig, types.BinaryJSON) (any, error) {
+	switch tp.EvalType() {
+	case types.ETString:
+		return func(b *castJSONAsArrayFunctionSig, item types.BinaryJSON) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeString {
+				return nil, errIncorrectArgs
+			}
+			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, b.ctx.GetSessionVars().StmtCtx, false)
+		}
+	default:
+		return func(b *castJSONAsArrayFunctionSig, item types.BinaryJSON) (any, error) {
+			switch tp.EvalType() {
+			case types.ETInt:
+				if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+					return nil, errIncorrectArgs
+				}
+			case types.ETReal, types.ETDecimal:
+				if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
+					return nil, errIncorrectArgs
+				}
+			case types.ETDatetime:
+				if item.TypeCode != types.JSONTypeCodeDatetime {
+					return nil, errIncorrectArgs
+				}
+			case types.ETTimestamp:
+				if item.TypeCode != types.JSONTypeCodeTimestamp {
+					return nil, errIncorrectArgs
+				}
+			case types.ETDuration:
+				if item.TypeCode != types.JSONTypeCodeDate {
+					return nil, errIncorrectArgs
+				}
+			}
+			d := types.NewJSONDatum(item)
+			to, err := d.ConvertTo(b.ctx.GetSessionVars().StmtCtx, tp)
+			return to.GetValue(), err
+		}
+	}
 }
 
 type castAsJSONFunctionClass struct {

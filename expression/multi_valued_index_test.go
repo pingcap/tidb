@@ -56,3 +56,25 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a json, b int, index idx3(b, (cast(a as signed array))));")
 }
+
+func TestMultiValuedIndexDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("create table t(a json, index idx((cast(a as unsigned array))));")
+
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustGetErrCode("insert into t values ('[-1]')", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode(`insert into t values ('["1"]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('["a"]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('[1.2]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('[1.0]')`, errno.ErrWrongArguments)
+
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustGetErrCode("insert into t values ('[-1]')", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode(`insert into t values ('["1"]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('["a"]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('[1.2]')`, errno.ErrWrongArguments)
+	tk.MustGetErrCode(`insert into t values ('[1.0]')`, errno.ErrWrongArguments)
+}
