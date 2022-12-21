@@ -865,6 +865,16 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
+
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); !ok ||
+		(e.Code() != mysql.ErrTruncatedWrongValue &&
+			e.Code() != mysql.ErrDataTooLong &&
+			e.Code() != mysql.ErrTruncatedWrongValueForField &&
+			e.Code() != mysql.WarnDataTruncated) {
+		return err
+	}
+
 	if sc.IgnoreTruncate {
 		return nil
 	}
