@@ -215,11 +215,11 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerDeadLock")); _err_ == nil {
+	failpoint.Inject("testRowContainerDeadLock", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Second)
 		}
-	}
+	})
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
 			return err
@@ -497,11 +497,11 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 		c.memTracker.Consume(1)
 		c.timesOfRowCompare = 0
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
 			c.timesOfRowCompare += 1024
 		}
-	}
+	})
 	c.timesOfRowCompare++
 	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
 	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])

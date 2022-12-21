@@ -161,7 +161,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			iterOutAction = setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
@@ -169,7 +169,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 					defer iterOutAction.WaitForTest()
 				}
 			}
-		}
+		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
 			e.resTbl.SetError(err)
@@ -433,11 +433,11 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
-		if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) {
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
-		}
+		})
 		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill

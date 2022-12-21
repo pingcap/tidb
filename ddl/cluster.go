@@ -325,14 +325,14 @@ func SendPrepareFlashbackToVersionRPC(
 		if err != nil {
 			return taskStat, err
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("mockPrepareMeetsEpochNotMatch")); _err_ == nil {
+		failpoint.Inject("mockPrepareMeetsEpochNotMatch", func(val failpoint.Value) {
 			if val.(bool) && bo.ErrorsNum() == 0 {
 				regionErr = &errorpb.Error{
 					Message:       "stale epoch",
 					EpochNotMatch: &errorpb.EpochNotMatch{},
 				}
 			}
-		}
+		})
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err != nil {
@@ -492,11 +492,11 @@ func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 // 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
-	if val, _err_ := failpoint.Eval(_curpkg_("mockFlashbackTest")); _err_ == nil {
+	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
 		if val.(bool) {
 			inFlashbackTest = true
 		}
-	}
+	})
 	// TODO: Support flashback in unistore.
 	if d.store.Name() != "TiKV" && !inFlashbackTest {
 		job.State = model.JobStateCancelled

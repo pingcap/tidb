@@ -286,14 +286,14 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 		return
 	}
 	timeout := reportTimeout
-	if val, _err_ := failpoint.Eval(_curpkg_("resetTimeoutForTest")); _err_ == nil {
+	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
 			interval := time.Duration(topsqlstate.GlobalState.ReportIntervalSeconds.Load()) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}
 		}
-	}
+	})
 	_ = tsr.trySend(data, time.Now().Add(timeout))
 }
 

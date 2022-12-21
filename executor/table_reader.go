@@ -140,10 +140,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	if v, _err_ := failpoint.Eval(_curpkg_("mockSleepInTableReaderNext")); _err_ == nil {
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
 		ms := v.(int)
 		time.Sleep(time.Millisecond * time.Duration(ms))
-	}
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)

@@ -294,9 +294,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("startPartialIndexWorkerErr")); _err_ == nil {
+	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
-	}
+	})
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
@@ -842,7 +842,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		if w.rowDelta >= int64(w.batchSize) {
 			w.consumeMemDelta()
 		}
-		failpoint.Eval(_curpkg_("testIndexMergeIntersectionWorkerPanic"))
+		failpoint.Inject("testIndexMergeIntersectionWorkerPanic", nil)
 	}
 	if w.rowDelta > 0 {
 		w.consumeMemDelta()
@@ -923,12 +923,12 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		partCnt = len(w.indexMerge.prunedPartitions)
 	}
 	workerCnt := mathutil.Min(partCnt, maxWorkerCnt)
-	if val, _err_ := failpoint.Eval(_curpkg_("testIndexMergeIntersectionConcurrency")); _err_ == nil {
+	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
 		con := val.(int)
 		if con != workerCnt {
 			panic(fmt.Sprintf("unexpected workerCnt, expect %d, got %d", con, workerCnt))
 		}
-	}
+	})
 
 	workers := make([]*intersectionProcessWorker, 0, workerCnt)
 	wg := util.WaitGroupWrapper{}

@@ -376,22 +376,22 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		d.setDDLLabelForTopSQL(job)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillRunErr")); _err_ == nil {
+		failpoint.Inject("mockBackfillRunErr", func() {
 			if w.id == 0 {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				w.resultCh <- result
-				continue
+				failpoint.Continue()
 			}
-		}
+		})
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForAddIndex")); _err_ == nil {
+		failpoint.Inject("mockHighLoadForAddIndex", func() {
 			sqlPrefixes := []string{"alter"}
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
-		}
+		})
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillSlow")); _err_ == nil {
+		failpoint.Inject("mockBackfillSlow", func() {
 			time.Sleep(100 * time.Millisecond)
-		}
+		})
 
 		// Change the batch size dynamically.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -516,12 +516,12 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 			zap.String("task failed error", err.Error()),
 			zap.String("take time", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
-		if _, _err_ := failpoint.Eval(_curpkg_("MockGetIndexRecordErr")); _err_ == nil {
+		failpoint.Inject("MockGetIndexRecordErr", func() {
 			// Make sure this job didn't failed because by the "Write conflict" error.
 			if dbterror.ErrNotOwner.Equal(err) {
 				time.Sleep(50 * time.Millisecond)
 			}
-		}
+		})
 		return errors.Trace(err)
 	}
 
@@ -863,12 +863,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		return nil
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockCaseWhenParseFailure")); _err_ == nil {
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			return errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause.")
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
-	}
+	})
 
 	jc := dc.jobContext(job)
 	scheduler := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, decodeColMap, jc)
@@ -928,13 +928,13 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 	if isMergeWorker {
 		return nil
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("checkBackfillWorkerNum")); _err_ == nil {
+	failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 			if num != 0 {
 				if num != curWorkerSize {
-					return errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize)
+					failpoint.Return(errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize))
 				}
 				var wg sync.WaitGroup
 				wg.Add(1)
@@ -942,7 +942,7 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 				wg.Wait()
 			}
 		}
-	}
+	})
 	return nil
 }
 
