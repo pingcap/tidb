@@ -4113,13 +4113,12 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			s.sessionVars.RequestSourceType = stmtLabel
 		}
 		return
-	} else {
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			requestSource := source.(kv.RequestSource)
-			if requestSource.RequestSourceType != "" {
-				s.sessionVars.RequestSourceType = requestSource.RequestSourceType
-				return
-			}
+	}
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		requestSource := source.(kv.RequestSource)
+		if requestSource.RequestSourceType != "" {
+			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			return
 		}
 	}
 	// panic in test mode in case there are requests without source in the future.
