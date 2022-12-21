@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -98,14 +99,47 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-// CheckLogBackupTaskExist increases the count of log backup task.
+func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
+	valStr := "show config where name = 'gc.ratio-threshold' and type = 'tikv'"
+	rows, fields, errSQL := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		valStr,
+	)
+	if errSQL != nil {
+		return "", errSQL
+	}
+	if len(rows) == 0 {
+		// no rows mean not support log backup.
+		return "", nil
+	}
+
+	d := rows[0].GetDatum(3, &fields[3].Column.FieldType)
+	return d.ToString()
+}
+
+func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
+	_, _, err := ctx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
+		nil,
+		"set config tikv `gc.ratio-threshold`=%?",
+		ratio,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to set config `gc.ratio-threshold`=%s", ratio)
+	}
+	log.Warn("set config tikv gc.ratio-threshold", zap.String("ratio", ratio))
+	return nil
+}
+
+// LogBackupTaskCountInc increases the count of log backup task.
 func LogBackupTaskCountInc() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount++
 	LogBackupTaskMutex.Unlock()
 }
 
-// CheckLogBackupTaskExist decreases the count of log backup task.
+// LogBackupTaskCountDec decreases the count of log backup task.
 func LogBackupTaskCountDec() {
 	LogBackupTaskMutex.Lock()
 	logBackupTaskCount--
@@ -122,6 +156,7 @@ func IsLogBackupInUse(ctx sessionctx.Context) bool {
 	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
 }
 
+// GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.
 func GetTidbNewCollationEnabled() string {
 	return tidbNewCollationEnabled
 }

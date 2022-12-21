@@ -1584,13 +1584,11 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := oracle.GoTimeToTS(time.Now())
@@ -1599,13 +1597,21 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	sm := se.GetSessionManager().(*testkit.MockSessionManager)
 	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: lowerLimit},
-		{CurTxnStartTS: validTS},
+		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: lowerLimit, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: validTS, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
 	}
-	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
+
+	unhold := se.GetSessionVars().ProtectedTSList.HoldTS(validTS - 1)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS-1, infoSyncer.GetMinStartTS())
+
+	unhold()
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
@@ -1762,4 +1768,24 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestHashPartitionAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("delete from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int")
 }

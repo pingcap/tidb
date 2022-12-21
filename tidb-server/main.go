@@ -46,6 +46,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -118,8 +119,9 @@ const (
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
 
-	nmInitializeSecure   = "initialize-secure"
-	nmInitializeInsecure = "initialize-insecure"
+	nmInitializeSecure            = "initialize-secure"
+	nmInitializeInsecure          = "initialize-insecure"
+	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 )
 
 var (
@@ -164,8 +166,9 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
 
 	// Security
-	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
-	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
 )
 
 func main() {
@@ -208,6 +211,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+	resourcemanager.GlobalResourceManager.Start()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -221,6 +225,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
+		resourcemanager.GlobalResourceManager.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -536,6 +541,9 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmInitializeInsecure] {
 		cfg.Security.SecureBootstrap = !*initializeInsecure
 	}
+	if actualFlags[nmDisconnectOnExpiredPassword] {
+		cfg.Security.DisconnectOnExpiredPassword = *disconnectOnExpiredPassword
+	}
 	// Secure bootstrap initializes with Socket authentication
 	// which is not supported on windows. Only the insecure bootstrap
 	// method is supported.
@@ -628,7 +636,12 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
+		// practically deprecate the config, let the new session memory tracker take charge of it.
+		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+	} else {
+		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	}
 	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
@@ -640,6 +653,7 @@ func setGlobalVars() {
 	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
 	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
+	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 

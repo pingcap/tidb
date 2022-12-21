@@ -1965,6 +1965,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
+	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
@@ -1975,21 +1976,22 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
+		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
-		logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
-		switch variable.OOMAction.Load() {
-		case variable.OOMActionCancel:
-			action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
-			action.SetLogHook(logOnQueryExceedMemQuota)
-			vars.MemTracker.SetActionOnExceed(action)
-		case variable.OOMActionLog:
-			fallthrough
-		default:
-			action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
-			action.SetLogHook(logOnQueryExceedMemQuota)
-			vars.MemTracker.SetActionOnExceed(action)
-		}
+	}
+	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	switch variable.OOMAction.Load() {
+	case variable.OOMActionCancel:
+		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+		action.SetLogHook(logOnQueryExceedMemQuota)
+		vars.MemTracker.SetActionOnExceed(action)
+	case variable.OOMActionLog:
+		fallthrough
+	default:
+		action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
+		action.SetLogHook(logOnQueryExceedMemQuota)
+		vars.MemTracker.SetActionOnExceed(action)
 	}
 	sc.MemTracker.SessionID = vars.ConnectionID
 	sc.MemTracker.AttachTo(vars.MemTracker)
@@ -2166,6 +2168,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+	vars.DurationWaitTS = 0
 	return
 }
 

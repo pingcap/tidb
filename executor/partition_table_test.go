@@ -439,6 +439,31 @@ func TestOrderByandLimit(t *testing.T) {
 	tk.MustExec("insert into thash_clustered values " + strings.Join(dedupValsAB, ","))
 	tk.MustExec("insert into tregular_clustered values " + strings.Join(dedupValsAB, ","))
 
+	tk.MustExec("analyze table trange")
+	tk.MustExec("analyze table trange_intpk")
+	tk.MustExec("analyze table trange_clustered")
+	tk.MustExec("analyze table thash")
+	tk.MustExec("analyze table thash_intpk")
+	tk.MustExec("analyze table thash_clustered")
+	tk.MustExec("analyze table tregular")
+	tk.MustExec("analyze table tregular_intpk")
+	tk.MustExec("analyze table tregular_clustered")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
+
 	// test indexLookUp
 	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
@@ -529,6 +554,45 @@ func TestOrderByandLimit(t *testing.T) {
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
+
+		tk.MustExec(" set @@tidb_allow_mpp=1;")
+		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash,tikv\"")
+		queryPartitionWithTiFlash := fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_intpk]) */ * from trange_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_intpk]) */ /*+ LIMIT_TO_COP() */ * from trange_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_clustered]) */ * from trange_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_clustered]) */ /*+ LIMIT_TO_COP() */ * from trange_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_intpk]) */ * from thash_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_intpk]) */ /*+ LIMIT_TO_COP() */ * from thash_intpk where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_clustered]) */ * from thash_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_clustered]) */ /*+ LIMIT_TO_COP() */ * from thash_clustered where a > %v order by a limit %v", x, y)
+		// check if tiflash is used
+		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
+		// but order is not pushed
+		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustExec(" set @@tidb_allow_mpp=0;")
+		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 	}
 
 	// test indexReader
@@ -3670,11 +3734,11 @@ func TestPartitionTableExplain(t *testing.T) {
 		"  └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
 		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
-		"├─TableReader(Build) 1.00 root  data:Selection",
-		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
-		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-		"└─Selection(Probe) 1.00 root  not(isnull(testpartitiontableexplain.t.b))",
-		"  └─Point_Get 1.00 root table:t, partition:p1 handle:1"))
+		`├─Selection(Build) 1.00 root  not(isnull(testpartitiontableexplain.t.b))`,
+		`│ └─Point_Get 1.00 root table:t, partition:p1 handle:1`,
+		`└─TableReader(Probe) 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))`,
+		`    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false`))
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`analyze table t`)
@@ -3766,4 +3830,73 @@ func TestIssue21732(t *testing.T) {
 			tk.MustExec("drop database TestIssue21732")
 		})
 	}
+}
+
+func TestIssue39999(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create schema test39999`)
+	tk.MustExec(`use test39999`)
+	tk.MustExec(`drop table if exists c, t`)
+	tk.MustExec("CREATE TABLE `c` (" +
+		"`serial_id` varchar(24)," +
+		"`occur_trade_date` date," +
+		"`txt_account_id` varchar(24)," +
+		"`capital_sub_class` varchar(10)," +
+		"`occur_amount` decimal(16,2)," +
+		"`broker` varchar(10)," +
+		"PRIMARY KEY (`txt_account_id`,`occur_trade_date`,`serial_id`) /*T![clustered_index] CLUSTERED */," +
+		"KEY `idx_serial_id` (`serial_id`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci " +
+		"PARTITION BY RANGE COLUMNS(`serial_id`) (" +
+		"PARTITION `p202209` VALUES LESS THAN ('20221001')," +
+		"PARTITION `p202210` VALUES LESS THAN ('20221101')," +
+		"PARTITION `p202211` VALUES LESS THAN ('20221201')" +
+		")")
+
+	tk.MustExec("CREATE TABLE `t` ( " +
+		"`txn_account_id` varchar(24), " +
+		"`account_id` varchar(32), " +
+		"`broker` varchar(10), " +
+		"PRIMARY KEY (`txn_account_id`) /*T![clustered_index] CLUSTERED */ " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")
+
+	tk.MustExec("INSERT INTO `c` (serial_id, txt_account_id, capital_sub_class, occur_trade_date, occur_amount, broker) VALUES ('2022111700196920','04482786','CUST','2022-11-17',-2.01,'0009')")
+	tk.MustExec("INSERT INTO `t` VALUES ('04482786','1142927','0009')")
+
+	tk.MustExec(`set tidb_partition_prune_mode='dynamic'`)
+	tk.MustExec(`analyze table c`)
+	tk.MustExec(`analyze table t`)
+	query := `select
+    /*+ inl_join(c) */
+    c.occur_amount
+from
+    c
+    join t on c.txt_account_id = t.txn_account_id
+    and t.broker = '0009'
+    and c.occur_trade_date = '2022-11-17'`
+	tk.MustQuery("explain " + query).Check(testkit.Rows(""+
+		"IndexJoin_22 1.00 root  inner join, inner:TableReader_21, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)",
+		"├─TableReader_27(Build) 1.00 root  data:Selection_26",
+		"│ └─Selection_26 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")",
+		"│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false",
+		"└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20",
+		"  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)",
+		"    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false"))
+	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
+
+	// Add the missing partition key part.
+	tk.MustExec(`alter table t add column serial_id varchar(24) default '2022111700196920'`)
+	query += ` and c.serial_id = t.serial_id`
+	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
+	tk.MustQuery("explain " + query).Check(testkit.Rows(""+
+		`IndexJoin_20 0.80 root  inner join, inner:TableReader_19, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)`,
+		`├─TableReader_25(Build) 0.80 root  data:Selection_24`,
+		`│ └─Selection_24 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
+		`│   └─TableFullScan_23 1.00 cop[tikv] table:t keep order:false`,
+		`└─TableReader_19(Probe) 0.80 root partition:all data:Selection_18`,
+		`  └─Selection_18 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
+		`    └─TableRangeScan_17 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
 }

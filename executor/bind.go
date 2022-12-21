@@ -38,6 +38,9 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	source       string // by manual or from history, only in create stmt
+	sqlDigest    string
+	planDigest   string
 }
 
 // Next implements the Executor Next interface.
@@ -48,6 +51,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.createSQLBind()
 	case plannercore.OpSQLBindDrop:
 		return e.dropSQLBind()
+	case plannercore.OpSQLBindDropByDigest:
+		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
 	case plannercore.OpCaptureBindings:
@@ -83,6 +88,20 @@ func (e *SQLBindExec) dropSQLBind() error {
 	return err
 }
 
+func (e *SQLBindExec) dropSQLBindByDigest() error {
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
+	if !e.isGlobal {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		err := handle.DropBindRecordByDigest(e.sqlDigest)
+		return err
+	}
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecordByDigest(e.sqlDigest)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
+}
+
 func (e *SQLBindExec) setBindingStatus() error {
 	var bindInfo *bindinfo.Binding
 	if e.bindSQL != "" {
@@ -109,11 +128,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}()
 
 	bindInfo := bindinfo.Binding{
-		BindSQL:   e.bindSQL,
-		Charset:   e.charset,
-		Collation: e.collation,
-		Status:    bindinfo.Enabled,
-		Source:    bindinfo.Manual,
+		BindSQL:    e.bindSQL,
+		Charset:    e.charset,
+		Collation:  e.collation,
+		Status:     bindinfo.Enabled,
+		Source:     e.source,
+		SQLDigest:  e.sqlDigest,
+		PlanDigest: e.planDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

@@ -989,6 +989,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
 func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
+	if copTsk.getStoreType() != kv.TiKV {
+		return nil, false
+	}
 	copTsk = copTsk.copy().(*copTask)
 	if len(copTsk.rootTaskConds) > 0 {
 		return nil, false
@@ -1236,12 +1239,17 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		ret = false
 	}
 
-	if !ret && sc.InExplainStmt {
+	if !ret {
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
+		} else {
+			sc.AppendExtraWarning(warnErr)
+		}
 	}
 	return ret
 }
@@ -1740,8 +1748,12 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {
-			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			storeType := cop.getStoreType()
+			// TiFlash doesn't support Stream Aggregation
+			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
+				return invalidTask
+			}
+			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -1970,6 +1982,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
+	case NoMpp:
+		t = mpp.convertToRootTask(p.ctx)
+		attachPlan2Task(p, t)
+		return t
 	default:
 		return invalidTask
 	}

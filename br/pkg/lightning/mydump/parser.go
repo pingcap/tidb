@@ -94,6 +94,7 @@ type ChunkParser struct {
 type Chunk struct {
 	Offset       int64
 	EndOffset    int64
+	RealOffset   int64
 	PrevRowIDMax int64
 	RowIDMax     int64
 	Columns      []string
@@ -126,6 +127,7 @@ const (
 type Parser interface {
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
+	RealPos() (int64, error)
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -173,6 +175,11 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 	parser.pos = pos
 	parser.lastRow.RowID = rowID
 	return nil
+}
+
+// RealPos gets the read position of current reader.
+func (parser *blockParser) RealPos() (int64, error) {
+	return parser.reader.Seek(0, io.SeekCurrent)
 }
 
 // Pos returns the current file offset.

@@ -515,6 +515,10 @@ const (
 	TpBasicCopRunTimeStats
 	// TpUpdateRuntimeStats is the tp for UpdateRuntimeStats
 	TpUpdateRuntimeStats
+	// TpFKCheckRuntimeStats is the tp for FKCheckRuntimeStats
+	TpFKCheckRuntimeStats
+	// TpFKCascadeRuntimeStats is the tp for FKCascadeRuntimeStats
+	TpFKCascadeRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -549,7 +553,7 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	}
 }
 func (context *TiFlashScanContext) String() string {
-	return fmt.Sprintf("tiflash_scan:{dmfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rough_set_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs)
+	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
@@ -621,11 +625,14 @@ type RootRuntimeStats struct {
 
 // NewRootRuntimeStats returns a new RootRuntimeStats
 func NewRootRuntimeStats() *RootRuntimeStats {
-	return &RootRuntimeStats{basic: &BasicRuntimeStats{}}
+	return &RootRuntimeStats{}
 }
 
 // GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
+	if e.basic == nil {
+		return 0
+	}
 	return e.basic.rows
 }
 
@@ -638,8 +645,7 @@ func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []Runt
 func (e *RootRuntimeStats) String() string {
 	basic, groups := e.MergeStats()
 	strs := make([]string, 0, len(groups)+1)
-	basicStr := basic.String()
-	if len(basicStr) > 0 {
+	if basic != nil {
 		strs = append(strs, basic.String())
 	}
 	for _, group := range groups {

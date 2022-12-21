@@ -209,9 +209,15 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message        string
-		warnings       []SQLWarn
-		errorCount     uint16
+		message  string
+		warnings []SQLWarn
+		// extraWarnings record the extra warnings and are only used by the slow log only now.
+		// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
+		// not under such conditions now, it is considered as an extra warning.
+		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
+		// log to help diagnostics, so we store them here separately.
+		extraWarnings []SQLWarn
+
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
 	}
@@ -300,8 +306,6 @@ type StatementContext struct {
 		LogOnExceed [2]memory.LogOnExceed
 	}
 
-	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
-	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
@@ -730,9 +734,7 @@ func (sc *StatementContext) SetMessage(msg string) {
 func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	warns := make([]SQLWarn, len(sc.mu.warnings))
-	copy(warns, sc.mu.warnings)
-	return warns
+	return sc.mu.warnings
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
@@ -763,7 +765,11 @@ func (sc *StatementContext) WarningCount() uint16 {
 func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	ec = sc.mu.errorCount
+	for _, w := range sc.mu.warnings {
+		if w.Level == WarnLevelError {
+			ec++
+		}
+	}
 	wc = len(sc.mu.warnings)
 	return
 }
@@ -773,12 +779,6 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.warnings = warns
-	sc.mu.errorCount = 0
-	for _, w := range warns {
-		if w.Level == WarnLevelError {
-			sc.mu.errorCount++
-		}
-	}
 }
 
 // AppendWarning appends a warning with level 'Warning'.
@@ -814,7 +814,47 @@ func (sc *StatementContext) AppendError(warn error) {
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
-		sc.mu.errorCount++
+	}
+}
+
+// GetExtraWarnings gets extra warnings.
+func (sc *StatementContext) GetExtraWarnings() []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.extraWarnings
+}
+
+// SetExtraWarnings sets extra warnings.
+func (sc *StatementContext) SetExtraWarnings(warns []SQLWarn) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.extraWarnings = warns
+}
+
+// AppendExtraWarning appends an extra warning with level 'Warning'.
+func (sc *StatementContext) AppendExtraWarning(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelWarning, warn})
+	}
+}
+
+// AppendExtraNote appends an extra warning with level 'Note'.
+func (sc *StatementContext) AppendExtraNote(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelNote, warn})
+	}
+}
+
+// AppendExtraError appends an extra warning with level 'Error'.
+func (sc *StatementContext) AppendExtraError(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelError, warn})
 	}
 }
 
@@ -860,7 +900,6 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
-	sc.mu.errorCount = 0
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
 	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
@@ -1093,6 +1132,9 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	sc.SkipPlanCache = true
+	if sc.UseCache {
+		sc.AppendWarning(errors.Errorf("skip plan-cache: in-list is too long"))
+	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true

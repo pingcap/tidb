@@ -461,6 +461,11 @@ error = '''
 update pd error
 '''
 
+["Lightning:PreCheck:ErrCheckCDCPiTR"]
+error = '''
+check TiCDC/PiTR task error
+'''
+
 ["Lightning:PreCheck:ErrCheckCSVHeader"]
 error = '''
 check csv header error
@@ -1211,6 +1216,16 @@ error = '''
 Cannot set TTL_ENABLE on a table without TTL config
 '''
 
+["ddl:8151"]
+error = '''
+Set TTL for temporary table is not allowed
+'''
+
+["ddl:8152"]
+error = '''
+Set TTL for a table referenced by foreign key is not allowed
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id
@@ -1356,6 +1371,11 @@ error = '''
 Error happened when enable/disable DDL: %s
 '''
 
+["ddl:8247"]
+error = '''
+Ingest failed: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1486,6 +1506,11 @@ error = '''
 Foreign key cascade delete/update exceeds max depth of %v.
 '''
 
+["executor:3016"]
+error = '''
+The password for anonymous user cannot be expired.
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s
@@ -1499,6 +1524,11 @@ Illegal privilege level specified for %s
 ["executor:3636"]
 error = '''
 Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
+'''
+
+["executor:3638"]
+error = '''
+Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
 ["executor:3929"]
@@ -2256,6 +2286,11 @@ error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
 '''
 
+["privilege:1862"]
+error = '''
+Your password has expired. To log in you must change it using a client that supports expired passwords.
+'''
+
 ["privilege:3530"]
 error = '''
 %s is not granted to %s
@@ -2749,6 +2784,11 @@ Display width out of range for column '%-.192s' (max = %d)
 ["types:1441"]
 error = '''
 Datetime function: %-.32s field overflow
+'''
+
+["types:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
 '''
 
 ["types:1690"]
