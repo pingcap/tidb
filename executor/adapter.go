@@ -281,12 +281,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInShortPointGetPlan")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		// stale read should not reach here
 		staleread.AssertStmtStaleness(a.Ctx, false)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
-	})
+	}
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
@@ -365,7 +365,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) ignoreMaxExecutionTime() bool {
 	switch a.StmtNode.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return true
+		return false
 	}
 	return !a.IsReadOnly(a.Ctx.GetSessionVars())
 }
@@ -378,7 +378,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInRebuildPlan")); _err_ == nil {
 		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
@@ -389,7 +389,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		if ret.IsStaleness {
 			sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
 		}
-	})
+	}
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	replicaReadScope := sessiontxn.GetTxnManager(a.Ctx).GetReadReplicaScope()
@@ -451,7 +451,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
-	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleTSO")); _err_ == nil {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
 			ts, err := txnManager.GetStmtReadTS()
@@ -463,7 +463,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 		}
-	})
+	}
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -542,7 +542,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
-	failpoint.Inject("mockDelayInnerSessionExecute", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockDelayInnerSessionExecute")); _err_ == nil {
 		var curTxnStartTS uint64
 		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
 			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
@@ -553,7 +553,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
 			zap.Uint64("startTS", curTxnStartTS))
 		time.Sleep(200 * time.Millisecond)
-	})
+	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
@@ -1018,13 +1018,13 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if lockErr == nil {
 		return nil, nil
 	}
-	failpoint.Inject("assertPessimisticLockErr", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertPessimisticLockErr")); _err_ == nil {
 		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errWriteConflict")
 		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
 		}
-	})
+	}
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
@@ -1072,9 +1072,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
-	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterPessimisticLockErrorRetry")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
-	})
+	}
 
 	if err = a.openExecutor(ctx, e); err != nil {
 		return nil, err
@@ -1108,10 +1108,10 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		return nil, errors.Trace(b.err)
 	}
 
-	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterBuildExecutor")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
 		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
-	})
+	}
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
@@ -1536,13 +1536,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
-	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertSyncStatsFailed")); _err_ == nil {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
 				panic("isSyncStatsFailed should be true")
 			}
 		}
-	})
+	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}

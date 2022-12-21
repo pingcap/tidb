@@ -149,11 +149,11 @@ func (c *copReqSender) run() {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
-		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockCopSenderPanic")); _err_ == nil {
 			if val.(bool) {
 				panic("mock panic")
 			}
-		})
+		}
 		var done bool
 		var total int
 		for !done {

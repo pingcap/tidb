@@ -1441,9 +1441,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
-	failpoint.Inject("injectExtStatsLoadErr", func() {
-		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("injectExtStatsLoadErr")); _err_ == nil {
+		return nil, errors.New("gofail extendedStatsFromStorage error")
+	}
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion
@@ -2026,11 +2026,11 @@ func (h *Handle) releaseGlobalStatsReader(reader *statsReader) error {
 }
 
 func (h *Handle) getStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
-	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockGetStatsReaderFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
+			return nil, errors.New("gofail genStatsReader error")
 		}
-	})
+	}
 	if snapshot > 0 {
 		return &statsReader{ctx: exec, snapshot: snapshot}, nil
 	}
@@ -2040,7 +2040,7 @@ func (h *Handle) getStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecu
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	failpoint.Eval(_curpkg_("mockGetStatsReaderPanic"))
 	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return nil, err

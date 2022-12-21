@@ -243,7 +243,7 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 			probeSideResult.SetRequiredRows(required, maxChunkSize)
 		}
 		err := Next(ctx, fetcher.probeSideExec, probeSideResult)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if err != nil {
 			fetcher.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -251,11 +251,11 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 			return
 		}
 		if !hasWaitedForBuild {
-			failpoint.Inject("issue30289", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 				if val.(bool) {
 					probeSideResult.Reset()
 				}
-			})
+			}
 			if probeSideResult.NumRows() == 0 && !fetcher.useOuterToBuild {
 				fetcher.finished.Store(true)
 			}
@@ -299,13 +299,13 @@ func (fetcher *probeSideTupleFetcher) wait4BuildSide() (emptyBuild bool, err err
 func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
-	failpoint.Inject("issue30289", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
 			errCh <- errors.Trace(err)
 			return
 		}
-	})
+	}
 	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
 	for {
 		if w.hashJoinCtx.finished.Load() {
@@ -317,8 +317,8 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 			errCh <- errors.Trace(err)
 			return
 		}
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("errorFetchBuildSideRowsMockOOMPanic"))
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -492,7 +492,7 @@ func (w *probeWorker) runJoinWorker() {
 			return
 		case probeSideResult, ok = <-w.probeResultCh:
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if !ok {
 			break
 		}
@@ -997,11 +997,11 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, j
 
 	for i := range selected {
 		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
-		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2Chunk")); _err_ == nil {
 			if val.(bool) {
 				killed = true
 			}
-		})
+		}
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -1063,11 +1063,11 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
 		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
-		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2ChunkForOuterHashJoin")); _err_ == nil {
 			if val.(bool) {
 				killed = true
 			}
-		})
+		}
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -1197,12 +1197,12 @@ func (w *buildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chun
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill := rowContainer.ActionSpill()
-		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill = rowContainer.rowContainer.ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
-		})
+		}
 		w.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
@@ -1225,7 +1225,7 @@ func (w *buildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chun
 				err = rowContainer.PutChunkSelected(chk, selected, w.hashJoinCtx.isNullEQ)
 			}
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if err != nil {
 			return err
 		}

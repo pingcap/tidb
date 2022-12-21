@@ -66,11 +66,11 @@ func (t *memoryLimitTuner) tuning() {
 				memory.MemoryLimitGCTotal.Add(1)
 				debug.SetMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
-				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("testMemoryLimitTuner")); _err_ == nil {
 					if val, ok := val.(bool); val && ok {
 						resetInterval = 1 * time.Second
 					}
-				})
+				}
 				time.Sleep(resetInterval)
 				debug.SetMemoryLimit(t.calcMemoryLimit(t.GetPercentage()))
 				for !t.waitingReset.CompareAndSwap(true, false) {

@@ -482,11 +482,11 @@ func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
 
 	err := utils.WithRetry(ctx, func() error {
 		startTS, getTSErr = rc.GetTS(ctx)
-		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("get-ts-error")); _err_ == nil {
 			if val.(bool) && retry < 3 {
 				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 			}
-		})
+		}
 
 		retry++
 		if getTSErr != nil {
@@ -862,11 +862,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
-			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("restore-createtables-error")); _err_ == nil {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
 				}
-			})
+			}
 			if err != nil {
 				log.Error("create tables fail")
 				return err
@@ -1650,9 +1650,9 @@ func (rc *Client) getRuleID(tableID int64) string {
 
 // IsFull returns whether this backup is full.
 func (rc *Client) IsFull() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(false)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mock-incr-backup-data")); _err_ == nil {
+		return false
+	}
 	return !rc.IsIncremental()
 }
 

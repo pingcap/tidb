@@ -464,9 +464,9 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	failpoint.Inject("requestTsoFromPD", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("requestTsoFromPD")); _err_ == nil {
 		sessiontxn.TsoRequestCountInc(sctx)
-	})
+	}
 
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}

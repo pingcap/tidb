@@ -183,12 +183,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.spillAction = e.rowChunks.ActionSpill()
-		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testSortedRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				e.spillAction = e.rowChunks.ActionSpillForTest()
 				defer e.spillAction.WaitForTest()
 			}
-		})
+		}
 		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
@@ -212,12 +212,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 				e.spillAction = e.rowChunks.ActionSpill()
-				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("testSortedRowContainerSpill")); _err_ == nil {
 					if val.(bool) {
 						e.spillAction = e.rowChunks.ActionSpillForTest()
 						defer e.spillAction.WaitForTest()
 					}
-				})
+				}
 				e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
@@ -226,13 +226,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	}
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 		if val.(bool) {
 			if e.ctx.GetSessionVars().ConnectionID == 123456 {
 				e.ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
 			}
 		}
-	})
+	}
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.Sort()
 		e.partitionList = append(e.partitionList, e.rowChunks)

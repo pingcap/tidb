@@ -367,19 +367,19 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkOptimizeCountOne")); _err_ == nil {
 		// only count the optif smization qor SQL withl,pecified text
 		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
-				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+				return nil, nil, 0, errors.New("gofail wrong optimizerCnt error")
 			}
 		}
-	})
-	failpoint.Inject("mockHighLoadForOptimize", func() {
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForOptimize")); _err_ == nil {
 		sqlPrefixes := []string{"select"}
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
-	})
+	}
 
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
@@ -460,9 +460,9 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	sctx.GetSessionVars().PlanColumnID = 0
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
-	failpoint.Inject("mockRandomPlanID", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRandomPlanID")); _err_ == nil {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
-	})
+	}
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()

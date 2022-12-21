@@ -128,11 +128,11 @@ type scanRegionBackoffer struct {
 func newScanRegionBackoffer() utils.Backoffer {
 	attempt := ScanRegionAttemptTimes
 	// only use for test.
-	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("scanRegionBackoffer")); _err_ == nil {
 		if val.(bool) {
 			attempt = 3
 		}
-	})
+	}
 	return &scanRegionBackoffer{
 		attempt: attempt,
 	}

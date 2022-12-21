@@ -901,10 +901,10 @@ func (local *local) WriteToTiKV(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(nil, Range{}, rangeStats{},
-			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("WriteToTiKVNotEnoughDiskSpace")); _err_ == nil {
+		return nil, Range{}, rangeStats{},
+			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0)
+	}
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
@@ -1394,7 +1394,7 @@ loopWrite:
 			for errCnt < maxRetryTimes {
 				log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 				var resp *sst.IngestResponse
-				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("FailIngestMeta")); _err_ == nil {
 					// only inject the error once
 					switch val.(string) {
 					case "notleader":
@@ -1418,7 +1418,7 @@ loopWrite:
 					if resp != nil {
 						err = nil
 					}
-				})
+				}
 				if resp == nil {
 					resp, err = local.Ingest(ctx, ingestMetas, region)
 				}
@@ -1602,7 +1602,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 
-	failpoint.Inject("ReadyForImportEngine", func() {})
+	failpoint.Eval(_curpkg_("ReadyForImportEngine"))
 
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)

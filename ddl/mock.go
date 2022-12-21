@@ -107,11 +107,11 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 	for {
 		select {
 		case <-ctx.Done():
-			failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("checkOwnerCheckAllVersionsWaitTime")); _err_ == nil {
 				if v.(bool) {
 					panic("shouldn't happen")
 				}
-			})
+			}
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			if variable.EnableMDL.Load() {

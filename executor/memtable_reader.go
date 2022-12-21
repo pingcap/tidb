@@ -168,12 +168,12 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockClusterConfigServerInfo")); _err_ == nil {
 		if s := val.(string); len(s) > 0 {
 			// erase the error
 			serversInfo, err = parseFailpointServerInfo(s), nil
 		}
-	})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -502,13 +502,13 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockClusterLogServerInfo")); _err_ == nil {
 		// erase the error
 		err = nil
 		if s := val.(string); len(s) > 0 {
 			serversInfo = parseFailpointServerInfo(s)
 		}
-	})
+	}
 	if err != nil {
 		return nil, err
 	}

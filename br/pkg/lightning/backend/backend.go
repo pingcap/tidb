@@ -359,7 +359,7 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 
 	logger.Info("open engine")
 
-	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("FailIfEngineCountExceeds")); _err_ == nil {
 		if m, ok := metric.FromContext(ctx); ok {
 			closedCounter := m.ImporterEngineCounter.WithLabelValues("closed")
 			openCounter := m.ImporterEngineCounter.WithLabelValues("open")
@@ -370,7 +370,7 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 				panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
 			}
 		}
-	})
+	}
 
 	return &OpenedEngine{
 		engine: engine{
